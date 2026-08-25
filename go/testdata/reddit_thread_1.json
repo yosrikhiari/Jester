@@ -1,0 +1,12 @@
+[
+  {
+    "id": "t1_goa",
+    "body": "Self hosting my music library with navidrome broke after the latest docker upgrade and my volume mounts vanished overnight without any error message",
+    "score": 42
+  },
+  {
+    "id": "t1_gob",
+    "body": "Every backup script I write for my home server fails silently and I only notice something went wrong when a disk actually dies",
+    "score": 17
+  }
+]
