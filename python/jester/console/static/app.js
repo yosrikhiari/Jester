@@ -341,13 +341,16 @@ $('#src-form').addEventListener('submit', async e => {
 });
 
 // ── runs ────────────────────────────────────────────────────────────────
+let RUNS = [];
+
 async function loadRuns() {
   const res = await api('/api/runs');
   if (res.ok === false) { toast(res.error, 'bad'); return; }
-  COUNTS.runs = res.runs.length;
+  RUNS = res.runs || [];
+  COUNTS.runs = RUNS.length;
   renderNav();
 
-  $('#runs-body').innerHTML = res.runs.map(r => {
+  $('#runs-body').innerHTML = RUNS.map(r => {
     const funnel = Object.entries(r.prefilter_funnel_obj || {});
     const near = (r.top_near_misses_list || []).map(v => (+v).toFixed(2));
     const platforms = Object.entries(r.platform_counts_obj || {});
@@ -358,7 +361,7 @@ async function loadRuns() {
       near.length ? `<span class="chip">near ${esc(near.join(', '))}</span>` : '',
       r.error ? `<span class="chip chip--bad" title="${esc(r.error)}">error</span>` : '',
     ].filter(Boolean).join('');
-    return `<tr>
+    return `<tr data-id="${r.id}" style="cursor:pointer" title="Click to view details">
       <td>${esc(when(r.started_at))}<div class="xs">${esc(ago(r.started_at))} · ${int(r.n_posts)} post(s)</div></td>
       <td class="mono">${esc(r.run_id)}</td>
       <td>${pill(r.status)}</td>
@@ -368,6 +371,96 @@ async function loadRuns() {
       <td><div class="chiprow">${signals || '<span class="xs">clean</span>'}</div></td>
     </tr>`;
   }).join('') || emptyRow(7, 'No runs yet — hit ▶ run pipeline on the Overview tab.');
+}
+
+$('#runs-body').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-id]');
+  if (!tr) return;
+  const id = +tr.dataset.id;
+  showRun(id);
+});
+
+function showRun(id) {
+  const r = RUNS.find(run => run.id === id);
+  if (!r) { toast('Run not found', 'bad'); return; }
+
+  $('#drawer-title').textContent = `Run: ${r.run_id || r.id}`;
+
+  const phases = JSON.parse(r.phase_checkpoints || '[]');
+  const phasesList = phases.map(p =>
+    `<div class="row xs" style="gap:var(--s-3)">
+      <span class="chip">${esc(p.phase)}</span>
+      <span>${esc(when(p.at))}</span>
+    </div>`
+  ).join('') || '<p class="xs">No phase checkpoints recorded.</p>';
+
+  const models = r.models || {};
+  const modelsList = models.models ? models.models.map(m =>
+    `<span class="chip mono">${esc(m)}</span>`
+  ).join(' ') : '<span class="xs">—</span>';
+
+  const promptVers = models.prompt_versions || {};
+  const promptInfo = Object.keys(promptVers).length
+    ? Object.entries(promptVers).map(([k, v]) => `${k}: v${v}`).join(', ')
+    : '—';
+
+  const funnel = Object.entries(r.prefilter_funnel_obj || {});
+  const funnelList = funnel.length
+    ? funnel.map(([k, v]) => `<div class="row"><strong>${esc(k)}:</strong> ${esc(v)}</div>`).join('')
+    : '<p class="xs">No funnel data.</p>';
+
+  const platforms = Object.entries(r.platform_counts_obj || {});
+  const platformsList = platforms.length
+    ? platforms.map(([p, n]) => `<span class="chip">${esc(p)}: ${esc(n)}</span>`).join(' ')
+    : '<span class="xs">—</span>';
+
+  const flags = (r.floor_flags_list || []);
+  const flagsList = flags.length
+    ? flags.map(f => `<span class="chip chip--bad">${esc(f)}</span>`).join(' ')
+    : '<span class="xs">None</span>';
+
+  $('#drawer-body').innerHTML = `
+    <div class="row">${pill(r.status)}</div>
+    <dl class="dl">
+      <dt>Started</dt><dd>${esc(when(r.started_at))}</dd>
+      <dt>Finished</dt><dd>${r.finished_at ? esc(when(r.finished_at)) : '—'}</dd>
+      <dt>Duration</dt><dd>${r.duration_actual_s ? num(r.duration_actual_s, 1) + 's' : '—'} ${r.duration_expected_s ? '(expected: ' + num(r.duration_expected_s, 1) + 's)' : ''}</dd>
+      <dt>Origin</dt><dd>${esc(r.origin || 'manual')}</dd>
+      <dt>Posts</dt><dd>${int(r.n_posts)}</dd>
+      <dt>Comments</dt><dd>${int(r.n_comments)}</dd>
+      <dt>Batches</dt><dd>${int(r.n_batches)}</dd>
+      <dt>Nuggets kept</dt><dd>${int(r.n_nuggets_kept)}</dd>
+      <dt>Discarded (trivial)</dt><dd>${r.n_discarded_trivial !== null ? int(r.n_discarded_trivial) + ' (' + num((r.trivial_share || 0) * 100, 1) + '%)' : '—'}</dd>
+      <dt>Ideas</dt><dd>${int(r.n_ideas)}</dd>
+    </dl>
+
+    <h3>Models</h3>
+    <div class="chiprow" style="margin-block-end:var(--s-4)">${modelsList}</div>
+    <div class="xs"><strong>Prompts:</strong> ${esc(promptInfo)}</div>
+    <div class="xs"><strong>Rubric:</strong> v${esc(models.rubric_version || '—')}</div>
+
+    <h3>Platforms</h3>
+    <div class="chiprow" style="margin-block-end:var(--s-4)">${platformsList}</div>
+
+    <h3>Prefilter Funnel</h3>
+    <div style="margin-block-end:var(--s-4)">${funnelList}</div>
+
+    <h3>Floor Flags</h3>
+    <div class="chiprow" style="margin-block-end:var(--s-4)">${flagsList}</div>
+
+    ${(r.top_near_misses_list || []).length ? `
+      <h3>Near Misses</h3>
+      <div class="chiprow" style="margin-block-end:var(--s-4)">
+        ${(r.top_near_misses_list || []).map(v => `<span class="chip">${(+v).toFixed(2)}</span>`).join(' ')}
+      </div>
+    ` : ''}
+
+    <h3>Phase Checkpoints</h3>
+    <div class="stack">${phasesList}</div>
+
+    ${r.error ? `<div style="margin-block-start:var(--s-5)"><strong class="chip chip--bad">Error:</strong> ${esc(r.error)}</div>` : ''}
+  `;
+  openDrawer();
 }
 
 // ── ideas ───────────────────────────────────────────────────────────────
@@ -803,8 +896,112 @@ $('#refresh-btn').onclick = e => busy(e.currentTarget, async () => {
   await PAGES.find(p => p.id === CURRENT).load();
 });
 
+// ── pipeline configuration modal ────────────────────────────────────────
+let SOURCES_LIST = [];
+
+function openModal() {
+  $('#pipeline-modal').showModal();
+  $('#modal-scrim').classList.add('on');
+}
+
+function closeModal() {
+  $('#pipeline-modal').close();
+  $('#modal-scrim').classList.remove('on');
+}
+
+async function loadSourcesForModal() {
+  const res = await api('/api/sources');
+  if (res.ok === false) { toast('Failed to load sources', 'bad'); return; }
+  SOURCES_LIST = res.sources || [];
+
+  const enabledSources = SOURCES_LIST.filter(s => s.enabled);
+  $('#sources-checklist').innerHTML = SOURCES_LIST.map(s => `
+    <label style="display:block;padding:var(--s-2)">
+      <input type="checkbox" class="source-check" data-source-id="${s.id}"
+             ${s.enabled ? 'checked' : ''}>
+      <span class="chip" style="margin-inline-start:var(--s-2)">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
+      <strong>${esc(s.name)}</strong>
+      <span class="xs" style="opacity:0.7">${esc(s.kind)}</span>
+    </label>
+  `).join('');
+
+  // Update select-all checkbox state
+  const allChecked = enabledSources.length === SOURCES_LIST.length;
+  $('#select-all-sources').checked = allChecked;
+}
+
+$('#select-all-sources').addEventListener('change', e => {
+  const checked = e.target.checked;
+  $$('.source-check').forEach(cb => { cb.checked = checked; });
+});
+
+$('#goal-type').addEventListener('change', e => {
+  const showValue = e.target.value !== 'none';
+  $('#goal-value-field').style.display = showValue ? 'block' : 'none';
+});
+
+$('#modal-close').onclick = closeModal;
+$('#modal-cancel').onclick = closeModal;
+$('#modal-scrim').onclick = closeModal;
+
+$('#modal-run').onclick = async () => {
+  const selectedSources = $$('.source-check:checked').map(cb => cb.dataset.sourceId);
+
+  if (selectedSources.length === 0) {
+    toast('Please select at least one source', 'bad');
+    return;
+  }
+
+  const goalType = $('#goal-type').value;
+  const goalValue = goalType !== 'none' ? parseInt($('#goal-value').value, 10) : null;
+  const runId = $('#run-id-input').value.trim() || `console-${Date.now()}`;
+
+  const body = {
+    run_id: runId,
+    source_ids: selectedSources,
+  };
+
+  if (goalType !== 'none' && goalValue > 0) {
+    body.goal = { type: goalType, value: goalValue };
+  }
+
+  closeModal();
+
+  // Find the run pipeline button and run the action
+  const btn = $('button[data-act="/api/run"]');
+  await runAction('/api/run', body, btn);
+};
+
+// Intercept run pipeline button to show modal instead
+const originalQuickActionsHandler = $('#quick-actions').onclick;
+$('#quick-actions').removeEventListener('click', originalQuickActionsHandler);
+
+$('#quick-actions').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+
+  // If it's the run pipeline button, show modal instead
+  if (btn.dataset.act === '/api/run' && !btn.dataset.liveModels) {
+    e.preventDefault();
+    e.stopPropagation();
+    loadSourcesForModal();
+    openModal();
+    return;
+  }
+
+  // Otherwise handle normally
+  const body = {};
+  if (btn.dataset.runPrefix) body.run_id = `${btn.dataset.runPrefix}-${Date.now()}`;
+  if (btn.dataset.liveModels) body.live_models = true;
+  if (btn.dataset.live) body.live = true;
+  runAction(btn.dataset.act, body, btn);
+});
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeDrawer();
+  if (e.key === 'Escape') {
+    if ($('#pipeline-modal').open) closeModal();
+    else closeDrawer();
+  }
   // e.target is `document` when nothing is focused — it has no .matches().
   const t = e.target;
   if ((t instanceof Element && t.matches('input, select, textarea, [contenteditable]'))

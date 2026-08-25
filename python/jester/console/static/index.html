@@ -260,6 +260,51 @@
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
 
+<div class="scrim" id="modal-scrim" style="display:none"></div>
+<dialog class="modal" id="pipeline-modal" aria-labelledby="modal-title">
+  <div class="modal-head">
+    <h2 id="modal-title">Configure Pipeline Run</h2>
+    <button class="btn btn--ghost btn--icon" id="modal-close" aria-label="Close">✕</button>
+  </div>
+  <div class="modal-body">
+    <h3>Target Sources</h3>
+    <p class="xs" style="margin-block-end:var(--s-4);opacity:0.8">Select which sources to scrape for this run</p>
+    <div class="field">
+      <label>
+        <input type="checkbox" id="select-all-sources" checked>
+        Select All Sources
+      </label>
+    </div>
+    <div id="sources-checklist" style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s-4);background:var(--surface-2)"></div>
+
+    <h3>Run Goals</h3>
+    <p class="xs" style="margin-block-end:var(--s-4);opacity:0.8">Set optional targets to stop the run early</p>
+    <div class="formgrid">
+      <div class="field">
+        <label for="goal-type">Goal Type</label>
+        <select id="goal-type">
+          <option value="none">No specific goal</option>
+          <option value="posts">Target number of posts</option>
+          <option value="comments">Target number of comments</option>
+          <option value="ideas">Target number of ideas</option>
+        </select>
+      </div>
+      <div class="field" id="goal-value-field" style="display:none">
+        <label for="goal-value">Target Count</label>
+        <input type="number" id="goal-value" min="1" value="10" placeholder="e.g., 50">
+      </div>
+      <div class="field">
+        <label for="run-id-input">Run ID <span class="xs">(optional)</span></label>
+        <input type="text" id="run-id-input" placeholder="auto-generated if empty">
+      </div>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn--ghost" id="modal-cancel">Cancel</button>
+    <button class="btn btn--primary" id="modal-run">▶ Start Pipeline</button>
+  </div>
+</dialog>
+
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script src="/app.js"></script>

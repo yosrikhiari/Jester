@@ -28,7 +28,7 @@ export_rows_per_file: 100000
 competitor_search_provider: none
 embedding_model: nomic-embed-text
 models:
-  extractor: claude-sonnet-4-6
-  archivist: claude-sonnet-4-6
-  synthesizer: claude-opus-4-7
-  critic: claude-opus-4-7
+  extractor: qwen3:8b
+  archivist: phi4-mini:3.8b
+  synthesizer: qwen3:8b
+  critic: qwen3:8b

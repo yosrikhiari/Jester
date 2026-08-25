@@ -76,14 +76,14 @@ sources:
   name: organization
   kind: subreddit
   url: https://www.reddit.com/r/organization/
-  enabled: false
+  enabled: true
   notes: parked - mostly physical-space tidying, low app-shaped signal; enable to
     sample
 - platform: reddit
   name: nostupidquestions
   kind: subreddit
   url: https://www.reddit.com/r/NoStupidQuestions/
-  enabled: false
+  enabled: true
   notes: parked - high volume, low pain density; enable only with a tight prefilter
 - platform: tiktok
   name: indiehackers
