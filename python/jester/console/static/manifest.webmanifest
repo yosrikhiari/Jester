@@ -1,0 +1,24 @@
+{
+  "name": "Jester — Operator Console",
+  "short_name": "Jester",
+  "description": "Local operator console for the Jester scrape → nugget → idea pipeline.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FDF6E3",
+  "theme_color": "#0F141E",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "768x768",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "768x768",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

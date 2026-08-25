@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jester — Operator Console</title>
+<meta name="description" content="Local operator console for the Jester scrape → nugget → idea pipeline.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0F141E">
+<link rel="icon" href="/icon.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <span class="brand">
+    <span><img src="/icon.png" alt="" width="28" height="28" class="brandmark"></span>
+    <strong>Jester</strong>
+    <em>operator console</em>
+  </span>
+  <span class="topbar-meta">
+    <span class="chip" id="db-chip" title="active database">db —</span>
+    <span class="chip" id="cfg-chip" title="active config directory">config —</span>
+  </span>
+  <span class="topbar-actions">
+    <button class="btn btn--ghost btn--icon" id="theme-btn" title="toggle light / dark" aria-label="Toggle theme">◐</button>
+    <button class="btn btn--secondary btn--sm" id="refresh-btn" title="reload the current page (r)">↻ refresh</button>
+  </span>
+</header>
+
+<div class="shell">
+<nav class="nav" aria-label="Sections"><ul id="nav"></ul></nav>
+
+<main id="main">
+
+  <!-- ── overview ─────────────────────────────────────────────────── -->
+  <section data-page="overview">
+    <div class="hero">
+      <div><h1>Overview</h1><p>Archive and pipeline at a glance.</p></div>
+    </div>
+    <div id="ov-banners" class="stack"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid">
+      <div class="card"><h3>Last run</h3><div id="last-run"></div></div>
+      <div class="card"><h3>Quota ledger</h3><div id="quota"></div></div>
+      <div class="card"><h3>Infrastructure</h3><div id="infra" class="chiprow"></div>
+        <p class="xs" style="margin-block-end:0">Live ingestion needs cloakserve; live models need Ollama.</p></div>
+    </div>
+    <div class="card">
+      <h3>Quick actions</h3>
+      <div class="row" id="quick-actions">
+        <button class="btn btn--primary" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
+        <button class="btn btn--accent btn--sm hidden" id="btn-ingest-live"
+                data-act="/api/ingest" data-live="1" data-run-prefix="ingest"
+                title="Fetch the enabled sources through cloakserve">⇣ ingest sources (live)</button>
+        <button class="btn btn--accent btn--sm hidden" id="btn-live-models"
+                data-act="/api/run" data-live-models="1" data-run-prefix="live-models">▶ run with live models</button>
+        <button class="btn btn--secondary btn--sm hidden" id="btn-ingest-mock"
+                data-act="/api/ingest" data-run-prefix="ingest-mock">⇣ ingest (worker mock)</button>
+        <button class="btn btn--secondary btn--sm" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
+        <button class="btn btn--secondary btn--sm" data-act="/api/seed-mock">seed fixture</button>
+        <button class="btn btn--secondary btn--sm" data-act="/api/smoke">smoke check</button>
+        <button class="btn btn--ghost btn--sm" data-act="/api/requeue">requeue failed</button>
+        <button class="btn btn--ghost btn--sm" data-act="/api/reembed">reembed backlog</button>
+        <button class="btn btn--ghost btn--sm" data-act="/api/migrate">migrate schema</button>
+        <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
+      </div>
+      <p class="xs" style="margin-block-end:0">
+        <b>ingest</b> runs the Go worker over the enabled entries in the Sources tab and queues what it
+        finds; <b>run pipeline</b> then extracts, archives and synthesizes whatever is queued
+        (falling back to the fixture corpus when nothing is). Live ingestion needs the Go toolchain and
+        cloakserve on :9222 — the button appears once both are reachable.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── sources ──────────────────────────────────────────────────── -->
+  <section data-page="sources" hidden>
+    <div class="hero">
+      <div><h1>Sources</h1><p>The curated ingest list the live worker walks. Paste a subreddit,
+        a thread, a YouTube channel or video, or a TikTok profile — anything the parser recognises.</p></div>
+    </div>
+    <div class="card">
+      <h3>Add a source</h3>
+      <form id="src-form" class="formgrid">
+        <div class="field">
+          <label for="src-platform">Platform</label>
+          <select id="src-platform">
+            <option value="auto">detect from link</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="src-url">Link or handle</label>
+          <input id="src-url" required autocomplete="off"
+                 placeholder="r/ExperiencedDevs · ask · news.ycombinator.com/item?id=… · community.home-assistant.io · @fosdemtalks · youtu.be/…">
+        </div>
+        <div class="field">
+          <label for="src-name">Name <span class="mute">(optional)</span></label>
+          <input id="src-name" autocomplete="off" placeholder="derived from the link">
+        </div>
+        <button class="btn btn--primary" type="submit">+ add</button>
+      </form>
+      <p class="xs" id="src-hint" style="margin-block-end:0"></p>
+    </div>
+    <div class="card card--flush">
+      <div class="card-head">
+        <h3>Curated list</h3>
+        <span class="pill pill--sm tone-neutral" id="src-count">—</span>
+        <span class="row-end xs mono" id="src-path"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>on</th><th>platform</th><th>name</th><th>kind</th><th>target</th><th>status</th><th></th>
+          </tr></thead>
+          <tbody id="src-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── runs ─────────────────────────────────────────────────────── -->
+  <section data-page="runs" hidden>
+    <div class="hero">
+      <div><h1>Runs</h1><p>Run ledger — status, funnel, durations and floor flags.</p></div>
+    </div>
+    <div class="card card--flush">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>started</th><th>run</th><th>status</th><th class="num">kept / ideas</th>
+            <th class="num">duration</th><th>origin</th><th>signals</th>
+          </tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ideas ────────────────────────────────────────────────────── -->
+  <section data-page="ideas" hidden>
+    <div class="hero">
+      <div><h1>Ideas</h1><p>Review loop — open one to verify its citations, then mark it.</p></div>
+      <div class="row row-end">
+        <input id="ideas-q" placeholder="filter ideas…" style="inline-size:200px" autocomplete="off">
+        <div class="seg" id="ideas-filter" role="group" aria-label="Filter by status"></div>
+      </div>
+    </div>
+    <div class="card card--flush">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th class="num">#</th><th>title</th><th class="num">overall</th>
+            <th class="num">demand / feasibility / competition</th><th>status</th><th>critic</th><th></th>
+          </tr></thead>
+          <tbody id="ideas-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── nuggets ──────────────────────────────────────────────────── -->
+  <section data-page="nuggets" hidden>
+    <div class="hero">
+      <div><h1>Nuggets</h1><p>Archived pain signals, newest first. Trivial and reembed flags shown inline.</p></div>
+      <div class="row row-end">
+        <input id="nuggets-q" placeholder="filter nuggets…" style="inline-size:200px" autocomplete="off">
+        <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>
+      </div>
+    </div>
+    <div class="card card--flush">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>key</th><th>platform</th><th>category</th><th>insight</th><th>flags</th>
+          </tr></thead>
+          <tbody id="nuggets-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── config ───────────────────────────────────────────────────── -->
+  <section data-page="config" hidden>
+    <div class="hero">
+      <div><h1>Config</h1><p>Every knob the pipeline reads. Editable values write straight back to
+        <span class="mono">thresholds.yaml</span>; comments in the file are preserved.</p></div>
+    </div>
+    <div class="card">
+      <div class="card-head" style="padding:0 0 var(--s-4);border-block-end:1px solid var(--line);background:none">
+        <h3>Thresholds</h3>
+        <span class="xs row-end">range-checked on save; a refused value is never written</span>
+      </div>
+      <div class="knobgrid" id="cfg-knobs" style="margin-block-start:var(--s-5)"></div>
+      <div class="savebar hidden" id="cfg-savebar">
+        <b id="cfg-dirty">0 changes</b>
+        <span class="row-end row">
+          <button class="btn btn--ghost btn--sm" id="cfg-reset">discard</button>
+          <button class="btn btn--primary btn--sm" id="cfg-save">save to thresholds.yaml</button>
+        </span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="align-items:flex-start">
+        <div>
+          <h3 style="margin:0">Agent models</h3>
+          <p class="xs" style="margin:2px 0 0">Pick from what Ollama has pulled, or type any name your
+            provider accepts. Written to the selected profile's <span class="mono">thresholds.yaml</span>.</p>
+        </div>
+        <div class="row row-end" style="gap:var(--s-3)">
+          <span class="pill pill--sm tone-neutral" id="models-ollama">—</span>
+          <div class="seg" id="models-profile" role="group" aria-label="Config profile"></div>
+        </div>
+      </div>
+      <div class="knobgrid" id="models-grid" style="margin-block-start:var(--s-5)"></div>
+      <div class="savebar hidden" id="models-savebar">
+        <b id="models-dirty">0 changes</b>
+        <span class="row-end row">
+          <button class="btn btn--ghost btn--sm" id="models-reset">discard</button>
+          <button class="btn btn--primary btn--sm" id="models-save">save models</button>
+        </span>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Scraper <span class="xs">scraper.yaml</span></h3><dl class="dl" id="cfg-scraper"></dl></div>
+      <div class="card"><h3>Environment</h3><dl class="dl" id="cfg-env"></dl></div>
+    </div>
+  </section>
+
+  <!-- ── doctor ───────────────────────────────────────────────────── -->
+  <section data-page="doctor" hidden>
+    <div class="hero">
+      <div><h1>Doctor</h1><p>Silent-degradation guards (R40 / R55) plus the M2.2 calibration gate.</p></div>
+    </div>
+    <div class="card"><h3>Health findings</h3><div id="doctor-card"></div></div>
+    <div class="card">
+      <div class="row">
+        <h3 style="margin:0">Eval gate</h3>
+        <span class="pill pill--sm tone-neutral" id="eval-badge">—</span>
+        <button class="btn btn--secondary btn--sm row-end" id="eval-rerun">re-run gate</button>
+      </div>
+      <div id="eval-info" style="margin-block-start:var(--s-4)"></div>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true">
+  <div class="drawer-head">
+    <h2 id="drawer-title">Idea</h2>
+    <button class="btn btn--ghost btn--icon row-end" id="drawer-close" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
