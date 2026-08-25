@@ -1,0 +1,13 @@
+sources:
+  - platform: reddit
+    name: selfhosted
+    url: https://www.reddit.com/r/selfhosted/
+  - platform: reddit
+    name: selfhostedcomments
+    url: https://www.reddit.com/r/selfhosted/comments/
+  - platform: youtube
+    name: fosdem
+    url: https://www.youtube.com/@fosdem
+  - platform: tiktok
+    name: indiehackers
+    url: https://www.tiktok.com/@indiehackers

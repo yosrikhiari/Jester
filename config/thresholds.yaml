@@ -1,0 +1,17 @@
+# Every numeric key has a documented default (see go/internal/config/config.go).
+# Out-of-range values fail validation at startup.
+max_comments_per_thread: 500
+min_upvotes: 1
+dedup_threshold: 0.87
+prefilter_min_chars: 40
+prefilter_max_chars: 600
+prefilter_max_emoji: 5
+prefilter_max_mentions: 3
+prefilter_min_words: 6
+request_delay_ms: 2000
+embedding_model: nomic-embed-text
+models:
+  extractor: claude-sonnet-4-6
+  archivist: claude-sonnet-4-6
+  synthesizer: claude-opus-4-7
+  critic: claude-opus-4-7

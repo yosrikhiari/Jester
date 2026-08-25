@@ -1,0 +1,8 @@
+[
+  {"id": "c1", "body": "I really wish there was a simpler way to self host my email without all the yaml", "score": 42},
+  {"id": "c2", "body": "Managing 14 docker containers just to read my mail is insane. Someone please build a single binary.", "score": 88},
+  {"id": "c3", "body": "loe", "score": 1},
+  {"id": "c4", "body": "👍👍👍👍👍👍👍👍", "score": 3},
+  {"id": "c5", "body": "@spam @bot @shill @ads this is mention spam buy my course now ok", "score": 0},
+  {"id": "c6", "body": "The DNS records alone take me a weekend. MX, SPF, DKIM, DMARC and then deliverability still drops.", "score": 130}
+]

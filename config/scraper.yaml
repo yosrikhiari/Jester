@@ -1,0 +1,9 @@
+# CloakBrowser (v3.11.0 §36) integration config. Live fetch (M1.1+) reads
+# these; mock mode ignores them.
+cdp_url: http://localhost:9222
+license_key: ${CLOAKBROWSER_LICENSE_KEY}
+proxy: ${CLOAKBROWSER_PROXY}
+geoip: ${CLOAKBROWSER_GEOIP}
+# Action when a source is detected as blocked/rate-limited by the platform:
+# pass_through | backoff | fail
+blocked_response_action: backoff

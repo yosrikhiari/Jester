@@ -1,0 +1,19 @@
+# Live-model profile (jester-setup.md §37.16): same pipeline, real Ollama backends.
+# Requires: Ollama daemon running + models `qwen3:8b` and `nomic-embed-text` pulled.
+llm_provider: ollama
+embedding_provider: ollama
+max_comments_per_thread: 500
+min_upvotes: 1
+dedup_threshold: 0.87
+prefilter_min_chars: 40
+prefilter_max_chars: 600
+prefilter_max_emoji: 5
+prefilter_max_mentions: 3
+prefilter_min_words: 6
+request_delay_ms: 2000
+embedding_model: nomic-embed-text
+models:
+  extractor: qwen3:8b
+  archivist: qwen3:8b
+  synthesizer: qwen3:8b
+  critic: qwen3:8b

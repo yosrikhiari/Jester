@@ -1,0 +1,10 @@
+# Jester Python-side dependencies (pure-Python build, jester-setup.md §37).
+PyYAML>=6.0
+qdrant-client>=1.10
+pytest>=8.0
+# ZoneInfo needs an IANA database; Windows ships none (§37.13 quota day-keys).
+tzdata>=2024.1
+
+# Live Ollama backend (�37.16) - installed SDK returns pydantic responses
+ollama>=0.4
+
