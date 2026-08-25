@@ -12,7 +12,7 @@ services:
     environment:
       - CLOAKBROWSER_LICENSE_KEY=${CLOAKBROWSER_LICENSE_KEY:-}   # empty = free tier, 1 concurrent session
       - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
-      - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-us}
+      - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}          # boolean; only applies with a proxy (a country code here means "off")
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
       interval: 30s

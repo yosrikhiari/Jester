@@ -76,3 +76,52 @@ func TestDefaultThresholdsInBounds(t *testing.T) {
 		t.Fatalf("defaults should validate: %v", err)
 	}
 }
+
+func TestScraperExpandsEnvAndBlanksPlaceholders(t *testing.T) {
+	dir := writeConfigDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "scraper.yaml"), []byte(
+		"cdp_url: http://localhost:9222\n"+
+			"license_key: ${JESTER_TEST_LICENCE}\n"+
+			"proxy: ${JESTER_TEST_PROXY_UNSET}\n"+
+			"geoip: ${JESTER_TEST_GEOIP}\n"+
+			"timezone: America/New_York\n"+
+			"locale: en-US\n"+
+			"blocked_response_action: backoff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JESTER_TEST_LICENCE", "abc123")
+	t.Setenv("JESTER_TEST_GEOIP", "true")
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Scraper.LicenseKey != "abc123" {
+		t.Errorf("licence not expanded: %q", cfg.Scraper.LicenseKey)
+	}
+	// An unset placeholder must become empty, never the literal "${...}" —
+	// Chrome takes that as a proxy address and fails every navigation with
+	// ERR_PROXY_CONNECTION_FAILED.
+	if cfg.Scraper.Proxy != "" {
+		t.Errorf("unset proxy should be blank, got %q", cfg.Scraper.Proxy)
+	}
+	if !cfg.Scraper.GeoIPEnabled() {
+		t.Error("geoip=true should enable geoip")
+	}
+	if cfg.Scraper.Timezone != "America/New_York" || cfg.Scraper.Locale != "en-US" {
+		t.Errorf("identity not read: tz=%q locale=%q", cfg.Scraper.Timezone, cfg.Scraper.Locale)
+	}
+}
+
+func TestGeoIPCountryCodeIsNotEnabled(t *testing.T) {
+	// The old default was `geoip: us`, which cloakserve parses as false. Keep
+	// that explicit so nobody re-adds a country code expecting it to work.
+	if (Scraper{GeoIP: "us"}).GeoIPEnabled() {
+		t.Error(`geoip:"us" must not count as enabled`)
+	}
+	for _, on := range []string{"true", "TRUE", "1", "yes", "on"} {
+		if !(Scraper{GeoIP: on}).GeoIPEnabled() {
+			t.Errorf("geoip:%q should be enabled", on)
+		}
+	}
+}

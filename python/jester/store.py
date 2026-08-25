@@ -6,7 +6,9 @@ schema_version=1 guard still holds across both languages.
 """
 import json
 import os
+import re
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -102,6 +104,7 @@ CREATE TABLE IF NOT EXISTS runs (
     error               TEXT,
     prefilter_funnel    TEXT,              -- JSON: kept + per-heuristic drops (R35)
     top_near_misses     TEXT,              -- JSON list of dedup near-miss scores (§13.1)
+    platform_counts     TEXT,              -- JSON {platform: kept} for the run (M3.2)
     origin              TEXT NOT NULL DEFAULT 'manual',
     n_posts             INTEGER,
     duration_expected_s REAL,
@@ -122,6 +125,8 @@ _ADD_COLUMNS = [
     "ALTER TABLE runs ADD COLUMN duration_actual_s REAL",
     "ALTER TABLE runs ADD COLUMN prefilter_funnel TEXT",
     "ALTER TABLE runs ADD COLUMN top_near_misses TEXT",
+    # M3.2: per-platform ingest counts for a multi-platform run.
+    "ALTER TABLE runs ADD COLUMN platform_counts TEXT",
     # §37.20 Phase A: ingest_batch parity with the Go owner (D-17) so Go's
     # EnqueueBatch works against Python-created databases.
     "ALTER TABLE ingest_batch ADD COLUMN run_id TEXT",
@@ -135,6 +140,85 @@ _ADD_COLUMNS = [
 ]
 
 
+_TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", re.S)
+_ALTER_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.I)
+
+
+def _alter_supplied():
+    """{table: {column, ...}} that ``_ADD_COLUMNS`` can add in place.
+
+    reconcile_schema must not treat these as an incompatible shape: several
+    live in BASE_SCHEMA *and* in the ALTER list, so an older database missing
+    one would otherwise be renamed aside — losing run history from the active
+    table — when a plain ALTER two lines later would have fixed it.
+    """
+    out = {}
+    for stmt in _ADD_COLUMNS:
+        m = _ALTER_RE.search(stmt)
+        if m:
+            out.setdefault(m.group(1), set()).add(m.group(2))
+    return out
+
+
+def _schema_columns():
+    """{table: [column, ...]} as declared in BASE_SCHEMA."""
+    out = {}
+    for match in _TABLE_RE.finditer(BASE_SCHEMA):
+        table, body = match.group(1), match.group(2)
+        cols = []
+        for line in body.splitlines():
+            line = line.split("--")[0].strip().rstrip(",")
+            if not line or line.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+                continue
+            cols.append(line.split()[0])
+        out[table] = cols
+    return out
+
+
+def reconcile_schema(db: sqlite3.Connection):
+    """Bring tables written by an older build up to BASE_SCHEMA.
+
+    ``CREATE TABLE IF NOT EXISTS`` never upgrades a table that already exists,
+    so a database from an earlier schema kept its old column names and every
+    read died on `no such column` — that is what took the console overview and
+    the ideas list down against a pre-existing data/jester.db.
+
+    Incremental columns are still ``_ADD_COLUMNS``' job. This only handles a
+    table whose shape is *incompatible*: it is recreated when empty, and
+    renamed to ``<table>_legacy`` when it holds rows. Nothing is ever dropped
+    with data in it, and old rows are never re-attributed to the new columns
+    (R29: never fabricate).
+    """
+    actions = []
+    addable = _alter_supplied()
+    for table, want in _schema_columns().items():
+        exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if exists is None:
+            continue
+        have = {c[1] for c in db.execute(f"PRAGMA table_info({table})")}
+        # A column the ALTER pass can add is not an incompatible shape.
+        skip = addable.get(table, set())
+        missing = [c for c in want if c not in have and c not in skip]
+        if not missing:
+            continue
+        rows = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        if rows == 0:
+            db.execute(f"DROP TABLE {table}")
+            actions.append(f"{table}: recreated (was empty, missing {', '.join(missing)})")
+        else:
+            db.execute(f"DROP TABLE IF EXISTS {table}_legacy")
+            db.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+            actions.append(
+                f"{table}: {rows} row(s) kept as {table}_legacy "
+                f"(missing {', '.join(missing)})"
+            )
+    if actions:
+        db.commit()
+    return actions
+
+
 def open_db(path: str) -> sqlite3.Connection:
     if path != ":memory:":
         parent = os.path.dirname(path)
@@ -143,6 +227,9 @@ def open_db(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=5.0)
     db.execute('PRAGMA journal_mode=WAL')
     db.execute('PRAGMA busy_timeout=5000')
+    for note in reconcile_schema(db):
+        # Never silently: an operator must know a legacy table was set aside.
+        print(f"schema: {note}", file=sys.stderr)
     db.executescript(BASE_SCHEMA)
     for stmt in _ADD_COLUMNS:
         try:
@@ -186,12 +273,20 @@ def enqueue_batch(
     source: str,
     thread_id: str,
     comments: list,
+    run_id: str = "",
+    batch_index: int = 0,
 ) -> int:
-    """Insert one raw ingestion job (comments is a JSON-serializable list)."""
+    """Insert one raw ingestion job (comments is a JSON-serializable list).
+
+    §37.20: ingest_batch is owned by the Go worker, whose DDL declares run_id
+    and batch_index NOT NULL. Omitting them here worked only against a
+    Python-created table and failed with `NOT NULL constraint failed` on any
+    database the worker had touched first — so both are always written.
+    """
     cur = db.execute(
-        "INSERT INTO ingest_batch(platform, source, thread_id, comments, status) "
-        "VALUES(?,?,?,?,'pending')",
-        (platform, source, thread_id, json.dumps(comments)),
+        "INSERT INTO ingest_batch(run_id, platform, source, thread_id, "
+        "batch_index, comments, status) VALUES(?,?,?,?,?,?,'pending')",
+        (run_id, platform, source, thread_id, batch_index, json.dumps(comments)),
     )
     db.commit()
     return cur.lastrowid
@@ -230,7 +325,7 @@ def mark_comments_ingested(db: sqlite3.Connection, thread_id: str, prints: list)
 
 
 def enqueue_new_only(db: sqlite3.Connection, platform: str, source: str,
-                     thread_id: str, comments: list) -> int:
+                     thread_id: str, comments: list, run_id: str = "") -> int:
     """M1.2 batcher: drop already-ingested fingerprints before queueing.
     Returns the number of NEW comments queued (0 ⇒ zero new batches)."""
     seen = seen_fingerprints(db, [c.get("fingerprint") for c in comments])
@@ -240,7 +335,7 @@ def enqueue_new_only(db: sqlite3.Connection, platform: str, source: str,
     ]
     if not fresh:
         return 0
-    enqueue_batch(db, platform, source, thread_id, fresh)
+    enqueue_batch(db, platform, source, thread_id, fresh, run_id=run_id)
     return len(fresh)
 
 
@@ -288,9 +383,14 @@ def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
 
 def list_nuggets(db: sqlite3.Connection) -> List[sqlite3.Row]:
     db.row_factory = sqlite3.Row
+    # trivial/needs_reembed/synthesized_at are part of the reviewer's read of a
+    # nugget (R37 floor + R40 reembed backlog) — selecting them here is what
+    # lets the console show the flags instead of silently rendering nothing.
     return db.execute(
-        "SELECT unique_key, category, raw_text, extracted_insight, platform, source_url "
-        "FROM nuggets ORDER BY id"
+        "SELECT unique_key, category, raw_text, extracted_insight, platform, "
+        "source_url, thread_id, run_id, trivial, needs_reembed, "
+        "engagement_score, synthesized_at, created_at "
+        "FROM nuggets ORDER BY id DESC"
     ).fetchall()
 
 
@@ -447,7 +547,7 @@ _RUN_SUMMARY_FIELDS = frozenset({
     "status", "models_used", "n_comments", "n_batches", "n_posts", "n_nuggets_kept",
     "n_discarded_trivial", "trivial_share", "n_ideas", "floor_flags",
     "phase_checkpoints", "error", "duration_expected_s", "duration_actual_s",
-    "prefilter_funnel", "top_near_misses",
+    "prefilter_funnel", "top_near_misses", "platform_counts",
 })
 
 

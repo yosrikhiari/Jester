@@ -21,7 +21,7 @@ func Fingerprint(c FetchedComment) string { return reddit.Fingerprint(c) }
 // NEXT_XHR_MARK selects the lazy-load comment responses.
 const NEXT_XHR_MARK = "/youtubei/v1/next"
 
-var challengeRE = regexp.MustCompile(`(?i)captcha|challenge|access denied|blocked|unusual traffic`)
+var challengeRE = regexp.MustCompile(`(?i)captcha|challenge|access denied|blocked|unusual traffic|prove your humanity|verify you are human|just a moment|are you a robot|rate limit`)
 
 // WalkCommentPayloads collects every commentEntityPayload dict nested anywhere
 // under frameworkUpdates.entityBatchUpdate.mutations[].payload (and tolerates

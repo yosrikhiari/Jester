@@ -13,8 +13,10 @@ from jester.agents.archivist import Archivist
 from jester.agents.critic import Critic, row_to_idea
 from jester.agents.extractor import extract
 from jester.agents.synthesizer import Synthesizer
+from jester.competitors import CompetitorChecker
 from jester.config import load_config
 from jester.embed import select_embedding
+from jester.export import default_export_dir, export_csv, prune_exports
 from jester.fetchers import FixtureFetcher, MOCK_SAMPLE  # noqa: F401 (re-export)
 from jester.llm import (
     PROMPT_VERSIONS,
@@ -24,6 +26,7 @@ from jester.llm import (
     select_synthesizer_llm,
 )
 from jester.notify import dispatch_notify
+from jester import schedule as _schedule
 from jester.ops import compute_floor_flags
 from jester.prefilter import prefilter_comment
 from jester.scoring import compute_overall
@@ -69,6 +72,39 @@ def _vector_for(cfg, db_path):
         os.path.join(os.path.dirname(db_path), os.path.splitext(os.path.basename(db_path))[0] + ".qdrant"),
         embed,
     )
+
+
+def _idea_vector_for(cfg, db_path):
+    """R44 needs its own collection: idea vectors must not pollute the nugget
+    space the archivist dedups against. Returns None when no vector backend is
+    reachable, which disables idea dedup rather than failing the run."""
+    from jester.vector import VectorStore
+
+    try:
+        embed = select_embedding(cfg.thresholds)
+        qdrant_url = os.environ.get("JESTER_QDRANT_URL")
+        if qdrant_url:
+            return VectorStore.for_url(qdrant_url, embed, collection="ideas")
+        if db_path == ":memory:":
+            return VectorStore.in_memory(embed, collection="ideas")
+        base = os.path.abspath(db_path)
+        path = os.path.join(
+            os.path.dirname(base),
+            os.path.splitext(os.path.basename(base))[0] + ".ideas.qdrant",
+        )
+        return VectorStore.open(path, embed, collection="ideas")
+    except Exception as exc:  # noqa: BLE001 - dedup is a nice-to-have, not a gate
+        print(f"idea dedup disabled (vector store unavailable: {exc})")
+        return None
+
+
+def _platform_counts(meta):
+    """M3.2: kept comments per platform, from the post-prefilter metadata."""
+    counts = {}
+    for platform, _source, _thread, _fp in meta:
+        key = platform or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _run_all_trivial(db, run_id):
@@ -137,15 +173,34 @@ def cmd_run(args):
         # decides what is actually new (re-fetches yield zero new batches).
         print("no pending batches; fetching via FixtureFetcher")
         for b in FixtureFetcher().fetch():
-            new = enqueue_new_only(db, b["platform"], b["source"], b["thread_id"], b["comments"])
+            new = enqueue_new_only(
+                db, b["platform"], b["source"], b["thread_id"], b["comments"],
+                run_id=args.run,
+            )
             if new == 0:
                 print(f"skip-list: thread {b['thread_id']} already ingested; 0 new comments")
         rows = pending_batches(db)
 
     # M1.3/R35: pre-filter before extraction; per-heuristic funnel recorded.
     raw_meta, raw_comments = [], []
+    readable, unreadable = [], 0
     for r in rows:
-        for c in json.loads(r["comments"]):
+        # The Go worker marshals an empty comment slice as JSON `null`, and a
+        # truncated write leaves invalid JSON. One malformed batch used to
+        # abort the whole run with `'NoneType' object is not iterable`; it is
+        # now counted and skipped so the healthy batches still flow (R55).
+        try:
+            payload = json.loads(r["comments"] or "null")
+        except (TypeError, ValueError):
+            payload = None
+        if not isinstance(payload, list):
+            unreadable += 1
+            mark_batch_processed(db, r["id"])
+            continue
+        readable.append((r, payload))
+        for c in payload:
+            if not isinstance(c, dict):
+                continue
             raw_meta.append((r["platform"] or "reddit", r["source"] or "", r["thread_id"] or "", c.get("fingerprint")))
             raw_comments.append(
                 {
@@ -154,6 +209,9 @@ def cmd_run(args):
                     "score": c.get("upvotes", 0),
                 }
             )
+
+    if unreadable:
+        print(f"skipped {unreadable} batch(es) with unreadable comments payload")
 
     meta, comments = [], []
     funnel = {"kept": 0}
@@ -173,8 +231,13 @@ def cmd_run(args):
         db,
         args.run,
         n_comments=len(comments),
-        n_batches=len(rows),
-        n_posts=len(rows),
+        # Count what the run actually processed, not what it found queued —
+        # an unreadable batch is reported separately, never as a post.
+        n_batches=len(readable),
+        n_posts=len(readable),
+        # M3.2: a multi-platform run must say what each platform contributed,
+        # or one dead adapter hides behind a healthy total.
+        platform_counts=_platform_counts(meta),
         prefilter_funnel=funnel,
     )
 
@@ -198,12 +261,12 @@ def cmd_run(args):
     archivist = Archivist(db, vector, cfg.thresholds)
     kept = archivist.run(nuggets)
 
-    for r in rows:
+    for r, payload in readable:
         mark_batch_processed(db, r["id"])
         mark_comments_ingested(
             db,
             r["thread_id"],
-            [c.get("fingerprint") for c in json.loads(r["comments"])],
+            [c.get("fingerprint") for c in payload if isinstance(c, dict)],
         )
 
     update_run_summary(
@@ -219,15 +282,28 @@ def cmd_run(args):
     print(f"kept {len(kept)} nuggets from {len(comments)} pending comments")
 
     # M2: synthesize + score any unclaimed nuggets.
+    # M2.3: the competitor web step (D-1) and R44 idea-level dedup ride on the
+    # same run. Both are off unless configured, so the default path is M2.2's.
+    checker = CompetitorChecker(db, cfg.thresholds)
+    idea_vector = _idea_vector_for(cfg, args.db)
     synthesizer = Synthesizer(db, cfg.thresholds)
     ideas = synthesizer.run(
         select_synthesizer_llm(cfg.thresholds),
         select_critic_llm(cfg.thresholds),
         run_id=args.run,
+        checker=checker,
+        idea_vector=idea_vector,
     )
     for idea in ideas:
         verdict = "PASS" if idea.scores.overall >= cfg.thresholds.good_idea_min else "REVIEW"
-        print(f"idea #{idea.id}: {idea.title}  overall={idea.scores.overall:.1f}  [{verdict}]")
+        comp = "unchecked" if not idea.competition_checked else f"{idea.scores.competition:.1f}"
+        print(f"idea #{idea.id}: {idea.title}  overall={idea.scores.overall:.1f} "
+              f"comp={comp}  [{verdict}]")
+    # R44 merges did real work but archived nothing new — say so, or the run
+    # reads as "0 ideas" on a night that grew the evidence behind several.
+    for m in synthesizer.merged:
+        print(f"merged into idea #{m.duplicate_of} (cosine {m.score:.2f}): "
+              f"+{len(m.added)} nugget(s){' — re-scored' if m.grew else ''}")
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
     checkpoint("synthesize")
@@ -250,6 +326,22 @@ def cmd_run(args):
     )
     if flags:
         print("floor flags: " + ", ".join(flags))
+
+    # Leave a readable copy behind. A nightly run nobody watches should not
+    # require a second command before the haul is inspectable, so this happens
+    # after the summary is written — an export failure must never turn a good
+    # run into a failed one.
+    if cfg.thresholds.export_after_run:
+        out_dir = getattr(args, "exports", None) or default_export_dir(args.db)
+        try:
+            manifest = export_csv(db, out_dir,
+                                  rows_per_file=cfg.thresholds.export_rows_per_file)
+            c = manifest["counts"]
+            print(f"exported {c['comments']} comment(s), {c['nuggets']} nugget(s), "
+                  f"{c['ideas']} idea(s) to {out_dir}")
+        except Exception as exc:  # noqa: BLE001 - reporting, not a pipeline gate
+            print(f"export skipped: {exc}")
+
     # Only a broken pipeline fails the exit code (§13.1); quality flags are advisory.
     if "FAILED_BATCHES" in flags:
         sys.exit(1)
@@ -384,6 +476,8 @@ def cmd_runs(args):
             f"kept={r['n_nuggets_kept']} ideas={r['n_ideas']}  "
             f"{dur}  origin={r['origin']}  posts={posts}"
         )
+        if r["platform_counts"]:
+            line += f"  platforms={r['platform_counts']}"
         if r["prefilter_funnel"]:
             line += f"  filter={r['prefilter_funnel']}"
         if r["top_near_misses"]:
@@ -404,10 +498,65 @@ def cmd_retention(args):
             print(f"retention skipped: write lock held ({exc})")
             return
         raise
+    # §14 does not stop at the database boundary: a CSV export holds the same
+    # raw text, so it ages out on the same clock.
+    pruned = prune_exports(getattr(args, "exports", None) or default_export_dir(args.db))
     print(
         f"retention sweep: wiped raw_text on {purged['nuggets_raw']} nugget(s); "
-        f"dropped {purged['batches']} completed batch(es)"
+        f"dropped {purged['batches']} completed batch(es); "
+        f"pruned {pruned} export dir(s)"
     )
+
+
+def cmd_schedule(args):
+    """D-2: register / inspect / remove the nightly job with the host scheduler."""
+    if args.action == "status":
+        st = _schedule.status()
+        if st["installed"]:
+            nxt = st.get("next_run")
+            print(f"nightly job INSTALLED via {st['scheduler']}"
+                  + (f" — next run {nxt}" if nxt else ""))
+        else:
+            print(f"nightly job NOT installed ({st['scheduler']} has no jester entry)")
+            print("  install it with: jester schedule install --at 03:00")
+        return
+    if args.action == "install":
+        res = _schedule.install(at=args.at, db=args.db, config=args.config)
+    elif args.action == "remove":
+        res = _schedule.remove()
+    else:  # run
+        res = _schedule.run_now()
+    print(res["detail"])
+    if not res["ok"] and res["action"] != "manual":
+        sys.exit(1)
+
+
+def cmd_export(args):
+    """Write the archive out as CSV, split by content type and origin."""
+    db = open_db(args.db)
+    out_dir = args.out or default_export_dir(args.db)
+    rows_per_file = getattr(args, "rows_per_file", None)
+    if rows_per_file is None:
+        try:
+            rows_per_file = load_config(args.config).thresholds.export_rows_per_file
+        except Exception:  # noqa: BLE001 - export must work without a config dir
+            rows_per_file = None
+    manifest = export_csv(db, out_dir, rows_per_file=rows_per_file)
+    c = manifest["counts"]
+    print(f"exported to {out_dir}")
+    print(f"  {c['comments']} scraped comment(s), {c['nuggets']} nugget(s), "
+          f"{c['ideas']} idea(s), {c['citations']} citation(s)")
+    if manifest.get("duplicates_dropped"):
+        # Never a silent gap: the export holding fewer rows than the archive
+        # must be an explained number.
+        print(f"  {manifest['duplicates_dropped']} duplicate row(s) collapsed "
+              f"— see duplicates.csv")
+    for name, rows in sorted(manifest["files"].items()):
+        print(f"  {rows:>6}  {name}")
+    if not any(manifest["files"].values()):
+        # An empty archive exports empty files; say so rather than letting the
+        # operator read a directory of headers as a successful haul.
+        print("  (archive is empty — every file is headers only)")
 
 
 def cmd_requeue(args):
@@ -620,6 +769,8 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("--db", default="data/jester.db")
     r.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    r.add_argument("--exports", default=None,
+                   help="where export_after_run writes (default: exports/ beside the db)")
     r.add_argument("--run", default="mock-run")
     r.set_defaults(func=cmd_run)
 
@@ -650,7 +801,26 @@ def main(argv=None):
 
     rt = sub.add_parser("retention")
     rt.add_argument("--db", default="data/jester.db")
+    rt.add_argument("--exports", default=None,
+                    help="export dir to prune (default: exports/ beside the db)")
     rt.set_defaults(func=cmd_retention)
+
+    sc = sub.add_parser("schedule", help="register the nightly run with the host scheduler (D-2)")
+    sc.add_argument("action", choices=["status", "install", "remove", "run"],
+                    nargs="?", default="status")
+    sc.add_argument("--at", default=_schedule.DEFAULT_TIME, help="HH:MM local time")
+    sc.add_argument("--db", default="data/jester.db")
+    sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    sc.set_defaults(func=cmd_schedule)
+
+    ex = sub.add_parser("export", help="write the archive as CSV by content type + origin")
+    ex.add_argument("--db", default="data/jester.db")
+    ex.add_argument("--out", default=None,
+                    help="output directory (default: exports/ beside the db)")
+    ex.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    ex.add_argument("--rows-per-file", type=int, default=None, dest="rows_per_file",
+                    help="rows per CSV shard (default: export_rows_per_file)")
+    ex.set_defaults(func=cmd_export)
 
     rq = sub.add_parser("requeue")
     rq.add_argument("--db", default="data/jester.db")

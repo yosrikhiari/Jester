@@ -150,3 +150,14 @@ $RECYCLE.BIN/
 .turbo/
 tmp/
 temp/
+
+# ── Generated exports (CSV shards live beside the DB) ─────────────
+exports/
+**/exports/
+duplicates.csv
+
+# ── Local dev scratch ─────────────────────────────────────────────
+# review.cjs only parses jester-design-system.html, which is ignored above —
+# committing it would ship a script with nothing to read.
+review.cjs
+.claude/settings.local.json

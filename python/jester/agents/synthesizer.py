@@ -8,7 +8,16 @@ unprocessed nuggets stay NULL.
 from collections import defaultdict
 from typing import List, Optional
 
+from jester.agents.critic import Critic
 from jester.config import Thresholds
+from jester.idea_dedup import (
+    MergeResult,
+    apply_verdict,
+    find_duplicate,
+    index_idea,
+    merge_supporting,
+    rescore_after_merge,
+)
 from jester.llm import CriticLLM, SynthesizerLLM
 from jester.models import Idea, IdeaScores, Nugget
 from jester.scoring import compute_overall, SCORE_MAX, SCORE_MIN
@@ -68,6 +77,10 @@ class Synthesizer:
     def __init__(self, db, config: Thresholds):
         self.db = db
         self.config = config
+        # R44 merges from the last run(), for the run summary. Merges are not
+        # returned as ideas — nothing new was archived — so without this the
+        # run would report "0 ideas" on a night that did real work.
+        self.merged: List[MergeResult] = []
 
     def run(
         self,
@@ -76,9 +89,15 @@ class Synthesizer:
         *,
         run_id: str,
         rows: Optional[List] = None,
+        checker=None,
+        idea_vector=None,
     ) -> List[Idea]:
+        """M2.3: `checker` runs the competitor web step before final scoring;
+        `idea_vector` enables R44 idea-level dedup. Both default to off, so a
+        caller that passes neither gets exactly the M2.2 behaviour."""
         # §37.28 resynth: cluster an explicit subset (manual nugget selection)
         # instead of the NULL-pool. Lone-nugget R50 skip still applies.
+        self.merged = []
         if rows is None:
             rows = unprocessed_nuggets(self.db)
         if not rows:
@@ -130,10 +149,33 @@ class Synthesizer:
             idea.critic_model = self.config.critic_model
             idea.last_scored_at = now
 
+            # M2.3 / D-1: a verified competitor check overrides the model's
+            # prior. When it cannot run, R29 applies — competition goes NULL
+            # and §7.2 imputes 5 rather than trusting an unverified number.
+            if checker is not None and checker.enabled:
+                apply_verdict(idea, checker.check(idea))
+
             # R48 structural gate: reject before persisting anything.
             golden_gate(idea, set(supporting))
 
+            # R44: an idea the archive already holds gains evidence instead of
+            # gaining a duplicate row.
+            match = find_duplicate(idea_vector, idea, self.config.dedup_threshold) \
+                if idea_vector is not None else None
+            if match is not None:
+                existing_id, score = match
+                grew, added = merge_supporting(self.db, existing_id, supporting)
+                self.merged.append(MergeResult(existing_id, grew, score, added))
+                if grew:
+                    # R49: re-score against the evidence it now actually rests on.
+                    rescore_after_merge(self.db, existing_id, Critic(self.db, self.config),
+                                        critic_llm, checker)
+                set_synthesized(self.db, supporting, now)
+                continue
+
             idea.id = insert_idea(self.db, idea)
+            if idea_vector is not None:
+                index_idea(idea_vector, idea)
             # R50: stamp synthesized_at ONLY on the nuggets that joined.
             set_synthesized(self.db, supporting, now)
             ideas.append(idea)

@@ -21,6 +21,12 @@ const DOMJS = `() => [...document.querySelectorAll('shreddit-comment')].map(n =>
 // PERMALINK_JS discovers the first post permalink on a listing page.
 const PERMALINK_JS = `() => { const p = document.querySelector('shreddit-post[permalink]'); return p ? p.getAttribute('permalink') : null; }`
 
+// PERMALINKS_JS discovers every post permalink on a listing page, in feed
+// order. Walking more than the first post is what turns "add a subreddit" into
+// an actual sample of that subreddit (max_threads_per_source caps it).
+const PERMALINKS_JS = `() => [...document.querySelectorAll('shreddit-post[permalink]')]
+    .map(p => p.getAttribute('permalink')).filter(Boolean)`
+
 // Fingerprint derives the cross-language dedup key: hex(sha1(id-or-body))[:16],
 // byte-identical to Python's fetchers.cloak fingerprints.
 func Fingerprint(c FetchedComment) string {

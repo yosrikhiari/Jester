@@ -42,6 +42,12 @@ class ScraperConfig:
     license_key: str = ""
     proxy: str = ""
     geoip: str = ""
+    # §4.3.2 per-connection identity. The Go worker acts on these; Python only
+    # needs to *know* them so the console's Config page shows the whole file
+    # rather than the subset one language happens to consume.
+    timezone: str = ""
+    locale: str = ""
+    warmup_navigations: int = 1
     blocked_response_action: str = "backoff"
 
 
@@ -62,12 +68,23 @@ def load_scraper_config(path=None) -> ScraperConfig:
         license_key=str(raw.get("license_key", "")),
         proxy=str(raw.get("proxy", "")),
         geoip=str(raw.get("geoip", "")),
+        timezone=str(raw.get("timezone", "") or ""),
+        locale=str(raw.get("locale", "") or ""),
+        warmup_navigations=int(raw.get("warmup_navigations", 1) or 0),
         blocked_response_action=action,
     )
 
 
 _API_RE = re.compile(r"graphql\.reddit\.com|/svc/shreddit|reddit\.com/api", re.I)
-_CHALLENGE_RE = re.compile(r"captcha|challenge|access denied|blocked|unusual traffic", re.I)
+# Interstitials seen live: Reddit answers a flagged fingerprint with a
+# "Prove your humanity" page and Cloudflare with "Just a moment". Without these
+# a block reads as "no posts found" and sends the operator hunting a selector
+# bug that is not there.
+_CHALLENGE_RE = re.compile(
+    r"captcha|challenge|access denied|blocked|unusual traffic"
+    r"|prove your humanity|verify you are human|just a moment|are you a robot|rate limit",
+    re.I,
+)
 
 
 def _is_reddit_api_response(url: str) -> bool:

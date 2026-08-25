@@ -4,11 +4,28 @@ max_comments_per_thread: 500
 min_upvotes: 1
 dedup_threshold: 0.87
 prefilter_min_chars: 40
-prefilter_max_chars: 600
+# Forum prose (Hacker News, Discourse) runs longer than a Reddit comment;
+# 600 was tuned on Reddit alone and dropped most of it before extraction.
+prefilter_max_chars: 1400
 prefilter_max_emoji: 5
 prefilter_max_mentions: 3
 prefilter_min_words: 6
 request_delay_ms: 2000
+# How many threads/videos the live worker walks per source in one run.
+max_threads_per_source: 3
+# Skip threads too quiet to be worth a fetch. Only the API-backed adapters
+# (Hacker News, Discourse) can apply this before fetching.
+min_comments_per_thread: 8
+# Write the archive out as CSV at the end of every run, so a nightly job
+# nobody watches still leaves something readable behind. Pruned by
+# `jester retention` on the same §14 TTL as the archive itself.
+export_after_run: true
+# Rows per CSV shard: reddit/reddit-001.csv, -002.csv, … Excel stops near
+# 1,048,576 rows and gets unusable long before that.
+export_rows_per_file: 100000
+# M2.3/D-1 competitor web check. none = keep M2.2 behaviour (competition
+# rides on the model prior); fake = deterministic offline; duckduckgo = live.
+competitor_search_provider: none
 embedding_model: nomic-embed-text
 models:
   extractor: claude-sonnet-4-6

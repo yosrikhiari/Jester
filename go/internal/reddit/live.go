@@ -25,7 +25,11 @@ func (e *ErrBlocked) Error() string {
 	return fmt.Sprintf("blocked response at %s (action=%s)", e.URL, e.Action)
 }
 
-var challengeRE = regexp.MustCompile(`(?i)captcha|challenge|access denied|blocked|unusual traffic`)
+// Interstitials seen live: Reddit answers a flagged fingerprint with a
+// "Prove your humanity" page and Cloudflare with "Just a moment". Without these
+// a block reads as "no posts found", which sends the operator hunting a
+// selector bug that is not there.
+var challengeRE = regexp.MustCompile(`(?i)captcha|challenge|access denied|blocked|unusual traffic|prove your humanity|verify you are human|just a moment|are you a robot|rate limit`)
 
 const backoffSeconds = 5.0
 
@@ -108,6 +112,46 @@ func waitPresent(sel string) chromedp.Action {
 	})
 }
 
+// Challenged reports whether the currently loaded page is an interstitial
+// rather than content.
+func Challenged(ctx context.Context) bool {
+	title, _ := evalString(ctx, `() => document.title`)
+	if challengeRE.MatchString(title) {
+		return true
+	}
+	text, _ := evalString(ctx, `() => document.body.innerText.slice(0, 1000)`)
+	return challengeRE.MatchString(text)
+}
+
+// WarmUp absorbs the first-request challenge on a cold fingerprint.
+//
+// Calibrated live through cloakserve: Reddit answers the FIRST navigation from
+// an unseen session with "Prove your humanity" regardless of which URL is
+// requested, and serves real content from the second navigation onward. Dwell
+// time on the challenge page does NOT help — only a second navigation does.
+// Because cloakserve keys one Chrome process (and cookie jar) per fingerprint
+// seed, this is a one-time cost per source, not per run.
+//
+// Returns true when the session is clear, false when it is still challenged
+// after `attempts` navigations.
+func WarmUp(ctx context.Context, url string, delay time.Duration, attempts int) bool {
+	if attempts < 1 {
+		attempts = 1
+	}
+	for i := 0; i < attempts; i++ {
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate(url),
+			chromedp.Sleep(delay),
+		); err != nil {
+			return false
+		}
+		if !Challenged(ctx) {
+			return true
+		}
+	}
+	return !Challenged(ctx)
+}
+
 // FetchThread loads a listing URL, discovers the first post permalink,
 // navigates to it and extracts comments from the server-rendered DOM.
 // Returns the comments, the resolved thread URL and thread id.
@@ -116,30 +160,88 @@ func waitPresent(sel string) chromedp.Action {
 func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 	threadIDFrom func(permalink string) string, blockedAction string,
 ) ([]FetchedComment, string, string, error) {
-	var permalink any
+	threads, err := ListThreads(ctx, listingURL, delay, 1)
+	if err != nil {
+		return nil, "", "", err
+	}
+	threadURL := threads[0]
+	comments, err := FetchThreadURL(ctx, threadURL, delay, blockedAction)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return comments, threadURL, threadIDFrom(threadURL), nil
+}
+
+// ListThreads loads a subreddit listing and returns up to `limit` absolute
+// thread URLs in feed order.
+func ListThreads(ctx context.Context, listingURL string, delay time.Duration, limit int) ([]string, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	var permalinks []string
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(listingURL),
 		chromedp.Sleep(delay),
 		waitPresent(`shreddit-post[permalink]`),
 		chromedp.ActionFunc(func(actx context.Context) error {
-			return evalInto(actx, PERMALINK_JS, &permalink)
+			return evalInto(actx, PERMALINKS_JS, &permalinks)
 		}),
 	); err != nil {
-		return nil, "", "", fmt.Errorf("navigate listing: %w", err)
+		return nil, fmt.Errorf("navigate listing: %w", err)
 	}
-	permalinkStr, _ := permalink.(string)
-	if permalinkStr == "" {
+	// A cold fingerprint burns its first navigation on the challenge; one more
+	// clears it. Re-read the listing rather than reporting an empty feed.
+	if len(permalinks) == 0 && Challenged(ctx) {
+		if WarmUp(ctx, listingURL, delay, 2) {
+			if err := chromedp.Run(ctx,
+				waitPresent(`shreddit-post[permalink]`),
+				chromedp.ActionFunc(func(actx context.Context) error {
+					return evalInto(actx, PERMALINKS_JS, &permalinks)
+				}),
+			); err != nil {
+				return nil, fmt.Errorf("re-read listing after warm-up: %w", err)
+			}
+		}
+	}
+	out := make([]string, 0, limit)
+	seen := map[string]bool{}
+	for _, p := range permalinks {
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "/") {
+			p = "https://www.reddit.com" + p
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) == limit {
+			break
+		}
+	}
+	if len(out) == 0 {
 		title, _ := evalString(ctx, `() => document.title`)
 		posts, _ := evalInt(ctx, `() => document.querySelectorAll('shreddit-post').length`)
 		href, _ := evalString(ctx, `() => location.href`)
-		return nil, "", "", fmt.Errorf("no shreddit-post[permalink] on %s; href=%q title=%q posts=%d", listingURL, href, title, posts)
+		// A challenge page has no posts either. Say "blocked", not "selector
+		// found nothing" — they call for completely different responses.
+		pageText, _ := evalString(ctx, `() => document.body.innerText.slice(0, 1000)`)
+		if challengeRE.MatchString(title) || challengeRE.MatchString(pageText) {
+			return nil, &ErrBlocked{URL: listingURL, Action: "listing"}
+		}
+		return nil, fmt.Errorf("no shreddit-post[permalink] on %s; href=%q title=%q posts=%d",
+			listingURL, href, title, posts)
 	}
-	threadURL := permalinkStr
-	if strings.HasPrefix(threadURL, "/") {
-		threadURL = "https://www.reddit.com" + threadURL
-	}
-	threadID := threadIDFrom(threadURL)
+	return out, nil
+}
 
+// FetchThreadURL extracts comments from one already-resolved thread URL.
+// This is the path a `kind: thread` source takes — no listing walk at all.
+func FetchThreadURL(ctx context.Context, threadURL string, delay time.Duration,
+	blockedAction string,
+) ([]FetchedComment, error) {
 	var raw []map[string]any
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(threadURL),
@@ -149,7 +251,20 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 			return evalInto(actx, DOMJS, &raw)
 		}),
 	); err != nil {
-		return nil, "", "", fmt.Errorf("navigate thread: %w", err)
+		return nil, fmt.Errorf("navigate thread: %w", err)
+	}
+
+	// A cold fingerprint burns its first navigation on the challenge (see
+	// WarmUp); retry once before treating this as a real block.
+	if len(raw) == 0 && Challenged(ctx) && WarmUp(ctx, threadURL, delay, 2) {
+		if err := chromedp.Run(ctx,
+			waitPresent(`shreddit-comment`),
+			chromedp.ActionFunc(func(actx context.Context) error {
+				return evalInto(actx, DOMJS, &raw)
+			}),
+		); err != nil {
+			return nil, fmt.Errorf("re-read thread after warm-up: %w", err)
+		}
 	}
 
 	// D-19 block detection on the rendered page text.
@@ -158,26 +273,21 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 	if challengeRE.MatchString(pageText) || challengeRE.MatchString(title) {
 		switch blockedAction {
 		case "fail":
-			return nil, "", "", &ErrBlocked{URL: threadURL, Action: "fail"}
+			return nil, &ErrBlocked{URL: threadURL, Action: "fail"}
 		case "backoff":
 			select {
 			case <-time.After(backoffSeconds * time.Second):
 			case <-ctx.Done():
-				return nil, "", "", ctx.Err()
+				return nil, ctx.Err()
 			}
-			return nil, "", "", &ErrBlocked{URL: threadURL, Action: "backoff"}
+			return nil, &ErrBlocked{URL: threadURL, Action: "backoff"}
 		default: // pass_through
-			return nil, threadURL, threadID, nil
+			return nil, nil
 		}
 	}
 
-	comments := CommentsFromNodes(raw)
-	if len(comments) == 0 {
-		// SSR stub fallback already covered by DOM; nothing here means an
-		// empty/vanished thread — not an error.
-		return nil, threadURL, threadID, nil
-	}
-	return comments, threadURL, threadID, nil
+	// An empty comment list means an empty/vanished thread — not an error.
+	return CommentsFromNodes(raw), nil
 }
 
 // ThreadIDFromPath pulls the base-36 post id out of a reddit permalink

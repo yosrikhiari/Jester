@@ -64,3 +64,39 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+func TestPermalinksJSCollectsEveryPostOnTheListing(t *testing.T) {
+	// Walking only the first post made "add a subreddit" a one-thread sample;
+	// max_threads_per_source caps the list this selector returns.
+	for _, marker := range []string{"querySelectorAll", "shreddit-post[permalink]", "permalink"} {
+		if !contains(PERMALINKS_JS, marker) {
+			t.Fatalf("PERMALINKS_JS missing %q", marker)
+		}
+	}
+}
+
+func TestChallengeREMatchesLiveInterstitials(t *testing.T) {
+	// Calibrated against a real cloakserve run: Reddit answered a flagged
+	// fingerprint with "Reddit - Prove your humanity" and the old pattern
+	// missed it, so a block surfaced as "no shreddit-post[permalink]".
+	for _, page := range []string{
+		"Reddit - Prove your humanity",
+		"Just a moment...",
+		"Please verify you are human",
+		"Are you a robot?",
+		"unusual traffic from your network",
+		"CAPTCHA required",
+	} {
+		if !challengeRE.MatchString(page) {
+			t.Errorf("challengeRE missed %q", page)
+		}
+	}
+	for _, page := range []string{
+		"r/selfhosted - What are you running this week?",
+		"Comments on my homelab rack",
+	} {
+		if challengeRE.MatchString(page) {
+			t.Errorf("challengeRE false-positived on %q", page)
+		}
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"jester/internal/cloakbrowser"
 )
 
 func cdpUpYT() bool {
@@ -27,7 +29,7 @@ func TestLiveFetchRealVideoComments(t *testing.T) {
 	}
 	videoURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 	comments, err := FetchVideoComments(
-		context.Background(), "http://127.0.0.1:9222", videoURL,
+		ytSessionCtx(t), videoURL,
 		2*time.Second, 5, "backoff",
 	)
 	if err != nil {
@@ -56,4 +58,19 @@ func min2(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ytSessionCtx opens a seeded cloakserve session for the live test, mirroring
+// how the worker fetches: the caller owns the session (§4.3.2).
+func ytSessionCtx(t *testing.T) context.Context {
+	t.Helper()
+	cb := cloakbrowser.NewWithOptions("http://127.0.0.1:9222", cloakbrowser.Options{
+		Fingerprint: cloakbrowser.SeedFor("youtube", "livetest"),
+	})
+	sess, err := cb.NewSession(context.Background())
+	if err != nil {
+		t.Fatalf("cdp session: %v", err)
+	}
+	t.Cleanup(sess.Cancel)
+	return sess.Ctx
 }

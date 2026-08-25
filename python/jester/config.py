@@ -1,12 +1,48 @@
 """Config loading for jester (thresholds + sources) with fail-fast validation."""
-import yaml
+import json
+import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+import yaml
+
+# The curated-source vocabulary lives in jester.sources (shared with the Go
+# worker's sources.yaml contract); re-exported here so existing importers of
+# `jester.config.Source` / `load_sources` keep working.
+from jester.sources import (  # noqa: F401
+    PLATFORM_KINDS,
+    PLATFORMS,
+    SUPPORTED_KINDS,
+    Source,
+    SourceError,
+    load_sources,
+    parse_source,
+    save_sources,
+)
+
 
 class ConfigError(Exception):
     pass
+
+
+def _as_bool(value) -> bool:
+    """YAML/console booleans, coerced honestly.
+
+    ``bool("false")`` is True in Python, so the obvious caster would turn every
+    string a user typed into an enabled flag. Anything unrecognised raises
+    rather than silently picking a default.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("true", "1", "yes", "on"):
+        return True
+    if text in ("false", "0", "no", "off", ""):
+        return False
+    raise ConfigError(f"{value!r} is not a boolean (try true/false)")
 
 
 @dataclass
@@ -33,8 +69,28 @@ class Thresholds:
     competitor_ttl_days: int = 30       # re-run the competitor check when older
     critic_web_rate_limit: int = 6      # calls/min; provisional default
     critic_web_daily_budget: int = 50   # calls/day; provisional default
+    # M2.3/D-1: which provider verifies competition. "none" keeps the M2.2
+    # behaviour (competition rides on the model's prior); "fake" is the
+    # deterministic offline provider; "duckduckgo" hits the live web.
+    competitor_search_provider: str = "none"  # none | fake | duckduckgo
     # §7.2 gate: an idea is "good" when overall >= good_idea_min.
     good_idea_min: float = 7.0
+    # M1.1 live ingestion: how many threads/videos the worker walks per source
+    # in one run. 1 keeps the original single-thread behaviour.
+    max_threads_per_source: int = 1
+    # Go-only in effect (the API-backed adapters are the only ones that get a
+    # comment count before fetching), but it lives in the shared thresholds.yaml
+    # so the console must know it — otherwise the Config page silently omits a
+    # knob the pipeline reads.
+    min_comments_per_thread: int = 0
+    # Write the archive out as CSV at the end of every run. The dataclass
+    # default is False so no existing caller changes behaviour; the shipped
+    # profiles turn it on, because a nightly run nobody watches should leave
+    # something readable behind without a second command.
+    export_after_run: bool = False
+    # Rows per CSV shard. Excel stops near 1,048,576 rows and gets unusable
+    # long before that; 100k opens quickly and keeps the file count small.
+    export_rows_per_file: int = 100000
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -50,6 +106,36 @@ class Thresholds:
         "competitor_ttl_days": (1, 365),
         "critic_web_rate_limit": (1, 600),
         "critic_web_daily_budget": (0, 100000),
+        "max_threads_per_source": (1, 50),
+        "min_comments_per_thread": (0, 10000),
+        "export_rows_per_file": (100, 1000000),
+    }
+
+    # Keys the operator console may write back to thresholds.yaml, with the
+    # coercion used on the way in. The `models:` block is deliberately absent:
+    # model choice is a code-review decision, not a slider.
+    _EDITABLE = {
+        "max_comments_per_thread": int,
+        "min_upvotes": int,
+        "dedup_threshold": float,
+        "prefilter_min_chars": int,
+        "prefilter_max_chars": int,
+        "prefilter_max_emoji": int,
+        "prefilter_max_mentions": int,
+        "prefilter_min_words": int,
+        "request_delay_ms": int,
+        "good_idea_min": float,
+        "competitor_ttl_days": int,
+        "critic_web_rate_limit": int,
+        "critic_web_daily_budget": int,
+        "competitor_search_provider": str,
+        "max_threads_per_source": int,
+        "min_comments_per_thread": int,
+        "export_after_run": _as_bool,
+        "export_rows_per_file": int,
+        "embedding_model": str,
+        "llm_provider": str,
+        "embedding_provider": str,
     }
 
     def validate(self) -> "Thresholds":
@@ -57,14 +143,21 @@ class Thresholds:
             v = getattr(self, key)
             if not (lo <= v <= hi):
                 raise ConfigError(f"{key}={v} out of range [{lo},{hi}]")
+        if self.prefilter_min_chars > self.prefilter_max_chars:
+            raise ConfigError(
+                f"prefilter_min_chars={self.prefilter_min_chars} exceeds "
+                f"prefilter_max_chars={self.prefilter_max_chars}"
+            )
+        for key in ("llm_provider", "embedding_provider"):
+            v = getattr(self, key)
+            if v not in ("fake", "ollama"):
+                raise ConfigError(f"{key}={v!r} invalid; valid: fake, ollama")
+        if self.competitor_search_provider not in ("none", "fake", "duckduckgo"):
+            raise ConfigError(
+                f"competitor_search_provider={self.competitor_search_provider!r} "
+                "invalid; valid: none, fake, duckduckgo"
+            )
         return self
-
-
-@dataclass
-class Source:
-    name: str
-    platform: str
-    url: str
 
 
 @dataclass
@@ -74,7 +167,7 @@ class Config:
 
 
 def load_thresholds(path) -> Thresholds:
-    data = yaml.safe_load(Path(path).read_text()) or {}
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     known = {f for f in Thresholds.__dataclass_fields__}
     kwargs = {k: v for k, v in data.items() if k in known}
     # The `models:` block holds agent model names; map them onto Thresholds.
@@ -90,11 +183,183 @@ def load_thresholds(path) -> Thresholds:
     return Thresholds(**kwargs).validate()
 
 
-def load_sources(path) -> List[Source]:
-    data = yaml.safe_load(Path(path).read_text()) or []
-    if isinstance(data, dict):
-        data = data.get("sources", [])
-    return [Source(name=s.get("name", ""), platform=s.get("platform", ""), url=s.get("url", "")) for s in data]
+def coerce_thresholds_patch(patch: dict, current: Thresholds | None = None) -> dict:
+    """Validate a console edit against the editable allow-list + ranges.
+
+    Returns the coerced patch. Raises ConfigError with a per-field message so
+    the UI can show which knob was refused and why. `current` supplies the
+    untouched values so cross-field rules (min<=max) see the real file, not
+    dataclass defaults.
+    """
+    out = {}
+    for key, raw in (patch or {}).items():
+        caster = Thresholds._EDITABLE.get(key)
+        if caster is None:
+            raise ConfigError(f"{key} is not an editable threshold")
+        if caster is not str and isinstance(raw, str) and not raw.strip():
+            raise ConfigError(f"{key} cannot be blank")
+        try:
+            out[key] = caster(raw)
+        except (TypeError, ValueError):
+            raise ConfigError(f"{key}={raw!r} is not a valid {caster.__name__}") from None
+    base = {
+        f: getattr(current, f)
+        for f in Thresholds.__dataclass_fields__
+        if current is not None
+    }
+    Thresholds(**{**base, **out}).validate()
+    return out
+
+
+_SCALAR_LINE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:\s*)(.*)$")
+
+# A bare word is safe in YAML when it has no whitespace and no trailing colon.
+# Ollama tags (`qwen3:8b`, `hf.co/user/model:Q4_K_M`) qualify, so editing a
+# model name does not churn the file into quoted strings.
+_PLAIN_SCALAR = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./@+\-]*(?::[A-Za-z0-9_./@+\-]+)?$")
+
+
+def _fmt(value) -> str:
+    """Render a scalar as YAML, quoting only when a bare word would be unsafe."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(round(value, 6))
+    if isinstance(value, str) and not _PLAIN_SCALAR.match(value):
+        return json.dumps(value)  # valid YAML double-quoted scalar
+    return str(value)
+
+
+def save_thresholds(path, patch: dict) -> dict:
+    """Rewrite only the touched top-level keys, preserving comments and order.
+
+    A whole-file yaml.safe_dump would strip the documented defaults that live
+    in thresholds.yaml as comments, so this edits lines in place instead.
+    """
+    path = Path(path)
+    current = load_thresholds(path) if path.exists() else Thresholds()
+    patch = coerce_thresholds_patch(patch, current)
+    if not patch:
+        return {}
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    remaining = dict(patch)
+    for i, line in enumerate(lines):
+        m = _SCALAR_LINE.match(line)
+        if not m:
+            continue
+        indent, key, sep, _value = m.groups()
+        if indent:  # inside `models:` or another nested block — never touched
+            continue
+        if key in remaining:
+            lines[i] = f"{indent}{key}{sep}{_fmt(remaining.pop(key))}"
+    if remaining:
+        # Append new keys before the `models:` block if there is one, so the
+        # nested block stays last and readable.
+        insert_at = len(lines)
+        for i, line in enumerate(lines):
+            if line.startswith("models:"):
+                insert_at = i
+                break
+        added = [f"{k}: {_fmt(v)}" for k, v in remaining.items()]
+        lines[insert_at:insert_at] = added
+    _atomic_write(path, "\n".join(lines).rstrip("\n") + "\n", prefix=".thresholds-")
+    load_thresholds(path)  # fail loudly if the rewrite produced junk
+    return patch
+
+
+def _atomic_write(path: Path, body: str, *, prefix: str) -> None:
+    """Never leave a half-written config behind when the console crashes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=prefix, suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(body)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+# ---- agent model block ------------------------------------------------------
+
+# The `models:` keys in thresholds.yaml, in the order the pipeline uses them.
+MODEL_ROLES = ("extractor", "archivist", "synthesizer", "critic")
+# Every model name the console may write, including the top-level embedding key.
+MODEL_KEYS = MODEL_ROLES + ("embedding_model",)
+
+# Ollama-style tags: name, optionally `:tag`, optionally a registry path.
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@+\-]*(?::[A-Za-z0-9._/@+\-]+)?$")
+
+
+def coerce_models_patch(patch: dict) -> dict:
+    out = {}
+    for key, raw in (patch or {}).items():
+        if key not in MODEL_KEYS:
+            raise ConfigError(
+                f"{key} is not a model slot; valid: {', '.join(MODEL_KEYS)}"
+            )
+        name = str(raw or "").strip()
+        if not name:
+            raise ConfigError(f"{key} cannot be blank")
+        if not _MODEL_NAME.match(name):
+            raise ConfigError(
+                f"{key}={name!r} is not a usable model name "
+                "(letters, digits, . _ - / @ + and one optional :tag)"
+            )
+        out[key] = name
+    return out
+
+
+def save_models(path, patch: dict) -> dict:
+    """Write agent model names, editing the nested `models:` block in place.
+
+    Model choice is exactly what distinguishes config/ from config-live/, so
+    this never mirrors — the caller picks the profile.
+    """
+    path = Path(path)
+    patch = coerce_models_patch(patch)
+    if not patch:
+        return {}
+    applied = dict(patch)
+
+    embedding = patch.pop("embedding_model", None)
+    if embedding is not None:
+        save_thresholds(path, {"embedding_model": embedding})
+
+    if patch:
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        start = next((i for i, ln in enumerate(lines) if ln.startswith("models:")), None)
+        remaining = dict(patch)
+        if start is None:
+            lines.append("models:")
+            start = len(lines) - 1
+            end = len(lines)
+            indent = "  "
+        else:
+            end = start + 1
+            indent = None
+            while end < len(lines):
+                line = lines[end]
+                if line.strip() and not line[:1].isspace():
+                    break  # back at column 0: the block ended
+                m = _SCALAR_LINE.match(line)
+                if m and m.group(1):
+                    if indent is None:
+                        indent = m.group(1)
+                    if m.group(2) in remaining:
+                        lines[end] = f"{m.group(1)}{m.group(2)}{m.group(3)}" \
+                                     f"{_fmt(remaining.pop(m.group(2)))}"
+                end += 1
+            indent = indent or "  "
+        if remaining:
+            addition = [f"{indent}{k}: {_fmt(v)}" for k, v in remaining.items()]
+            lines[end:end] = addition
+        body = "\n".join(lines).rstrip("\n") + "\n"
+        _atomic_write(path, body, prefix=".thresholds-")
+
+    load_thresholds(path)  # fail loudly if the rewrite produced junk
+    return applied
 
 
 def load_config(config_dir) -> Config:

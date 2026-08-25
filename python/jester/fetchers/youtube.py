@@ -15,7 +15,10 @@ from typing import Callable, List, Optional
 from jester.fetchers.cloak import BlockedResponse, ScraperConfig, _looks_blocked
 
 NEXT_XHR_MARK = "/youtubei/v1/next"
-_CHALLENGE_RE = re.compile(r"(?i)captcha|challenge|access denied|blocked|unusual traffic")
+_CHALLENGE_RE = re.compile(
+    r"(?i)captcha|challenge|access denied|blocked|unusual traffic"
+    r"|prove your humanity|verify you are human|just a moment|are you a robot|rate limit"
+)
 
 _DOM_JS = """
 () => [...document.querySelectorAll('ytd-comment-thread-renderer')].map(n => ({
