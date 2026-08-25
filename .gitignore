@@ -1,0 +1,163 @@
+jester-setup.md
+/inspiration/
+download6.png
+JESTER-FRONTEND-SYSTEM-DESIGN.md
+jester-design-system.html
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+.installed.cfg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+venv/
+ENV/
+env/
+.conda/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+
+# ── Go ──────────────────────────────────────────────────────────────
+# Binaries
+*.exe
+*.out
+*.test
+bin/
+go/bin/
+vendor/
+
+# ── Node / Frontend (review.cjs) ──────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+.parcel-cache/
+.next/
+out/
+
+# ── Runtime data — SQLite + Qdrant (local only, never commit) ─────
+data/
+python/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+# Qdrant storage (also covered by data/ but explicit for safety)
+qdrant_storage/
+**/jester.qdrant/
+**/*.qdrant/
+.qdrant/
+storage.sqlite
+
+# ── Secrets & local env (never commit) ────────────────────────────
+config/local.env
+local.env
+.env
+.env.local
+.env.*.local
+*.env
+!config/local.env.example
+!**/*.env.example
+# CloakBrowser / LLM keys
+*.key
+*.pem
+
+# Config live overrides (optional local overrides)
+# Uncomment if config-live/ should stay local-only:
+# config-live/
+
+# ── Logs ───────────────────────────────────────────────────────────
+logs/
+*.log
+*.out.log
+*.error.log
+
+# ── OS ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── IDE / Editor ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+*.temp
+*.bak
+*.orig
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ── Misc caches ──────────────────────────────────────────────────
+.cache/
+.parcel-cache/
+.turbo/
+tmp/
+temp/
+
+# ── Generated exports (CSV shards live beside the DB) ─────────────
+exports/
+**/exports/
+duplicates.csv
+
+# ── Local dev scratch ─────────────────────────────────────────────
+# review.cjs only parses jester-design-system.html, which is ignored above —
+# committing it would ship a script with nothing to read.
+review.cjs
+.claude/settings.local.json
