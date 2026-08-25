@@ -1,0 +1,55 @@
+# CloakBrowser (v3.11.0 §36) integration config. Live fetch (M1.1+) reads
+# these; mock mode ignores them.
+# 127.0.0.1, not localhost: the container publishes on IPv4 only, and
+# localhost resolves to ::1 first on Windows -> connection refused.
+cdp_url: http://127.0.0.1:9222
+license_key: ${CLOAKBROWSER_LICENSE_KEY}
+
+# --- per-connection stealth identity (§4.3.2) -------------------------------
+# cloakserve is a CDP multiplexer: it keys a separate stealth Chrome process
+# (and cookie jar) off the `fingerprint` query param. The worker derives one
+# seed per curated source, so a subreddit or channel keeps the same identity —
+# and the same warmed session — between runs.
+#
+# timezone/locale pin the browser's declared locale. Leave blank to let
+# cloakserve's own defaults apply, or set them to match your proxy's exit.
+timezone: America/New_York
+locale: en-US
+
+# Residential proxy. v3.11 #3: datacenter IPs get flagged on IP reputation
+# alone, independent of fingerprint quality, so anything beyond light scraping
+# wants one here. Empty = direct (works for the volumes below, but expect
+# platforms to challenge more often).
+proxy: ${CLOAKBROWSER_PROXY}
+# geoip is a BOOLEAN and only applies when `proxy` is set — it asks cloakserve
+# to derive timezone/locale/WebRTC-IP from the proxy's exit IP. A country code
+# here (the old "us") parses as false, i.e. silently off.
+geoip: ${CLOAKBROWSER_GEOIP}
+
+# How many throwaway navigations a cold fingerprint makes before its first real
+# fetch. Calibrated live: Reddit challenges the FIRST request from an unseen
+# session whatever the URL and serves real content from the second onward;
+# dwell time on the challenge page does not help, only a second navigation.
+# 0 disables the warm-up.
+warmup_navigations: 1
+
+# Action when a source is detected as blocked/rate-limited by the platform:
+# pass_through | backoff | fail
+blocked_response_action: backoff
+
+# --- §35.3 DECISION (recorded 2026-08-25) ----------------------------------
+# Resolved as option (a), flag kept and left OFF: TikTok stays a configurable
+# source with NO adapter built. The other two scraped platforms (Reddit,
+# YouTube) are public pages a logged-out browser can read; TikTok has no
+# public API, so ingesting it means scraping against their Terms — a risk
+# accepted deliberately or not at all, never by default.
+#
+# Practically this cost nothing: Hacker News and Discourse were added instead
+# and cover the same ground through documented public APIs, with no ToS grey
+# area and no bot detector to fight. The TikTok entry in sources.yaml stays
+# disabled, and the worker reports it as "no adapter for platform=tiktok"
+# rather than silently skipping it, so the gap stays visible.
+#
+# To revisit: build go/internal/tiktok on the Reddit/YouTube pattern, add
+# ("tiktok", <kind>) to SUPPORTED_KINDS in python/jester/sources.py, and
+# change this note.

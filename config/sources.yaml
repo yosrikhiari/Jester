@@ -1,0 +1,94 @@
+# Curated source list. Edit here or in the operator console (Sources tab).
+# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag
+# Set `enabled: false` to park a source without losing it; `notes` is
+# free text and survives console edits.
+sources:
+- platform: hackernews
+  name: hn-ask
+  kind: feed
+  url: https://news.ycombinator.com/ask
+  enabled: true
+  notes: Ask HN - the densest pain-signal feed in the list; public API, no scraping
+- platform: reddit
+  name: experienceddevs
+  kind: subreddit
+  url: https://www.reddit.com/r/ExperiencedDevs/
+  enabled: true
+- platform: reddit
+  name: devops
+  kind: subreddit
+  url: https://www.reddit.com/r/devops/
+  enabled: true
+- platform: reddit
+  name: sysadmin
+  kind: subreddit
+  url: https://www.reddit.com/r/sysadmin/
+  enabled: true
+- platform: reddit
+  name: selfhosted
+  kind: subreddit
+  url: https://www.reddit.com/r/selfhosted/
+  enabled: true
+- platform: reddit
+  name: homelab
+  kind: subreddit
+  url: https://www.reddit.com/r/homelab/
+  enabled: true
+- platform: reddit
+  name: dataengineering
+  kind: subreddit
+  url: https://www.reddit.com/r/dataengineering/
+  enabled: true
+- platform: discourse
+  name: meta-discourse
+  kind: forum
+  url: https://meta.discourse.org
+  enabled: true
+  notes: forum operators debugging their own platform - concrete tooling pain
+- platform: discourse
+  name: community-home-assistant
+  kind: forum
+  url: https://community.home-assistant.io
+  enabled: true
+  notes: home automation - where DIY software meets a daily-life problem
+- platform: youtube
+  name: fosdemtalks
+  kind: channel
+  url: https://www.youtube.com/@fosdemtalks
+  enabled: true
+- platform: reddit
+  name: productivity
+  kind: subreddit
+  url: https://www.reddit.com/r/productivity/
+  enabled: true
+- platform: reddit
+  name: personalfinance
+  kind: subreddit
+  url: https://www.reddit.com/r/personalfinance/
+  enabled: true
+- platform: reddit
+  name: smallbusiness
+  kind: subreddit
+  url: https://www.reddit.com/r/smallbusiness/
+  enabled: true
+  notes: owners describing manual processes they would pay to automate
+- platform: reddit
+  name: organization
+  kind: subreddit
+  url: https://www.reddit.com/r/organization/
+  enabled: false
+  notes: parked - mostly physical-space tidying, low app-shaped signal; enable to
+    sample
+- platform: reddit
+  name: nostupidquestions
+  kind: subreddit
+  url: https://www.reddit.com/r/NoStupidQuestions/
+  enabled: false
+  notes: parked - high volume, low pain density; enable only with a tight prefilter
+- platform: tiktok
+  name: indiehackers
+  kind: profile
+  url: https://www.tiktok.com/@indiehackers
+  enabled: false
+  notes: no TikTok adapter yet - parked so the worker does not report it as skipped
+    every run
