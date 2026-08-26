@@ -1019,11 +1019,27 @@ def cmd_smoke(args):
     print("SMOKE PASS: run summary recorded with duration; >=1 non-trivial nugget")
 
 
-def _qdrant_point_count(url, collection="nuggets"):
+def _db_path_of(db) -> str:
+    """The file a sqlite connection is attached to.
+
+    Needed because `evaluate_doctor` is handed a connection, not a path, and
+    the collection name is derived from the path. Asking the connection avoids
+    changing a signature every caller and test already depends on.
+    """
+    try:
+        for _seq, name, file in db.execute("PRAGMA database_list"):
+            if name == "main":
+                return file or ":memory:"
+    except Exception:  # noqa: BLE001
+        pass
+    return ":memory:"
+
+
+def _qdrant_point_count(url, collection=None):
     """§33 #4 parity probe; overridable in tests via monkeypatch."""
     from jester.vector import VectorStore
 
-    return VectorStore.count_points_at(url, collection)
+    return VectorStore.count_points_at(url, collection or "nuggets")
 
 
 def evaluate_doctor(db):
@@ -1061,14 +1077,20 @@ def evaluate_doctor(db):
     qdrant_url = os.environ.get("JESTER_QDRANT_URL")
     if qdrant_url:
         rows = db.execute("SELECT COUNT(*) FROM nuggets").fetchone()[0]
+        # The collection is namespaced per database, so the parity probe has
+        # to ask about THIS database's collection. Probing the bare "nuggets"
+        # name reported 0 points against a healthy 1,771-point store and
+        # raised a mismatch finding for a system that was fine.
+        collection = collection_for(_db_path_of(db))
         try:
-            points = _qdrant_point_count(qdrant_url)
+            points = _qdrant_point_count(qdrant_url, collection)
         except Exception as exc:
             findings.append(f"qdrant parity check failed: {exc}")
         else:
             if points != rows:
                 findings.append(
-                    f"qdrant parity mismatch: {rows} nugget row(s) vs {points} point(s)"
+                    f"qdrant parity mismatch in {collection}: "
+                    f"{rows} nugget row(s) vs {points} point(s)"
                 )
     return findings
 

@@ -119,3 +119,46 @@ def test_cmd_doctor_unhealthy_exits_one_with_findings(tmp_path, capsys):
     assert exc.value.code == 1
     out = capsys.readouterr().out
     assert "running" in out
+
+
+def test_parity_probe_asks_about_this_databases_collection(tmp_path, monkeypatch):
+    """Collections are namespaced per database. Probing the bare "nuggets"
+    name reported 0 points against a healthy 1,771-point store and raised a
+    mismatch finding for a system that was fine."""
+    from jester.cli import collection_for, evaluate_doctor
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db_path = tmp_path / "probe.db"
+    db = open_db(str(db_path))
+    insert_nugget(db, Nugget(unique_key="k1", platform="reddit", raw_text="x"))
+
+    monkeypatch.setenv("JESTER_QDRANT_URL", "http://qdrant.test:6333")
+    asked = {}
+
+    def fake_count(url, collection=None):
+        asked["collection"] = collection
+        return 1  # matches the single row, so no finding is raised
+
+    monkeypatch.setattr("jester.cli._qdrant_point_count", fake_count)
+    findings = evaluate_doctor(db)
+
+    assert asked["collection"] == collection_for(str(db_path)), asked
+    assert not [f for f in findings if "parity" in f], findings
+
+
+def test_parity_mismatch_names_the_collection(tmp_path, monkeypatch):
+    """A mismatch must say WHICH store disagrees — with per-database
+    namespacing there is more than one."""
+    from jester.cli import evaluate_doctor
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db = open_db(str(tmp_path / "probe.db"))
+    insert_nugget(db, Nugget(unique_key="k1", platform="reddit", raw_text="x"))
+    monkeypatch.setenv("JESTER_QDRANT_URL", "http://qdrant.test:6333")
+    monkeypatch.setattr("jester.cli._qdrant_point_count", lambda url, c=None: 0)
+
+    findings = [f for f in evaluate_doctor(db) if "parity" in f]
+    assert findings, "a real mismatch must still be reported"
+    assert "nuggets__probe" in findings[0], findings[0]
