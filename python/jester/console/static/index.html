@@ -173,6 +173,26 @@
     </div>
   </section>
 
+  <!-- ── search ───────────────────────────────────────────────────── -->
+  <section data-page="search" hidden>
+    <div class="hero">
+      <div>
+        <h1>Search</h1>
+        <p>
+          Ask the archive a question in your own words. Matches on meaning, not
+          keywords — "backups fail silently" finds someone who wrote "my cron
+          job dies without telling me".
+        </p>
+        <p id="search-note" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <input id="search-q" placeholder="describe a problem…" style="inline-size:280px" autocomplete="off">
+        <button id="search-go" class="primary">search</button>
+      </div>
+    </div>
+    <div id="search-body" class="stack"></div>
+  </section>
+
   <!-- ── clusters ─────────────────────────────────────────────────── -->
   <section data-page="clusters" hidden>
     <div class="hero">

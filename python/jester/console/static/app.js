@@ -97,6 +97,7 @@ const PAGES = [
   { group: 'Archive', id: 'ideas', label: 'Ideas', icon: '✦', load: loadIdeas, count: () => COUNTS.ideas },
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
+  { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
   { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
@@ -685,6 +686,63 @@ async function showIdea(id) {
          </div>`).join('') || '<p class="xs">No citations recorded.</p>'}`;
   openDrawer();
 }
+
+// ── search ──────────────────────────────────────────────────────────────
+// Every nugget has been embedded since the first run and the vector store's
+// search has existed the whole time, wired only into dedup. The archive was
+// searchable and there was no way to search it.
+
+function renderSearch(res) {
+  const note = $('#search-note');
+  if (note) {
+    // Say WHICH search answered. Semantic and substring return very different
+    // things, and a user who thinks they got one when they got the other will
+    // draw the wrong conclusion from an empty result.
+    const bits = [];
+    if (res) {
+      bits.push(res.mode === 'semantic' ? 'matched on meaning' : 'matched on text');
+      bits.push(`${res.returned} result(s)`);
+      if (res.detail) bits.push(res.detail);
+    }
+    note.textContent = bits.join(' · ');
+    note.className = res && res.mode === 'text' ? 'xs chip chip--warn' : 'xs';
+  }
+
+  const rows = (res && res.results) || [];
+  $('#search-body').innerHTML = rows.length ? rows.map(n => `
+    <div class="card">
+      <div class="row row-between">
+        <div class="chiprow">
+          <span class="chip">${esc(n.platform || '—')}</span>
+          <span class="chip">${esc(n.category || 'uncategorised')}</span>
+          ${n.author ? `<span class="chip">${esc(n.author)}</span>` : ''}
+          ${n.created_utc ? `<span class="xs">${esc(String(n.created_utc).slice(0, 10))}</span>` : ''}
+        </div>
+        ${n.score !== undefined && n.score !== null
+          ? `<span class="xs mono">${Number(n.score).toFixed(3)}</span>` : ''}
+      </div>
+      <p><strong>${esc(n.extracted_insight || '')}</strong></p>
+      <p class="xs">${esc((n.raw_text || '').slice(0, 400))}</p>
+      ${n.source_url ? `<a href="${esc(n.source_url)}" target="_blank" rel="noopener noreferrer" class="xs">source ↗</a>` : ''}
+    </div>`).join('')
+    : `<div class="empty">${esc(res ? 'Nothing matched that.' : 'Describe a problem to search for.')}</div>`;
+}
+
+async function runSearch() {
+  const q = ($('#search-q').value || '').trim();
+  if (!q) { renderSearch(null); return; }
+  const btn = $('#search-go');
+  btn.disabled = true;
+  const res = await api(`/api/search?q=${encodeURIComponent(q)}&limit=40`);
+  btn.disabled = false;
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  renderSearch(res);
+}
+
+function loadSearch() { renderSearch(null); }
+
+$('#search-go').addEventListener('click', runSearch);
+$('#search-q').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
 
 // ── clusters ────────────────────────────────────────────────────────────
 // The archive regrouped by meaning instead of by scrape origin. Ideas drafted

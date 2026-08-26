@@ -139,6 +139,15 @@ class Handler(BaseHTTPRequestHandler):
             # and ignored by the code. Absent means every nugget.
             self._json(api.nuggets(parse_qs(query).get("limit", [None])[0]))
             return
+        if path == "/api/search":
+            qs = parse_qs(query)
+            self._json(api.search(
+                q=qs.get("q", [""])[0],
+                limit=qs.get("limit", [30])[0],
+                platform=qs.get("platform", [""])[0],
+                category=qs.get("category", [""])[0],
+            ))
+            return
         if path == "/api/models":
             profile = parse_qs(query).get("profile", [None])[0]
             self._json(api.models(profile))

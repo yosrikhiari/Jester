@@ -468,6 +468,101 @@ class ConsoleAPI:
             return {"ok": True, "detail": f"draft {draft_id} discarded"}
         return {"ok": False, "error": f"no draft idea {draft_id}"}
 
+    # ---- search ----------------------------------------------------------
+
+    def search(self, q="", limit=30, platform="", category=""):
+        """Semantic search over the archive.
+
+        The gap this closes: every nugget has been embedded since the first
+        run, `VectorStore.search_scored` has existed the whole time, and it was
+        wired only into dedup. The archive was searchable and there was no way
+        to search it.
+
+        Falls back to a substring scan when no vector backend is reachable —
+        a worse search is better than a dead box, and the response says which
+        one answered so nobody mistakes one for the other.
+        """
+        q = (q or "").strip()
+        if not q:
+            return {"ok": False, "error": "type something to search for"}
+        try:
+            limit = max(1, min(200, int(limit)))
+        except (TypeError, ValueError):
+            limit = 30
+
+        rows, mode, detail = [], "text", ""
+        cfg = self._cfg()
+        fake = (getattr(cfg.thresholds, "embedding_provider", "") or "").lower() == "fake"
+
+        if not fake:
+            try:
+                from jester.cli import _vector_for
+
+                vector = _vector_for(cfg, self.db_path)
+                # No threshold: the caller ranks. A score_threshold here would
+                # silently return nothing for a query phrased differently from
+                # the corpus, which reads as "no results" rather than "try
+                # other words".
+                hits = vector.search_scored(q, limit=limit * 3)
+                keys = [k for _, k in hits if k]
+                scores = {k: s for s, k in hits if k}
+                if keys:
+                    self.db.row_factory = sqlite3.Row
+                    found = self.db.execute(
+                        "SELECT * FROM nuggets WHERE unique_key IN (%s)"
+                        % ",".join("?" * len(keys)),
+                        keys,
+                    ).fetchall()
+                    by_key = {r["unique_key"]: r for r in found}
+                    for k in keys:  # preserve rank order
+                        if k in by_key:
+                            d = self._rowdict(by_key[k])
+                            d["score"] = round(float(scores.get(k, 0.0)), 4)
+                            rows.append(d)
+                    mode = "semantic"
+                else:
+                    # The vector store answered and had nothing for this
+                    # database. Distinct from "unavailable" and from "fake
+                    # embeddings", and the commonest cause is simply that
+                    # nothing has been embedded into this collection yet.
+                    detail = (
+                        "no vectors indexed for this database yet — "
+                        "run `jester reembed --all`; searched text instead"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                detail = f"vector search unavailable ({exc}); fell back to text"
+        else:
+            detail = (
+                "embedding_provider is `fake`, so semantic search would rank by "
+                "hash collision — using text search instead"
+            )
+
+        if mode == "text":
+            self.db.row_factory = sqlite3.Row
+            like = f"%{q}%"
+            found = self.db.execute(
+                "SELECT * FROM nuggets WHERE raw_text LIKE ? OR extracted_insight LIKE ? "
+                "ORDER BY id DESC LIMIT ?",
+                (like, like, limit * 3),
+            ).fetchall()
+            rows = [self._rowdict(r) for r in found]
+
+        # Filters apply AFTER retrieval so the mode is what changed, not the
+        # meaning of the query.
+        if platform:
+            rows = [r for r in rows if (r.get("platform") or "") == platform]
+        if category:
+            rows = [r for r in rows if (r.get("category") or "") == category]
+
+        return {
+            "ok": True,
+            "mode": mode,
+            "query": q,
+            "results": rows[:limit],
+            "returned": len(rows[:limit]),
+            "detail": detail,
+        }
+
     def doctor(self):
         findings = evaluate_doctor(self.db)
         return {"ok": len(findings) == 0, "findings": findings}

@@ -146,3 +146,69 @@ def test_list_nuggets_limits_in_sql_not_in_a_slice(tmp_path):
     assert len(list_nuggets(db, limit=7)) == 7
     # Newest first, so a limited read takes the newest — not a random 7.
     assert list_nuggets(db, limit=7)[0]["unique_key"] == "reddit:t:29"
+
+
+# ---- search: the archive was searchable and had no search ----------------
+
+
+def _seed_searchable(db):
+    from jester.models import Nugget
+    from jester.store import insert_nugget
+
+    for k, plat, text in [
+        ("a", "reddit", "my backup cron dies without telling me and I lose a week"),
+        ("b", "hackernews", "kubernetes upgrades break my ingress every single time"),
+        ("c", "discourse", "the docs are wrong about how to restore a snapshot"),
+    ]:
+        insert_nugget(db, Nugget(unique_key=k, platform=plat, raw_text=text,
+                                 extracted_insight=text, category="pain_point"))
+
+
+def test_search_needs_a_query(api):
+    res = api.search(q="   ")
+    assert res["ok"] is False
+    assert "search for" in res["error"]
+
+
+def test_search_finds_by_text_when_vectors_are_unavailable(api):
+    """The archive ships with embedding_provider: fake in test config, so this
+    exercises the fallback — which must work rather than return a dead box."""
+    _seed_searchable(api.db)
+    res = api.search(q="backup cron")
+    assert res["ok"] is True
+    assert res["returned"] >= 1
+    assert any("backup cron" in (r["raw_text"] or "") for r in res["results"])
+
+
+def test_search_says_which_search_answered(api):
+    """Semantic and substring return very different things. A user who thinks
+    they got one when they got the other draws the wrong conclusion from an
+    empty result."""
+    _seed_searchable(api.db)
+    res = api.search(q="backup")
+    assert res["mode"] in ("semantic", "text")
+    if res["mode"] == "text":
+        assert res["detail"], "a fallback must explain itself"
+
+
+def test_search_refuses_to_rank_by_hash_collision(api):
+    """With embedding_provider: fake the vectors are SHA-256. Ranking by them
+    would look like semantic search and be noise, so it must not claim to be
+    semantic."""
+    _seed_searchable(api.db)
+    res = api.search(q="anything at all")
+    if (api._cfg().thresholds.embedding_provider or "").lower() == "fake":
+        assert res["mode"] == "text"
+        assert "fake" in res["detail"]
+
+
+def test_search_filters_apply_after_retrieval(api):
+    _seed_searchable(api.db)
+    res = api.search(q="break", platform="hackernews")
+    assert all(r["platform"] == "hackernews" for r in res["results"])
+
+
+def test_search_limit_is_bounded(api):
+    _seed_searchable(api.db)
+    assert api.search(q="the", limit=99999)["returned"] <= 200
+    assert api.search(q="the", limit="nonsense")["ok"] is True

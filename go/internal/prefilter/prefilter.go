@@ -82,6 +82,12 @@ func Keep(body string, p Params) (bool, string) {
 	if !HasLetter(body) {
 		return false, "no_letters"
 	}
+	// Checked LAST, and only on text that already looks like prose: the
+	// phrase list is a substring scan, and running it on every scrap before
+	// the cheap length checks would be wasted work on things already dropped.
+	if bot, why := IsBoilerplate(body); bot {
+		return false, why
+	}
 	return true, ""
 }
 
