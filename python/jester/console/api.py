@@ -54,6 +54,7 @@ from jester.sources import (
     unique_name,
 )
 from jester.store import (
+    count_nuggets,
     get_idea,
     run_activity,
     get_runs,
@@ -214,9 +215,32 @@ class ConsoleAPI:
         d["citations"] = cites
         return {"ok": True, "idea": d}
 
-    def nuggets(self, limit=500):
-        rows = list_nuggets(self.db)
-        return {"ok": True, "nuggets": [self._rowdict(r) for r in rows][:limit]}
+    def nuggets(self, limit=None):
+        """Every archived nugget, newest first.
+
+        The default used to be 500, applied AFTER loading and dicting every
+        row, and the route never passed anything else — so an archive of 1,761
+        showed 500 and counted itself as 500. Nothing said it had been cut.
+
+        `total` is always the real count, so a caller that does pass a limit
+        still reports the archive honestly rather than describing its own
+        page as the whole of it (R55: no silent caps).
+        """
+        total = count_nuggets(self.db)
+        cap = None
+        if limit not in (None, "", 0, "0"):
+            try:
+                cap = max(1, int(limit))
+            except (TypeError, ValueError):
+                cap = None
+        rows = list_nuggets(self.db, limit=cap)
+        out = [self._rowdict(r) for r in rows]
+        return {
+            "ok": True,
+            "nuggets": out,
+            "total": total,
+            "truncated": len(out) < total,
+        }
 
     def doctor(self):
         findings = evaluate_doctor(self.db)

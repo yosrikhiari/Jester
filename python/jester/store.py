@@ -541,12 +541,17 @@ def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
     db.commit()
 
 
-def list_nuggets(db: sqlite3.Connection) -> List[sqlite3.Row]:
+def list_nuggets(
+    db: sqlite3.Connection, limit: Optional[int] = None
+) -> List[sqlite3.Row]:
+    """Archived nuggets, newest first. ``limit=None`` (the default) means ALL
+    of them — a cap is something a caller asks for, never something the
+    archive quietly applies to itself."""
     db.row_factory = sqlite3.Row
     # trivial/needs_reembed/synthesized_at are part of the reviewer's read of a
     # nugget (R37 floor + R40 reembed backlog) — selecting them here is what
     # lets the console show the flags instead of silently rendering nothing.
-    return db.execute(
+    sql = (
         "SELECT unique_key, category, raw_text, extracted_insight, platform, "
         "source_url, thread_id, run_id, trivial, needs_reembed, "
         "engagement_score, synthesized_at, created_at, "
@@ -556,7 +561,24 @@ def list_nuggets(db: sqlite3.Connection) -> List[sqlite3.Row]:
         + ", ".join(_NUGGET_DETAIL_COLUMNS)
         + ", extra "
         "FROM nuggets ORDER BY id DESC"
-    ).fetchall()
+    )
+    # The limit belongs in SQL, not in a slice of the result. The console used
+    # to load every row, build a dict for every one, and then throw away
+    # everything past 500 — paying the full cost of the query it was trying to
+    # avoid, and getting no protection for it.
+    if limit is not None and int(limit) > 0:
+        return db.execute(sql + " LIMIT ?", (int(limit),)).fetchall()
+    return db.execute(sql).fetchall()
+
+
+def count_nuggets(db: sqlite3.Connection) -> int:
+    """How many nuggets the archive actually holds.
+
+    Separate from ``list_nuggets`` so a caller that limits its rows can still
+    report the true total. Without this the console had no way to tell a full
+    page of 500 from a truncated view of 1,761, and neither did anyone
+    reading it."""
+    return int(db.execute("SELECT COUNT(*) FROM nuggets").fetchone()[0])
 
 
 def _now() -> str:

@@ -665,6 +665,11 @@ async function showIdea(id) {
 
 // ── nuggets ─────────────────────────────────────────────────────────────
 let NUGGETS = [];
+//: What the archive holds, as opposed to what this page received. They differ
+//: only if a caller asked for a limit — but when they do differ, saying so is
+//: the difference between a filter and a lie.
+let NUGGET_TOTAL = 0;
+let NUGGET_TRUNCATED = false;
 let NUGGET_FILTER = 'all';
 const NUGGET_FILTERS = ['all', 'flagged', 'trivial', 'needs reembed'];
 
@@ -700,13 +705,31 @@ function renderNuggets() {
   }).join('') || emptyRow(5, NUGGETS.length
     ? 'No nugget matches that filter.'
     : 'No nuggets archived yet.');
+
+  // Always say what is on screen versus what exists. A row count that only
+  // ever describes itself cannot tell you something is missing.
+  const note = $('#nuggets-count');
+  if (note) {
+    const shown = rows.length;
+    const parts = [`${shown.toLocaleString()} shown`];
+    if (shown !== NUGGETS.length) parts.push(`${NUGGETS.length.toLocaleString()} loaded`);
+    if (NUGGET_TRUNCATED) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive — response was capped`);
+    else if (NUGGET_TOTAL !== NUGGETS.length) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive`);
+    note.textContent = parts.join(' · ');
+    note.className = NUGGET_TRUNCATED ? 'xs chip chip--warn' : 'xs';
+  }
 }
 
 async function loadNuggets() {
   const res = await api('/api/nuggets');
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   NUGGETS = res.nuggets || [];
-  COUNTS.nuggets = NUGGETS.length;
+  // The ARCHIVE's count, not this page's. These were the same line before,
+  // so a capped response reported its own length as the total and the nav
+  // badge read "500" over an archive of 1,761.
+  NUGGET_TOTAL = typeof res.total === 'number' ? res.total : NUGGETS.length;
+  NUGGET_TRUNCATED = !!res.truncated;
+  COUNTS.nuggets = NUGGET_TOTAL;
   renderNav();
   renderNuggetFilter();
   renderNuggets();

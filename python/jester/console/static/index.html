@@ -176,7 +176,14 @@
   <!-- ── nuggets ──────────────────────────────────────────────────── -->
   <section data-page="nuggets" hidden>
     <div class="hero">
-      <div><h1>Nuggets</h1><p>Archived pain signals, newest first. Trivial and reembed flags shown inline.</p></div>
+      <div>
+        <h1>Nuggets</h1>
+        <p>Archived pain signals, newest first. Trivial and reembed flags shown inline.</p>
+        <!-- Filled by renderNuggets: what is on screen vs what the archive
+             holds. Silence here is what let a capped view pass for the whole
+             archive. -->
+        <p id="nuggets-count" class="xs"></p>
+      </div>
       <div class="row row-end">
         <input id="nuggets-q" placeholder="filter nuggets…" style="inline-size:200px" autocomplete="off">
         <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>

@@ -121,7 +121,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/overview": api.overview,
             "/api/runs": api.runs,
             "/api/ideas": api.ideas,
-            "/api/nuggets": api.nuggets,
             "/api/doctor": api.doctor,
             "/api/eval": api.eval_gate,
             "/api/config": api.config,
@@ -131,6 +130,12 @@ class Handler(BaseHTTPRequestHandler):
         }
         if path in routes:
             self._json(routes[path]())
+            return
+        if path == "/api/nuggets":
+            # Query-aware, unlike the plain table above, which calls its
+            # handler with no arguments — so `?limit=` was accepted by the URL
+            # and ignored by the code. Absent means every nugget.
+            self._json(api.nuggets(parse_qs(query).get("limit", [None])[0]))
             return
         if path == "/api/models":
             profile = parse_qs(query).get("profile", [None])[0]
