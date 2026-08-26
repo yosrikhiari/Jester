@@ -393,3 +393,28 @@ def test_a_dimension_mismatch_is_refused_at_open_time(tmp_path):
     msg = str(exc.value)
     assert "32" in msg and "768" in msg
     assert "reembed" in msg, "the error must name the way out"
+
+
+def test_collections_are_namespaced_per_database():
+    """A shared Qdrant server has no notion of which database a vector belongs
+    to. Before this, every database wrote into one `nuggets` collection: a
+    cycle run against a throwaway --db put 240 vectors into the production
+    dedup space, where they stayed and influenced real runs."""
+    from jester.cli import collection_for
+
+    main = collection_for("data/jester.db")
+    probe = collection_for("/tmp/probe.db")
+    assert main != probe, "two databases must not share a collection"
+    assert collection_for("data/jester.db") == main, "must be stable"
+    # Absolute and relative paths to the same file are the same database.
+    import os
+
+    assert collection_for(os.path.abspath("data/jester.db")) == main
+    # Ideas get their own space, so idea vectors never pollute the nugget
+    # space the archivist dedups against (R44).
+    assert collection_for("data/jester.db", "ideas") != main
+    # In-memory databases are their own namespace, not a shared bucket.
+    assert collection_for(":memory:") == "nuggets__memory"
+    # Names must be safe for a collection identifier.
+    weird = collection_for("/tmp/My Test DB (2).db")
+    assert weird.replace("_", "").isalnum(), weird

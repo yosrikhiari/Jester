@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -65,13 +66,35 @@ from jester.vector import VectorStore
 from jester.worker import ingest as worker_ingest
 
 
+def collection_for(db_path: str, base: str = "nuggets") -> str:
+    """Collection name for one database on a SHARED Qdrant server.
+
+    Namespaced by the database file's stem, because the server has no other
+    notion of which database a vector belongs to. Without this every database
+    shares one collection: running a cycle against a throwaway `--db` wrote
+    240 vectors straight into the production dedup space, where they stayed
+    and influenced dedup for real runs. The per-database local-file mode never
+    had this problem — the isolation came free with the path.
+
+    No special case for the shipped database: a rule with an exception is how
+    the next person gets surprised.
+    """
+    if db_path == ":memory:":
+        return f"{base}__memory"
+    stem = os.path.splitext(os.path.basename(os.path.abspath(db_path)))[0]
+    slug = re.sub(r"[^a-z0-9]+", "_", stem.lower()).strip("_") or "db"
+    return f"{base}__{slug}"
+
+
 def _vector_for(cfg, db_path):
     """§37.17/§37.24: shared server via JESTER_QDRANT_URL, else per-DB path.
     In-memory databases get an in-memory store (no :memory:.qdrant file)."""
     qdrant_url = os.environ.get("JESTER_QDRANT_URL")
     embed = select_embedding(cfg.thresholds)
     if qdrant_url:
-        return VectorStore.for_url(qdrant_url, embed)
+        return VectorStore.for_url(
+            qdrant_url, embed, collection=collection_for(db_path)
+        )
     if db_path == ":memory:":
         return VectorStore.in_memory(embed)
     db_path = os.path.abspath(db_path)
@@ -94,7 +117,9 @@ def _idea_vector_for(cfg, db_path):
         embed = select_embedding(cfg.thresholds)
         qdrant_url = os.environ.get("JESTER_QDRANT_URL")
         if qdrant_url:
-            return VectorStore.for_url(qdrant_url, embed, collection="ideas")
+            return VectorStore.for_url(
+                qdrant_url, embed, collection=collection_for(db_path, "ideas")
+            )
         if db_path == ":memory:":
             return VectorStore.in_memory(embed, collection="ideas")
         base = os.path.abspath(db_path)

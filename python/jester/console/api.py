@@ -797,11 +797,18 @@ class ConsoleAPI:
         set AND answers; "local file" otherwise, which is a working but
         single-process store that no other component shares.
         """
+        from jester.cli import collection_for
+
         url = os.environ.get("JESTER_QDRANT_URL") or ""
+        # Namespaced per database: a shared server has no other notion of which
+        # database a vector belongs to, and reporting a collection this console
+        # does not actually write to would be the same class of lie the port
+        # check was.
+        collection = collection_for(self.db_path)
         state = {
             "mode": "server" if url else "local file",
             "url": url,
-            "collection": "nuggets",
+            "collection": collection,
             "points": None,
             "dim": None,
             "embedding_provider": "",
@@ -829,11 +836,14 @@ class ConsoleAPI:
             from qdrant_client import QdrantClient
 
             client = QdrantClient(url=url, timeout=5)
-            if not client.collection_exists("nuggets"):
-                state["detail"] = "server reachable; nuggets collection not created yet"
+            if not client.collection_exists(collection):
+                state["detail"] = (
+                    f"server reachable; {collection} not created yet — "
+                    "run a cycle or `jester reembed --all`"
+                )
                 state["usable"] = True
                 return state
-            info = client.get_collection("nuggets")
+            info = client.get_collection(collection)
             state["points"] = int(info.points_count or 0)
             state["dim"] = int(info.config.params.vectors.size)
         except Exception as exc:  # noqa: BLE001
