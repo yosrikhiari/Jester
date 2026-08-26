@@ -77,6 +77,59 @@ CREATE TABLE IF NOT EXISTS ideas (
     run_id               TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS clusters (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id             TEXT,
+    label              TEXT,
+    problem_statement  TEXT,
+    size               INTEGER,            -- chunks, not nuggets
+    n_nuggets          INTEGER,
+    -- The number that says whether a theme means anything. Five chunks from
+    -- one prolific commenter cluster beautifully and signify nothing.
+    n_authors          INTEGER,
+    -- Members whose author the archive never recorded. "0 authors" and "3
+    -- authors we did not capture" are different findings.
+    authors_unknown    INTEGER NOT NULL DEFAULT 0,
+    n_threads          INTEGER,
+    platforms          TEXT,               -- JSON list
+    nugget_keys        TEXT,               -- JSON list
+    coherence          REAL,               -- mean cosine of members to centroid
+    -- WHICH embeddings produced this. A cluster built from the 32-dim hash
+    -- stand-in is noise, and a row that cannot say which model made it cannot
+    -- be told apart from a real one later.
+    embedding_model    TEXT,
+    single_author      INTEGER NOT NULL DEFAULT 0,
+    single_thread      INTEGER NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS cluster_members (
+    cluster_id  INTEGER NOT NULL,
+    nugget_key  TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    chunk_text  TEXT,
+    similarity  REAL,
+    PRIMARY KEY (cluster_id, nugget_key, chunk_index)
+);
+-- Ideas generated FROM a cluster, held apart from the `ideas` archive until
+-- somebody promotes one. Drafts are cheap to make and most will be discarded;
+-- writing them straight into `ideas` would make the archive a scratchpad.
+CREATE TABLE IF NOT EXISTS cluster_ideas (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id         INTEGER NOT NULL,
+    title              TEXT NOT NULL,
+    problem_statement  TEXT,
+    proposed_solution   TEXT,
+    supporting_nuggets  TEXT,              -- JSON list
+    demand_signal       REAL,
+    feasibility         REAL,
+    competition         REAL,
+    overall             REAL,
+    synthesis_model     TEXT,
+    -- Set to the `ideas`.id once promoted, so a draft cannot be saved twice
+    -- and the console can show which ones already landed.
+    promoted_idea_id    INTEGER,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS quota (
     platform TEXT NOT NULL,
     day_key  TEXT NOT NULL,
@@ -539,6 +592,187 @@ def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
         tuple(vals),
     )
     db.commit()
+
+
+def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int:
+    """Persist a clustering pass, replacing whatever the last one produced.
+
+    Clusters are DERIVED — a fresh pass over the same archive is the truth, and
+    keeping the previous pass's rows alongside would leave the console showing
+    two contradictory groupings of the same nuggets with no way to tell which
+    is current. Draft ideas are preserved: those are somebody's work, not
+    derived data, so they outlive the cluster that prompted them.
+    """
+    db.execute("DELETE FROM cluster_members")
+    db.execute("DELETE FROM clusters")
+    n = 0
+    for p in payloads:
+        cur = db.execute(
+            """
+            INSERT INTO clusters
+                (run_id, label, problem_statement, size, n_nuggets, n_authors,
+                 authors_unknown, n_threads, platforms, nugget_keys, coherence,
+                 embedding_model, single_author, single_thread)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                run_id,
+                p.get("label") or "",
+                p.get("problem_statement") or "",
+                int(p.get("size") or 0),
+                int(p.get("n_nuggets") or 0),
+                int(p.get("n_authors") or 0),
+                int(p.get("authors_unknown") or 0),
+                int(p.get("n_threads") or 0),
+                p.get("platforms") or "[]",
+                p.get("nugget_keys") or "[]",
+                float(p.get("coherence") or 0.0),
+                p.get("embedding_model") or "",
+                1 if p.get("single_author") else 0,
+                1 if p.get("single_thread") else 0,
+            ),
+        )
+        cid = cur.lastrowid
+        for m in p.get("members") or []:
+            db.execute(
+                "INSERT OR REPLACE INTO cluster_members "
+                "(cluster_id, nugget_key, chunk_index, chunk_text, similarity) "
+                "VALUES (?,?,?,?,?)",
+                (cid, m["nugget_key"], int(m.get("chunk_index") or 0),
+                 m.get("text") or "", float(m.get("similarity") or 0.0)),
+            )
+        n += 1
+    db.commit()
+    return n
+
+
+def list_clusters(db: sqlite3.Connection) -> List[sqlite3.Row]:
+    """Themes, biggest first. No cap: see the Nuggets page for what a silent
+    default limit costs."""
+    db.row_factory = sqlite3.Row
+    return db.execute(
+        "SELECT c.*, "
+        "(SELECT COUNT(*) FROM cluster_ideas ci WHERE ci.cluster_id = c.id) AS n_ideas "
+        "FROM clusters c ORDER BY c.n_nuggets DESC, c.id ASC"
+    ).fetchall()
+
+
+def get_cluster(db: sqlite3.Connection, cluster_id: int):
+    db.row_factory = sqlite3.Row
+    return db.execute("SELECT * FROM clusters WHERE id=?", (cluster_id,)).fetchone()
+
+
+def cluster_members(db: sqlite3.Connection, cluster_id: int) -> List[sqlite3.Row]:
+    """Members with the nugget detail joined on, so a reviewer can see who said
+    a thing and where — not just the text."""
+    db.row_factory = sqlite3.Row
+    return db.execute(
+        "SELECT m.nugget_key, m.chunk_index, m.chunk_text, m.similarity, "
+        "n.platform, n.author, n.source_url, n.created_utc, n.upvotes, "
+        "n.post_title, n.community, n.extracted_insight "
+        "FROM cluster_members m LEFT JOIN nuggets n ON n.unique_key = m.nugget_key "
+        "WHERE m.cluster_id=? ORDER BY m.similarity DESC",
+        (cluster_id,),
+    ).fetchall()
+
+
+def insert_cluster_idea(db: sqlite3.Connection, cluster_id: int, idea) -> int:
+    cur = db.execute(
+        """
+        INSERT INTO cluster_ideas
+            (cluster_id, title, problem_statement, proposed_solution,
+             supporting_nuggets, demand_signal, feasibility, competition,
+             overall, synthesis_model)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            cluster_id,
+            idea.title,
+            idea.problem_statement,
+            idea.proposed_solution,
+            json.dumps(idea.supporting_nuggets or []),
+            idea.scores.demand_signal,
+            idea.scores.feasibility,
+            idea.scores.competition,
+            idea.scores.overall,
+            idea.synthesis_model or "",
+        ),
+    )
+    db.commit()
+    return int(cur.lastrowid)
+
+
+def list_cluster_ideas(db: sqlite3.Connection, cluster_id: Optional[int] = None):
+    db.row_factory = sqlite3.Row
+    if cluster_id is None:
+        return db.execute(
+            "SELECT * FROM cluster_ideas ORDER BY id DESC"
+        ).fetchall()
+    return db.execute(
+        "SELECT * FROM cluster_ideas WHERE cluster_id=? ORDER BY id DESC",
+        (cluster_id,),
+    ).fetchall()
+
+
+def promote_cluster_idea(db: sqlite3.Connection, draft_id: int) -> dict:
+    """Move one draft into the `ideas` archive.
+
+    Refuses a second promotion rather than silently creating a duplicate: the
+    draft records which idea it became, and a double-click on Save is a much
+    more likely event than a deliberate wish for two copies.
+    """
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM cluster_ideas WHERE id=?", (draft_id,)).fetchone()
+    if row is None:
+        return {"ok": False, "error": f"no draft idea {draft_id}"}
+    if row["promoted_idea_id"]:
+        return {
+            "ok": False,
+            "error": f"already saved as idea #{row['promoted_idea_id']}",
+            "idea_id": row["promoted_idea_id"],
+        }
+    keys = json.loads(row["supporting_nuggets"] or "[]")
+    platforms = sorted({
+        (r["platform"] or "")
+        for r in db.execute(
+            "SELECT platform FROM nuggets WHERE unique_key IN (%s)"
+            % ",".join("?" * len(keys)),
+            keys,
+        ).fetchall()
+    } - {""}) if keys else []
+    threads = db.execute(
+        "SELECT COUNT(DISTINCT thread_id) FROM nuggets WHERE unique_key IN (%s)"
+        % ",".join("?" * len(keys)),
+        keys,
+    ).fetchone()[0] if keys else 0
+    cur = db.execute(
+        """
+        INSERT INTO ideas
+            (title, problem_statement, proposed_solution, supporting_nuggets,
+             source_threads, source_platforms, demand_signal, feasibility,
+             competition, overall, status, synthesis_model, run_id, last_scored_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'new',?,?,?)
+        """,
+        (
+            row["title"], row["problem_statement"], row["proposed_solution"],
+            row["supporting_nuggets"], int(threads or 0), json.dumps(platforms),
+            row["demand_signal"], row["feasibility"], row["competition"],
+            row["overall"], row["synthesis_model"] or "",
+            f"cluster-{row['cluster_id']}", _now(),
+        ),
+    )
+    idea_id = int(cur.lastrowid)
+    db.execute(
+        "UPDATE cluster_ideas SET promoted_idea_id=? WHERE id=?", (idea_id, draft_id)
+    )
+    db.commit()
+    return {"ok": True, "idea_id": idea_id}
+
+
+def delete_cluster_idea(db: sqlite3.Connection, draft_id: int) -> bool:
+    cur = db.execute("DELETE FROM cluster_ideas WHERE id=?", (draft_id,))
+    db.commit()
+    return cur.rowcount > 0
 
 
 def list_nuggets(

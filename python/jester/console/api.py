@@ -7,6 +7,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import urllib.request
 from datetime import datetime, timezone
@@ -54,7 +55,14 @@ from jester.sources import (
     unique_name,
 )
 from jester.store import (
+    cluster_members,
     count_nuggets,
+    delete_cluster_idea,
+    get_cluster,
+    insert_cluster_idea,
+    list_cluster_ideas,
+    list_clusters,
+    promote_cluster_idea,
     get_idea,
     run_activity,
     get_runs,
@@ -241,6 +249,173 @@ class ConsoleAPI:
             "total": total,
             "truncated": len(out) < total,
         }
+
+    # ---- clusters (semantic regrouping) ---------------------------------
+
+    def clusters(self):
+        """Every theme the last clustering pass produced.
+
+        No default cap — see `nuggets` for what a silent one costs.
+        """
+        rows = [self._rowdict(r) for r in list_clusters(self.db)]
+        for r in rows:
+            for key in ("platforms", "nugget_keys"):
+                try:
+                    r[key] = json.loads(r.get(key) or "[]")
+                except (TypeError, ValueError):
+                    r[key] = []
+        stale = any(
+            (r.get("embedding_model") or "").startswith("fake") for r in rows
+        )
+        return {
+            "ok": True,
+            "clusters": rows,
+            "total": len(rows),
+            # A pass run against hash vectors is noise wearing labels. It
+            # cannot happen through this API, but a database carried over from
+            # an older build can hold one, and it must be visibly marked
+            # rather than silently trusted.
+            "fake_embeddings": stale,
+            "nuggets_total": count_nuggets(self.db),
+        }
+
+    def cluster(self, cluster_id: int):
+        """One theme, its members, and any draft ideas made from it."""
+        row = get_cluster(self.db, cluster_id)
+        if row is None:
+            return {"ok": False, "error": f"no cluster {cluster_id}"}
+        d = self._rowdict(row)
+        for key in ("platforms", "nugget_keys"):
+            try:
+                d[key] = json.loads(d.get(key) or "[]")
+            except (TypeError, ValueError):
+                d[key] = []
+        d["members"] = [self._rowdict(m) for m in cluster_members(self.db, cluster_id)]
+        d["ideas"] = [
+            self._rowdict(i) for i in list_cluster_ideas(self.db, cluster_id)
+        ]
+        return {"ok": True, "cluster": d}
+
+    def cluster_run(self, threshold=None, min_size=None, min_nuggets=None,
+                    limit=None, run_id="console-cluster"):
+        """Regroup the archive. The console's copy of `jester cluster`.
+
+        Calls the same `cluster_archive` the CLI does rather than
+        reimplementing the pass — the `jester schedule` lesson: behaviour that
+        exists in only one caller is behaviour nobody can check.
+        """
+        from jester import clustering
+        from jester.clustering import FakeEmbeddingRefused, cluster_archive
+
+        def _num(v, default, cast=float):
+            if v in (None, "", "0", 0):
+                return default
+            try:
+                return cast(v)
+            except (TypeError, ValueError):
+                return default
+
+        try:
+            return cluster_archive(
+                self.db,
+                self._cfg().thresholds,
+                run_id=run_id,
+                threshold=_num(threshold, clustering.DEFAULT_THRESHOLD, float),
+                min_size=_num(min_size, clustering.DEFAULT_MIN_SIZE, int),
+                min_nuggets=_num(min_nuggets, clustering.DEFAULT_MIN_NUGGETS, int),
+                limit=_num(limit, None, int),
+            )
+        except FakeEmbeddingRefused as exc:
+            # A refusal, not a crash. The operator needs the knob, not a 500.
+            return {
+                "ok": False,
+                "error": str(exc),
+                "fix": "set embedding_provider: ollama in config/thresholds.yaml, "
+                       "make sure Ollama is reachable, then run this again",
+            }
+        except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
+            return {"ok": False, "error": f"clustering failed: {exc}"}
+
+    def cluster_generate_idea(self, cluster_id: int):
+        """Draft an idea FROM one theme.
+
+        Deliberately writes to `cluster_ideas`, not `ideas`. Drafts are cheap
+        and most get discarded; letting them into the archive directly would
+        turn it into a scratchpad. Promotion is a separate, explicit act.
+        """
+        from jester.agents.critic import Critic
+        from jester.agents.synthesizer import row_to_nugget
+        from jester.llm import (
+            model_name,
+            select_critic_llm,
+            select_synthesizer_llm,
+        )
+        from jester.models import Idea, IdeaScores
+
+        row = get_cluster(self.db, cluster_id)
+        if row is None:
+            return {"ok": False, "error": f"no cluster {cluster_id}"}
+        try:
+            keys = json.loads(row["nugget_keys"] or "[]")
+        except (TypeError, ValueError):
+            keys = []
+        if not keys:
+            return {"ok": False, "error": "this cluster cites no nuggets"}
+
+        self.db.row_factory = sqlite3.Row
+        rows = self.db.execute(
+            "SELECT * FROM nuggets WHERE unique_key IN (%s)"
+            % ",".join("?" * len(keys)),
+            keys,
+        ).fetchall()
+        if not rows:
+            return {"ok": False, "error": "the cluster's nuggets are gone from the archive"}
+        nuggets = [row_to_nugget(r) for r in rows]
+
+        synth = select_synthesizer_llm(self._cfg().thresholds)
+        draft = synth.synthesize(nuggets)
+        idea = Idea(
+            title=draft.title,
+            problem_statement=draft.problem_statement,
+            proposed_solution=draft.proposed_solution,
+            supporting_nuggets=[n.unique_key for n in nuggets],
+            synthesis_model=model_name(synth),
+            scores=IdeaScores(),
+        )
+        # Critic.score persists ONLY when idea.id is set. A draft has none, so
+        # this scores in memory and nothing reaches the ideas archive — which
+        # is the whole point of the draft/promote split.
+        critic = Critic(self.db, self._cfg().thresholds)
+        idea = critic.score(idea, select_critic_llm(self._cfg().thresholds))
+
+        draft_id = insert_cluster_idea(self.db, cluster_id, idea)
+        return {
+            "ok": True,
+            "draft_id": draft_id,
+            "idea": {
+                "id": draft_id,
+                "title": idea.title,
+                "problem_statement": idea.problem_statement,
+                "proposed_solution": idea.proposed_solution,
+                "supporting_nuggets": idea.supporting_nuggets,
+                "demand_signal": idea.scores.demand_signal,
+                "feasibility": idea.scores.feasibility,
+                "competition": idea.scores.competition,
+                "overall": idea.scores.overall,
+                "synthesis_model": idea.synthesis_model,
+            },
+            # Said out loud: a draft is not archived until somebody saves it.
+            "detail": "draft only — not in the Ideas archive until you save it",
+        }
+
+    def cluster_save_idea(self, draft_id: int):
+        """Promote one draft into the Ideas archive."""
+        return promote_cluster_idea(self.db, int(draft_id))
+
+    def cluster_discard_idea(self, draft_id: int):
+        if delete_cluster_idea(self.db, int(draft_id)):
+            return {"ok": True, "detail": f"draft {draft_id} discarded"}
+        return {"ok": False, "error": f"no draft idea {draft_id}"}
 
     def doctor(self):
         findings = evaluate_doctor(self.db)

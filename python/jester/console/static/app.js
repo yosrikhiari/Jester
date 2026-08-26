@@ -78,6 +78,7 @@ const PAGES = [
   { group: 'Pipeline', id: 'runs', label: 'Runs', icon: '▷', load: loadRuns, count: () => COUNTS.runs },
   { group: 'Archive', id: 'ideas', label: 'Ideas', icon: '✦', load: loadIdeas, count: () => COUNTS.ideas },
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
+  { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
   { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
@@ -662,6 +663,198 @@ async function showIdea(id) {
          </div>`).join('') || '<p class="xs">No citations recorded.</p>'}`;
   openDrawer();
 }
+
+// ── clusters ────────────────────────────────────────────────────────────
+// The archive regrouped by meaning instead of by scrape origin. Ideas drafted
+// here live in `cluster_ideas` until somebody saves one — drafts are cheap and
+// most get discarded, so letting them straight into the Ideas archive would
+// turn it into a scratchpad.
+let CLUSTERS = [];
+let CLUSTER_OPEN = null;      // id of the expanded theme
+let CLUSTER_DETAIL = {};      // id -> full detail once fetched
+let CLUSTER_FAKE = false;     // last pass ran on hash vectors
+
+function clusterQuality(c) {
+  // The numbers that decide whether a theme means anything, said plainly.
+  // n_authors is the strongest of them: five chunks from one prolific
+  // commenter cluster beautifully and signify nothing.
+  const bits = [];
+  bits.push(`${c.n_nuggets} nugget${c.n_nuggets === 1 ? '' : 's'}`);
+  if (c.n_authors > 0) bits.push(`${c.n_authors} author${c.n_authors === 1 ? '' : 's'}`);
+  else if (c.authors_unknown > 0) bits.push('authors not captured');
+  if (c.n_threads > 0) bits.push(`${c.n_threads} thread${c.n_threads === 1 ? '' : 's'}`);
+  bits.push(`coherence ${Number(c.coherence || 0).toFixed(2)}`);
+  return bits.join(' · ');
+}
+
+function clusterFlags(c) {
+  const out = [];
+  // A theme confined to one thread is exactly what the old thread-grouping
+  // already found — worth saying, because it is not new information.
+  if (c.single_thread) out.push('<span class="chip chip--warn">one thread</span>');
+  if (c.single_author) out.push('<span class="chip chip--warn">one author</span>');
+  if ((c.embedding_model || '').startsWith('fake'))
+    out.push('<span class="chip chip--bad">hash vectors — not meaningful</span>');
+  if (c.n_ideas > 0) out.push(`<span class="chip">${c.n_ideas} draft idea(s)</span>`);
+  return out.join('');
+}
+
+function renderClusterIdea(i) {
+  const saved = i.promoted_idea_id
+    ? `<span class="chip">saved as idea #${i.promoted_idea_id}</span>` : '';
+  const scores = [
+    ['demand', i.demand_signal], ['feasibility', i.feasibility],
+    // competition stays null when the critic did not verify it (R29) — shown
+    // as "unchecked", never as a zero.
+    ['competition', i.competition === null || i.competition === undefined ? null : i.competition],
+    ['overall', i.overall],
+  ].map(([k, v]) => `${k} ${v === null ? '—' : Number(v).toFixed(1)}`).join(' · ');
+  return `<div class="card" style="margin-block-start:var(--jester-s-4)">
+    <div class="row row-between">
+      <strong>${esc(i.title || 'untitled')}</strong>
+      <div class="chiprow">${saved}</div>
+    </div>
+    <p class="xs">${esc(scores)}${i.synthesis_model ? ' · ' + esc(i.synthesis_model) : ''}</p>
+    <p>${esc(i.problem_statement || '')}</p>
+    <p>${esc(i.proposed_solution || '')}</p>
+    ${i.promoted_idea_id ? '' : `<div class="row">
+      <button data-save-idea="${i.id}" class="primary">✓ save to Ideas</button>
+      <button data-discard-idea="${i.id}">discard</button>
+    </div>`}
+  </div>`;
+}
+
+function renderClusters() {
+  const q = ($('#clusters-q').value || '').trim().toLowerCase();
+  const rows = CLUSTERS.filter(c => !q ||
+    `${c.label || ''} ${c.problem_statement || ''}`.toLowerCase().includes(q));
+
+  const warn = $('#clusters-warn');
+  if (warn) {
+    warn.innerHTML = CLUSTER_FAKE
+      ? `<div class="card card--bad"><strong>These groups are not meaningful.</strong>
+         <p class="xs">They were built from 32-dimension hash vectors, which carry no
+         semantic information — two comments about the same problem are as far apart
+         as two unrelated ones. Set <code>embedding_provider: ollama</code> in
+         config/thresholds.yaml, make sure Ollama is reachable, then regroup.</p></div>`
+      : '';
+  }
+
+  $('#clusters-body').innerHTML = rows.length ? rows.map(c => {
+    const open = CLUSTER_OPEN === c.id;
+    const detail = CLUSTER_DETAIL[c.id];
+    return `<div class="card">
+      <div class="row row-between">
+        <div>
+          <h3 style="margin:0">${esc(c.label || 'unnamed theme')}</h3>
+          <p class="xs">${esc(clusterQuality(c))}</p>
+        </div>
+        <div class="chiprow">${clusterFlags(c)}</div>
+      </div>
+      <p>${esc(c.problem_statement || '')}</p>
+      <div class="chiprow">${(c.platforms || [])
+        .map(p => `<span class="chip">${esc(p)}</span>`).join('')}</div>
+      <div class="row">
+        <button data-open-cluster="${c.id}">${open ? '▾ hide' : '▸ show'} ${c.size} chunk(s)</button>
+        <button data-gen-idea="${c.id}" class="primary">✦ generate idea</button>
+      </div>
+      ${open && detail ? `
+        <div class="stack" style="margin-block-start:var(--jester-s-4)">
+          ${(detail.members || []).map(m => `<div class="card card--flush" style="padding:var(--jester-s-3)">
+            <p class="xs">${esc(m.author || 'unknown author')} · ${esc(m.platform || '')}
+              · similarity ${Number(m.similarity || 0).toFixed(2)}
+              ${m.source_url ? `· <a href="${esc(m.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</p>
+            <p>${esc(m.chunk_text || '')}</p>
+          </div>`).join('')}
+          ${(detail.ideas || []).map(renderClusterIdea).join('')}
+        </div>` : ''}
+    </div>`;
+  }).join('') : `<div class="empty">${esc(CLUSTERS.length
+    ? 'No theme matches that filter.'
+    : 'No themes yet — press “regroup” to cluster the archive.')}</div>`;
+
+  const note = $('#clusters-count');
+  if (note) {
+    const parts = [`${rows.length} theme(s) shown`];
+    if (rows.length !== CLUSTERS.length) parts.push(`${CLUSTERS.length} total`);
+    note.textContent = parts.join(' · ');
+  }
+}
+
+async function loadClusters() {
+  const res = await api('/api/clusters');
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  CLUSTERS = res.clusters || [];
+  CLUSTER_FAKE = !!res.fake_embeddings;
+  COUNTS.clusters = res.total ?? CLUSTERS.length;
+  renderNav();
+  renderClusters();
+}
+
+async function openCluster(id) {
+  if (CLUSTER_OPEN === id) { CLUSTER_OPEN = null; renderClusters(); return; }
+  const res = await api(`/api/cluster/${id}`);
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  CLUSTER_DETAIL[id] = res.cluster;
+  CLUSTER_OPEN = id;
+  renderClusters();
+}
+
+$('#clusters-q').addEventListener('input', renderClusters);
+
+$('#clusters-run').addEventListener('click', async () => {
+  toast('regrouping the archive — embedding takes a moment…');
+  const res = await api('/api/cluster/run', {});
+  if (res.ok === false) {
+    // A refusal carries the knob that fixes it; showing only "failed" would
+    // send someone hunting.
+    toast(res.fix ? `${res.error} — ${res.fix}` : res.error, 'bad');
+    return;
+  }
+  toast(`${res.clusters} theme(s) from ${res.nuggets} nugget(s); ` +
+        `${res.ungrouped_nuggets} did not group`, 'ok');
+  await loadClusters();
+});
+
+$('#clusters-body').addEventListener('click', async e => {
+  const open = e.target.closest('button[data-open-cluster]');
+  if (open) { await openCluster(Number(open.dataset.openCluster)); return; }
+
+  const gen = e.target.closest('button[data-gen-idea]');
+  if (gen) {
+    const id = Number(gen.dataset.genIdea);
+    gen.disabled = true; gen.textContent = '… thinking';
+    const res = await api('/api/cluster/idea', { cluster_id: id });
+    gen.disabled = false; gen.textContent = '✦ generate idea';
+    if (res.ok === false) { toast(res.error, 'bad'); return; }
+    toast(res.detail || 'draft created', 'ok');
+    CLUSTER_OPEN = null;            // force a refetch so the draft shows
+    await openCluster(id);
+    await loadClusters();
+    return;
+  }
+
+  const save = e.target.closest('button[data-save-idea]');
+  if (save) {
+    const res = await api('/api/cluster/idea/save', { draft_id: Number(save.dataset.saveIdea) });
+    if (res.ok === false) { toast(res.error, 'bad'); return; }
+    toast(`saved as idea #${res.idea_id}`, 'ok');
+    const id = CLUSTER_OPEN; CLUSTER_OPEN = null;
+    if (id) await openCluster(id);
+    await loadClusters();
+    return;
+  }
+
+  const drop = e.target.closest('button[data-discard-idea]');
+  if (drop) {
+    const res = await api('/api/cluster/idea/discard', { draft_id: Number(drop.dataset.discardIdea) });
+    if (res.ok === false) { toast(res.error, 'bad'); return; }
+    toast('draft discarded');
+    const id = CLUSTER_OPEN; CLUSTER_OPEN = null;
+    if (id) await openCluster(id);
+    await loadClusters();
+  }
+});
 
 // ── nuggets ─────────────────────────────────────────────────────────────
 let NUGGETS = [];

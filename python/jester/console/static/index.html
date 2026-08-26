@@ -173,6 +173,28 @@
     </div>
   </section>
 
+  <!-- ── clusters ─────────────────────────────────────────────────── -->
+  <section data-page="clusters" hidden>
+    <div class="hero">
+      <div>
+        <h1>Clusters</h1>
+        <p>
+          The archive regrouped by MEANING rather than by the thread each
+          comment was scraped from — so the same complaint on Reddit and on
+          Hacker News lands in one theme. Generate an idea from a theme, then
+          save the ones worth keeping.
+        </p>
+        <p id="clusters-count" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <input id="clusters-q" placeholder="filter themes…" style="inline-size:200px" autocomplete="off">
+        <button id="clusters-run" class="primary">⟳ regroup</button>
+      </div>
+    </div>
+    <div id="clusters-warn"></div>
+    <div id="clusters-body" class="stack"></div>
+  </section>
+
   <!-- ── nuggets ──────────────────────────────────────────────────── -->
   <section data-page="nuggets" hidden>
     <div class="hero">

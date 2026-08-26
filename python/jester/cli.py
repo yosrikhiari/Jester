@@ -787,6 +787,69 @@ def cmd_cycle(args):
     return cmd_run(args)
 
 
+def cmd_cluster(args):
+    """Regroup the archive into semantic themes (chunk -> embed -> cluster).
+
+    The counterpart to `run`, which groups nuggets by the thread they were
+    scraped from. This groups them by what they SAY, so a complaint on Hacker
+    News and the same complaint on Reddit land together.
+    """
+    from jester import clustering
+    from jester.clustering import FakeEmbeddingRefused, cluster_archive
+
+    cfg = load_config(args.config)
+    db = open_db(args.db)
+    # argparse defaults are None so an unset flag is distinguishable from one
+    # set to the same value the module already uses; resolve here rather than
+    # writing the numbers down twice.
+    threshold = (
+        clustering.DEFAULT_THRESHOLD if args.threshold is None else args.threshold
+    )
+    neighbours = (
+        clustering.DEFAULT_NEIGHBOURS if args.neighbours is None else args.neighbours
+    )
+    min_size = (
+        clustering.DEFAULT_MIN_SIZE if args.min_size is None else args.min_size
+    )
+    try:
+        res = cluster_archive(
+            db,
+            cfg.thresholds,
+            run_id=args.run or "cluster",
+            threshold=threshold,
+            neighbours=neighbours,
+            min_size=min_size,
+            limit=args.limit,
+        )
+    except FakeEmbeddingRefused as exc:
+        # Not a crash — a refusal, and the operator needs to know which knob
+        # fixes it rather than a stack trace.
+        print(f"cluster refused: {exc}")
+        sys.exit(2)
+
+    if not res.get("clusters"):
+        print(
+            f"no clusters formed from {res.get('nuggets', 0)} nugget(s) — "
+            f"nothing reached {min_size} members at threshold "
+            f"{threshold}. Lower --threshold or --min-size to group more "
+            "loosely."
+        )
+        return res
+    print(
+        f"{res['clusters']} cluster(s) from {res['nuggets']} nugget(s) "
+        f"[{res['embedding_model']}]"
+    )
+    # R55: say what did NOT group. A pass that clusters 8% of the archive has
+    # told you the threshold is too tight, and reporting only the clusters
+    # hides it.
+    print(
+        f"  grouped {res['grouped_nuggets']}, "
+        f"ungrouped {res['ungrouped_nuggets']} "
+        f"(threshold {res['threshold']}, min size {res['min_size']})"
+    )
+    return res
+
+
 def cmd_schedule(args):
     """D-2: register / inspect / remove the nightly job with the host scheduler."""
     if args.action == "status":
@@ -1318,6 +1381,32 @@ def main(argv=None):
         "--pending", action="store_true", help="retry all needs_reembed nuggets"
     )
     re_.set_defaults(func=cmd_reembed)
+
+    cl = sub.add_parser(
+        "cluster",
+        help="regroup the archive into semantic themes using embeddings",
+    )
+    cl.add_argument("--db", default="data/jester.db")
+    cl.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    cl.add_argument("--run", default=None, help="run id to file the pass under")
+    cl.add_argument(
+        "--threshold", type=float, default=None,
+        help="cosine similarity two chunks must reach to be linked "
+             "(higher = tighter, fewer, cleaner groups)",
+    )
+    cl.add_argument(
+        "--neighbours", type=int, default=None,
+        help="how many neighbours each chunk may link to",
+    )
+    cl.add_argument(
+        "--min-size", dest="min_size", type=int, default=None,
+        help="drop groups smaller than this as noise",
+    )
+    cl.add_argument(
+        "--limit", type=int, default=None,
+        help="cluster only the N newest nuggets (default: the whole archive)",
+    )
+    cl.set_defaults(func=cmd_cluster)
 
     rs_ = sub.add_parser("resynth")
     rs_.add_argument("--db", default="data/jester.db")

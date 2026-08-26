@@ -127,6 +127,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/infra": api.infra,
             "/api/sources": api.sources,
             "/api/schedule": api.schedule,
+            "/api/clusters": api.clusters,
         }
         if path in routes:
             self._json(routes[path]())
@@ -140,6 +141,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/models":
             profile = parse_qs(query).get("profile", [None])[0]
             self._json(api.models(profile))
+            return
+        if path.startswith("/api/cluster/"):
+            tail = path.rsplit("/", 1)[1]
+            if not tail.isdigit():
+                self._json({"ok": False, "error": f"bad cluster id {tail!r}"}, 400)
+                return
+            self._json(api.cluster(int(tail)))
             return
         if path.startswith("/api/idea/"):
             tail = path.rsplit("/", 1)[1]
@@ -178,6 +186,25 @@ class Handler(BaseHTTPRequestHandler):
                 max_posts=body.get("max_posts"),
             ),
             "/api/export": lambda: api.export(body.get("out_dir") or None),
+            # Regroup the archive by meaning. Same call the CLI makes.
+            "/api/cluster/run": lambda: api.cluster_run(
+                threshold=body.get("threshold"),
+                min_size=body.get("min_size"),
+                min_nuggets=body.get("min_nuggets"),
+                limit=body.get("limit"),
+                run_id=body.get("run_id") or "console-cluster",
+            ),
+            # Draft an idea from one theme. Lands in cluster_ideas, NOT ideas.
+            "/api/cluster/idea": lambda: api.cluster_generate_idea(
+                int(body.get("cluster_id") or 0)
+            ),
+            # The explicit act that puts a draft into the archive.
+            "/api/cluster/idea/save": lambda: api.cluster_save_idea(
+                int(body.get("draft_id") or 0)
+            ),
+            "/api/cluster/idea/discard": lambda: api.cluster_discard_idea(
+                int(body.get("draft_id") or 0)
+            ),
             "/api/smoke": api.smoke,
             "/api/requeue": api.requeue,
             "/api/reembed": api.reembed,
