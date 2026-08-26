@@ -179,8 +179,11 @@ def test_sources_payload_carries_the_ui_vocabulary(api):
     payload = api.sources()
     assert payload["ok"] is True
     assert set(payload["platform_kinds"]) == {
-        "reddit", "hackernews", "discourse", "youtube", "tiktok"}
+        "reddit", "hackernews", "discourse", "youtube", "tiktok", "stackexchange"}
     assert ["reddit", "subreddit"] in payload["supported_kinds"]
+    # Stack Exchange is a sanctioned keyless API, so unlike tiktok it ships
+    # with an adapter behind it rather than as a configurable placeholder.
+    assert ["stackexchange", "site"] in payload["supported_kinds"]
     assert all("supported" in s for s in payload["sources"])
 
 

@@ -1,5 +1,5 @@
 # Curated source list. Edit here or in the operator console (Sources tab).
-# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag
+# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag - stackexchange=site|question
 # Set `enabled: false` to park a source without losing it; `notes` is
 # free text and survives console edits.
 sources:
@@ -163,3 +163,39 @@ sources:
   url: https://community.grafana.com
   enabled: true
   notes: 'observability: people describing what they cannot see'
+- platform: stackexchange
+  name: serverfault
+  kind: site
+  url: https://serverfault.com
+  enabled: true
+  notes: sysadmins describing infrastructure that will not behave
+- platform: stackexchange
+  name: unix
+  kind: site
+  url: https://unix.stackexchange.com
+  enabled: true
+  notes: shell, systemd and filesystem pain, deeply specific
+- platform: stackexchange
+  name: dba
+  kind: site
+  url: https://dba.stackexchange.com
+  enabled: true
+  notes: 'database operators: slow queries, replication, lock contention'
+- platform: stackexchange
+  name: devops
+  kind: site
+  url: https://devops.stackexchange.com
+  enabled: true
+  notes: CI/CD and deployment friction
+- platform: stackexchange
+  name: security
+  kind: site
+  url: https://security.stackexchange.com
+  enabled: true
+  notes: threat modelling and tooling gaps
+- platform: stackexchange
+  name: softwareengineering
+  kind: site
+  url: https://softwareengineering.stackexchange.com
+  enabled: true
+  notes: design and process complaints from practitioners

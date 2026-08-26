@@ -30,6 +30,13 @@ max_threads_per_source: 3
 # flagged; they stay where they were.
 max_threads_per_platform:
   hackernews: 40
+  # Stack Exchange is sanctioned and keyless, but METERED, which none of the
+  # others are. Each question costs two requests (question, then answers) plus
+  # one listing per site per run, so depth 3 is 7 requests per site per run.
+  # Against the keyless 300/day-per-IP quota that is already tight across six
+  # sites on a 30-minute schedule. Set STACKEXCHANGE_KEY (free, no approval)
+  # to raise the ceiling to 10,000/day and this can go much higher.
+  stackexchange: 3
   discourse: 25
   reddit: 3
   youtube: 2

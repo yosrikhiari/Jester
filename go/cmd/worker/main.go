@@ -21,6 +21,7 @@ import (
 	"jester/internal/hackernews"
 	"jester/internal/prefilter"
 	"jester/internal/reddit"
+	"jester/internal/stackexchange"
 	"jester/internal/store"
 	"jester/internal/youtube"
 )
@@ -351,7 +352,7 @@ func selectSources(all []config.Source, only string) ([]config.Source, error) {
 // challenge to absorb. Opening a Chrome process for them would be pure cost.
 func needsBrowser(platform string) bool {
 	switch platform {
-	case "hackernews", "discourse":
+	case "hackernews", "discourse", "stackexchange":
 		return false
 	default:
 		return true
@@ -481,6 +482,52 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live]   enqueued %d kept comments (hn %s)\n", n, s.ID)
 			total += n
 			sleep(delay)
+		}
+		return total, nil
+
+	case src.Platform == "stackexchange":
+		se := stackexchange.New()
+		// No answer floor by default: a question with NO answers and many
+		// views is the most valuable thing this source produces — many people
+		// arrived with the problem and nobody has a fix.
+		site := stackexchange.SiteFromURL(src.URL)
+		questions := []stackexchange.Question{}
+		if kind == "question" {
+			id := stackexchangeIDFromURL(src.URL)
+			if id == 0 {
+				return 0, fmt.Errorf("no question id in %s", src.URL)
+			}
+			questions = append(questions, stackexchange.Question{ID: id})
+		} else {
+			fmt.Printf("[live] stackexchange %s (up to %d question(s))\n", site, perSource)
+			found, err := se.ListQuestions(ctx, site, perSource)
+			if err != nil {
+				return 0, err
+			}
+			questions = found
+		}
+		total := 0
+		for _, q := range questions {
+			if bg.stop("question") {
+				break
+			}
+			comments, post, err := se.FetchQuestion(ctx, site, q.ID)
+			if err != nil {
+				fmt.Printf("[live]   question %d skipped: %v\n", q.ID, err)
+				continue
+			}
+			n := enqueueComments(st, runID, "stackexchange",
+				stackexchange.QuestionURL(site, q.ID),
+				fmt.Sprintf("se-%s-%d", site, q.ID), comments, post, pp, maxPerThread)
+			bg.add(n)
+			fmt.Printf("[live]   enqueued %d kept item(s) (%s q%d)\n", n, site, q.ID)
+			total += n
+			sleep(delay)
+		}
+		// The quota is published on every response. Report it rather than
+		// discovering the ceiling by hitting it at request 301.
+		if se.QuotaRemaining > 0 {
+			fmt.Printf("[live]   stackexchange quota remaining today: %d\n", se.QuotaRemaining)
 		}
 		return total, nil
 
@@ -640,6 +687,22 @@ func hackernewsIDFromURL(raw string) string {
 		return strings.TrimSpace(rest)
 	}
 	return ""
+}
+
+// stackexchangeIDFromURL pulls the question id out of /questions/<id>/...
+func stackexchangeIDFromURL(raw string) int64 {
+	parts := strings.Split(strings.Trim(raw, "/"), "/")
+	for i, p := range parts {
+		if p != "questions" {
+			continue
+		}
+		for _, tail := range parts[i+1:] {
+			if n, err := strconv.ParseInt(tail, 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // discourseTopicFromURL parses /t/<slug>/<id> (slug optional).

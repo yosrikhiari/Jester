@@ -32,6 +32,10 @@ PLATFORM_KINDS = {
     "discourse": ("forum", "topic"),
     "youtube": ("channel", "video"),
     "tiktok": ("profile", "video", "hashtag"),
+    # 170+ sites of "this does not work and here is exactly how", behind a
+    # documented keyless API. `site` walks recently-active questions;
+    # `question` pins one.
+    "stackexchange": ("site", "question"),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -46,6 +50,8 @@ SUPPORTED_KINDS = frozenset({
     ("discourse", "topic"),
     ("youtube", "channel"),
     ("youtube", "video"),
+    ("stackexchange", "site"),
+    ("stackexchange", "question"),
 })
 
 PLATFORMS = tuple(PLATFORM_KINDS)
@@ -113,6 +119,14 @@ def _detect_platform(raw: str) -> str:
         return "tiktok"
     if "news.ycombinator.com" in low:
         return "hackernews"
+    if (
+        "stackexchange.com" in low
+        or "stackoverflow.com" in low
+        or "serverfault.com" in low
+        or "superuser.com" in low
+        or "askubuntu.com" in low
+    ):
+        return "stackexchange"
     # Discourse is NOT auto-detected from a bare host: it runs on arbitrary
     # domains, so guessing would claim every unknown URL. Pick it explicitly.
     raise SourceError(
@@ -259,12 +273,56 @@ def _parse_discourse(raw: str):
     )
 
 
+_RE_SE_QUESTION = re.compile(
+    r"^https?://([A-Za-z0-9.\-]+)/questions/(\d+)", re.I
+)
+#: Sites that live on their own domain rather than *.stackexchange.com.
+_SE_OWN_DOMAIN = ("stackoverflow", "serverfault", "superuser", "askubuntu", "mathoverflow")
+
+
+def _se_host(slug: str) -> str:
+    return f"{slug}.com" if slug in _SE_OWN_DOMAIN else f"{slug}.stackexchange.com"
+
+
+def _se_slug(host: str) -> str:
+    host = host.lower().strip()
+    if host.endswith(".stackexchange.com"):
+        return host[: -len(".stackexchange.com")]
+    return host.split(".")[0]
+
+
+def _parse_stackexchange(raw: str):
+    """A whole site to walk, or one question to pin."""
+    m = _RE_SE_QUESTION.match(raw.strip())
+    if m:
+        slug = _se_slug(m.group(1))
+        qid = m.group(2)
+        return (
+            "question",
+            f"https://{_se_host(slug)}/questions/{qid}",
+            f"{slugify(slug)}-{qid}",
+        )
+    text = raw.strip().lower()
+    text = text.replace("https://", "").replace("http://", "").strip("/")
+    host = text.split("/")[0]
+    if not host:
+        raise SourceError("a Stack Exchange source needs a site, e.g. 'serverfault'")
+    slug = _se_slug(host) if "." in host else host
+    if not re.fullmatch(r"[a-z0-9\-]{2,40}", slug):
+        raise SourceError(
+            "%r is not a Stack Exchange site — try 'serverfault', "
+            "'unix.stackexchange.com', or a /questions/<id> link" % raw
+        )
+    return "site", f"https://{_se_host(slug)}", slugify(slug)
+
+
 _PARSERS = {
     "reddit": _parse_reddit,
     "hackernews": _parse_hackernews,
     "discourse": _parse_discourse,
     "youtube": _parse_youtube,
     "tiktok": _parse_tiktok,
+    "stackexchange": _parse_stackexchange,
 }
 
 
