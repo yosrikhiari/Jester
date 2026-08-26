@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -284,6 +285,36 @@ type topicResponse struct {
 	} `json:"post_stream"`
 }
 
+// quoteBlock matches Discourse's rendered quote: an <aside class="quote ...">
+// wrapping the quoted user's avatar, name and words.
+//
+// (?is) so it spans newlines and ignores case; non-greedy so two quotes in one
+// post do not swallow everything between them.
+// `quote` as a whole space-delimited class token, NOT a substring:
+// Discourse renders class="quote" and class="quote no-group", while
+// `blockquote` also contains the letters "quote" and must not match.
+var quoteBlock = regexp.MustCompile(
+	`(?is)<aside[^>]*class="(?:[^"]*\s)?quote(?:\s[^"]*)?".*?</aside>`)
+
+// bbcodeQuote is the older markup that still appears in imported posts.
+var bbcodeQuote = regexp.MustCompile(`(?is)\[quote[^\]]*\].*?\[/quote\]`)
+
+// stripQuotes removes text this person did not write.
+//
+// Discourse discussions quote each other constantly. Left in, the quoted words
+// are embedded as though the quoting poster had said them — so a thread agrees
+// with itself and a cluster forms out of one person's sentence repeated by
+// three others. Observed directly: a live cluster whose three "independent"
+// members were one original post and two people quoting it.
+//
+// Attribution goes with the quote. "Falco: we should do a splash contest" is
+// not this poster's complaint, and the original is already captured as its own
+// post — keeping both double-counts one opinion.
+func stripQuotes(cooked string) string {
+	out := quoteBlock.ReplaceAllString(cooked, " ")
+	return bbcodeQuote.ReplaceAllString(out, " ")
+}
+
 // likeCount reads the like tally out of actions_summary, and reports whether
 // one was published at all. A payload carrying no summary is not a post that
 // nobody liked.
@@ -315,8 +346,9 @@ func (c *Client) FetchPosts(ctx context.Context, base string, topicID int64) ([]
 	}
 	out := make([]FetchedComment, 0, len(resp.PostStream.Posts))
 	for _, p := range resp.PostStream.Posts {
-		text := htmltext.Plain(p.Cooked)
+		text := htmltext.Plain(stripQuotes(p.Cooked))
 		if text == "" {
+			// A post that was ONLY a quote has nothing of its own to say.
 			continue
 		}
 		author := p.Username
@@ -424,7 +456,7 @@ func topicPost(base string, t topicResponse) *reddit.FetchedPost {
 	if len(t.PostStream.Posts) > 0 {
 		op := t.PostStream.Posts[0]
 		p.Author = op.Username
-		p.Body = htmltext.Plain(op.Cooked)
+		p.Body = htmltext.Plain(stripQuotes(op.Cooked))
 		if p.Author != "" {
 			p.AuthorURL = base + "/u/" + p.Author
 		}

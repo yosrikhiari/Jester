@@ -876,6 +876,53 @@ def cmd_cluster(args):
     return res
 
 
+def cmd_backup(args):
+    """Snapshot the archive, verify the snapshot, prune old ones.
+
+    Verification is not optional here: a backup nobody has opened is a hope,
+    not a backup, and a mid-write filesystem copy produces a file that opens
+    fine and is corrupt.
+    """
+    from jester.backup import backup_db, prune_backups, verify_backup
+
+    if args.verify:
+        got = verify_backup(args.verify)
+        if not got["ok"]:
+            print(f"backup UNUSABLE: {got['error']}")
+            sys.exit(1)
+        counts = ", ".join(f"{k}={v}" for k, v in got["counts"].items())
+        print(f"backup OK (integrity {got['integrity']}) — {counts}")
+        return got
+
+    res = backup_db(args.db, args.out or "", compress=not args.no_compress)
+    if not res["ok"]:
+        print(f"backup failed: {res['error']}")
+        sys.exit(1)
+    ratio = ""
+    if res.get("source_bytes"):
+        ratio = f" ({res['bytes'] * 100 // res['source_bytes']}% of source)"
+    print(f"wrote {res['path']} — {res['bytes']:,} bytes{ratio}")
+
+    check = verify_backup(res["path"])
+    if not check["ok"]:
+        # Written but unreadable is worse than not written: it looks like
+        # protection and is not.
+        print(f"  VERIFY FAILED: {check['error']}")
+        sys.exit(1)
+    counts = ", ".join(f"{k}={v}" for k, v in check["counts"].items())
+    print(f"  verified: integrity {check['integrity']}, {counts}")
+    print(f"  note: {res['detail']}")
+
+    removed = prune_backups(
+        args.out or str(Path(args.db).parent / "backups"),
+        keep=args.keep,
+        stem=Path(args.db).stem,
+    )
+    if removed:
+        print(f"  pruned {len(removed)} old backup(s), keeping {args.keep}")
+    return res
+
+
 def cmd_schedule(args):
     """D-2: register / inspect / remove the nightly job with the host scheduler."""
     if args.action == "status":
@@ -1481,6 +1528,23 @@ def main(argv=None):
         help="cluster only the N newest nuggets (default: the whole archive)",
     )
     cl.set_defaults(func=cmd_cluster)
+
+    bk = sub.add_parser(
+        "backup", help="snapshot the archive and verify the snapshot"
+    )
+    bk.add_argument("--db", default="data/jester.db")
+    bk.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    bk.add_argument("--out", default=None, help="directory (default: data/backups)")
+    bk.add_argument(
+        "--keep", type=int, default=14,
+        help="how many backups to retain (default 14)",
+    )
+    bk.add_argument("--no-compress", action="store_true")
+    bk.add_argument(
+        "--verify", default=None, metavar="PATH",
+        help="verify an existing backup instead of taking a new one",
+    )
+    bk.set_defaults(func=cmd_backup)
 
     rs_ = sub.add_parser("resynth")
     rs_.add_argument("--db", default="data/jester.db")

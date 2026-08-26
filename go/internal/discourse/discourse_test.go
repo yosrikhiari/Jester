@@ -2,6 +2,7 @@ package discourse
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -221,5 +222,130 @@ func TestALaterPageFailingKeepsWhatEarlierPagesYielded(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("want the 2 topics page 0 gave us, got %d", len(got))
+	}
+}
+
+// Discourse discussions quote each other constantly. Left in, the quoted words
+// are embedded as though the quoting poster had said them — so a thread agrees
+// with itself and a cluster forms from one sentence repeated by three people.
+// Observed live: a cluster whose three "independent" members were one original
+// post and two others quoting it.
+func TestQuotedTextIsNotAttributedToTheQuoter(t *testing.T) {
+	cooked := `<aside class="quote no-group" data-username="Jagster" data-post="2">` +
+		`<div class="title">Jagster:</div>` +
+		`<blockquote><p>You will not need a persistent last_changed.</p></blockquote>` +
+		`</aside>` +
+		`<p>I disagree, my dashboards break without it.</p>`
+	c := fixtureClient(t, map[string]string{
+		"/t/2.json": `{"id":2,"post_stream":{"posts":[` +
+			`{"id":10,"cooked":` + jsonString(cooked) + `,"username":"a","score":5}]}}`,
+	})
+	got, _, err := c.FetchPosts(context.Background(), "https://forum.test", 2)
+	if err != nil {
+		t.Fatalf("FetchPosts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 post, got %d", len(got))
+	}
+	body := got[0].Body
+	if !strings.Contains(body, "dashboards break") {
+		t.Errorf("the poster's own words were lost: %q", body)
+	}
+	if strings.Contains(body, "persistent last_changed") {
+		t.Errorf("quoted text survived and will be embedded as this poster's: %q", body)
+	}
+	if strings.Contains(body, "Jagster") {
+		t.Errorf("quote attribution survived: %q", body)
+	}
+}
+
+func TestAPostThatIsOnlyAQuoteIsDropped(t *testing.T) {
+	cooked := `<aside class="quote" data-username="x"><blockquote><p>agreed</p></blockquote></aside>`
+	c := fixtureClient(t, map[string]string{
+		"/t/2.json": `{"id":2,"post_stream":{"posts":[` +
+			`{"id":10,"cooked":` + jsonString(cooked) + `,"username":"a"}]}}`,
+	})
+	got, _, err := c.FetchPosts(context.Background(), "https://forum.test", 2)
+	if err != nil {
+		t.Fatalf("FetchPosts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a post with nothing of its own to say must be dropped, got %+v", got)
+	}
+}
+
+func TestTwoQuotesInOnePostDoNotSwallowTheMiddle(t *testing.T) {
+	// A greedy regex here would delete everything between the first <aside>
+	// and the last </aside>, taking the poster's reply with it.
+	cooked := `<aside class="quote"><blockquote>first quoted</blockquote></aside>` +
+		`<p>my actual point</p>` +
+		`<aside class="quote"><blockquote>second quoted</blockquote></aside>` +
+		`<p>and my conclusion</p>`
+	c := fixtureClient(t, map[string]string{
+		"/t/2.json": `{"id":2,"post_stream":{"posts":[` +
+			`{"id":10,"cooked":` + jsonString(cooked) + `,"username":"a"}]}}`,
+	})
+	got, _, _ := c.FetchPosts(context.Background(), "https://forum.test", 2)
+	if len(got) != 1 {
+		t.Fatalf("want 1 post, got %d", len(got))
+	}
+	for _, want := range []string{"my actual point", "and my conclusion"} {
+		if !strings.Contains(got[0].Body, want) {
+			t.Errorf("lost %q from between two quotes: %q", want, got[0].Body)
+		}
+	}
+	for _, unwanted := range []string{"first quoted", "second quoted"} {
+		if strings.Contains(got[0].Body, unwanted) {
+			t.Errorf("quote %q survived: %q", unwanted, got[0].Body)
+		}
+	}
+}
+
+func TestLegacyBBCodeQuotesAreStrippedToo(t *testing.T) {
+	cooked := `[quote="busman, post:11, topic:1010612"]you will not need this[/quote] but I do`
+	c := fixtureClient(t, map[string]string{
+		"/t/2.json": `{"id":2,"post_stream":{"posts":[` +
+			`{"id":10,"cooked":` + jsonString(cooked) + `,"username":"a"}]}}`,
+	})
+	got, _, _ := c.FetchPosts(context.Background(), "https://forum.test", 2)
+	if len(got) != 1 {
+		t.Fatalf("want 1 post, got %d", len(got))
+	}
+	if strings.Contains(got[0].Body, "you will not need this") {
+		t.Errorf("bbcode quote survived: %q", got[0].Body)
+	}
+	if !strings.Contains(got[0].Body, "but I do") {
+		t.Errorf("own words lost: %q", got[0].Body)
+	}
+}
+
+// jsonString quotes a string for embedding in a JSON fixture.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestStripQuotesDirectly(t *testing.T) {
+	in := `<aside class="quote"><blockquote><p>agreed</p></blockquote></aside>`
+	out := stripQuotes(in)
+	t.Logf("in  = %q", in)
+	t.Logf("out = %q", out)
+	if strings.Contains(out, "agreed") {
+		t.Errorf("stripQuotes did not strip: %q", out)
+	}
+}
+
+func TestBlockquoteIsNotMistakenForAQuoteAside(t *testing.T) {
+	// `blockquote` contains the letters "quote". A substring match here would
+	// delete an ordinary quoted-code or emphasis block that the poster wrote
+	// themselves — which is why the class is matched as a whole token.
+	in := `<aside class="blockquote-styling"><p>my own words</p></aside>`
+	if got := stripQuotes(in); !strings.Contains(got, "my own words") {
+		t.Errorf("a non-quote aside was stripped: %q", got)
+	}
+	// …and the real thing still goes.
+	real := `<aside class="quote no-group"><blockquote>theirs</blockquote></aside>`
+	if got := stripQuotes(real); strings.Contains(got, "theirs") {
+		t.Errorf("a real quote survived: %q", got)
 	}
 }

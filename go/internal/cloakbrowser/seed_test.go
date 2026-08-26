@@ -4,10 +4,10 @@ import "testing"
 
 func TestSeedForIsStableAndURLSafe(t *testing.T) {
 	cases := map[[2]string]string{
-		{"reddit", "selfhosted"}:      "jester-reddit-selfhosted",
-		{"reddit", "SelfHosted"}:      "jester-reddit-selfhosted",
-		{"youtube", "fosdem talks"}:   "jester-youtube-fosdem-talks",
-		{"tiktok", "@build/public"}:   "jester-tiktok-build-public",
+		{"reddit", "selfhosted"}:    "jester-reddit-selfhosted",
+		{"reddit", "SelfHosted"}:    "jester-reddit-selfhosted",
+		{"youtube", "fosdem talks"}: "jester-youtube-fosdem-talks",
+		{"tiktok", "@build/public"}: "jester-tiktok-build-public",
 	}
 	for in, want := range cases {
 		if got := SeedFor(in[0], in[1]); got != want {
