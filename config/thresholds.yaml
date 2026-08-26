@@ -12,7 +12,27 @@ prefilter_max_mentions: 3
 prefilter_min_words: 6
 request_delay_ms: 2000
 # How many threads/videos the live worker walks per source in one run.
+# The fallback for any platform not listed below.
 max_threads_per_source: 3
+# Per-platform depth. One number cannot serve all four adapters:
+#
+#   hackernews  a keyless, unmetered, documented API that returns 1,000
+#               stories in ONE request. Depth here is free and carries no
+#               ToS question. 3 was leaving almost all of it unused.
+#   discourse   public JSON API, 30 topics per page, paginated. Cheap, but
+#               each page is a request, so this is paced.
+#   reddit      browser scrape through cloakserve: bot detection, one
+#               concurrent session, no licence key. The only platform where
+#               more depth is a real risk to the identity.
+#   youtube     same, plus lazy-loading makes each video slow to read.
+#
+# Raising the bottom two is the one change here that could get a fingerprint
+# flagged; they stay where they were.
+max_threads_per_platform:
+  hackernews: 40
+  discourse: 25
+  reddit: 3
+  youtube: 2
 # Skip threads too quiet to be worth a fetch. Only the API-backed adapters
 # (Hacker News, Discourse) can apply this before fetching.
 min_comments_per_thread: 8
@@ -26,6 +46,7 @@ export_rows_per_file: 100000
 # M2.3/D-1 competitor web check. none = keep M2.2 behaviour (competition
 # rides on the model prior); fake = deterministic offline; duckduckgo = live.
 competitor_search_provider: none
+embedding_provider: ollama
 embedding_model: nomic-embed-text
 synthesizer_provider: groq
 critic_provider: groq

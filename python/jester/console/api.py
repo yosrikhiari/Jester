@@ -587,8 +587,6 @@ class ConsoleAPI:
             "env": {
                 "JESTER_QDRANT_URL": os.environ.get("JESTER_QDRANT_URL", ""),
                 "JESTER_ORIGIN": os.environ.get("JESTER_ORIGIN", "manual"),
-                "JESTER_GO_WORKER": os.environ.get("JESTER_GO_WORKER", ""),
-                "JESTER_WORKER_LIVE": os.environ.get("JESTER_WORKER_LIVE", ""),
                 "JESTER_NOTIFY_CMD_set": bool(os.environ.get("JESTER_NOTIFY_CMD")),
             },
         }
@@ -779,12 +777,85 @@ class ConsoleAPI:
             "ok": True,
             "ollama": {"up": ollama_up, "models": ollama_models},
             "qdrant_6333": tcp("127.0.0.1", 6333),
+            # A port check says a container is listening, not that anything
+            # talks to it. For an entire day this panel showed Qdrant green
+            # while every write went to a 32-dimension local file, because
+            # JESTER_QDRANT_URL was unset. Report what the app is CONFIGURED
+            # to use, and how wide the vectors in it actually are.
+            "vectors": self._vector_state(),
             "cloakserve_9222": cloak_up,
             "worker_go_available": bool(go_bin),
             "go_bin": go_bin or "",
             # Live ingestion needs both halves; the UI gates its button on this.
             "can_ingest_live": bool(go_bin) and cloak_up,
         }
+
+    def _vector_state(self):
+        """Where vectors actually go, and whether that store is usable.
+
+        `mode` is the honest headline: "server" only when JESTER_QDRANT_URL is
+        set AND answers; "local file" otherwise, which is a working but
+        single-process store that no other component shares.
+        """
+        url = os.environ.get("JESTER_QDRANT_URL") or ""
+        state = {
+            "mode": "server" if url else "local file",
+            "url": url,
+            "collection": "nuggets",
+            "points": None,
+            "dim": None,
+            "embedding_provider": "",
+            "embedding_dim": None,
+            "usable": False,
+            "detail": "",
+        }
+        try:
+            t = self._cfg().thresholds
+            state["embedding_provider"] = getattr(t, "embedding_provider", "")
+            from jester.embed import select_embedding
+
+            state["embedding_dim"] = int(getattr(select_embedding(t), "dim", 0))
+        except Exception as exc:  # noqa: BLE001
+            state["detail"] = f"cannot read embedding config: {exc}"
+            return state
+
+        if not url:
+            state["detail"] = (
+                "JESTER_QDRANT_URL is unset, so vectors go to a per-database "
+                "file that no other process can share"
+            )
+            return state
+        try:
+            from qdrant_client import QdrantClient
+
+            client = QdrantClient(url=url, timeout=5)
+            if not client.collection_exists("nuggets"):
+                state["detail"] = "server reachable; nuggets collection not created yet"
+                state["usable"] = True
+                return state
+            info = client.get_collection("nuggets")
+            state["points"] = int(info.points_count or 0)
+            state["dim"] = int(info.config.params.vectors.size)
+        except Exception as exc:  # noqa: BLE001
+            state["detail"] = f"unreachable: {exc}"
+            return state
+
+        # The failure this exists to catch: a collection built for one vector
+        # width while the configured embedder produces another. It reads as
+        # healthy right up until the first upsert.
+        if state["dim"] and state["embedding_dim"] and state["dim"] != state["embedding_dim"]:
+            state["detail"] = (
+                f"collection is {state['dim']}-dim but {state['embedding_provider']} "
+                f"produces {state['embedding_dim']} — delete the store and re-embed"
+            )
+            return state
+        state["usable"] = True
+        if (state["embedding_provider"] or "").lower() == "fake":
+            state["detail"] = (
+                "embedding_provider is `fake`: these vectors are SHA-256 hashes "
+                "and carry no meaning"
+            )
+        return state
 
     # ---- actions ----------------------------------------------------------
 

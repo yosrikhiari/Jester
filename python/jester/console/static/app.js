@@ -40,6 +40,24 @@ const tag = (tone, label, extra = '') =>
 
 const pill = (status, extra = '') => tag(status || 'neutral', status || 'unknown', extra);
 
+/** Where vectors actually go, and whether that store can be written to. */
+function vectorPill(v) {
+  if (!v) return '';
+  const bits = [v.mode === 'server' ? 'Qdrant server' : 'Qdrant local file'];
+  if (v.points !== null && v.points !== undefined) bits.push(`${v.points} pts`);
+  if (v.dim) bits.push(`${v.dim}d`);
+  const tone = !v.usable ? 'off'
+    : (v.embedding_provider || '').toLowerCase() === 'fake' ? 'warn'
+    : 'done';
+  const pillEl = tag(tone, bits.join(' · '), 'pill--sm');
+  // The detail is the whole point when something is wrong: a width mismatch
+  // or a hash-vector store reads as healthy until the next write.
+  return v.detail
+    ? `<span title="${esc(v.detail)}">${pillEl}</span>`
+    : pillEl;
+}
+
+
 const emptyRow = (cols, text) =>
   `<tr><td colspan="${cols}"><div class="empty">${esc(text)}</div></td></tr>`;
 
@@ -239,10 +257,14 @@ async function loadOverview() {
   if (infra.ok !== false) {
     $('#infra').innerHTML = [
       [infra.ollama.up, infra.ollama.up ? `Ollama · ${infra.ollama.models.length} model(s)` : 'Ollama down'],
-      [infra.qdrant_6333, 'Qdrant :6333'],
       [infra.cloakserve_9222, 'cloakserve :9222'],
       [infra.worker_go_available, 'Go worker'],
-    ].map(([up, label]) => tag(up ? 'done' : 'off', label, 'pill--sm')).join(' ');
+    ].map(([up, label]) => tag(up ? 'done' : 'off', label, 'pill--sm')).join(' ')
+    // Vectors get their own pill, because "the port is open" and "the app
+    // writes there" are different claims and only the second one matters.
+    // For a whole day this panel was green while every write went to a
+    // 32-dimension local file.
+    + ' ' + vectorPill(infra.vectors);
     $('#btn-live-models').classList.toggle('hidden',
       !(infra.ollama.up && infra.ollama.models.some(m => /qwen|mistral|phi|llama|gemma/i.test(m))));
     $('#btn-ingest-live').classList.toggle('hidden', !infra.can_ingest_live);

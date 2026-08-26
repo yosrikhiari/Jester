@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -1069,13 +1070,32 @@ def cmd_reembed(args):
         print(f"refusing reembed: {running} run(s) still active")
         sys.exit(1)
 
-    rows = pending_reembeds(db)
+    # --all re-embeds the WHOLE archive, not just the failure backlog. Needed
+    # whenever the embedding backend changes: vectors written by a different
+    # model are not comparable with new ones, and a backlog drain would leave
+    # the archive half in one space and half in another — which reads as a
+    # working store and returns nonsense neighbours.
+    if getattr(args, "all", False):
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            "SELECT unique_key, raw_text FROM nuggets ORDER BY id"
+        ).fetchall()
+        print(f"re-embedding all {len(rows)} nugget(s)")
+    else:
+        rows = pending_reembeds(db)
     if not rows:
         print("reembed OK: backlog empty")
         return
 
     cfg = load_config(args.config)
     vector = _vector_for(cfg, args.db)
+    # Which backend is about to write, said out loud: re-embedding with the
+    # wrong one is silent and only shows up later as nonsense neighbours.
+    # getattr throughout — a test double is a vector store without an embedder.
+    _emb = getattr(vector, "embed", None)
+    if _emb is not None:
+        print(f"embedding backend: {type(_emb).__name__} "
+              f"(dim {getattr(_emb, 'dim', '?')})")
     ok = failed = 0
     for row in rows:
         key = row["unique_key"]
@@ -1379,6 +1399,13 @@ def main(argv=None):
     re_.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     re_.add_argument(
         "--pending", action="store_true", help="retry all needs_reembed nuggets"
+    )
+    re_.add_argument(
+        "--all",
+        action="store_true",
+        help="re-embed EVERY nugget, not just the failure backlog — use after "
+             "changing embedding_provider, since vectors from two models are "
+             "not comparable",
     )
     re_.set_defaults(func=cmd_reembed)
 

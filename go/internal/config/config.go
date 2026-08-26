@@ -21,10 +21,10 @@ const SchemaVersion = 1
 
 // Config is the merged runtime configuration.
 type Config struct {
-	Sources   Sources          `yaml:"sources"`
-	Thresholds Thresholds       `yaml:"thresholds"`
-	Scraper   Scraper           `yaml:"scraper"`
-	DataDir   string            `yaml:"data_dir"`
+	Sources    Sources    `yaml:"sources"`
+	Thresholds Thresholds `yaml:"thresholds"`
+	Scraper    Scraper    `yaml:"scraper"`
+	DataDir    string     `yaml:"data_dir"`
 }
 
 // Source describes one curated channel to ingest.
@@ -102,12 +102,22 @@ type Thresholds struct {
 	PrefilterMinWords    int     `yaml:"prefilter_min_words"`
 	RequestDelayMs       int64   `yaml:"request_delay_ms"`
 	MaxThreadsPerSource  int     `yaml:"max_threads_per_source"`
+	// Per-platform override of MaxThreadsPerSource. One number cannot serve
+	// all four adapters: Hacker News answers 1,000 stories from a keyless,
+	// unmetered, documented API in a single request, while Reddit is a
+	// bot-detected browser scrape running on one concurrent session with no
+	// licence key. Holding HN at the value that keeps Reddit safe throws away
+	// the cheapest depth in the system; raising Reddit to HN's is the one
+	// change here that could actually get an identity flagged.
+	//
+	// Absent platform => MaxThreadsPerSource. Absent map => today's behaviour.
+	MaxThreadsPerPlatform map[string]int `yaml:"max_threads_per_platform"`
 	// MinCommentsPerThread skips threads too quiet to be worth a fetch. Only
 	// the API-backed adapters (Hacker News, Discourse) can filter on it before
 	// fetching, because only they get a comment count in the listing.
-	MinCommentsPerThread int     `yaml:"min_comments_per_thread"`
-	EmbeddingModel       string  `yaml:"embedding_model"`
-	Models               Models  `yaml:"models"`
+	MinCommentsPerThread int    `yaml:"min_comments_per_thread"`
+	EmbeddingModel       string `yaml:"embedding_model"`
+	Models               Models `yaml:"models"`
 }
 
 // Models names the LLM roles used by the Python agent pipeline.
@@ -145,8 +155,8 @@ type Scraper struct {
 	WarmupNavigations *int `yaml:"warmup_navigations"`
 }
 
-//: Warm-ups when the key is absent. One extra navigation is what the live
-//: calibration showed clears Reddit's first-request challenge.
+// : Warm-ups when the key is absent. One extra navigation is what the live
+// : calibration showed clears Reddit's first-request challenge.
 const defaultWarmupNavigations = 1
 
 // Warmups is the resolved warm-up count: the configured value, or the default
@@ -270,6 +280,18 @@ func (t *Thresholds) Validate() error {
 		t.MaxThreadsPerSource = int(bounds["max_threads_per_source"].def)
 	}
 	checks["max_threads_per_source"] = float64(t.MaxThreadsPerSource)
+	// Every override is bounded by the same rule as the scalar it overrides,
+	// so a typo cannot smuggle an unbounded crawl past validation. Checked
+	// here rather than added to `checks`, because the loop below skips keys it
+	// does not recognise — a dotted key would have validated vacuously.
+	b := bounds["max_threads_per_source"]
+	for platform, n := range t.MaxThreadsPerPlatform {
+		if float64(n) < b.min || float64(n) > b.max {
+			return fmt.Errorf(
+				"max_threads_per_platform.%s=%d out of range [%v,%v]",
+				platform, n, b.min, b.max)
+		}
+	}
 	checks["min_comments_per_thread"] = float64(t.MinCommentsPerThread)
 	for k, v := range checks {
 		b, ok := bounds[k]
@@ -287,6 +309,19 @@ func (t *Thresholds) Validate() error {
 		return fmt.Errorf("thresholds.embedding_model must be set")
 	}
 	return nil
+}
+
+// DepthFor is how many threads/videos/topics to walk for one platform in one
+// run. Falls back to MaxThreadsPerSource when the platform has no override,
+// so a config written before this field existed behaves exactly as it did.
+func (t *Thresholds) DepthFor(platform string) int {
+	if n, ok := t.MaxThreadsPerPlatform[platform]; ok && n > 0 {
+		return n
+	}
+	if t.MaxThreadsPerSource > 0 {
+		return t.MaxThreadsPerSource
+	}
+	return int(bounds["max_threads_per_source"].def)
 }
 
 // DefaultThresholds returns a Thresholds populated with documented defaults.

@@ -284,6 +284,13 @@ def _schema_columns():
     return out
 
 
+#: Tables that are DERIVED and regenerated wholesale. When their shape
+#: changes, reconcile_schema must drop them rather than preserving a renamed
+#: copy: keeping `runs` history is the point of that mechanism, but a stale
+#: `clusters_legacy` is pure cruft, and one accumulates on every schema change.
+DERIVED_TABLES = frozenset({"clusters", "cluster_members"})
+
+
 def reconcile_schema(db: sqlite3.Connection):
     """Bring tables written by an older build up to BASE_SCHEMA.
 
@@ -313,10 +320,11 @@ def reconcile_schema(db: sqlite3.Connection):
         if not missing:
             continue
         rows = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        if rows == 0:
+        if rows == 0 or table in DERIVED_TABLES:
             db.execute(f"DROP TABLE {table}")
+            why = "was empty" if rows == 0 else f"derived, {rows} row(s) regenerable"
             actions.append(
-                f"{table}: recreated (was empty, missing {', '.join(missing)})"
+                f"{table}: recreated ({why}, missing {', '.join(missing)})"
             )
         else:
             db.execute(f"DROP TABLE IF EXISTS {table}_legacy")
@@ -325,6 +333,17 @@ def reconcile_schema(db: sqlite3.Connection):
                 f"{table}: {rows} row(s) kept as {table}_legacy "
                 f"(missing {', '.join(missing)})"
             )
+    # Sweep any legacy copy of a derived table left by an earlier build. These
+    # were never worth keeping — `clusters` is rebuilt from scratch on every
+    # pass — and one appears on each schema change until something removes it.
+    for table in DERIVED_TABLES:
+        stale = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (f"{table}_legacy",),
+        ).fetchone()
+        if stale:
+            db.execute(f"DROP TABLE {table}_legacy")
+            actions.append(f"{table}_legacy: dropped (derived data, regenerable)")
     if actions:
         db.commit()
     return actions

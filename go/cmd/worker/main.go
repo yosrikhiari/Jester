@@ -138,10 +138,8 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 	sources []config.Source, maxComments, maxPosts int,
 ) {
 	delay := time.Duration(cfg.Thresholds.RequestDelayMs) * time.Millisecond
-	perSource := cfg.Thresholds.MaxThreadsPerSource
-	if perSource < 1 {
-		perSource = 1
-	}
+	// Depth is resolved PER SOURCE now, inside the loop, because it depends on
+	// the platform. See Thresholds.DepthFor.
 	bg := &budget{comments: maxComments, posts: maxPosts}
 	// Least-recently-fetched first. A run budget spent in sources.yaml order
 	// always lands on the same head of the list: with -max-posts 2 the
@@ -166,6 +164,10 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 			continue
 		}
 		kind := src.ResolvedKind()
+		perSource := cfg.Thresholds.DepthFor(src.Platform)
+		if perSource < 1 {
+			perSource = 1
+		}
 
 		ctx := context.Background()
 		var cancel func()
@@ -483,6 +485,9 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "discourse":
 		dc := discourse.New()
+		// Paginated listing walks make several requests; pace them like every
+		// other outbound call rather than looping as fast as the API answers.
+		dc.Delay = delay
 		if cfg.Thresholds.MinCommentsPerThread > 0 {
 			// Same floor as Hacker News: both adapters get a count in the
 			// listing, so both can skip a quiet thread before fetching it.

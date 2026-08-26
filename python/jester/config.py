@@ -100,6 +100,12 @@ class Thresholds:
     # M1.1 live ingestion: how many threads/videos the worker walks per source
     # in one run. 1 keeps the original single-thread behaviour.
     max_threads_per_source: int = 1
+    #: Per-platform override of max_threads_per_source. One number cannot
+    #: serve all four adapters — Hacker News answers 1,000 stories from a
+    #: keyless unmetered API in one request, while Reddit is a bot-detected
+    #: browser scrape on a single session. Absent platform falls back to the
+    #: scalar above; absent map reproduces the old behaviour exactly.
+    max_threads_per_platform: dict = field(default_factory=dict)
     # Go-only in effect (the API-backed adapters are the only ones that get a
     # comment count before fetching), but it lives in the shared thresholds.yaml
     # so the console must know it — otherwise the Config page silently omits a
@@ -152,6 +158,7 @@ class Thresholds:
         "critic_web_daily_budget": int,
         "competitor_search_provider": str,
         "max_threads_per_source": int,
+        "max_threads_per_platform": dict,
         "min_comments_per_thread": int,
         "export_after_run": _as_bool,
         "export_rows_per_file": int,
@@ -164,6 +171,18 @@ class Thresholds:
     }
 
     def validate(self) -> "Thresholds":
+        depth_lo, depth_hi = 1, 200
+        for platform, n in (self.max_threads_per_platform or {}).items():
+            if not isinstance(n, int) or isinstance(n, bool):
+                raise ValueError(
+                    f"max_threads_per_platform.{platform} must be a whole "
+                    f"number, got {n!r}"
+                )
+            if not (depth_lo <= n <= depth_hi):
+                raise ValueError(
+                    f"max_threads_per_platform.{platform}={n} out of range "
+                    f"[{depth_lo},{depth_hi}]"
+                )
         for key, (lo, hi) in self._RANGES.items():
             v = getattr(self, key)
             if not (lo <= v <= hi):

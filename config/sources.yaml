@@ -127,3 +127,39 @@ sources:
   kind: subreddit
   url: https://www.reddit.com/r/rabbitmq/
   enabled: true
+- platform: hackernews
+  name: hn-show
+  kind: feed
+  url: https://news.ycombinator.com/show
+  enabled: true
+  notes: Show HN - people shipping things, and what broke on the way
+- platform: hackernews
+  name: hn-front
+  kind: feed
+  url: https://news.ycombinator.com/news
+  enabled: true
+  notes: front page - broader than Ask HN, catches pain in comments
+- platform: discourse
+  name: forum-rclone-org
+  kind: forum
+  url: https://forum.rclone.org
+  enabled: true
+  notes: sync/backup tooling - dense, specific operational pain
+- platform: discourse
+  name: discuss-python-org
+  kind: forum
+  url: https://discuss.python.org
+  enabled: true
+  notes: language + packaging friction from practitioners
+- platform: discourse
+  name: forum-obsidian-md
+  kind: forum
+  url: https://forum.obsidian.md
+  enabled: true
+  notes: knowledge tooling - heavy workflow-workaround culture
+- platform: discourse
+  name: community-grafana-com
+  kind: forum
+  url: https://community.grafana.com
+  enabled: true
+  notes: 'observability: people describing what they cannot see'

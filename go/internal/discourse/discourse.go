@@ -35,6 +35,9 @@ type Client struct {
 	Get Getter
 	// MinPosts skips topics with too little discussion to be worth a fetch.
 	MinPosts int
+	// Delay paces multi-page listing walks. Zero in tests, the configured
+	// request delay in production.
+	Delay time.Duration
 }
 
 func New() *Client { return &Client{Get: httpGet, MinPosts: 3} }
@@ -104,6 +107,10 @@ type latestResponse struct {
 			PostsCount int    `json:"posts_count"`
 			Pinned     bool   `json:"pinned"`
 		} `json:"topics"`
+		// Present while more pages exist; absent on the last one. Cheaper and
+		// more truthful than inferring the end from a short page, which also
+		// happens when a page is all pinned topics.
+		MoreTopicsURL string `json:"more_topics_url"`
 	} `json:"topic_list"`
 }
 
@@ -113,7 +120,23 @@ type latestResponse struct {
 // platform rather than being recorded as zero.
 const LikeActionID = 2
 
-// ListTopics returns up to `limit` recent topics with enough discussion.
+// : Discourse serves /latest.json 30 topics at a time and advertises the next
+// : page in `more_topics_url`. Reading one page and stopping capped this
+// : adapter at 18 qualifying topics on meta.discourse.org — measured, and
+// : silent: asking for 100 or 300 returned the same 18.
+const topicsPerPage = 30
+
+// : Ceiling on pages walked in one call, so a `limit` set far beyond what a
+// : forum holds cannot turn into an unbounded crawl. 34 pages ~ 1,000 topics,
+// : which is past any sane per-run depth.
+const maxTopicPages = 34
+
+// ListTopics returns up to `limit` recent topics with enough discussion,
+// paginating until it has them or the forum runs out.
+//
+// Pacing between pages is the caller's `Delay` (0 for tests): this is a public
+// API being read as intended, but reading it as fast as the loop can go is
+// still rude, and Discourse rate-limits anonymous clients.
 func (c *Client) ListTopics(ctx context.Context, base string, limit int) ([]Topic, error) {
 	base = BaseURL(base)
 	if base == "" {
@@ -122,24 +145,75 @@ func (c *Client) ListTopics(ctx context.Context, base string, limit int) ([]Topi
 	if limit < 1 {
 		limit = 1
 	}
-	// no_definitions drops the pinned "welcome"/"how to ask" boilerplate that
-	// every forum pins and nobody is describing a problem in.
-	body, err := c.get(ctx, base+"/latest.json?no_definitions=true")
-	if err != nil {
-		return nil, fmt.Errorf("discourse latest: %w", err)
-	}
-	var resp latestResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("discourse latest decode: %w", err)
-	}
 	out := make([]Topic, 0, limit)
-	for _, t := range resp.TopicList.Topics {
-		if t.ID == 0 || t.Pinned || t.PostsCount < c.MinPosts {
-			continue
+	seen := make(map[int64]bool, limit)
+
+	// Walk until we have `limit`, the forum runs out, or a hard page ceiling.
+	//
+	// Deliberately NOT a page budget computed from `limit`: that assumes
+	// almost every topic qualifies, and on a quiet forum most are filtered by
+	// MinPosts, so the walk stopped short while pages remained. The
+	// qualification rate is not knowable in advance — only walking reveals it.
+	//
+	// `barren` bounds the other direction: a forum with pages of nothing
+	// useful should be abandoned, not crawled to the ceiling.
+	const maxBarrenPages = 3
+	barren := 0
+
+	for page := 0; page < maxTopicPages; page++ {
+		// no_definitions drops the pinned "welcome"/"how to ask" boilerplate
+		// that every forum pins and nobody is describing a problem in.
+		u := fmt.Sprintf("%s/latest.json?no_definitions=true&page=%d", base, page)
+		body, err := c.get(ctx, u)
+		if err != nil {
+			// A later page failing is not a failed call: keep what the
+			// earlier ones yielded rather than losing the whole walk.
+			if len(out) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("discourse latest: %w", err)
 		}
-		out = append(out, Topic{ID: t.ID, Slug: t.Slug, Title: t.Title, Posts: t.PostsCount})
-		if len(out) == limit {
+		var resp latestResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			if len(out) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("discourse latest decode: %w", err)
+		}
+		if len(resp.TopicList.Topics) == 0 {
+			break // ran off the end of the forum
+		}
+		before := len(out)
+		for _, t := range resp.TopicList.Topics {
+			if t.ID == 0 || t.Pinned || t.PostsCount < c.MinPosts || seen[t.ID] {
+				continue
+			}
+			seen[t.ID] = true
+			out = append(out, Topic{
+				ID: t.ID, Slug: t.Slug, Title: t.Title, Posts: t.PostsCount,
+			})
+			if len(out) == limit {
+				return out, nil
+			}
+		}
+		if len(out) == before {
+			barren++
+			if barren >= maxBarrenPages {
+				break
+			}
+		} else {
+			barren = 0
+		}
+		// The forum told us there is no next page.
+		if resp.TopicList.MoreTopicsURL == "" {
 			break
+		}
+		if c.Delay > 0 {
+			select {
+			case <-time.After(c.Delay):
+			case <-ctx.Done():
+				return out, ctx.Err()
+			}
 		}
 	}
 	if len(out) == 0 {

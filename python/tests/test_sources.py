@@ -597,12 +597,27 @@ def test_shipped_source_list_is_valid_and_ingestable():
 
 
 def test_adding_a_forum_through_the_console_writes_it_through(api, config_dir):
-    res = api.add_source("https://forum.rclone.org", platform="discourse")
+    # A forum NOT in the shipped list, so this stays a test of the new-source
+    # path. forum.rclone.org used to sit here and is now shipped, which sent
+    # this down the duplicate-name branch instead.
+    res = api.add_source("https://forum.zorin.com", platform="discourse")
     assert res["ok"] is True
     assert res["source"]["kind"] == "forum"
     assert res["source"]["supported"] is True
     written = load_sources(config_dir / "sources.yaml")
-    assert any(s.platform == "discourse" and s.name == "forum-rclone-org" for s in written)
+    assert any(s.platform == "discourse" and s.name == "forum-zorin-com" for s in written)
+
+
+def test_adding_a_forum_that_is_already_shipped_is_refused(api, config_dir):
+    """The branch the test above used to reach by accident once rclone joined
+    the shipped list. Refusing beats silently adding a second entry on the same
+    URL, which would scrape it twice every run."""
+    before = len(load_sources(config_dir / "sources.yaml"))
+    res = api.add_source("https://forum.rclone.org", platform="discourse")
+    assert res["ok"] is False
+    assert "already" in res["error"]
+    after = load_sources(config_dir / "sources.yaml")
+    assert len(after) == before, "a refused add must not write anything"
 
     hn = api.add_source("ask", platform="hackernews")
     # `ask` is already in the shipped list, so this must be refused as a dup

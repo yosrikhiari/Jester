@@ -164,3 +164,62 @@ func TestTopicURLIsReadableByAHuman(t *testing.T) {
 		t.Errorf("slugless TopicURL=%q", got)
 	}
 }
+
+// Pagination: /latest.json serves 30 topics a page and advertises the next in
+// more_topics_url. Reading one page and stopping capped this adapter at 18
+// qualifying topics on meta.discourse.org — measured, and silent: asking for
+// 100 or 300 returned the same 18.
+func TestListTopicsWalksPastTheFirstPage(t *testing.T) {
+	page := func(ids []int, more string) string {
+		out := `{"topic_list":{"topics":[`
+		for i, id := range ids {
+			if i > 0 {
+				out += ","
+			}
+			out += fmt.Sprintf(`{"id":%d,"posts_count":50}`, id)
+		}
+		out += `],"more_topics_url":"` + more + `"}}`
+		return out
+	}
+	c := fixtureClient(t, map[string]string{
+		"page=0": page([]int{1, 2, 3, 4, 5}, "/latest?page=1"),
+		"page=1": page([]int{6, 7, 8, 9, 10}, "/latest?page=2"),
+		"page=2": page([]int{11, 12}, ""),
+	})
+	got, err := c.ListTopics(context.Background(), "https://forum.test", 12)
+	if err != nil {
+		t.Fatalf("ListTopics: %v", err)
+	}
+	if len(got) != 12 {
+		t.Fatalf("want 12 across three pages, got %d", len(got))
+	}
+}
+
+func TestListTopicsStopsWhenTheForumSaysThereIsNoMore(t *testing.T) {
+	c := fixtureClient(t, map[string]string{
+		"page=0": `{"topic_list":{"topics":[{"id":1,"posts_count":50}],"more_topics_url":""}}`,
+	})
+	got, err := c.ListTopics(context.Background(), "https://forum.test", 100)
+	if err != nil {
+		t.Fatalf("ListTopics: %v", err)
+	}
+	// Asking for 100 from a one-page forum returns what exists, and does not
+	// keep hammering pages that will never come.
+	if len(got) != 1 {
+		t.Fatalf("want the single available topic, got %d", len(got))
+	}
+}
+
+func TestALaterPageFailingKeepsWhatEarlierPagesYielded(t *testing.T) {
+	c := fixtureClient(t, map[string]string{
+		"page=0": `{"topic_list":{"topics":[{"id":1,"posts_count":50},{"id":2,"posts_count":50}],"more_topics_url":"/latest?page=1"}}`,
+		// page=1 deliberately absent -> the fixture getter errors on it
+	})
+	got, err := c.ListTopics(context.Background(), "https://forum.test", 50)
+	if err != nil {
+		t.Fatalf("a mid-walk failure must not lose the whole call: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want the 2 topics page 0 gave us, got %d", len(got))
+	}
+}

@@ -166,3 +166,39 @@ func TestScraperYAMLWarmupIsRead(t *testing.T) {
 			cfg.Scraper.Warmups(), *cfg.Scraper.WarmupNavigations)
 	}
 }
+
+// Per-platform depth: one number cannot serve a keyless unmetered API and a
+// bot-detected browser scrape. These pin the fallback chain, because getting
+// it wrong silently means either wasted depth or a flagged fingerprint.
+func TestDepthForFallsBackToTheScalar(t *testing.T) {
+	th := &Thresholds{MaxThreadsPerSource: 3}
+	if got := th.DepthFor("reddit"); got != 3 {
+		t.Errorf("no map => scalar; got %d", got)
+	}
+	th.MaxThreadsPerPlatform = map[string]int{"hackernews": 40}
+	if got := th.DepthFor("hackernews"); got != 40 {
+		t.Errorf("override ignored; got %d", got)
+	}
+	if got := th.DepthFor("reddit"); got != 3 {
+		t.Errorf("unlisted platform must keep the scalar; got %d", got)
+	}
+	// A zero override is "not set", not "fetch nothing" — a depth of 0 would
+	// silently turn a source off.
+	th.MaxThreadsPerPlatform["youtube"] = 0
+	if got := th.DepthFor("youtube"); got != 3 {
+		t.Errorf("zero override must fall back, got %d", got)
+	}
+}
+
+func TestPerPlatformDepthIsRangeChecked(t *testing.T) {
+	th := DefaultThresholds()
+	th.EmbeddingModel = "nomic-embed-text"
+	th.MaxThreadsPerPlatform = map[string]int{"hackernews": 9999}
+	if err := th.Validate(); err == nil {
+		t.Fatal("an out-of-range override must be refused, not silently accepted")
+	}
+	th.MaxThreadsPerPlatform = map[string]int{"hackernews": 40}
+	if err := th.Validate(); err != nil {
+		t.Fatalf("a valid override must pass: %v", err)
+	}
+}
