@@ -53,6 +53,10 @@ from jester.chunking import Chunk, chunk_nugget
 #: would change what every dedup lookup compares against.
 CHUNK_COLLECTION = "chunks"
 
+#: Where the compose stack publishes Qdrant. Used when JESTER_QDRANT_URL is
+#: unset, which is the normal state of this repo.
+DEFAULT_QDRANT_URL = "http://127.0.0.1:6333"
+
 #: Cosine similarity two chunks must reach before they can be linked at all.
 #:
 #: Measured, not guessed. Swept over 342 real chunks (300 nuggets, this
@@ -624,17 +628,28 @@ def cluster_archive(
     # reachable keeps a laptop without the container working, slowly and
     # loudly, rather than failing.
     neighbour_fn = None
-    qdrant_url = os.environ.get("JESTER_QDRANT_URL")
-    if qdrant_url:
-        try:
-            from qdrant_client import QdrantClient
+    # DEFAULTED, not required. JESTER_QDRANT_URL is unset on this machine and
+    # in the scheduled launcher, so keying the index off it alone meant the
+    # feature quietly fell back to the quadratic path — the vector database
+    # running in the next container over, unused, while a 2,000-chunk pass
+    # spent 293s doing by hand what the index does in 22s.
+    qdrant_url = os.environ.get("JESTER_QDRANT_URL") or DEFAULT_QDRANT_URL
+    backend = "brute force (quadratic)"
+    try:
+        from qdrant_client import QdrantClient
 
-            client = QdrantClient(url=qdrant_url)
-            neighbour_fn = lambda vs, th, k: qdrant_neighbours(  # noqa: E731
-                client, CHUNK_COLLECTION, vs, th, k
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(f"[cluster] qdrant unavailable ({exc}); using brute force")
+        client = QdrantClient(url=qdrant_url, timeout=10)
+        client.get_collections()  # prove it answers before relying on it
+        neighbour_fn = lambda vs, th, k: qdrant_neighbours(  # noqa: E731
+            client, CHUNK_COLLECTION, vs, th, k
+        )
+        backend = f"qdrant {qdrant_url}"
+    except Exception as exc:  # noqa: BLE001
+        # Loud, not silent: the run still works, just slowly, and the operator
+        # should know which of the two it got.
+        print(f"[cluster] qdrant at {qdrant_url} unreachable ({exc}); "
+              "falling back to brute force — this is quadratic and will crawl "
+              "on a large archive")
 
     clusters = build_clusters(
         rows, embed,
@@ -669,6 +684,10 @@ def cluster_archive(
         # and a summary that reports only the clusters hides that.
         "ungrouped_nuggets": len(rows) - grouped,
         "embedding_model": model,
+        # Which path answered the neighbour queries. A summary that does not
+        # say cannot distinguish "the index did this in 20s" from "we brute
+        # forced it and got lucky the archive was small".
+        "neighbour_backend": backend,
         "threshold": threshold,
         "min_size": min_size,
         "min_nuggets": min_nuggets,

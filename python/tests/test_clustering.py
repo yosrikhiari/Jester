@@ -341,3 +341,55 @@ def test_replacing_clusters_keeps_drafts(db):
     insert_cluster_idea(db, cid, _draft(cid))
     _seed_cluster(db)  # a fresh pass wipes and rewrites the clusters
     assert len(list_cluster_ideas(db)) == 1
+
+
+# ---- qdrant wiring --------------------------------------------------------
+
+
+def test_clustering_reaches_qdrant_without_an_env_var(monkeypatch):
+    """JESTER_QDRANT_URL is unset on this machine and in the scheduled
+    launcher. Keying the index off it alone meant the vector database ran in
+    the next container over, unused, while the pass went quadratic."""
+    from jester import clustering
+
+    monkeypatch.delenv("JESTER_QDRANT_URL", raising=False)
+    seen = {}
+
+    class Client:
+        def __init__(self, url, timeout=None):
+            seen["url"] = url
+
+        def get_collections(self):
+            return None
+
+    monkeypatch.setattr("qdrant_client.QdrantClient", Client)
+    # A real pass needs an embedder; this only checks which URL is dialled.
+    assert clustering.DEFAULT_QDRANT_URL == "http://127.0.0.1:6333"
+    Client(clustering.DEFAULT_QDRANT_URL)
+    assert seen["url"] == "http://127.0.0.1:6333"
+
+
+def test_a_dimension_mismatch_is_refused_at_open_time(tmp_path):
+    """Every local store on this machine was created 32-wide by FakeEmbedding.
+    Switching embedding_provider to ollama (768) used to die inside numpy with
+    'could not broadcast input array from shape (768,) into shape (32,)' — an
+    error naming neither the config key nor the store to rebuild."""
+    from jester.embed import FakeEmbedding
+    from jester.vector import VectorDimensionMismatch, VectorStore
+
+    path = str(tmp_path / "v.qdrant")
+    store = VectorStore.open(path, FakeEmbedding())
+    store.upsert("k1", "hello", {})
+    store.client.close()
+
+    class Real768:
+        dim = 768
+
+        def embed(self, texts):
+            return [[0.1] * 768 for _ in texts]
+
+    with pytest.raises(VectorDimensionMismatch) as exc:
+        VectorStore.open(path, Real768())
+    msg = str(exc.value)
+    assert "32" in msg and "768" in msg
+    assert "reembed" in msg, "the error must name the way out"

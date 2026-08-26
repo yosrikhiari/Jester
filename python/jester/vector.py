@@ -6,6 +6,14 @@ from jester.embed import EmbeddingClient, FakeEmbedding
 COLLECTION = "nuggets"
 
 
+class VectorDimensionMismatch(RuntimeError):
+    """An existing collection's vector width does not match the embedder.
+
+    Raised at OPEN time rather than left to surface as a numpy broadcast error
+    on the first upsert, because by then the traceback points at array shapes
+    instead of at the configuration change that caused it."""
+
+
 class VectorStore:
     def __init__(self, client: QdrantClient, embed: EmbeddingClient, force_fail: bool = False,
                  collection: str = COLLECTION):
@@ -56,6 +64,29 @@ class VectorStore:
                 vectors_config=models.VectorParams(
                     size=self.embed.dim, distance=models.Distance.COSINE
                 ),
+            )
+            return
+        # The collection already exists — and a collection remembers the width
+        # it was CREATED with. Every store on this machine was created by the
+        # 32-dimension FakeEmbedding, so switching embedding_provider to ollama
+        # (768) leaves the old collection in place and the first upsert dies
+        # deep inside numpy with "could not broadcast input array from shape
+        # (768,) into shape (32,)" — an error that names neither the config
+        # key that caused it nor the store that has to be rebuilt.
+        try:
+            have = self.client.get_collection(
+                self.collection
+            ).config.params.vectors.size
+        except Exception:  # noqa: BLE001 - an unreadable config is not fatal here
+            return
+        want = int(self.embed.dim)
+        if have is not None and int(have) != want:
+            raise VectorDimensionMismatch(
+                f"collection {self.collection!r} was built for {have}-dimension "
+                f"vectors but the current embedding backend produces {want}. "
+                "Vectors of two widths cannot share a collection: delete the "
+                "old store and re-embed (`jester reembed`), or point "
+                "JESTER_QDRANT_URL at a different server."
             )
 
     def upsert(self, unique_key: str, text: str, payload: dict) -> None:
