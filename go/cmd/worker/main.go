@@ -381,7 +381,8 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 	case src.Platform == "reddit" && kind == "subreddit":
 		listing := strings.TrimRight(src.URL, "/") + "/new/"
 		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, perSource)
-		threads, err := reddit.ListThreads(ctx, listing, delay, perSource, cfg.Scraper.Warmups())
+		threads, err := reddit.ListThreads(ctx, listing, delay, perSource,
+			cfg.Scraper.Warmups(), int(cfg.Thresholds.MinCommentsPerThread))
 		if err != nil {
 			return 0, err
 		}

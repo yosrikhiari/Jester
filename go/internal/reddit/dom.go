@@ -88,10 +88,20 @@ const POST_META_JS = `() => {
 const PERMALINK_JS = `() => { const p = document.querySelector('shreddit-post[permalink]'); return p ? p.getAttribute('permalink') : null; }`
 
 // PERMALINKS_JS discovers every post permalink on a listing page, in feed
-// order. Walking more than the first post is what turns "add a subreddit" into
-// an actual sample of that subreddit (max_threads_per_source caps it).
+// order, WITH the comment count the listing already renders beside it.
+//
+// The count is the point. Hacker News and Discourse both skip a thread that is
+// too quiet to be worth a fetch, because their listings carry a count; Reddit's
+// listing carries one too (`comment-count` on <shreddit-post>) and this read it
+// and threw it away. A scheduled run then spent its whole two-post budget on
+// two r/hiredev threads advertising 0 and 1 comments against a floor of 8,
+// fetched both, kept nothing, and ended with 27 sources unvisited.
 const PERMALINKS_JS = `() => [...document.querySelectorAll('shreddit-post[permalink]')]
-    .map(p => p.getAttribute('permalink')).filter(Boolean)`
+    .map(p => ({
+      permalink: p.getAttribute('permalink') || '',
+      comments: p.getAttribute('comment-count') || ''
+    }))
+    .filter(x => x.permalink)`
 
 // Fingerprint derives the cross-language dedup key: hex(sha1(id-or-body))[:16],
 // byte-identical to Python's fetchers.cloak fingerprints.

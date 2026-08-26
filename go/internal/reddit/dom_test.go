@@ -5,6 +5,7 @@ package reddit
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +99,21 @@ func TestChallengeREMatchesLiveInterstitials(t *testing.T) {
 		if challengeRE.MatchString(page) {
 			t.Errorf("challengeRE false-positived on %q", page)
 		}
+	}
+}
+
+// The listing already renders a comment count next to every post. Hacker News
+// and Discourse both use theirs to skip a thread too quiet to be worth
+// fetching; Reddit read its own and threw it away. A scheduled run then spent
+// its entire two-post budget on two r/hiredev threads advertising 0 and 1
+// comments against a floor of 8, fetched both, kept nothing, and finished with
+// 27 sources unvisited.
+func TestPermalinksJSAsksForTheCommentCount(t *testing.T) {
+	if !strings.Contains(PERMALINKS_JS, "comment-count") {
+		t.Fatal("the listing walk must read the count the page already renders")
+	}
+	// It must still be the permalink that identifies a row, not the count.
+	if !strings.Contains(PERMALINKS_JS, "permalink") {
+		t.Fatal("permalink is still the identity")
 	}
 }

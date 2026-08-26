@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -166,7 +167,10 @@ func WarmUp(ctx context.Context, url string, delay time.Duration, attempts int) 
 func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 	threadIDFrom func(permalink string) string, blockedAction string, warmup int,
 ) ([]FetchedComment, string, string, error) {
-	threads, err := ListThreads(ctx, listingURL, delay, 1, warmup)
+	// FetchThread wants the single newest thread whatever its size, so no
+	// comment floor is applied here — the caller asked for one thread, not
+	// for one BUSY thread.
+	threads, err := ListThreads(ctx, listingURL, delay, 1, warmup, 0)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -180,11 +184,25 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 
 // ListThreads loads a subreddit listing and returns up to `limit` absolute
 // thread URLs in feed order.
-func ListThreads(ctx context.Context, listingURL string, delay time.Duration, limit, warmup int) ([]string, error) {
+// listingRow is one post as the listing advertises it: where it is, and how
+// much discussion it claims to hold.
+type listingRow struct {
+	Permalink string `json:"permalink"`
+	Comments  string `json:"comments"`
+}
+
+// ListThreads returns up to `limit` thread URLs from a subreddit listing,
+// skipping threads whose advertised comment count is below `minComments`.
+//
+// Skipping BEFORE the fetch is the whole value: a thread with 0 comments costs
+// a full browser navigation, a slot in the run's post budget, and yields
+// nothing. The count is right there in the listing markup.
+func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
+	limit, warmup, minComments int) ([]string, error) {
 	if limit < 1 {
 		limit = 1
 	}
-	var permalinks []string
+	var permalinks []listingRow
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(listingURL),
 		chromedp.Sleep(Pace(delay)),
@@ -211,9 +229,21 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration, li
 	}
 	out := make([]string, 0, limit)
 	seen := map[string]bool{}
-	for _, p := range permalinks {
+	quiet := 0
+	for _, row := range permalinks {
+		p := row.Permalink
 		if p == "" {
 			continue
+		}
+		// An ABSENT count is not a zero: only a published number may exclude a
+		// thread. Reddit renders comment-count on every post, but a layout
+		// change that dropped it must degrade to fetching everything rather
+		// than silently skipping the whole feed.
+		if minComments > 0 && row.Comments != "" {
+			if n, err := strconv.Atoi(strings.TrimSpace(row.Comments)); err == nil && n < minComments {
+				quiet++
+				continue
+			}
 		}
 		if strings.HasPrefix(p, "/") {
 			p = "https://www.reddit.com" + p
@@ -226,6 +256,19 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration, li
 		if len(out) == limit {
 			break
 		}
+	}
+	if quiet > 0 {
+		// R55: a skipped thread is reported, never silent. "0 comments queued"
+		// and "we declined to fetch 12 empty threads" are different runs.
+		fmt.Printf("[live]   skipped %d thread(s) advertising fewer than %d comment(s)\n",
+			quiet, minComments)
+	}
+	if len(out) == 0 && quiet > 0 {
+		// Every thread was too quiet. That is a real, benign outcome and must
+		// not be reported as a block — they call for opposite responses.
+		return nil, fmt.Errorf(
+			"no thread at %s has %d+ comments (%d skipped as too quiet)",
+			listingURL, minComments, quiet)
 	}
 	if len(out) == 0 {
 		title, _ := evalString(ctx, `() => document.title`)
