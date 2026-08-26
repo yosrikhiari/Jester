@@ -359,6 +359,18 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
     manifest = {
         "exported_at": now.isoformat(),
         "rows_per_file": rows_per_file,
+        # Stated because it bites every naive reader exactly once. The BOM is
+        # deliberate — Excel on Windows reads a plain UTF-8 CSV as cp1252 and
+        # mangles every non-ASCII character in scraped text — but it means the
+        # FIRST column header carries an invisible ﻿ prefix. A consumer
+        # opening these with plain "utf-8" silently loses that column, which
+        # is unique_key for nuggets and id for ideas. Read them with
+        # encoding="utf-8-sig" (pandas: encoding="utf-8-sig").
+        "encoding": "utf-8-sig",
+        "reader_note": (
+            "open with encoding='utf-8-sig'; plain utf-8 leaves a BOM on the "
+            "first column name"
+        ),
         "counts": {
             "comments": len(comments),
             "nuggets": len(nuggets),
