@@ -36,6 +36,9 @@ PLATFORM_KINDS = {
     # documented keyless API. `site` walks recently-active questions;
     # `question` pins one.
     "stackexchange": ("site", "question"),
+    # An issue tracker is a database of things that are broken, with
+    # reproduction steps. `repo` walks the busiest issues; `issue` pins one.
+    "github": ("repo", "issue"),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -52,6 +55,8 @@ SUPPORTED_KINDS = frozenset({
     ("youtube", "video"),
     ("stackexchange", "site"),
     ("stackexchange", "question"),
+    ("github", "repo"),
+    ("github", "issue"),
 })
 
 PLATFORMS = tuple(PLATFORM_KINDS)
@@ -119,6 +124,8 @@ def _detect_platform(raw: str) -> str:
         return "tiktok"
     if "news.ycombinator.com" in low:
         return "hackernews"
+    if "github.com" in low:
+        return "github"
     if (
         "stackexchange.com" in low
         or "stackoverflow.com" in low
@@ -316,6 +323,41 @@ def _parse_stackexchange(raw: str):
     return "site", f"https://{_se_host(slug)}", slugify(slug)
 
 
+_RE_GH_ISSUE = re.compile(
+    r"github\.com/([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]+)/issues/(\d+)", re.I
+)
+_RE_GH_REPO = re.compile(
+    r"(?:github\.com/)?([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]+)/?$", re.I
+)
+
+
+def _parse_github(raw: str):
+    """A repo to walk, or one issue to pin."""
+    text = raw.strip().rstrip("/")
+    m = _RE_GH_ISSUE.search(text)
+    if m:
+        owner, repo, num = m.group(1), m.group(2), m.group(3)
+        return (
+            "issue",
+            f"https://github.com/{owner}/{repo}/issues/{num}",
+            f"{slugify(owner)}-{slugify(repo)}-{num}",
+        )
+    stripped = text.replace("https://", "").replace("http://", "")
+    stripped = stripped[len("github.com/"):] if stripped.lower().startswith("github.com/") else stripped
+    m = _RE_GH_REPO.match(stripped)
+    if m:
+        owner, repo = m.group(1), m.group(2)
+        return (
+            "repo",
+            f"https://github.com/{owner}/{repo}",
+            f"{slugify(owner)}-{slugify(repo)}",
+        )
+    raise SourceError(
+        "%r is not a GitHub repo or issue — try 'rclone/rclone' or a "
+        "https://github.com/<owner>/<repo>/issues/<n> link" % raw
+    )
+
+
 _PARSERS = {
     "reddit": _parse_reddit,
     "hackernews": _parse_hackernews,
@@ -323,6 +365,7 @@ _PARSERS = {
     "youtube": _parse_youtube,
     "tiktok": _parse_tiktok,
     "stackexchange": _parse_stackexchange,
+    "github": _parse_github,
 }
 
 

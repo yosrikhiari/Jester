@@ -36,6 +36,12 @@ max_threads_per_platform:
   # Against the keyless 300/day-per-IP quota that is already tight across six
   # sites on a 30-minute schedule. Set STACKEXCHANGE_KEY (free, no approval)
   # to raise the ceiling to 10,000/day and this can go much higher.
+  # GitHub: 60 core requests/hour and 10 search/minute UNAUTHENTICATED. Each
+  # issue costs two core requests plus one search per repo per run, so depth 3
+  # is 7 requests per repo. Ten repos would exhaust the hourly budget in one
+  # run. GITHUB_TOKEN (a scopeless personal access token - it authenticates
+  # the rate limit, not any permission) raises it to 5,000/hour.
+  github: 3
   stackexchange: 3
   discourse: 25
   reddit: 3

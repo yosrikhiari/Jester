@@ -18,6 +18,7 @@ import (
 	"jester/internal/cloakbrowser"
 	"jester/internal/config"
 	"jester/internal/discourse"
+	"jester/internal/github"
 	"jester/internal/hackernews"
 	"jester/internal/prefilter"
 	"jester/internal/reddit"
@@ -352,7 +353,7 @@ func selectSources(all []config.Source, only string) ([]config.Source, error) {
 // challenge to absorb. Opening a Chrome process for them would be pure cost.
 func needsBrowser(platform string) bool {
 	switch platform {
-	case "hackernews", "discourse", "stackexchange":
+	case "hackernews", "discourse", "stackexchange", "github":
 		return false
 	default:
 		return true
@@ -482,6 +483,53 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live]   enqueued %d kept comments (hn %s)\n", n, s.ID)
 			total += n
 			sleep(delay)
+		}
+		return total, nil
+
+	case src.Platform == "github":
+		gh := github.New()
+		if cfg.Thresholds.MinCommentsPerThread > 0 {
+			gh.MinComments = int(cfg.Thresholds.MinCommentsPerThread)
+		}
+		repo := github.RepoFromURL(src.URL)
+		issues := []github.Issue{}
+		if kind == "issue" {
+			n := githubIssueFromURL(src.URL)
+			if n == 0 {
+				return 0, fmt.Errorf("no issue number in %s", src.URL)
+			}
+			issues = append(issues, github.Issue{Number: n})
+		} else {
+			fmt.Printf("[live] github %s (up to %d issue(s))\n", repo, perSource)
+			found, err := gh.ListIssues(ctx, repo, perSource)
+			if err != nil {
+				return 0, err
+			}
+			issues = found
+		}
+		total := 0
+		for _, iss := range issues {
+			if bg.stop("issue") {
+				break
+			}
+			comments, post, err := gh.FetchIssue(ctx, repo, iss.Number)
+			if err != nil {
+				fmt.Printf("[live]   issue #%d skipped: %v\n", iss.Number, err)
+				continue
+			}
+			n := enqueueComments(st, runID, "github",
+				github.IssueURL(repo, iss.Number),
+				fmt.Sprintf("gh-%s-%d", strings.ReplaceAll(repo, "/", "-"), iss.Number),
+				comments, post, pp, maxPerThread)
+			bg.add(n)
+			fmt.Printf("[live]   enqueued %d kept item(s) (%s#%d)\n", n, repo, iss.Number)
+			total += n
+			sleep(delay)
+		}
+		// 60 core requests/hour unauthenticated. Report the remaining budget
+		// rather than letting a run discover the ceiling as a sudden 403.
+		if gh.RateRemaining > 0 {
+			fmt.Printf("[live]   github rate remaining: %d\n", gh.RateRemaining)
 		}
 		return total, nil
 
@@ -687,6 +735,22 @@ func hackernewsIDFromURL(raw string) string {
 		return strings.TrimSpace(rest)
 	}
 	return ""
+}
+
+// githubIssueFromURL pulls the issue number out of /issues/<n>.
+func githubIssueFromURL(raw string) int64 {
+	parts := strings.Split(strings.Trim(raw, "/"), "/")
+	for i, p := range parts {
+		if p != "issues" {
+			continue
+		}
+		for _, tail := range parts[i+1:] {
+			if n, err := strconv.ParseInt(tail, 10, 64); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // stackexchangeIDFromURL pulls the question id out of /questions/<id>/...

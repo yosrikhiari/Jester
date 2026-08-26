@@ -179,11 +179,16 @@ def test_sources_payload_carries_the_ui_vocabulary(api):
     payload = api.sources()
     assert payload["ok"] is True
     assert set(payload["platform_kinds"]) == {
-        "reddit", "hackernews", "discourse", "youtube", "tiktok", "stackexchange"}
+        "reddit", "hackernews", "discourse", "youtube", "tiktok",
+        "stackexchange", "github"}
     assert ["reddit", "subreddit"] in payload["supported_kinds"]
-    # Stack Exchange is a sanctioned keyless API, so unlike tiktok it ships
-    # with an adapter behind it rather than as a configurable placeholder.
+    # Stack Exchange and GitHub are sanctioned APIs, so unlike tiktok they
+    # ship with adapters behind them rather than as configurable placeholders.
     assert ["stackexchange", "site"] in payload["supported_kinds"]
+    assert ["github", "repo"] in payload["supported_kinds"]
+    # tiktok remains the one platform that is configurable and unimplemented,
+    # deliberately (config/scraper.yaml §35.3).
+    assert ["tiktok", "profile"] not in payload["supported_kinds"]
     assert all("supported" in s for s in payload["sources"])
 
 
@@ -600,15 +605,20 @@ def test_shipped_source_list_is_valid_and_ingestable():
 
 
 def test_adding_a_forum_through_the_console_writes_it_through(api, config_dir):
-    # A forum NOT in the shipped list, so this stays a test of the new-source
-    # path. forum.rclone.org used to sit here and is now shipped, which sent
-    # this down the duplicate-name branch instead.
-    res = api.add_source("https://forum.zorin.com", platform="discourse")
+    # A host that will never be shipped, so this stays a test of the
+    # new-source path. Two real forums have sat here and both were later added
+    # to the curated list, which quietly turned this into a duplicate-URL test.
+    # `.invalid` is reserved by RFC 2606 precisely so it can never be a real
+    # host, which makes that impossible a third time.
+    res = api.add_source("https://forum.jester-test.invalid", platform="discourse")
     assert res["ok"] is True
     assert res["source"]["kind"] == "forum"
     assert res["source"]["supported"] is True
     written = load_sources(config_dir / "sources.yaml")
-    assert any(s.platform == "discourse" and s.name == "forum-zorin-com" for s in written)
+    assert any(
+        s.platform == "discourse" and s.name == "forum-jester-test-invalid"
+        for s in written
+    )
 
 
 def test_adding_a_forum_that_is_already_shipped_is_refused(api, config_dir):

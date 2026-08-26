@@ -1,5 +1,5 @@
 # Curated source list. Edit here or in the operator console (Sources tab).
-# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag - stackexchange=site|question
+# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag - stackexchange=site|question - github=repo|issue
 # Set `enabled: false` to park a source without losing it; `notes` is
 # free text and survives console edits.
 sources:
@@ -199,3 +199,291 @@ sources:
   url: https://softwareengineering.stackexchange.com
   enabled: true
   notes: design and process complaints from practitioners
+- platform: discourse
+  name: forum-djangoproject-com
+  kind: forum
+  url: https://forum.djangoproject.com
+  enabled: true
+  notes: 'web framework: ORM, migrations, deployment'
+- platform: discourse
+  name: discuss-pytorch-org
+  kind: forum
+  url: https://discuss.pytorch.org
+  enabled: true
+  notes: 'ML practitioners: CUDA, memory, training that will not converge'
+- platform: discourse
+  name: discourse-julialang-org
+  kind: forum
+  url: https://discourse.julialang.org
+  enabled: true
+  notes: numerical computing; unusually high-quality problem statements
+- platform: discourse
+  name: users-rust-lang-org
+  kind: forum
+  url: https://users.rust-lang.org
+  enabled: true
+  notes: borrow checker and ecosystem friction
+- platform: discourse
+  name: discuss-gradle-org
+  kind: forum
+  url: https://discuss.gradle.org
+  enabled: true
+  notes: build systems - a permanent source of unglamorous pain
+- platform: discourse
+  name: talk-jekyllrb-com
+  kind: forum
+  url: https://talk.jekyllrb.com
+  enabled: true
+  notes: static site generation and its long tail
+- platform: discourse
+  name: forums-docker-com
+  kind: forum
+  url: https://forums.docker.com
+  enabled: true
+  notes: 'containers: networking, volumes, desktop breakage'
+- platform: discourse
+  name: forum-gitlab-com
+  kind: forum
+  url: https://forum.gitlab.com
+  enabled: true
+  notes: CI/CD pipelines - dense operational complaint
+- platform: discourse
+  name: discuss-hashicorp-com
+  kind: forum
+  url: https://discuss.hashicorp.com
+  enabled: true
+  notes: 'terraform/vault/consul: state, drift, auth'
+- platform: discourse
+  name: discuss-elastic-co
+  kind: forum
+  url: https://discuss.elastic.co
+  enabled: true
+  notes: search and observability at scale
+- platform: discourse
+  name: discourse-nixos-org
+  kind: forum
+  url: https://discourse.nixos.org
+  enabled: true
+  notes: declarative systems; users who document failures precisely
+- platform: discourse
+  name: discuss-linuxcontainers-org
+  kind: forum
+  url: https://discuss.linuxcontainers.org
+  enabled: true
+  notes: LXC/Incus operational issues
+- platform: discourse
+  name: forum-openwrt-org
+  kind: forum
+  url: https://forum.openwrt.org
+  enabled: true
+  notes: networking on constrained hardware
+- platform: discourse
+  name: forum-ansible-com
+  kind: forum
+  url: https://forum.ansible.com
+  enabled: true
+  notes: configuration management and idempotency problems
+- platform: discourse
+  name: forums-balena-io
+  kind: forum
+  url: https://forums.balena.io
+  enabled: true
+  notes: fleet device management - remote debugging pain
+- platform: discourse
+  name: community-temporal-io
+  kind: forum
+  url: https://community.temporal.io
+  enabled: true
+  notes: 'durable workflows: retries, timeouts, RBAC'
+- platform: discourse
+  name: community-letsencrypt-org
+  kind: forum
+  url: https://community.letsencrypt.org
+  enabled: true
+  notes: 'certificates: renewal, rate limits, DNS'
+- platform: discourse
+  name: help-nextcloud-com
+  kind: forum
+  url: https://help.nextcloud.com
+  enabled: true
+  notes: self-hosted collaboration; heavy sysadmin overlap
+- platform: discourse
+  name: forum-syncthing-net
+  kind: forum
+  url: https://forum.syncthing.net
+  enabled: true
+  notes: file sync conflicts - concrete, reproducible failures
+- platform: discourse
+  name: forum-snapcraft-io
+  kind: forum
+  url: https://forum.snapcraft.io
+  enabled: true
+  notes: packaging and confinement
+- platform: discourse
+  name: discourse-ubuntu-com
+  kind: forum
+  url: https://discourse.ubuntu.com
+  enabled: true
+  notes: distro-level issues and release friction
+- platform: discourse
+  name: forum-manjaro-org
+  kind: forum
+  url: https://forum.manjaro.org
+  enabled: true
+  notes: rolling-release breakage
+- platform: discourse
+  name: forum-endeavouros-com
+  kind: forum
+  url: https://forum.endeavouros.com
+  enabled: true
+  notes: 'Arch-adjacent: hardware and driver problems'
+- platform: discourse
+  name: forum-zorin-com
+  kind: forum
+  url: https://forum.zorin.com
+  enabled: true
+  notes: desktop Linux for newcomers - unfiltered usability pain
+- platform: discourse
+  name: community-frame-work
+  kind: forum
+  url: https://community.frame.work
+  enabled: true
+  notes: repairable hardware; firmware and Linux support
+- platform: discourse
+  name: forum-level1techs-com
+  kind: forum
+  url: https://forum.level1techs.com
+  enabled: true
+  notes: prosumer hardware, storage and virtualisation
+- platform: discourse
+  name: community-n8n-io
+  kind: forum
+  url: https://community.n8n.io
+  enabled: true
+  notes: workflow automation - people describing manual work they hate
+- platform: discourse
+  name: discuss-streamlit-io
+  kind: forum
+  url: https://discuss.streamlit.io
+  enabled: true
+  notes: 'data apps: deployment and state'
+- platform: discourse
+  name: community-plotly-com
+  kind: forum
+  url: https://community.plotly.com
+  enabled: true
+  notes: dashboards and visualisation
+- platform: discourse
+  name: community-openai-com
+  kind: forum
+  url: https://community.openai.com
+  enabled: true
+  notes: 'LLM integration: quotas, latency, prompt behaviour'
+- platform: discourse
+  name: forum-rasa-com
+  kind: forum
+  url: https://forum.rasa.com
+  enabled: true
+  notes: conversational AI in production
+- platform: discourse
+  name: discuss-ipfs-tech
+  kind: forum
+  url: https://discuss.ipfs.tech
+  enabled: true
+  notes: distributed storage - gateway and pinning problems
+- platform: discourse
+  name: forum-kicad-info
+  kind: forum
+  url: https://forum.kicad.info
+  enabled: true
+  notes: 'EDA: an under-mined engineering audience'
+- platform: discourse
+  name: devtalk-blender-org
+  kind: forum
+  url: https://devtalk.blender.org
+  enabled: true
+  notes: 3D tooling and pipeline friction
+- platform: discourse
+  name: discourse-mozilla-org
+  kind: forum
+  url: https://discourse.mozilla.org
+  enabled: true
+  notes: browser extensions, review process, web platform
+- platform: discourse
+  name: forum-arduino-cc
+  kind: forum
+  url: https://forum.arduino.cc
+  enabled: true
+  notes: 'embedded: hardware plus toolchain, very concrete'
+- platform: discourse
+  name: community-brave-com
+  kind: forum
+  url: https://community.brave.com
+  enabled: true
+  notes: browser bugs and privacy tooling
+- platform: discourse
+  name: community-wanikani-com
+  kind: forum
+  url: https://community.wanikani.com
+  enabled: true
+  notes: language learning - a non-technical control group
+- platform: github
+  name: home-assistant-core
+  kind: repo
+  url: https://github.com/home-assistant/core
+  enabled: true
+  notes: home automation at scale - integrations that break on vendor API changes
+- platform: github
+  name: n8n-io-n8n
+  kind: repo
+  url: https://github.com/n8n-io/n8n
+  enabled: true
+  notes: workflow automation; users describe the manual work they are escaping
+- platform: github
+  name: rclone-rclone
+  kind: repo
+  url: https://github.com/rclone/rclone
+  enabled: true
+  notes: cloud storage sync - concrete, reproducible failure reports
+- platform: github
+  name: grafana-grafana
+  kind: repo
+  url: https://github.com/grafana/grafana
+  enabled: true
+  notes: observability tooling friction
+- platform: github
+  name: nextcloud-server
+  kind: repo
+  url: https://github.com/nextcloud/server
+  enabled: true
+  notes: self-hosted collaboration, heavy sysadmin overlap
+- platform: github
+  name: immich-app-immich
+  kind: repo
+  url: https://github.com/immich-app/immich
+  enabled: true
+  notes: self-hosted photos - a fast-moving project with vocal users
+- platform: github
+  name: ollama-ollama
+  kind: repo
+  url: https://github.com/ollama/ollama
+  enabled: true
+  notes: 'local LLM tooling: hardware, quantisation, model management'
+- platform: github
+  name: langchain-ai-langchain
+  kind: repo
+  url: https://github.com/langchain-ai/langchain
+  enabled: true
+  notes: LLM framework churn and abstraction complaints
+- platform: github
+  name: supabase-supabase
+  kind: repo
+  url: https://github.com/supabase/supabase
+  enabled: true
+  notes: 'backend-as-a-service: auth, RLS, migrations'
+- platform: github
+  name: vercel-next-js
+  kind: repo
+  url: https://github.com/vercel/next.js
+  enabled: true
+  notes: frontend framework upgrade pain at very high volume
