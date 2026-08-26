@@ -27,8 +27,11 @@ export_rows_per_file: 100000
 # rides on the model prior); fake = deterministic offline; duckduckgo = live.
 competitor_search_provider: none
 embedding_model: nomic-embed-text
+synthesizer_provider: groq
+critic_provider: groq
+extractor_provider: fake
 models:
   extractor: qwen3:8b
   archivist: phi4-mini:3.8b
-  synthesizer: qwen3:8b
-  critic: qwen3:8b
+  synthesizer: openai/gpt-oss-120b
+  critic: openai/gpt-oss-120b

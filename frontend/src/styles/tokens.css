@@ -1,0 +1,112 @@
+:root {
+  /* --- Color: Light (parchment) --- */
+  --jester-bg: #FDF6E3;
+  --jester-surface: #FFFFFF;
+  --jester-surface-2: #F5E8C2;
+  --jester-ink: #0F141E;
+  --jester-ink-mute: #6B6A7A;
+  --jester-line: #E8D5A8;
+
+  /* --- Color: Dark (obsidian) --- */
+  --jester-bg-dark: #080C14;
+  --jester-surface-dark: #131A29;
+  --jester-surface-2-dark: #1E2A3D;
+  --jester-ink-dark: #F5E6C2;
+  --jester-ink-mute-dark: #A89B7E;
+  --jester-line-dark: #2A3548;
+
+  /* --- Brand --- */
+  --jester-gold: #8F6A0F;
+  --jester-gold-dark: #E8C05A;
+  --jester-plum: #C1272D;
+  --jester-plum-dark: #E03A4E;
+  --jester-teal: #C9A227;
+  --jester-teal-dark: #F0C75E;
+  --jester-coral: #9B1B30;
+  --jester-coral-dark: #C41E3A;
+  --jester-bell: #D4A017;
+  --jester-black: #0F141E;
+  --jester-red: #C1272D;
+  --jester-crimson: #8B1A2B;
+
+  /* --- Run-status tones --- */
+  --jester-queued: #8A8AA0;
+  --jester-queued-dark: #9A9AB4;
+  --jester-running: #E0A528;
+  --jester-running-dark: #E8B43E;
+  --jester-done: #2E9E8F;
+  --jester-done-dark: #3FB8A6;
+  --jester-failed: #E2603F;
+  --jester-failed-dark: #EC7355;
+  --jester-requeued: #7B4B94;
+  --jester-requeued-dark: #9A63B4;
+
+  /* --- Radius --- */
+  --jester-r-card: 10px;
+  --jester-r-ctrl: 8px;
+  --jester-r-sm: 6px;
+  --jester-r-pill: 999px;
+
+  /* --- Space ladder (px) --- */
+  --jester-s-1: 2px;
+  --jester-s-2: 4px;
+  --jester-s-3: 6px;
+  --jester-s-4: 8px;
+  --jester-s-5: 12px;
+  --jester-s-6: 16px;
+  --jester-s-7: 20px;
+  --jester-s-8: 24px;
+  --jester-s-9: 32px;
+  --jester-s-10: 40px;
+  --jester-s-11: 48px;
+
+  /* --- Elevation --- */
+  --jester-shadow-1: 0 1px 2px rgba(15, 20, 30, 0.08), 0 1px 3px rgba(15, 20, 30, 0.06);
+  --jester-shadow-2: 0 4px 12px rgba(15, 20, 30, 0.12), 0 2px 6px rgba(15, 20, 30, 0.08);
+  --jester-shadow-pop: 0 12px 32px rgba(15, 20, 30, 0.22), 0 4px 12px rgba(15, 20, 30, 0.16);
+
+  /* --- Motion --- */
+  --jester-ease: cubic-bezier(.2, .8, .2, 1);
+  --jester-t-fast: 120ms;
+  --jester-t-base: 200ms;
+  --jester-t-slow: 320ms;
+  --jester-t-data: 700ms;
+
+  /* --- Type --- */
+  --jester-fs-hero: 32px;
+  --jester-fs-h1: 24px;
+  --jester-fs-h2: 18px;
+  --jester-fs-body: 14px;
+  --jester-fs-sm: 12px;
+  --jester-fs-xs: 11px;
+
+  /* --- Z-index ladder --- */
+  --jester-z-base: 0;
+  --jester-z-nav: 10;
+  --jester-z-topbar: 20;
+  --jester-z-scrim: 40;
+  --jester-z-drawer: 50;
+  --jester-z-toast: 60;
+}
+
+/* Dark theme: swap by toggling `.jester-dark` on the root element */
+.jester-dark {
+  --jester-bg: var(--jester-bg-dark);
+  --jester-surface: var(--jester-surface-dark);
+  --jester-surface-2: var(--jester-surface-2-dark);
+  --jester-ink: var(--jester-ink-dark);
+  --jester-ink-mute: var(--jester-ink-mute-dark);
+  --jester-line: var(--jester-line-dark);
+
+  --jester-gold: var(--jester-gold-dark);
+  --jester-plum: var(--jester-plum-dark);
+  --jester-teal: var(--jester-teal-dark);
+  --jester-coral: var(--jester-coral-dark);
+  --jester-bell: var(--jester-bell);
+
+  --jester-queued: var(--jester-queued-dark);
+  --jester-running: var(--jester-running-dark);
+  --jester-done: var(--jester-done-dark);
+  --jester-failed: var(--jester-failed-dark);
+  --jester-requeued: var(--jester-requeued-dark);
+}

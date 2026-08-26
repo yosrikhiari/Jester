@@ -41,10 +41,27 @@ COMMENT_COLUMNS = [
     "platform", "source_url", "thread_id", "fingerprint", "body",
     "upvotes", "run_id", "batch_status", "batch_created_at",
 ]
+# A CSV that names only the score is a CSV that cannot answer "who said this
+# and when", which is the first question anyone asks of a scraped corpus.
+#
+# The vote columns are EMPTY, not 0, where a platform does not publish the
+# figure — Reddit per-comment downvotes, YouTube dislikes, Hacker News comment
+# scores. A spreadsheet full of zeroes would read as "measured, and nobody
+# voted"; a blank reads as what it is.
 NUGGET_COLUMNS = [
     "unique_key", "platform", "category", "thread_id", "source_url",
     "extracted_insight", "raw_text", "engagement_score", "trivial",
     "needs_reembed", "run_id", "synthesized_at", "created_at",
+    # who / when / where
+    "author", "author_url", "comment_url", "comment_id", "parent_id", "depth",
+    "created_utc", "created_raw",
+    # how it was received
+    "upvotes", "downvotes", "likes", "dislikes", "replies", "awards", "reads",
+    "edited", "pinned", "author_is_op", "distinguished", "accepted_answer",
+    # the thread it came from
+    "community", "post_title", "post_url", "post_author", "post_created_utc",
+    "post_score", "post_upvote_ratio", "post_comment_count", "post_views",
+    "extra",
 ]
 IDEA_COLUMNS = [
     "id", "title", "problem_statement", "proposed_solution",

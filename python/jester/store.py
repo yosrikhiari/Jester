@@ -4,6 +4,7 @@ Fields from jester-setup.md 3.2 that Go's table lacks (needs_reembed, embedding_
 thread_id, engagement_score, timestamp) are added via idempotent ALTERs so the shared
 schema_version=1 guard still holds across both languages.
 """
+
 import json
 import os
 import re
@@ -23,6 +24,7 @@ class SchemaVersionError(Exception):
 
 class ConcurrentRunError(Exception):
     """Raised by start_run when another run row is still 'running' (R25 guard)."""
+
     pass
 
 
@@ -137,6 +139,58 @@ _ADD_COLUMNS = [
     # §37.22: ingested_comments is SHARED (Go worker + Python both mark it);
     # legacy Go-created tables lack thread_id — add it idempotently.
     "ALTER TABLE ingested_comments ADD COLUMN thread_id TEXT",
+    # The thread/video/topic a batch came from, as JSON. Go's store writes it;
+    # this keeps a Python-created database wide enough to receive it (D-17).
+    "ALTER TABLE ingest_batch ADD COLUMN thread_meta TEXT",
+    # ---- what the platform actually published about a comment -------------
+    # The adapters have always had all of this and dropped it at the point of
+    # capture; a nugget could name its platform and its score and nothing else
+    # — not who said it, not when, not where to read it.
+    #
+    # The vote columns are NULLable on purpose. NULL means "this platform does
+    # not publish that figure", which is the true state for far more of them
+    # than one would guess: Reddit has not exposed per-comment downvotes since
+    # 2014, YouTube withdrew dislike counts in 2021, Hacker News never
+    # published per-comment scores, and Discourse has no downvote at all. A 0
+    # would assert that nobody voted, which is a different claim entirely.
+    "ALTER TABLE nuggets ADD COLUMN author TEXT",
+    "ALTER TABLE nuggets ADD COLUMN author_url TEXT",
+    "ALTER TABLE nuggets ADD COLUMN comment_url TEXT",
+    "ALTER TABLE nuggets ADD COLUMN comment_id TEXT",
+    "ALTER TABLE nuggets ADD COLUMN parent_id TEXT",
+    "ALTER TABLE nuggets ADD COLUMN depth INTEGER",
+    # created_utc is when the comment was WRITTEN. `timestamp` is when jester
+    # ingested it — two different facts that the schema could not tell apart.
+    "ALTER TABLE nuggets ADD COLUMN created_utc TEXT",
+    "ALTER TABLE nuggets ADD COLUMN created_raw TEXT",
+    "ALTER TABLE nuggets ADD COLUMN upvotes INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN downvotes INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN likes INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN dislikes INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN replies INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN awards INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN reads INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN edited INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN pinned INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN author_is_op INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN distinguished INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN accepted_answer INTEGER",
+    # ---- the thread it came from ------------------------------------------
+    "ALTER TABLE nuggets ADD COLUMN post_title TEXT",
+    "ALTER TABLE nuggets ADD COLUMN post_url TEXT",
+    "ALTER TABLE nuggets ADD COLUMN post_author TEXT",
+    "ALTER TABLE nuggets ADD COLUMN post_created_utc TEXT",
+    "ALTER TABLE nuggets ADD COLUMN post_score INTEGER",
+    # Reddit's published fraction of votes that were upvotes — the ONLY
+    # downvote signal any of the four platforms exposes.
+    "ALTER TABLE nuggets ADD COLUMN post_upvote_ratio REAL",
+    "ALTER TABLE nuggets ADD COLUMN post_comment_count INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN post_views INTEGER",
+    "ALTER TABLE nuggets ADD COLUMN community TEXT",
+    # The long tail one platform publishes and the others do not, as JSON, so
+    # a Discourse trust level or a YouTube creator heart is kept rather than
+    # discarded for not generalising.
+    "ALTER TABLE nuggets ADD COLUMN extra TEXT",
 ]
 
 
@@ -168,7 +222,9 @@ def _schema_columns():
         cols = []
         for line in body.splitlines():
             line = line.split("--")[0].strip().rstrip(",")
-            if not line or line.upper().startswith(("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")):
+            if not line or line.upper().startswith(
+                ("PRIMARY KEY", "UNIQUE", "FOREIGN KEY", "CHECK")
+            ):
                 continue
             cols.append(line.split()[0])
         out[table] = cols
@@ -206,7 +262,9 @@ def reconcile_schema(db: sqlite3.Connection):
         rows = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         if rows == 0:
             db.execute(f"DROP TABLE {table}")
-            actions.append(f"{table}: recreated (was empty, missing {', '.join(missing)})")
+            actions.append(
+                f"{table}: recreated (was empty, missing {', '.join(missing)})"
+            )
         else:
             db.execute(f"DROP TABLE IF EXISTS {table}_legacy")
             db.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
@@ -225,8 +283,19 @@ def open_db(path: str) -> sqlite3.Connection:
         if parent:
             os.makedirs(parent, exist_ok=True)
     db = sqlite3.connect(path, timeout=5.0)
-    db.execute('PRAGMA journal_mode=WAL')
-    db.execute('PRAGMA busy_timeout=5000')
+    # Rollback journal (DELETE), NOT WAL. The database is shared between the
+    # console server and the ingestion worker — separate processes, sometimes
+    # separate containers — over a Windows bind-mounted volume. WAL requires
+    # the -wal/-shm sidecars, which that filesystem cannot create/arbitrate
+    # reliably under concurrent access, surfacing as
+    # "OperationalError: unable to open database file". The default rollback
+    # journal uses a single -journal file with ordinary locking and avoids the
+    # sidecars entirely; busy_timeout absorbs brief writer locks.
+    try:
+        db.execute("PRAGMA journal_mode=DELETE")
+    except sqlite3.OperationalError:
+        pass
+    db.execute("PRAGMA busy_timeout=5000")
     for note in reconcile_schema(db):
         # Never silently: an operator must know a legacy table was set aside.
         print(f"schema: {note}", file=sys.stderr)
@@ -236,9 +305,14 @@ def open_db(path: str) -> sqlite3.Connection:
             db.execute(stmt)
         except sqlite3.OperationalError:
             pass  # already present
-    existing = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    existing = db.execute(
+        "SELECT value FROM meta WHERE key='schema_version'"
+    ).fetchone()
     if existing is None:
-        db.execute("INSERT INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+        db.execute(
+            "INSERT INTO meta(key,value) VALUES('schema_version',?)",
+            (str(SCHEMA_VERSION),),
+        )
     else:
         if int(existing[0]) != SCHEMA_VERSION:
             raise SchemaVersionError(
@@ -263,7 +337,9 @@ def meta_set(db: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def exists_unique_key(db: sqlite3.Connection, unique_key: str) -> bool:
-    row = db.execute("SELECT 1 FROM nuggets WHERE unique_key=?", (unique_key,)).fetchone()
+    row = db.execute(
+        "SELECT 1 FROM nuggets WHERE unique_key=?", (unique_key,)
+    ).fetchone()
     return row is not None
 
 
@@ -275,6 +351,7 @@ def enqueue_batch(
     comments: list,
     run_id: str = "",
     batch_index: int = 0,
+    thread_meta: Optional[dict] = None,
 ) -> int:
     """Insert one raw ingestion job (comments is a JSON-serializable list).
 
@@ -282,11 +359,24 @@ def enqueue_batch(
     and batch_index NOT NULL. Omitting them here worked only against a
     Python-created table and failed with `NOT NULL constraint failed` on any
     database the worker had touched first — so both are always written.
+
+    ``thread_meta`` is the thread/video/topic the comments came from. None
+    stays SQL NULL rather than becoming ``{}``: "the fetcher never captured
+    this" and "it captured one and it was empty" are different states, and
+    only the first is true of a batch queued before the widened capture.
     """
     cur = db.execute(
         "INSERT INTO ingest_batch(run_id, platform, source, thread_id, "
-        "batch_index, comments, status) VALUES(?,?,?,?,?,?,'pending')",
-        (run_id, platform, source, thread_id, batch_index, json.dumps(comments)),
+        "batch_index, comments, thread_meta, status) VALUES(?,?,?,?,?,?,?,'pending')",
+        (
+            run_id,
+            platform,
+            source,
+            thread_id,
+            batch_index,
+            json.dumps(comments),
+            json.dumps(thread_meta, ensure_ascii=False) if thread_meta else None,
+        ),
     )
     db.commit()
     return cur.lastrowid
@@ -295,12 +385,16 @@ def enqueue_batch(
 def pending_batches(db: sqlite3.Connection) -> List[sqlite3.Row]:
     db.row_factory = sqlite3.Row
     return db.execute(
-        "SELECT id, platform, source, thread_id, comments "
+        # thread_meta carries the post the comments came from; open_db's ALTER
+        # list guarantees the column exists, and the reader tolerates its
+        # absence anyway for a database opened by an older build.
+        "SELECT id, platform, source, thread_id, comments, thread_meta "
         "FROM ingest_batch WHERE status='pending' ORDER BY id"
     ).fetchall()
 
 
 # --- M1.2 fingerprint skip-list (§37.14) --------------------------------------
+
 
 def seen_fingerprints(db: sqlite3.Connection, prints: list) -> set:
     prints = [p for p in prints if p]
@@ -308,12 +402,15 @@ def seen_fingerprints(db: sqlite3.Connection, prints: list) -> set:
         return set()
     q = (
         "SELECT fingerprint FROM ingested_comments WHERE fingerprint IN ("
-        + ",".join("?" * len(prints)) + ")"
+        + ",".join("?" * len(prints))
+        + ")"
     )
     return {fp for (fp,) in db.execute(q, prints)}
 
 
-def mark_comments_ingested(db: sqlite3.Connection, thread_id: str, prints: list) -> None:
+def mark_comments_ingested(
+    db: sqlite3.Connection, thread_id: str, prints: list
+) -> None:
     prints = [p for p in prints if p]
     if not prints:
         return
@@ -324,18 +421,26 @@ def mark_comments_ingested(db: sqlite3.Connection, thread_id: str, prints: list)
     db.commit()
 
 
-def enqueue_new_only(db: sqlite3.Connection, platform: str, source: str,
-                     thread_id: str, comments: list, run_id: str = "") -> int:
+def enqueue_new_only(
+    db: sqlite3.Connection,
+    platform: str,
+    source: str,
+    thread_id: str,
+    comments: list,
+    run_id: str = "",
+    thread_meta: Optional[dict] = None,
+) -> int:
     """M1.2 batcher: drop already-ingested fingerprints before queueing.
     Returns the number of NEW comments queued (0 ⇒ zero new batches)."""
     seen = seen_fingerprints(db, [c.get("fingerprint") for c in comments])
     fresh = [
-        c for c in comments
-        if not c.get("fingerprint") or c["fingerprint"] not in seen
+        c for c in comments if not c.get("fingerprint") or c["fingerprint"] not in seen
     ]
     if not fresh:
         return 0
-    enqueue_batch(db, platform, source, thread_id, fresh, run_id=run_id)
+    enqueue_batch(
+        db, platform, source, thread_id, fresh, run_id=run_id, thread_meta=thread_meta
+    )
     return len(fresh)
 
 
@@ -351,32 +456,87 @@ def _nugget_trivial(n: Nugget) -> int:
     return 1 if (n.category == "pain_point" and not n.extracted_insight) else 0
 
 
+#: Columns written straight off the Nugget dataclass, in one list so adding a
+#: captured field means naming it once instead of editing three parallel
+#: tuples that drift apart.
+_NUGGET_DETAIL_COLUMNS = (
+    "author",
+    "author_url",
+    "comment_url",
+    "comment_id",
+    "parent_id",
+    "depth",
+    "created_utc",
+    "created_raw",
+    "upvotes",
+    "downvotes",
+    "likes",
+    "dislikes",
+    "replies",
+    "awards",
+    "reads",
+    "edited",
+    "pinned",
+    "author_is_op",
+    "distinguished",
+    "accepted_answer",
+    "post_title",
+    "post_url",
+    "post_author",
+    "post_created_utc",
+    "post_score",
+    "post_upvote_ratio",
+    "post_comment_count",
+    "post_views",
+    "community",
+)
+
+#: Flags stored as 0/1. None stays None — "not published" is not "false".
+_NUGGET_FLAG_COLUMNS = frozenset(
+    {"edited", "pinned", "author_is_op", "distinguished", "accepted_answer"}
+)
+
+
+def _detail_value(n: Nugget, col: str):
+    v = getattr(n, col, None)
+    if v is None:
+        return None
+    if col in _NUGGET_FLAG_COLUMNS:
+        return 1 if v else 0
+    return v
+
+
 def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
+    base_cols = [
+        "unique_key", "category", "raw_text", "extracted_insight", "source_url",
+        "platform", "run_id", "embedding_model", "synthesized_at", "trivial",
+        "needs_reembed", "embedding_id", "thread_id", "engagement_score",
+        "timestamp", "extra",
+    ]
+    base_vals = [
+        n.unique_key,
+        n.category,
+        n.raw_text,
+        n.extracted_insight,
+        n.source_url,
+        n.platform,
+        n.run_id,
+        "nomic-embed-text",
+        n.synthesized_at if n.synthesized_at else None,
+        _nugget_trivial(n),
+        1 if n.needs_reembed else 0,
+        n.embedding_id,
+        n.thread_id,
+        n.engagement_score,
+        n.timestamp or _now(),
+        json.dumps(n.extra, ensure_ascii=False) if n.extra else None,
+    ]
+    cols = base_cols + list(_NUGGET_DETAIL_COLUMNS)
+    vals = base_vals + [_detail_value(n, c) for c in _NUGGET_DETAIL_COLUMNS]
     db.execute(
-        """
-        INSERT OR IGNORE INTO nuggets
-            (unique_key, category, raw_text, extracted_insight, source_url, platform,
-             run_id, embedding_model, synthesized_at, trivial, needs_reembed, embedding_id,
-             thread_id, engagement_score, timestamp)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            n.unique_key,
-            n.category,
-            n.raw_text,
-            n.extracted_insight,
-            n.source_url,
-            n.platform,
-            n.run_id,
-            "nomic-embed-text",
-            n.synthesized_at if n.synthesized_at else None,
-            _nugget_trivial(n),
-            1 if n.needs_reembed else 0,
-            n.embedding_id,
-            n.thread_id,
-            n.engagement_score,
-            n.timestamp or _now(),
-        ),
+        "INSERT OR IGNORE INTO nuggets (%s) VALUES (%s)"
+        % (", ".join(cols), ", ".join("?" * len(cols))),
+        tuple(vals),
     )
     db.commit()
 
@@ -389,7 +549,12 @@ def list_nuggets(db: sqlite3.Connection) -> List[sqlite3.Row]:
     return db.execute(
         "SELECT unique_key, category, raw_text, extracted_insight, platform, "
         "source_url, thread_id, run_id, trivial, needs_reembed, "
-        "engagement_score, synthesized_at, created_at "
+        "engagement_score, synthesized_at, created_at, "
+        # Everything the scrapers now capture. Selecting it here is what lets
+        # the console and the CSV export show it instead of holding it in a
+        # column nothing reads.
+        + ", ".join(_NUGGET_DETAIL_COLUMNS)
+        + ", extra "
         "FROM nuggets ORDER BY id DESC"
     ).fetchall()
 
@@ -472,7 +637,9 @@ def get_idea(db: sqlite3.Connection, idea_id: int) -> Optional[sqlite3.Row]:
     return db.execute("SELECT * FROM ideas WHERE id=?", (idea_id,)).fetchone()
 
 
-def list_ideas(db: sqlite3.Connection, status: Optional[str] = None) -> List[sqlite3.Row]:
+def list_ideas(
+    db: sqlite3.Connection, status: Optional[str] = None
+) -> List[sqlite3.Row]:
     db.row_factory = sqlite3.Row
     # §3.3 comparability: group by critic_model, strongest first within a model.
     order = "critic_model, overall DESC, id"
@@ -504,12 +671,17 @@ def set_synthesized(db: sqlite3.Connection, unique_keys: List[str], when: str) -
 
 def nugget_by_key(db: sqlite3.Connection, unique_key: str) -> Optional[sqlite3.Row]:
     db.row_factory = sqlite3.Row
-    return db.execute("SELECT * FROM nuggets WHERE unique_key=?", (unique_key,)).fetchone()
+    return db.execute(
+        "SELECT * FROM nuggets WHERE unique_key=?", (unique_key,)
+    ).fetchone()
 
 
 # --- M2.4: run ledger (jester-setup.md 13.1) -------------------------------
 
-def start_run(db: sqlite3.Connection, run_id: str, models_used=None, origin: str = "manual") -> int:
+
+def start_run(
+    db: sqlite3.Connection, run_id: str, models_used=None, origin: str = "manual"
+) -> int:
     """Open a new run row. Refuses while another run is still 'running' (R25)."""
     row = db.execute("SELECT id FROM runs WHERE status='running' LIMIT 1").fetchone()
     if row is not None:
@@ -523,13 +695,40 @@ def start_run(db: sqlite3.Connection, run_id: str, models_used=None, origin: str
     return cur.lastrowid
 
 
-def reap_running(db: sqlite3.Connection) -> int:
-    """Flip orphaned 'running' rows (crashed session) to 'aborted'."""
-    cur = db.execute(
-        "UPDATE runs SET status='aborted', finished_at=datetime('now') WHERE status='running'"
-    )
+def reap_running(
+    db: sqlite3.Connection, older_than_minutes: Optional[int] = None
+) -> int:
+    """Flip orphaned 'running' rows (crashed session) to 'aborted'.
+
+    With no age, every 'running' row is treated as an orphan. That is sound
+    when runs are hours apart and only one session exists — and wrong the
+    moment a schedule fires every N minutes, because the tick that is still
+    working looks exactly like a corpse to the tick that just started. Pass
+    `older_than_minutes` to reap only rows too old to still be alive.
+    """
+    if older_than_minutes is None:
+        cur = db.execute(
+            "UPDATE runs SET status='aborted', finished_at=datetime('now') "
+            "WHERE status='running'"
+        )
+    else:
+        cur = db.execute(
+            "UPDATE runs SET status='aborted', finished_at=datetime('now') "
+            "WHERE status='running' AND started_at <= datetime('now', ?)",
+            (f"-{int(older_than_minutes)} minutes",),
+        )
     db.commit()
     return cur.rowcount
+
+
+def active_run(db: sqlite3.Connection) -> Optional[str]:
+    """The run_id still marked 'running', or None. Lets a scheduled tick see
+    that the previous one has not finished and stand down, rather than
+    discovering it at `start_run` after it has already re-fetched the web."""
+    row = db.execute(
+        "SELECT run_id FROM runs WHERE status='running' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
 
 
 def get_run(db: sqlite3.Connection, run_pk: int) -> Optional[sqlite3.Row]:
@@ -537,18 +736,88 @@ def get_run(db: sqlite3.Connection, run_pk: int) -> Optional[sqlite3.Row]:
     return db.execute("SELECT * FROM runs WHERE id=?", (run_pk,)).fetchone()
 
 
+def run_activity(
+    db: sqlite3.Connection, origin: str = "scheduled", windows=(1, 24)
+) -> dict:
+    """How often a given origin has actually run, and what it produced.
+
+    Counts rows, which is the only thing that can be counted honestly: a tick
+    that stood down because the previous one was still working never opened a
+    run, so it is absent here by design. That is the point — comparing this
+    against the cadence is how you notice a schedule that fires but achieves
+    nothing, which is exactly the failure this console kept hiding.
+
+    `windows` are hours. SQLite stores `started_at` as UTC 'YYYY-MM-DD HH:MM:SS'
+    via datetime('now'), so the comparison is done in the same terms.
+    """
+    db.row_factory = sqlite3.Row
+    out = {"origin": origin, "windows": {}}
+    total = db.execute(
+        "SELECT COUNT(*) FROM runs WHERE origin=?", (origin,)
+    ).fetchone()[0]
+    out["total"] = total
+    for hours in windows:
+        row = db.execute(
+            "SELECT COUNT(*) AS runs, "
+            "  COALESCE(SUM(n_nuggets_kept), 0) AS nuggets, "
+            "  COALESCE(SUM(n_ideas), 0) AS ideas, "
+            "  SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed "
+            "FROM runs WHERE origin=? AND started_at >= datetime('now', ?)",
+            (origin, f"-{int(hours)} hours"),
+        ).fetchone()
+        out["windows"][str(hours)] = {
+            "runs": row["runs"],
+            "completed": row["completed"] or 0,
+            "nuggets": row["nuggets"],
+            "ideas": row["ideas"],
+        }
+    last = db.execute(
+        "SELECT run_id, status, started_at, finished_at, n_comments, "
+        "       n_nuggets_kept, n_ideas "
+        "FROM runs WHERE origin=? ORDER BY id DESC LIMIT 1",
+        (origin,),
+    ).fetchone()
+    out["last"] = dict(last) if last else None
+    out["recent"] = [
+        dict(r)
+        for r in db.execute(
+            "SELECT run_id, status, started_at, n_comments, n_nuggets_kept, n_ideas "
+            "FROM runs WHERE origin=? ORDER BY id DESC LIMIT 12",
+            (origin,),
+        ).fetchall()
+    ]
+    return out
+
+
 def get_runs(db: sqlite3.Connection, limit: int = 50) -> List[sqlite3.Row]:
     """Run history, newest first (id DESC == insertion order)."""
     db.row_factory = sqlite3.Row
-    return db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return db.execute(
+        "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
 
 
-_RUN_SUMMARY_FIELDS = frozenset({
-    "status", "models_used", "n_comments", "n_batches", "n_posts", "n_nuggets_kept",
-    "n_discarded_trivial", "trivial_share", "n_ideas", "floor_flags",
-    "phase_checkpoints", "error", "duration_expected_s", "duration_actual_s",
-    "prefilter_funnel", "top_near_misses", "platform_counts",
-})
+_RUN_SUMMARY_FIELDS = frozenset(
+    {
+        "status",
+        "models_used",
+        "n_comments",
+        "n_batches",
+        "n_posts",
+        "n_nuggets_kept",
+        "n_discarded_trivial",
+        "trivial_share",
+        "n_ideas",
+        "floor_flags",
+        "phase_checkpoints",
+        "error",
+        "duration_expected_s",
+        "duration_actual_s",
+        "prefilter_funnel",
+        "top_near_misses",
+        "platform_counts",
+    }
+)
 
 
 def update_run_summary(db: sqlite3.Connection, run_id: str, **fields) -> None:
@@ -568,7 +837,9 @@ def update_run_summary(db: sqlite3.Connection, run_id: str, **fields) -> None:
     db.commit()
 
 
-def finish_run(db: sqlite3.Connection, run_id: str, status: str = "completed", **fields) -> None:
+def finish_run(
+    db: sqlite3.Connection, run_id: str, status: str = "completed", **fields
+) -> None:
     """Close out a run: stamp finished_at plus any final summary fields."""
     fields["status"] = status
     db.execute("UPDATE runs SET finished_at=datetime('now') WHERE run_id=?", (run_id,))
@@ -594,6 +865,7 @@ def requeue_failed(db: sqlite3.Connection) -> int:
 
 # --- R30-pattern budget ledger primitives (policy lives in jester.quota) ----
 
+
 def quota_used(db: sqlite3.Connection, platform: str, day_key: str) -> int:
     row = db.execute(
         "SELECT used FROM quota WHERE platform=? AND day_key=?", (platform, day_key)
@@ -611,6 +883,7 @@ def quota_add(db: sqlite3.Connection, platform: str, day_key: str, units: int) -
 
 
 # --- §37.24 reembed recovery ---------------------------------------------------
+
 
 def pending_reembeds(db: sqlite3.Connection) -> List[sqlite3.Row]:
     """Nuggets whose vector persistence failed (needs_reembed=1)."""

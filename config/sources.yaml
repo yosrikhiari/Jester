@@ -92,3 +92,38 @@ sources:
   enabled: false
   notes: no TikTok adapter yet - parked so the worker does not report it as skipped
     every run
+- platform: reddit
+  name: techjobs
+  kind: subreddit
+  url: https://www.reddit.com/r/techjobs/
+  enabled: true
+- platform: reddit
+  name: webdev
+  kind: subreddit
+  url: https://www.reddit.com/r/webdev/
+  enabled: true
+- platform: reddit
+  name: hiredev
+  kind: subreddit
+  url: https://www.reddit.com/r/hiredev/
+  enabled: true
+- platform: reddit
+  name: devsforhire
+  kind: subreddit
+  url: https://www.reddit.com/r/DevsForHire/
+  enabled: true
+- platform: reddit
+  name: datascience
+  kind: subreddit
+  url: https://www.reddit.com/r/datascience/
+  enabled: true
+- platform: reddit
+  name: rag
+  kind: subreddit
+  url: https://www.reddit.com/r/Rag/
+  enabled: true
+- platform: reddit
+  name: rabbitmq
+  kind: subreddit
+  url: https://www.reddit.com/r/rabbitmq/
+  enabled: true

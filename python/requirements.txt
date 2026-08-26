@@ -8,3 +8,7 @@ tzdata>=2024.1
 # Live Ollama backend (§37.16) - installed SDK returns pydantic responses
 ollama>=0.4
 
+# Groq needs no package: it is an OpenAI-compatible JSON POST served over
+# urllib from the standard library (see jester/llm.py). Put GROQ_API_KEY in
+# .env at the repo root.
+

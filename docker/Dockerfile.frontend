@@ -1,0 +1,12 @@
+# React + Vite dev server for the new Jester frontend.
+# Source is bind-mounted at runtime; node_modules is kept in an anonymous
+# volume so the bind mount does not shadow the installed packages.
+FROM node:24-slim
+
+WORKDIR /app
+
+COPY frontend/package*.json ./
+RUN npm install
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

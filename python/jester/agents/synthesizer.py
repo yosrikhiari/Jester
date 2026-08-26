@@ -18,7 +18,7 @@ from jester.idea_dedup import (
     merge_supporting,
     rescore_after_merge,
 )
-from jester.llm import CriticLLM, SynthesizerLLM
+from jester.llm import CriticLLM, SynthesizerLLM, model_name
 from jester.models import Idea, IdeaScores, Nugget
 from jester.scoring import compute_overall, SCORE_MAX, SCORE_MIN
 from jester.store import _now, insert_idea, set_synthesized, unprocessed_nuggets
@@ -81,6 +81,10 @@ class Synthesizer:
         # returned as ideas — nothing new was archived — so without this the
         # run would report "0 ideas" on a night that did real work.
         self.merged: List[MergeResult] = []
+        # True when a `max_ideas` ceiling ended run() with groups still
+        # unclustered, so the caller can say so instead of implying the pool
+        # was exhausted.
+        self.stopped_early: bool = False
 
     def run(
         self,
@@ -91,10 +95,17 @@ class Synthesizer:
         rows: Optional[List] = None,
         checker=None,
         idea_vector=None,
+        max_ideas: Optional[int] = None,
     ) -> List[Idea]:
         """M2.3: `checker` runs the competitor web step before final scoring;
         `idea_vector` enables R44 idea-level dedup. Both default to off, so a
-        caller that passes neither gets exactly the M2.2 behaviour."""
+        caller that passes neither gets exactly the M2.2 behaviour.
+
+        `max_ideas` backs the console's "stop at N ideas" goal. Stopping early
+        is safe precisely because of R50: a group is only stamped synthesized
+        once its idea is persisted, so the groups this run does not reach stay
+        unclaimed and are the next run's first work. Merges (R44) do not count
+        against the ceiling — they archive no new idea."""
         # §37.28 resynth: cluster an explicit subset (manual nugget selection)
         # instead of the NULL-pool. Lone-nugget R50 skip still applies.
         self.merged = []
@@ -109,7 +120,13 @@ class Synthesizer:
             groups[(r["platform"], r["thread_id"] or "")].append(r)
 
         ideas: List[Idea] = []
+        self.stopped_early = False
         for (platform, thread_id), group_rows in groups.items():
+            if max_ideas is not None and max_ideas > 0 and len(ideas) >= max_ideas:
+                # No silent caps: the caller reports what was left behind, or
+                # "3 ideas" reads as "the archive had only 3 to give".
+                self.stopped_early = True
+                break
             if len(group_rows) < 2:
                 # Lone nugget: leave unprocessed (R50). A singleton could be
                 # attached to an existing idea via vector search, but offline we
@@ -131,7 +148,11 @@ class Synthesizer:
                 source_threads=len(threads),
                 source_platforms=platforms,
                 status="new",
-                synthesis_model=self.config.synthesizer_model,
+                # What ACTUALLY wrote this, not what the config asked for.
+                # With llm_provider=fake the two disagree, and the archive
+                # was recording the frontier model name next to a line the
+                # deterministic stand-in produced.
+                synthesis_model=model_name(synth_llm, self.config.synthesizer_model),
                 run_id=run_id,
             )
 
@@ -146,7 +167,7 @@ class Synthesizer:
             )
             idea.competition_checked = c.competition is not None
             idea.competitor_notes = None  # never fabricated (R29/R41)
-            idea.critic_model = self.config.critic_model
+            idea.critic_model = model_name(critic_llm, self.config.critic_model)
             idea.last_scored_at = now
 
             # M2.3 / D-1: a verified competitor check overrides the model's

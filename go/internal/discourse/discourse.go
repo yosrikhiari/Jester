@@ -89,10 +89,10 @@ func BaseURL(raw string) string {
 
 // Topic is one thread worth fetching.
 type Topic struct {
-	ID     int64
-	Slug   string
-	Title  string
-	Posts  int
+	ID    int64
+	Slug  string
+	Title string
+	Posts int
 }
 
 type latestResponse struct {
@@ -106,6 +106,12 @@ type latestResponse struct {
 		} `json:"topics"`
 	} `json:"topic_list"`
 }
+
+// LikeActionID is the "like" entry in a post's actions_summary. Discourse
+// numbers its post actions and 2 is Like; a stock install has no downvote
+// action at all, which is why Dislikes and Downvotes stay nil for this
+// platform rather than being recorded as zero.
+const LikeActionID = 2
 
 // ListTopics returns up to `limit` recent topics with enough discussion.
 func (c *Client) ListTopics(ctx context.Context, base string, limit int) ([]Topic, error) {
@@ -142,28 +148,96 @@ func (c *Client) ListTopics(ctx context.Context, base string, limit int) ([]Topi
 	return out, nil
 }
 
+type postJSON struct {
+	ID                int64   `json:"id"`
+	Cooked            string  `json:"cooked"`
+	Username          string  `json:"username"`
+	Name              string  `json:"name"`
+	DisplayUsername   string  `json:"display_username"`
+	UserID            int64   `json:"user_id"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+	PostNumber        int     `json:"post_number"`
+	ReplyCount        int64   `json:"reply_count"`
+	ReplyToPostNumber *int    `json:"reply_to_post_number"`
+	QuoteCount        int64   `json:"quote_count"`
+	IncomingLinks     int64   `json:"incoming_link_count"`
+	Reads             int64   `json:"reads"`
+	ReadersCount      int64   `json:"readers_count"`
+	Score             float64 `json:"score"`
+	TrustLevel        int     `json:"trust_level"`
+	Admin             bool    `json:"admin"`
+	Moderator         bool    `json:"moderator"`
+	Staff             bool    `json:"staff"`
+	Hidden            bool    `json:"hidden"`
+	Wiki              bool    `json:"wiki"`
+	UserDeleted       bool    `json:"user_deleted"`
+	AcceptedAnswer    bool    `json:"accepted_answer"`
+	EditReason        string  `json:"edit_reason"`
+	Version           int     `json:"version"`
+	PostURL           string  `json:"post_url"`
+	PostType          int     `json:"post_type"`
+	UserTitle         string  `json:"user_title"`
+	ReactionUsers     int64   `json:"reaction_users_count"`
+	ActionsSummary    []struct {
+		ID    int   `json:"id"`
+		Count int64 `json:"count"`
+	} `json:"actions_summary"`
+}
+
 type topicResponse struct {
-	PostStream struct {
-		Posts []struct {
-			ID       int64   `json:"id"`
-			Cooked   string  `json:"cooked"`
-			Username string  `json:"username"`
-			Score    float64 `json:"score"`
-		} `json:"posts"`
+	ID               int64    `json:"id"`
+	Title            string   `json:"title"`
+	Slug             string   `json:"slug"`
+	CreatedAt        string   `json:"created_at"`
+	LastPostedAt     string   `json:"last_posted_at"`
+	PostsCount       int64    `json:"posts_count"`
+	ReplyCount       int64    `json:"reply_count"`
+	Views            int64    `json:"views"`
+	LikeCount        int64    `json:"like_count"`
+	ParticipantCount int64    `json:"participant_count"`
+	WordCount        int64    `json:"word_count"`
+	CategoryID       int64    `json:"category_id"`
+	Tags             []string `json:"tags"`
+	Closed           bool     `json:"closed"`
+	Archived         bool     `json:"archived"`
+	Pinned           bool     `json:"pinned"`
+	HasAccepted      bool     `json:"has_accepted_answer"`
+	Archetype        string   `json:"archetype"`
+	Locale           string   `json:"locale"`
+	PostStream       struct {
+		Posts []postJSON `json:"posts"`
 	} `json:"post_stream"`
 }
 
-// FetchPosts returns a topic's posts as batch comments.
-func (c *Client) FetchPosts(ctx context.Context, base string, topicID int64) ([]FetchedComment, error) {
+// likeCount reads the like tally out of actions_summary, and reports whether
+// one was published at all. A payload carrying no summary is not a post that
+// nobody liked.
+func likeCount(p postJSON) (int64, bool) {
+	for _, a := range p.ActionsSummary {
+		if a.ID == LikeActionID {
+			return a.Count, true
+		}
+	}
+	return 0, false
+}
+
+// FetchPosts returns a topic's posts as batch comments, plus the topic itself.
+//
+// Discourse publishes far more per post than the three fields this used to
+// read: who wrote it and when, how many people read it, how many replies and
+// quotes it drew, whether it was accepted as the answer, whether it was
+// edited. All of it is captured now. None of it was recoverable later.
+func (c *Client) FetchPosts(ctx context.Context, base string, topicID int64) ([]FetchedComment, *reddit.FetchedPost, error) {
 	base = BaseURL(base)
 	u := base + "/t/" + url.PathEscape(strconv.FormatInt(topicID, 10)) + ".json"
 	body, err := c.get(ctx, u)
 	if err != nil {
-		return nil, fmt.Errorf("discourse topic %d: %w", topicID, err)
+		return nil, nil, fmt.Errorf("discourse topic %d: %w", topicID, err)
 	}
 	var resp topicResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("discourse topic %d decode: %w", topicID, err)
+		return nil, nil, fmt.Errorf("discourse topic %d decode: %w", topicID, err)
 	}
 	out := make([]FetchedComment, 0, len(resp.PostStream.Posts))
 	for _, p := range resp.PostStream.Posts {
@@ -171,15 +245,117 @@ func (c *Client) FetchPosts(ctx context.Context, base string, topicID int64) ([]
 		if text == "" {
 			continue
 		}
-		// Discourse `score` is an engagement composite, not an upvote count —
-		// carried through as the engagement signal rather than invented.
-		out = append(out, FetchedComment{
-			ID:    "discourse:" + strconv.FormatInt(p.ID, 10),
-			Body:  text,
-			Score: int64(p.Score),
-		})
+		author := p.Username
+		if author == "" {
+			author = p.DisplayUsername
+		}
+		fc := FetchedComment{
+			ID:         "discourse:" + strconv.FormatInt(p.ID, 10),
+			PlatformID: strconv.FormatInt(p.ID, 10),
+			Body:       text,
+			// Discourse `score` is an engagement composite, not an upvote
+			// count — carried through as the engagement signal rather than
+			// relabelled as votes it is not.
+			Score:     int64(p.Score),
+			Author:    author,
+			CreatedAt: reddit.NormalizeTime(p.CreatedAt),
+			Permalink: postURL(base, p, resp),
+			Replies:   reddit.I64(p.ReplyCount),
+			Reads:     reddit.I64(p.Reads),
+			// post_number 1 is the topic's opening post, i.e. the OP.
+			AuthorIsOP:    p.PostNumber == 1,
+			Distinguished: p.Admin || p.Moderator || p.Staff,
+			Accepted:      p.AcceptedAnswer,
+			Hidden:        p.Hidden || p.UserDeleted,
+			// version starts at 1; anything above it means the post was edited.
+			Edited: p.Version > 1 || p.EditReason != "",
+		}
+		if author != "" {
+			fc.AuthorURL = base + "/u/" + author
+		}
+		if n, ok := likeCount(p); ok {
+			fc.Likes = reddit.I64(n)
+		}
+		if p.ReplyToPostNumber != nil {
+			fc.ParentID = strconv.Itoa(*p.ReplyToPostNumber)
+			// Nesting depth is not published — only WHICH post this replies
+			// to. Recording 1 for "is a reply" and 0 for "is not" says exactly
+			// what the API said and nothing more.
+			fc.Depth = 1
+		}
+		fc.Extra = map[string]any{
+			"post_number":         p.PostNumber,
+			"trust_level":         p.TrustLevel,
+			"quote_count":         p.QuoteCount,
+			"incoming_link_count": p.IncomingLinks,
+			"readers_count":       p.ReadersCount,
+			"reaction_users":      p.ReactionUsers,
+			"post_type":           p.PostType,
+			"wiki":                p.Wiki,
+		}
+		if p.UserTitle != "" {
+			fc.Extra["user_title"] = p.UserTitle
+		}
+		if p.UpdatedAt != "" {
+			fc.Extra["updated_at"] = reddit.NormalizeTime(p.UpdatedAt)
+		}
+		out = append(out, fc)
 	}
-	return out, nil
+	return out, topicPost(base, resp), nil
+}
+
+func postURL(base string, p postJSON, t topicResponse) string {
+	if p.PostURL != "" {
+		return base + p.PostURL
+	}
+	if t.Slug != "" {
+		return fmt.Sprintf("%s/t/%s/%d/%d", base, t.Slug, t.ID, p.PostNumber)
+	}
+	return fmt.Sprintf("%s/t/%d/%d", base, t.ID, p.PostNumber)
+}
+
+// topicPost maps the topic envelope into the shared post shape.
+func topicPost(base string, t topicResponse) *reddit.FetchedPost {
+	if t.ID == 0 {
+		return nil
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	p := &reddit.FetchedPost{
+		ID:           strconv.FormatInt(t.ID, 10),
+		Title:        t.Title,
+		URL:          TopicURL(base, Topic{ID: t.ID, Slug: t.Slug}),
+		CreatedAt:    reddit.NormalizeTime(t.CreatedAt),
+		CommentCount: reddit.I64(t.PostsCount),
+		Views:        reddit.I64(t.Views),
+		// Likes are the whole engagement story here: Discourse ships no
+		// downvote, so Dislikes stays nil rather than claiming zero.
+		Likes:        reddit.I64(t.LikeCount),
+		Participants: reddit.I64(t.ParticipantCount),
+		Community:    host,
+		CommunityURL: base,
+		Tags:         t.Tags,
+		Language:     t.Locale,
+		Kind:         t.Archetype,
+		Closed:       t.Closed,
+		Archived:     t.Archived,
+		Pinned:       t.Pinned,
+		Extra: map[string]any{
+			"category_id":         t.CategoryID,
+			"word_count":          t.WordCount,
+			"reply_count":         t.ReplyCount,
+			"has_accepted_answer": t.HasAccepted,
+			"last_posted_at":      reddit.NormalizeTime(t.LastPostedAt),
+		},
+	}
+	if len(t.PostStream.Posts) > 0 {
+		op := t.PostStream.Posts[0]
+		p.Author = op.Username
+		p.Body = htmltext.Plain(op.Cooked)
+		if p.Author != "" {
+			p.AuthorURL = base + "/u/" + p.Author
+		}
+	}
+	return p
 }
 
 // TopicURL is where a reviewer can read the thread a nugget came from.

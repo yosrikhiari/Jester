@@ -28,7 +28,7 @@ func TestFingerprintFallsBackToBodyWhenIDEmpty(t *testing.T) {
 func TestCommentsFromNodesMapsTrimsAndFilters(t *testing.T) {
 	nodes := []map[string]any{
 		{"id": "t1_a", "body": "  padded body  ", "score": "12"},
-		{"id": "", "body": "", "score": "5"},   // dropped: empty body
+		{"id": "", "body": "", "score": "5"}, // dropped: empty body
 		{"thingid": "t1_b", "body": "alt keys", "score": 7.0},
 	}
 	out := CommentsFromNodes(nodes)

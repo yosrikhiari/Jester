@@ -1,0 +1,31 @@
+﻿
+Folder: \
+HostName:                             HOST
+TaskName:                             \JesterNightly
+Next Run Time:                        8/25/2026 4:01:00 PM
+Status:                               Ready
+Logon Mode:                           Interactive only
+Last Run Time:                        11/30/1999 12:00:00 AM
+Last Result:                          267011
+Author:                               YOSRI\mano9
+Task To Run:                          "C:\jester\data\scheduled-cycle.cmd"
+epo\data\scheduled-cycle.cmd"
+Start In:                             N/A
+Comment:                              N/A
+Scheduled Task State:                 Enabled
+Idle Time:                            Disabled
+Power Management:                     Stop On Battery Mode, No Start On Batteries
+Run As User:                          OPERATOR
+Delete Task If Not Rescheduled:       Disabled
+Stop Task If Runs X Hours and X Mins: 72:00:00
+Schedule:                             Scheduling data is not available in this format.
+Schedule Type:                        One Time Only, Minute 
+Start Time:                           3:31:00 PM
+Start Date:                           8/25/2026
+End Date:                             N/A
+Days:                                 N/A
+Months:                               N/A
+Repeat: Every:                        0 Hour(s), 30 Minute(s)
+Repeat: Until: Time:                  None
+Repeat: Until: Duration:              Disabled
+Repeat: Stop If Still Running:        Disabled

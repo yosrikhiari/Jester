@@ -1,31 +1,130 @@
-# M1.1 live-ingestion stack — mirrors jester-setup.md §4.3.2 (v3.11-corrected).
-services:
-  cloakbrowser:
-    image: cloakhq/cloakbrowser
-    command: cloakserve --idle-timeout=300
-    restart: unless-stopped
-    shm_size: "2gb"                # Chromium needs real /dev/shm, not Docker's tiny default
-    ports:
-      - "127.0.0.1:9222:9222"      # CDP endpoint — localhost only, never expose publicly
-    volumes:
-      - cloak_profiles:/profile    # persistent fingerprint/cookie profile per source
-    environment:
-      - CLOAKBROWSER_LICENSE_KEY=${CLOAKBROWSER_LICENSE_KEY:-}   # empty = free tier, 1 concurrent session
-      - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
-      - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}          # boolean; only applies with a proxy (a country code here means "off")
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+# Jester — full local stack for `docker compose up`.
+#
+# Default (`docker compose up`) brings up everything that is pure local code
+# and needs no external account or model download:
+#   - qdrant            vector store
+#   - jester-console    Python operator console (serves the UI + /api) on :8619
+#   - go-worker         Go ingestion worker (mock enqueue) — stays up for exec
+#   - frontend          React/Vite dev server on :5173
+#
+# The two services that need external resources are behind a `live` profile,
+# so they don't block a plain `up`:
+#   docker compose --profile live up        # adds cloakbrowser + ollama
+#
+# All code is bind-mounted from the repo, so edits are picked up without a
+# rebuild (Python/Go console + CLI; the Go binary is built once into the
+# image, the React dev server hot-reloads).
+#
+# Data lives in ./data (host) and is shared between go-worker and
+# jester-console through the SQLite handoff queue — that IS the cross-process
+# contract, so both must see the same ./data.
 
+name: jester
+
+services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
       - "6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
+    # The qdrant image ships no curl/wget, so a HTTP healthcheck isn't
+    # available without rebuilding it. Downstream services depend on
+    # `service_started` instead; qdrant listens within ~1s of start.
+    networks: [jester_net]
+
+  jester-console:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.python
+    # Code bind-mounted from the repo; only pip deps are baked in.
+    volumes:
+      - .:/app
+      # Force every provider to `fake` so the stack runs fully offline.
+      - ./docker/config/thresholds.yaml:/app/config/thresholds.yaml:ro
+    environment:
+      JESTER_MOCK: "1"
+      JESTER_QDRANT_URL: http://qdrant:6333
+    env_file:
+      - .env
+    ports:
+      - "8619:8619"
+    depends_on:
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8619/api/doctor'); sys.exit(0)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks: [jester_net]
+
+  go-worker:
+    build:
+      context: .
+      dockerfile: docker/go.Dockerfile
+    volumes:
+      - .:/app
+    environment:
+      JESTER_MOCK: "1"
+    env_file:
+      - .env
+    depends_on:
+      qdrant:
+        condition: service_started
+    networks: [jester_net]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    volumes:
+      - ./frontend:/app
+      # Keep installed node_modules out of the bind mount.
+      - /app/node_modules
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "5173:5173"
+    networks: [jester_net]
+
+  # ---- profile-gated: need external resources -----------------------------
+  cloakbrowser:
+    image: cloakhq/cloakbrowser
+    command: cloakserve --idle-timeout=300
+    restart: unless-stopped
+    shm_size: "2gb"
+    ports:
+      - "127.0.0.1:9222:9222"
+    volumes:
+      - cloak_profiles:/profile
+    environment:
+      - CLOAKBROWSER_LICENSE_KEY=${CLOAKBROWSER_LICENSE_KEY:-}
+      - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
+      - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles: ["live"]
+    networks: [jester_net]
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles: ["live"]
+    networks: [jester_net]
 
 volumes:
-  cloak_profiles:
   qdrant_storage:
+  cloak_profiles:
+  ollama_data:
+
+networks:
+  jester_net:
+    driver: bridge

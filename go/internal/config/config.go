@@ -137,7 +137,28 @@ type Scraper struct {
 	// makes before its first real fetch. Calibrated live: Reddit challenges the
 	// FIRST request from an unseen session whatever the URL, and serves real
 	// content from the second onward — dwell time alone does not help.
-	WarmupNavigations int `yaml:"warmup_navigations"`
+	//
+	// A POINTER so that "absent" and "explicitly 0" stay distinguishable: 0
+	// means the operator turned the warm-up off, while a config file written
+	// before this key existed must keep warming rather than silently lose its
+	// only answer to Reddit's cold-session challenge. `sanitize` resolves it.
+	WarmupNavigations *int `yaml:"warmup_navigations"`
+}
+
+//: Warm-ups when the key is absent. One extra navigation is what the live
+//: calibration showed clears Reddit's first-request challenge.
+const defaultWarmupNavigations = 1
+
+// Warmups is the resolved warm-up count: the configured value, or the default
+// when the key is absent.
+func (s Scraper) Warmups() int {
+	if s.WarmupNavigations == nil {
+		return defaultWarmupNavigations
+	}
+	if *s.WarmupNavigations < 0 {
+		return 0
+	}
+	return *s.WarmupNavigations
 }
 
 // GeoIPEnabled reports whether geoip auto-matching is on. cloakserve parses

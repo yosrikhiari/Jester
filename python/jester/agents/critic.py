@@ -6,7 +6,7 @@ import json
 from typing import Optional
 
 from jester.config import Thresholds
-from jester.llm import CriticLLM
+from jester.llm import CriticLLM, model_name
 from jester.models import Idea, IdeaScores
 from jester.scoring import compute_overall
 from jester.store import _now, get_idea, update_idea
@@ -54,7 +54,7 @@ class Critic:
         )
         idea.competition_checked = c.competition is not None
         idea.competitor_notes = None  # never fabricated (R29/R41)
-        idea.critic_model = self.config.critic_model
+        idea.critic_model = model_name(critic_llm, self.config.critic_model)
         idea.last_scored_at = _now()
         if idea.id is not None:
             update_idea(self.db, idea)

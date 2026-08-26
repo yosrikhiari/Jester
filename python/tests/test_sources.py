@@ -275,6 +275,12 @@ def test_save_models_edits_the_nested_block_in_place(config_dir):
     path = config_dir / "thresholds.yaml"
     before = path.read_text(encoding="utf-8")
     assert before.lstrip().startswith("#")
+    # "Untouched" is a claim about this call, so it is measured against what
+    # the file said a moment ago. Hardcoding the dataclass default made the
+    # assertion a claim about the repo's shipped config instead, and it broke
+    # the day someone set models.archivist there.
+    archivist_before = load_thresholds(path).archivist_model
+    upvotes_before = load_thresholds(path).min_upvotes
 
     applied = save_models(path, {"extractor": "qwen3:8b", "critic": "gemma3:12b"})
     assert applied == {"extractor": "qwen3:8b", "critic": "gemma3:12b"}
@@ -284,8 +290,8 @@ def test_save_models_edits_the_nested_block_in_place(config_dir):
     t = load_thresholds(path)
     assert t.extractor_model == "qwen3:8b"
     assert t.critic_model == "gemma3:12b"
-    assert t.archivist_model == "claude-sonnet-4-6"   # untouched role
-    assert t.min_upvotes == 1                          # top-level untouched
+    assert t.archivist_model == archivist_before   # untouched role
+    assert t.min_upvotes == upvotes_before         # top-level untouched
 
 
 def test_save_models_keeps_ollama_tags_unquoted(config_dir):

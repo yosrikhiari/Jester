@@ -84,7 +84,10 @@ func mustFixture(t *testing.T) map[string]any {
 }
 
 func TestIsBlockRelevantScopesToYouTubeOrigin(t *testing.T) {
-	cases := []struct{ url string; want bool }{
+	cases := []struct {
+		url  string
+		want bool
+	}{
 		{"https://www.youtube.com/youtubei/v1/next", true},
 		{"https://www.youtube.com/watch?v=x", true},
 		{"https://rr1---sn-x.googlevideo.com/videoplayback?expire=1", false},

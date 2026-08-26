@@ -1,0 +1,38 @@
+# Docker-only override of config/thresholds.yaml.
+#
+# The repo's config/thresholds.yaml points the synthesizer/critic at Groq. For
+# a self-contained `docker compose up` that exercises the whole stack offline
+# (no API keys, no model downloads), every provider is forced to `fake` here.
+# This file is bind-mounted OVER config/thresholds.yaml for the console service
+# only — the Go worker ignores it, and your real config on disk is untouched.
+#
+# To test against real models instead, drop this override (set OFFLINE=0 in
+# docker-compose.yml) and make sure .env has the right keys / Ollama is up.
+max_comments_per_thread: 500
+min_upvotes: 1
+dedup_threshold: 0.87
+prefilter_min_chars: 40
+prefilter_max_chars: 1400
+prefilter_max_emoji: 5
+prefilter_max_mentions: 3
+prefilter_min_words: 6
+request_delay_ms: 2000
+max_threads_per_source: 3
+min_comments_per_thread: 8
+export_after_run: true
+export_rows_per_file: 100000
+competitor_search_provider: none
+
+# --- forced-offline providers (override) ---
+llm_provider: fake
+embedding_provider: fake
+extractor_provider: fake
+synthesizer_provider: fake
+critic_provider: fake
+
+embedding_model: nomic-embed-text
+models:
+  extractor: qwen3:8b
+  archivist: phi4-mini:3.8b
+  synthesizer: openai/gpt-oss-120b
+  critic: openai/gpt-oss-120b

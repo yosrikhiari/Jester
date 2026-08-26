@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/chromedp"
 )
 
 // ErrBlocked is the D-19 signal, mirroring Python's BlockedResponse.
@@ -132,16 +132,22 @@ func Challenged(ctx context.Context) bool {
 // Because cloakserve keys one Chrome process (and cookie jar) per fingerprint
 // seed, this is a one-time cost per source, not per run.
 //
+// `attempts` comes from scraper.yaml's `warmup_navigations`. Zero disables the
+// warm-up outright, which the config has always documented and the code never
+// honoured — the value was parsed into Scraper.WarmupNavigations and then read
+// by nobody, while the two call sites below passed a hardcoded 2. Turning the
+// knob did nothing in either direction.
+//
 // Returns true when the session is clear, false when it is still challenged
-// after `attempts` navigations.
+// after `attempts` navigations (and when attempts is 0, i.e. never warmed).
 func WarmUp(ctx context.Context, url string, delay time.Duration, attempts int) bool {
 	if attempts < 1 {
-		attempts = 1
+		return false
 	}
 	for i := 0; i < attempts; i++ {
 		if err := chromedp.Run(ctx,
 			chromedp.Navigate(url),
-			chromedp.Sleep(delay),
+			chromedp.Sleep(Pace(delay)),
 		); err != nil {
 			return false
 		}
@@ -158,14 +164,14 @@ func WarmUp(ctx context.Context, url string, delay time.Duration, attempts int) 
 //
 // blockedAction is one of pass_through | backoff | fail (config/scraper.yaml).
 func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
-	threadIDFrom func(permalink string) string, blockedAction string,
+	threadIDFrom func(permalink string) string, blockedAction string, warmup int,
 ) ([]FetchedComment, string, string, error) {
-	threads, err := ListThreads(ctx, listingURL, delay, 1)
+	threads, err := ListThreads(ctx, listingURL, delay, 1, warmup)
 	if err != nil {
 		return nil, "", "", err
 	}
 	threadURL := threads[0]
-	comments, err := FetchThreadURL(ctx, threadURL, delay, blockedAction)
+	comments, _, err := FetchThreadURL(ctx, threadURL, delay, blockedAction, warmup)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -174,14 +180,14 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 
 // ListThreads loads a subreddit listing and returns up to `limit` absolute
 // thread URLs in feed order.
-func ListThreads(ctx context.Context, listingURL string, delay time.Duration, limit int) ([]string, error) {
+func ListThreads(ctx context.Context, listingURL string, delay time.Duration, limit, warmup int) ([]string, error) {
 	if limit < 1 {
 		limit = 1
 	}
 	var permalinks []string
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(listingURL),
-		chromedp.Sleep(delay),
+		chromedp.Sleep(Pace(delay)),
 		waitPresent(`shreddit-post[permalink]`),
 		chromedp.ActionFunc(func(actx context.Context) error {
 			return evalInto(actx, PERMALINKS_JS, &permalinks)
@@ -192,7 +198,7 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration, li
 	// A cold fingerprint burns its first navigation on the challenge; one more
 	// clears it. Re-read the listing rather than reporting an empty feed.
 	if len(permalinks) == 0 && Challenged(ctx) {
-		if WarmUp(ctx, listingURL, delay, 2) {
+		if WarmUp(ctx, listingURL, delay, warmup) {
 			if err := chromedp.Run(ctx,
 				waitPresent(`shreddit-post[permalink]`),
 				chromedp.ActionFunc(func(actx context.Context) error {
@@ -240,30 +246,30 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration, li
 // FetchThreadURL extracts comments from one already-resolved thread URL.
 // This is the path a `kind: thread` source takes — no listing walk at all.
 func FetchThreadURL(ctx context.Context, threadURL string, delay time.Duration,
-	blockedAction string,
-) ([]FetchedComment, error) {
+	blockedAction string, warmup int,
+) ([]FetchedComment, *FetchedPost, error) {
 	var raw []map[string]any
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(threadURL),
-		chromedp.Sleep(delay),
+		chromedp.Sleep(Pace(delay)),
 		waitPresent(`shreddit-comment`),
 		chromedp.ActionFunc(func(actx context.Context) error {
 			return evalInto(actx, DOMJS, &raw)
 		}),
 	); err != nil {
-		return nil, fmt.Errorf("navigate thread: %w", err)
+		return nil, nil, fmt.Errorf("navigate thread: %w", err)
 	}
 
 	// A cold fingerprint burns its first navigation on the challenge (see
 	// WarmUp); retry once before treating this as a real block.
-	if len(raw) == 0 && Challenged(ctx) && WarmUp(ctx, threadURL, delay, 2) {
+	if len(raw) == 0 && Challenged(ctx) && WarmUp(ctx, threadURL, delay, warmup) {
 		if err := chromedp.Run(ctx,
 			waitPresent(`shreddit-comment`),
 			chromedp.ActionFunc(func(actx context.Context) error {
 				return evalInto(actx, DOMJS, &raw)
 			}),
 		); err != nil {
-			return nil, fmt.Errorf("re-read thread after warm-up: %w", err)
+			return nil, nil, fmt.Errorf("re-read thread after warm-up: %w", err)
 		}
 	}
 
@@ -273,21 +279,35 @@ func FetchThreadURL(ctx context.Context, threadURL string, delay time.Duration,
 	if challengeRE.MatchString(pageText) || challengeRE.MatchString(title) {
 		switch blockedAction {
 		case "fail":
-			return nil, &ErrBlocked{URL: threadURL, Action: "fail"}
+			return nil, nil, &ErrBlocked{URL: threadURL, Action: "fail"}
 		case "backoff":
 			select {
 			case <-time.After(backoffSeconds * time.Second):
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			}
-			return nil, &ErrBlocked{URL: threadURL, Action: "backoff"}
+			return nil, nil, &ErrBlocked{URL: threadURL, Action: "backoff"}
 		default: // pass_through
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
+	// The post's own metadata is on the page we already loaded — title,
+	// author, score, comment count and the upvote ratio. Reading it here costs
+	// one extra evaluate against a document that is already in memory, and it
+	// is the only chance to capture it: nothing downstream can recover what
+	// the thread was about from a bare id.
+	var postRow map[string]any
+	post := (*FetchedPost)(nil)
+	if err := evalInto(ctx, POST_META_JS, &postRow); err == nil {
+		post = PostFromNode(postRow)
+	}
+	if post != nil && post.URL == "" {
+		post.URL = threadURL
+	}
+
 	// An empty comment list means an empty/vanished thread — not an error.
-	return CommentsFromNodes(raw), nil
+	return CommentsFromNodes(raw), post, nil
 }
 
 // ThreadIDFromPath pulls the base-36 post id out of a reddit permalink

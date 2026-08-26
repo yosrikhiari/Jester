@@ -71,10 +71,11 @@
         <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
       </div>
       <p class="xs" style="margin-block-end:0">
-        <b>ingest</b> runs the Go worker over the enabled entries in the Sources tab and queues what it
-        finds; <b>run pipeline</b> then extracts, archives and synthesizes whatever is queued
-        (falling back to the fixture corpus when nothing is). Live ingestion needs the Go toolchain and
-        cloakserve on :9222 — the button appears once both are reachable.
+        <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
+        the whole loop: fetch those sources with the Go worker, extract, archive and synthesize.
+        <b>ingest</b> does the fetch half on its own, and the pipeline will still process anything
+        already queued. Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear
+        once both are reachable.
       </p>
     </div>
   </section>
@@ -82,8 +83,10 @@
   <!-- ── sources ──────────────────────────────────────────────────── -->
   <section data-page="sources" hidden>
     <div class="hero">
-      <div><h1>Sources</h1><p>The curated ingest list the live worker walks. Paste a subreddit,
-        a thread, a YouTube channel or video, or a TikTok profile — anything the parser recognises.</p></div>
+      <div><h1>Sources</h1><p>The curated ingest list the live worker walks — least recently
+        fetched first, so a run with a depth ceiling spreads across the list instead of
+        re-walking the top of it. Paste a subreddit, a thread, a YouTube channel or video,
+        or a TikTok profile — anything the parser recognises.</p></div>
     </div>
     <div class="card">
       <h3>Add a source</h3>
@@ -116,7 +119,8 @@
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th>on</th><th>platform</th><th>name</th><th>kind</th><th>target</th><th>status</th><th></th>
+            <th>on</th><th>platform</th><th>name</th><th>kind</th><th>target</th>
+            <th>last fetched</th><th>status</th><th></th>
           </tr></thead>
           <tbody id="src-body"></tbody>
         </table>
@@ -127,7 +131,12 @@
   <!-- ── runs ─────────────────────────────────────────────────────── -->
   <section data-page="runs" hidden>
     <div class="hero">
-      <div><h1>Runs</h1><p>Run ledger — status, funnel, durations and floor flags.</p></div>
+      <div><h1>Runs</h1><p>Run ledger — status, funnel, durations and floor flags.
+        Scheduled ticks land here alongside the ones you start by hand.</p></div>
+      <div class="row row-end">
+        <span class="pill pill--sm tone-neutral" id="runs-count">—</span>
+        <div class="seg" id="runs-filter" role="group" aria-label="Filter by origin"></div>
+      </div>
     </div>
     <div class="card card--flush">
       <div class="tablewrap">
@@ -232,6 +241,108 @@
     </div>
   </section>
 
+  <!-- ── schedule ─────────────────────────────────────────────────── -->
+  <section id="schedule" data-page="schedule" hidden>
+    <div class="hero">
+      <div><h1>Schedule</h1><p>Run the whole loop unattended — fetch the enabled sources with the
+        Go worker, then extract, archive and synthesize. Registered with the host's own scheduler,
+        so it survives a reboot and runs whether or not this console is open.</p></div>
+    </div>
+    <div id="sched-banner" class="stack"></div>
+    <div class="card">
+      <h3>Current schedule</h3>
+      <dl class="dl" id="sched-state"></dl>
+      <div class="row" style="margin-block-start:var(--s-5)">
+        <button class="btn btn--secondary btn--sm" id="sched-runnow"
+                title="Fire the registered task right now — the only proof it actually works">▶ run it now</button>
+        <button class="btn btn--danger btn--sm" id="sched-remove">remove schedule</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>How often it has actually run</h3>
+      <p class="xs">Counted from the run ledger, not from the scheduler's promises.
+        A tick that found the previous one still working stands down and leaves no
+        row, so a small shortfall against "expected" is normal — a large one is not.</p>
+      <div class="kpis" id="sched-kpis"></div>
+      <div class="tablewrap" style="margin-block-start:var(--s-5)">
+        <table>
+          <thead><tr>
+            <th>started (local)</th><th>run</th><th>status</th>
+            <th class="num">comments</th><th class="num">nuggets</th><th class="num">ideas</th>
+          </tr></thead>
+          <tbody id="sched-ticks"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>What each tick scrapes</h3>
+      <p class="xs">Leave every box ticked to walk the whole enabled list. The depth
+        ceilings below are what keep an unattended job proportionate — nobody is watching
+        it decide to walk sixteen sources at 3am.</p>
+      <div class="row modal-listhead">
+        <label class="checkall">
+          <input type="checkbox" id="sched-select-all" checked>
+          <span>Select all</span>
+        </label>
+        <span class="pill pill--sm tone-neutral row-end" id="sched-selected-count">—</span>
+      </div>
+      <div id="sched-sources" class="checklist"></div>
+      <p class="xs" id="sched-sources-hint"></p>
+
+      <h3 style="margin-block-start:var(--s-7)">How deep</h3>
+      <p class="xs">Blank means no ceiling. Posts and comments stop the fetch;
+        ideas stops synthesis — whatever is left stays queued for the next tick.</p>
+      <div class="formgrid">
+        <div class="field">
+          <label for="sched-max-posts">Max posts</label>
+          <input id="sched-max-posts" type="number" min="1" max="500" placeholder="no ceiling">
+          <span class="hint">threads / videos / topics per tick</span>
+        </div>
+        <div class="field">
+          <label for="sched-max-comments">Max comments</label>
+          <input id="sched-max-comments" type="number" min="1" max="100000" placeholder="no ceiling">
+          <span class="hint">comments queued per tick</span>
+        </div>
+        <div class="field">
+          <label for="sched-max-ideas">Max ideas</label>
+          <input id="sched-max-ideas" type="number" min="1" max="1000" placeholder="no ceiling">
+          <span class="hint">new ideas synthesized per tick</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Set a cadence</h3>
+      <p class="xs">Applies the selection above. Every tick runs
+        <span class="mono">jester cycle</span>; one that finds the previous tick still
+        working stands down rather than scraping the same sources twice.</p>
+      <div class="row" id="sched-presets" role="group" aria-label="Interval presets"></div>
+      <div class="formgrid" style="margin-block-start:var(--s-5)">
+        <div class="field">
+          <label for="sched-every">Every (minutes)</label>
+          <input id="sched-every" type="number" min="1" max="1439" value="30">
+        </div>
+        <div class="field">
+          <label for="sched-at">…or daily at</label>
+          <input id="sched-at" type="time" value="03:00">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <div class="row" style="flex-wrap:nowrap">
+            <button class="btn btn--primary" id="sched-install-every">set interval</button>
+            <button class="btn btn--ghost" id="sched-install-daily">set daily</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card card--flush">
+      <div class="card-head">
+        <h3>Last scheduled output</h3>
+        <span class="row-end xs mono" id="sched-logpath"></span>
+      </div>
+      <div class="card-body"><pre id="sched-log">no scheduled run has written a log yet</pre></div>
+    </div>
+  </section>
+
   <!-- ── doctor ───────────────────────────────────────────────────── -->
   <section data-page="doctor" hidden>
     <div class="hero">
@@ -260,25 +371,30 @@
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
 
-<div class="scrim" id="modal-scrim" style="display:none"></div>
+<div class="scrim" id="modal-scrim" hidden></div>
 <dialog class="modal" id="pipeline-modal" aria-labelledby="modal-title">
   <div class="modal-head">
     <h2 id="modal-title">Configure Pipeline Run</h2>
     <button class="btn btn--ghost btn--icon" id="modal-close" aria-label="Close">✕</button>
   </div>
   <div class="modal-body">
-    <h3>Target Sources</h3>
-    <p class="xs" style="margin-block-end:var(--s-4);opacity:0.8">Select which sources to scrape for this run</p>
-    <div class="field">
-      <label>
+    <h3>Target sources</h3>
+    <p class="xs">These are fetched with the Go worker before the pipeline runs.
+      The selection applies to this run only — it never edits
+      <span class="mono">sources.yaml</span>.</p>
+    <div class="row modal-listhead">
+      <label class="checkall">
         <input type="checkbox" id="select-all-sources" checked>
-        Select All Sources
+        <span>Select all</span>
       </label>
+      <span class="pill pill--sm tone-neutral row-end" id="selected-count">—</span>
     </div>
-    <div id="sources-checklist" style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s-4);background:var(--surface-2)"></div>
+    <div id="sources-checklist" class="checklist"></div>
+    <p class="xs" id="sources-hint"></p>
 
-    <h3>Run Goals</h3>
-    <p class="xs" style="margin-block-end:var(--s-4);opacity:0.8">Set optional targets to stop the run early</p>
+    <h3>Run goal</h3>
+    <p class="xs">Optional ceiling. Posts and comments stop the fetch; ideas stops
+      synthesis — whatever is left stays queued for the next run.</p>
     <div class="formgrid">
       <div class="field">
         <label for="goal-type">Goal Type</label>

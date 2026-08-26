@@ -29,7 +29,10 @@ def dispatch_notify(
     """Run the rendered hook argv; return (ok, stdout). Never raises."""
     argv = render_tokens(tokens, exit_code=exit_code, run_id=run_id, reason=reason)
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        # utf-8/replace, not the locale codec: a hook that echoes scraped
+        # text would otherwise raise in the reader thread and return None.
+        proc = subprocess.run(argv, capture_output=True, timeout=timeout,
+                              encoding="utf-8", errors="replace")
         return proc.returncode == 0, proc.stdout or ""
     except Exception:
         return False, ""

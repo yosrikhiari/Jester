@@ -45,6 +45,16 @@ def _as_bool(value) -> bool:
     raise ConfigError(f"{value!r} is not a boolean (try true/false)")
 
 
+#: Chat providers for the extractor / synthesizer / critic roles.
+LLM_PROVIDERS = ("fake", "ollama", "groq")
+#: Per-role provider override keys, in pipeline order.
+ROLE_PROVIDER_KEYS = ("extractor_provider", "synthesizer_provider", "critic_provider")
+#: Embedding providers. Groq is absent on purpose — it serves chat models only,
+#: so accepting it here would validate a config that dies at the first vector
+#: write, several minutes into a run.
+EMBEDDING_PROVIDERS = ("fake", "ollama")
+
+
 @dataclass
 class Thresholds:
     max_comments_per_thread: int = 500
@@ -63,8 +73,20 @@ class Thresholds:
     synthesizer_model: str = "claude-opus-4-7"
     critic_model: str = "claude-opus-4-7"
     # §37.10 provider selection: which backend serves the agent roles.
-    llm_provider: str = "fake"          # fake | ollama
+    llm_provider: str = "fake"          # fake | ollama | groq
     embedding_provider: str = "fake"    # fake | ollama
+    # Per-role overrides. Empty means "use llm_provider", so an untouched
+    # config behaves exactly as before.
+    #
+    # These exist because the three chat roles have call volumes that differ by
+    # three orders of magnitude: the extractor runs once per COMMENT (1,390 on
+    # a routine night), while the synthesizer runs once per idea CLUSTER and
+    # the critic once per idea. Sending all three to a rate-limited hosted API
+    # because you wanted a better-written solution paragraph is how a run that
+    # took 40 seconds starts taking 20 minutes and then 429s.
+    extractor_provider: str = ""
+    synthesizer_provider: str = ""
+    critic_provider: str = ""
     # §37.15 critic web-step knobs (v3.5 #3) + competitor recheck TTL (R53).
     competitor_ttl_days: int = 30       # re-run the competitor check when older
     critic_web_rate_limit: int = 6      # calls/min; provisional default
@@ -136,6 +158,9 @@ class Thresholds:
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,
+        "extractor_provider": str,
+        "synthesizer_provider": str,
+        "critic_provider": str,
     }
 
     def validate(self) -> "Thresholds":
@@ -148,10 +173,31 @@ class Thresholds:
                 f"prefilter_min_chars={self.prefilter_min_chars} exceeds "
                 f"prefilter_max_chars={self.prefilter_max_chars}"
             )
-        for key in ("llm_provider", "embedding_provider"):
-            v = getattr(self, key)
-            if v not in ("fake", "ollama"):
-                raise ConfigError(f"{key}={v!r} invalid; valid: fake, ollama")
+        # Groq is a chat provider only: it serves no embedding model, so
+        # `embedding_provider: groq` would validate and then fail at the first
+        # vector write. The two keys get two vocabularies for that reason.
+        if self.llm_provider not in LLM_PROVIDERS:
+            raise ConfigError(
+                f"llm_provider={self.llm_provider!r} invalid; "
+                f"valid: {', '.join(LLM_PROVIDERS)}"
+            )
+        if self.embedding_provider not in EMBEDDING_PROVIDERS:
+            raise ConfigError(
+                f"embedding_provider={self.embedding_provider!r} invalid; "
+                f"valid: {', '.join(EMBEDDING_PROVIDERS)}"
+            )
+        for key in ROLE_PROVIDER_KEYS:
+            # Strip before the emptiness test, because `provider_for` does:
+            # a whitespace-only override that resolves as "unset" but fails
+            # validation would mean a config could load and route differently
+            # depending on which of the two looked at it.
+            v = (getattr(self, key) or "").strip()
+            setattr(self, key, v)
+            if v and v not in LLM_PROVIDERS:
+                raise ConfigError(
+                    f"{key}={v!r} invalid; valid: {', '.join(LLM_PROVIDERS)} "
+                    "(or empty to follow llm_provider)"
+                )
         if self.competitor_search_provider not in ("none", "fake", "duckduckgo"):
             raise ConfigError(
                 f"competitor_search_provider={self.competitor_search_provider!r} "

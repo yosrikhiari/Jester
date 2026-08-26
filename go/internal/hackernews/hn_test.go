@@ -24,6 +24,12 @@ func fixtureClient(t *testing.T, byURL map[string]string) *Client {
 
 func TestSearchURLCarriesTagLimitAndCommentFloor(t *testing.T) {
 	u := New().SearchURL("ask_hn", 5)
+	// search_by_date, not search: a scheduled read of a feed must be ordered
+	// by date, or every tick re-fetches the same all-time-popular threads and
+	// dedup drops the lot.
+	if !strings.Contains(u, "/search_by_date") {
+		t.Errorf("SearchURL must use the date-ordered endpoint: %s", u)
+	}
 	for _, want := range []string{"tags=ask_hn", "hitsPerPage=5", "num_comments%3E10"} {
 		if !strings.Contains(u, want) {
 			t.Errorf("SearchURL missing %q: %s", want, u)
@@ -72,7 +78,7 @@ func TestFetchCommentsFlattensTheWholeTree(t *testing.T) {
 	    {"id":4,"text":"","author":"d"},
 	    {"id":5,"text":"&amp;quoted &lt;b&gt;bold&lt;/b&gt;","author":"e"}
 	  ]}`})
-	got, err := c.FetchComments(context.Background(), "111")
+	got, story, err := c.FetchComments(context.Background(), "111")
 	if err != nil {
 		t.Fatalf("FetchComments: %v", err)
 	}
@@ -85,9 +91,18 @@ func TestFetchCommentsFlattensTheWholeTree(t *testing.T) {
 	if got[2].Body != "third level" {
 		t.Errorf("deep reply lost: %+v", got[2])
 	}
-	// R29: Algolia sends null points on comments — absent means 0, not a guess.
+	// R29: Algolia sends null points on EVERY comment — HN does not publish
+	// per-comment scores. Score stays 0 as a neutral sort key, but Upvotes
+	// must stay NIL: recording 0 there would assert "nobody upvoted this",
+	// which the API never said.
 	if got[1].Score != 0 {
 		t.Errorf("null points must be 0, got %d", got[1].Score)
+	}
+	if got[1].Upvotes != nil {
+		t.Errorf("null points must leave Upvotes unset, got %d", *got[1].Upvotes)
+	}
+	if got[0].Upvotes == nil || *got[0].Upvotes != 7 {
+		t.Errorf("a published score must be recorded as upvotes: %+v", got[0].Upvotes)
 	}
 	if got[3].Body != `&quoted <b>bold</b>` {
 		t.Errorf("entities not decoded: %q", got[3].Body)
@@ -97,10 +112,44 @@ func TestFetchCommentsFlattensTheWholeTree(t *testing.T) {
 	if !strings.HasPrefix(got[0].ID, "hn:") {
 		t.Errorf("id not namespaced: %q", got[0].ID)
 	}
+
+	// Everything the API publishes about WHO and WHERE, which the adapter
+	// used to drop on the floor.
+	if got[0].Author != "a" || got[2].Author != "c" {
+		t.Errorf("author lost: %q / %q", got[0].Author, got[2].Author)
+	}
+	if got[0].Permalink != "https://news.ycombinator.com/item?id=1" {
+		t.Errorf("permalink wrong: %q", got[0].Permalink)
+	}
+	// Depth comes from the walk, not a payload field: HN publishes the tree,
+	// so position in it IS the depth.
+	if got[0].Depth != 0 || got[1].Depth != 1 || got[2].Depth != 2 {
+		t.Errorf("tree depth not derived: %d/%d/%d",
+			got[0].Depth, got[1].Depth, got[2].Depth)
+	}
+	if got[0].Replies == nil || *got[0].Replies != 1 {
+		t.Errorf("reply count lost: %+v", got[0].Replies)
+	}
+
+	// The story itself: previously discarded entirely, so a batch reached the
+	// archive without the question its comments were answering.
+	if story == nil {
+		t.Fatal("the story must be captured, not dropped")
+	}
+	if story.Title != "Ask HN" {
+		t.Errorf("story title lost: %q", story.Title)
+	}
+	if story.CommentCount == nil || *story.CommentCount != 5 {
+		t.Errorf("story comment count wrong: %+v", story.CommentCount)
+	}
+	// No downvote figure exists anywhere in this payload, so none is invented.
+	if story.Downvotes != nil {
+		t.Errorf("HN publishes no downvotes; got %d", *story.Downvotes)
+	}
 }
 
 func TestFetchCommentsRejectsAnEmptyID(t *testing.T) {
-	if _, err := New().FetchComments(context.Background(), "  "); err == nil {
+	if _, _, err := New().FetchComments(context.Background(), "  "); err == nil {
 		t.Fatal("empty story id must be refused before any request")
 	}
 }

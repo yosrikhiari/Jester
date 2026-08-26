@@ -4,13 +4,33 @@
 "nightly job" was a script waiting for a cron line somebody had to write, and
 on Windows there is no cron at all. These cover the registration path without
 touching the real scheduler.
+
+"Without touching" now includes the filesystem: `install()` on the Windows path
+writes the launcher batch file into `<repo>/data/`, so these tests were quietly
+rewriting whatever schedule this machine has registered — pointing it at a bare
+`python.exe` with a relative database path and no scrape scope. The task kept
+firing; it just no longer did what the operator configured.
 """
+from types import SimpleNamespace
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from jester import schedule
+
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_launcher(tmp_path, monkeypatch, request):
+    """Redirect repo_root so no test here can write the machine's launcher.
+
+    Exempt the one test whose subject IS repo_root — it asserts the real path
+    resolves to this project, which a redirect would make vacuous.
+    """
+    if request.node.name.startswith("test_repo_root"):
+        return
+    monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
 
 
 class FakeRun:
@@ -62,10 +82,18 @@ def test_install_registers_a_daily_task_with_the_environment_it_needs(monkeypatc
     assert "/sc" in cmd and "DAILY" in cmd
     assert "04:30" in cmd
     tr = cmd[cmd.index("/tr") + 1]
+    # The registered action is the generated launcher, not an inline command:
+    # `schtasks /tr` refuses anything over 261 characters and the obvious
+    # one-liner repeats the repo path four times.
+    assert tr.strip('"').endswith(schedule.LAUNCHER_NAME)
+    assert len(tr) <= 261
     # A scheduled task inherits none of the launching shell's exports, so the
-    # action must set PYTHONPATH and cd into the repo itself.
-    assert "PYTHONPATH" in tr
-    assert "jester.cli" in tr and "run" in tr
+    # launcher must set PYTHONPATH and cd into the repo itself.
+    script = schedule.launcher_script("data/j.db", "config", "py.exe")
+    assert "PYTHONPATH" in script
+    # `cycle`, never `run`: `run` drains a queue that nothing fills, so the
+    # job fired on time for months and archived nothing.
+    assert "jester.cli cycle" in script
 
 
 def test_install_surfaces_a_scheduler_failure(monkeypatch):
@@ -75,14 +103,61 @@ def test_install_surfaces_a_scheduler_failure(monkeypatch):
     assert res["ok"] is False and "Access is denied" in res["detail"]
 
 
-def test_posix_prints_the_crontab_line_instead_of_editing_it(monkeypatch):
+def _capture(sink):
+    """A `_write_crontab` stand-in that records the lines and reports success."""
+
+    def write(lines):
+        sink["lines"] = list(lines)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return write
+
+
+def test_posix_install_writes_the_line_into_the_crontab(monkeypatch):
+    """POSIX installs for real. `jester schedule install` that only PRINTS a
+    crontab line leaves nothing scheduled — the operator has to notice the
+    line, copy it, and run `crontab -e`, and until they do `schedule status`
+    correctly reports NOT installed. Windows registers the task outright, so
+    the POSIX path does too."""
     monkeypatch.setattr(schedule, "is_windows", lambda: False)
+    written = {}
+    monkeypatch.setattr(schedule, "_read_crontab", lambda: ["0 5 * * * backup.sh"])
+    monkeypatch.setattr(schedule, "_write_crontab", _capture(written))
     res = schedule.install(at="02:15", db="data/j.db")
-    # Editing someone's crontab behind their back is worse than telling them
-    # the line to add.
+    assert res["ok"] is True and res["action"] == "create"
+    line = written["lines"][-1]
+    assert "15 2 * * *" in line
+    # The scheduled verb is `cycle` (fetch AND process). Registering `run`
+    # gave a job that drained a queue nothing ever filled.
+    assert "jester.cli cycle" in line
+    # An unrelated crontab entry must survive the install.
+    assert "0 5 * * * backup.sh" in written["lines"]
+
+
+def test_posix_install_replaces_a_previous_jester_line(monkeypatch):
+    """Re-installing must not leave two schedules racing each other."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: False)
+    stale = "*/30 * * * * cd /r && python -m jester.cli cycle --db data/j.db"
+    written = {}
+    monkeypatch.setattr(schedule, "_read_crontab", lambda: [stale])
+    monkeypatch.setattr(schedule, "_write_crontab", _capture(written))
+    schedule.install(at="02:15", db="data/j.db")
+    assert stale not in written["lines"]
+    assert len(written["lines"]) == 1
+
+
+def test_posix_install_says_so_when_the_host_has_no_crontab(monkeypatch):
+    """A container without cron cannot schedule anything; say that plainly
+    rather than reporting a job that will never fire."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: False)
+
+    def no_crontab():
+        raise FileNotFoundError("crontab")
+
+    monkeypatch.setattr(schedule, "_read_crontab", no_crontab)
+    res = schedule.install(at="02:15", db="data/j.db")
     assert res["ok"] is False and res["action"] == "manual"
-    assert "15 2 * * *" in res["detail"]
-    assert "jester.cli run" in res["detail"]
+    assert "crontab" in res["detail"]
 
 
 def test_cron_line_is_a_valid_five_field_schedule():

@@ -11,10 +11,21 @@ license_key: ${CLOAKBROWSER_LICENSE_KEY}
 # seed per curated source, so a subreddit or channel keeps the same identity —
 # and the same warmed session — between runs.
 #
-# timezone/locale pin the browser's declared locale. Leave blank to let
-# cloakserve's own defaults apply, or set them to match your proxy's exit.
-timezone: America/New_York
-locale: en-US
+# timezone/locale pin the browser's declared locale. Left BLANK deliberately.
+#
+# These used to hardcode America/New_York + en-US while `proxy` was empty, so
+# every request exited from this host's own IP — which geolocates nowhere near
+# US Eastern. Cloudflare, Reddit and YouTube all cross-check the timezone a
+# page reports (Intl.DateTimeFormat().resolvedOptions().timeZone) against the
+# connection's geo-IP, and a disagreement between the two is one of the
+# cheapest, highest-confidence bot signals there is: it survives a perfect
+# canvas/WebGL fingerprint, because it is not a claim about the browser.
+#
+# Blank lets cloakserve apply its own defaults per seed. Set these ONLY to
+# match where the traffic actually leaves from — i.e. alongside a `proxy`
+# below, or to this machine's real zone.
+timezone:
+locale:
 
 # Residential proxy. v3.11 #3: datacenter IPs get flagged on IP reputation
 # alone, independent of fingerprint quality, so anything beyond light scraping

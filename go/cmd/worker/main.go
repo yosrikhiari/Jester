@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,20 +31,37 @@ func main() {
 	runID := flag.String("run", "mock-run", "run identifier")
 	fixture := flag.String("fixture", "testdata/reddit_thread_1.json", "mock fixture file")
 	live := flag.Bool("live", false, "fetch live via cloakserve CDP (§37.21); requires the container running")
+	only := flag.String("only", "", "comma-separated source names; empty walks every enabled source")
+	maxComments := flag.Int("max-comments", 0, "stop once this many comments are queued this run (0 = no cap)")
+	maxPosts := flag.Int("max-posts", 0, "stop once this many threads/videos/topics are fetched this run (0 = no cap)")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*configDir)
 	if err != nil {
 		fail("load config: %v", err)
 	}
+	// `-only` narrows the walk to the sources the operator ticked in the
+	// console. It is a run-scoped selection, deliberately NOT a write to
+	// sources.yaml: "scrape these two tonight" must not silently disable the
+	// other fourteen. An unknown name is a hard error rather than a quiet
+	// zero-source run, which is indistinguishable from "nothing was new".
+	selected, err := selectSources(cfg.Sources.Sources, *only)
+	if err != nil {
+		fail("%v", err)
+	}
 	enabled := 0
-	for _, s := range cfg.Sources.Sources {
+	for _, s := range selected {
 		if s.IsEnabled() {
 			enabled++
 		}
 	}
-	fmt.Printf("config schema_version=%d sources=%d (%d enabled)\n",
-		config.SchemaVersion, len(cfg.Sources.Sources), enabled)
+	if *only != "" {
+		fmt.Printf("config schema_version=%d sources=%d (%d enabled, %d selected by -only)\n",
+			config.SchemaVersion, len(cfg.Sources.Sources), enabled, len(selected))
+	} else {
+		fmt.Printf("config schema_version=%d sources=%d (%d enabled)\n",
+			config.SchemaVersion, len(cfg.Sources.Sources), enabled)
+	}
 
 	os.MkdirAll(filepath.Dir(*dbPath), 0o755)
 	st, err := store.Open(*dbPath)
@@ -61,7 +79,7 @@ func main() {
 	}
 
 	if *live {
-		runLive(cfg, st, *runID, pp)
+		runLive(cfg, st, *runID, pp, selected, *maxComments, *maxPosts)
 		return
 	}
 
@@ -93,7 +111,7 @@ func main() {
 		if err := st.MarkIngested(fp); err != nil {
 			fail("mark ingested: %v", err)
 		}
-		batch = append(batch, store.Comment{Body: c.Body, Fingerprint: fp, Upvotes: c.Score})
+		batch = append(batch, store.NewComment(fp, c))
 	}
 
 	if len(batch) == 0 {
@@ -116,14 +134,33 @@ func main() {
 	fmt.Printf("enqueued batch id=%d with %d kept comments\n", id, len(batch))
 }
 
-func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Params) {
+func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Params,
+	sources []config.Source, maxComments, maxPosts int,
+) {
 	delay := time.Duration(cfg.Thresholds.RequestDelayMs) * time.Millisecond
 	perSource := cfg.Thresholds.MaxThreadsPerSource
 	if perSource < 1 {
 		perSource = 1
 	}
-	total, skipped := 0, 0
-	for _, src := range cfg.Sources.Sources {
+	bg := &budget{comments: maxComments, posts: maxPosts}
+	// Least-recently-fetched first. A run budget spent in sources.yaml order
+	// always lands on the same head of the list: with -max-posts 2 the
+	// scheduler re-walked hn-ask's two exhausted threads every tick and never
+	// reached the other fifteen sources. Rotating by staleness makes a capped
+	// run cover the whole list across ticks instead of one source forever.
+	sources = orderByStaleness(st, sources)
+	skipped, unreached := 0, 0
+	for _, src := range sources {
+		// The ingest budget is the console's "stop at N" goal. Checking it only
+		// here would make it useless for the common single-source run, so it
+		// also rides into fetchSource and is consulted between threads — never
+		// mid-thread, so a thread is captured whole or not at all. That means a
+		// comment ceiling overshoots by at most one thread, which the final
+		// tally reports rather than hides.
+		if bg.spent() {
+			unreached++
+			continue
+		}
 		if !src.IsEnabled() {
 			fmt.Printf("[live] %s/%s disabled — skipping\n", src.Platform, src.Name)
 			continue
@@ -157,9 +194,17 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 			ctx, cancel = sess.Ctx, sess.Cancel
 		}
 
-		n, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource)
+		before := bg.usedComments
+		_, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg)
 		if cancel != nil {
 			cancel()
+		}
+		// Record the visit even when it failed or yielded nothing: "tried and
+		// got nothing" is exactly the state that should send a source to the
+		// back of the queue. Only crediting successes would retry a dead
+		// source first, forever.
+		if terr := st.TouchSource(src.Name, bg.usedComments-before); terr != nil {
+			fmt.Printf("[live] could not record visit to %s: %v\n", src.Name, terr)
 		}
 		if err != nil {
 			// One unreachable source must not abort the others: every run
@@ -168,9 +213,133 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 			skipped++
 			continue
 		}
-		total += n
 	}
-	fmt.Printf("[live] done: %d comment(s) queued this run, %d source(s) skipped\n", total, skipped)
+	if unreached > 0 {
+		fmt.Printf("[live] ingest budget reached; %d source(s) not visited this run\n", unreached)
+	}
+	fmt.Printf("[live] done: %d comment(s) from %d post(s) queued this run, %d source(s) skipped\n",
+		bg.usedComments, bg.usedPosts, skipped)
+}
+
+// budget caps how much one run ingests, backing the console's "stop at N"
+// goal. Two independent ceilings, because the console offers the operator two
+// units and they do not convert: a thread is one "post" whether it carries
+// three comments or four hundred. A zero limit means that ceiling is off,
+// which is what the nightly run and the plain ingest button both use.
+type budget struct {
+	comments     int // ceiling; 0 = uncapped
+	posts        int // ceiling; 0 = uncapped
+	usedComments int
+	usedPosts    int
+}
+
+func (b *budget) spent() bool {
+	if b == nil {
+		return false
+	}
+	return (b.comments > 0 && b.usedComments >= b.comments) ||
+		(b.posts > 0 && b.usedPosts >= b.posts)
+}
+
+// add books one fetched thread and the comments it yielded.
+func (b *budget) add(n int) {
+	if b != nil {
+		b.usedComments += n
+		b.usedPosts++
+	}
+}
+
+// stop reports whether the per-thread loop in fetchSource should break, and
+// says which ceiling ended it. Silence here would be indistinguishable from a
+// source that simply had nothing new.
+func (b *budget) stop(what string) bool {
+	if !b.spent() {
+		return false
+	}
+	unit, limit := "comment", b.comments
+	if b.posts > 0 && b.usedPosts >= b.posts {
+		unit, limit = "post", b.posts
+	}
+	fmt.Printf("[live]   %s budget of %d reached — stopping before the next %s\n", unit, limit, what)
+	return true
+}
+
+// orderByStaleness sorts sources least-recently-fetched first. A store error
+// is reported and the configured order kept — a run that cannot read its own
+// bookkeeping should still fetch, just without the rotation.
+func orderByStaleness(st *store.Store, sources []config.Source) []config.Source {
+	if len(sources) < 2 {
+		return sources
+	}
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Name)
+	}
+	ordered, err := st.SourceOrder(names)
+	if err != nil {
+		fmt.Printf("[live] source rotation unavailable (%v); using configured order\n", err)
+		return sources
+	}
+	byName := make(map[string]config.Source, len(sources))
+	for _, s := range sources {
+		byName[s.Name] = s
+	}
+	out := make([]config.Source, 0, len(sources))
+	for _, n := range ordered {
+		if s, ok := byName[n]; ok {
+			out = append(out, s)
+		}
+	}
+	// Anything the ordering dropped — a duplicate name, say — still gets
+	// walked. Losing a source to a bookkeeping quirk would be silent.
+	if len(out) != len(sources) {
+		seen := make(map[string]bool, len(out))
+		for _, s := range out {
+			seen[s.Name] = true
+		}
+		for _, s := range sources {
+			if !seen[s.Name] {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// selectSources narrows the configured list to the names in `only` (a
+// comma-separated list), preserving the configured order so a run is
+// reproducible. An empty `only` means "every source", which is what the
+// nightly cron and the plain `ingest` button both want.
+func selectSources(all []config.Source, only string) ([]config.Source, error) {
+	only = strings.TrimSpace(only)
+	if only == "" {
+		return all, nil
+	}
+	want := map[string]bool{}
+	for _, raw := range strings.Split(only, ",") {
+		if n := strings.TrimSpace(raw); n != "" {
+			want[n] = true
+		}
+	}
+	if len(want) == 0 {
+		return all, nil
+	}
+	var picked []config.Source
+	for _, s := range all {
+		if want[s.Name] {
+			picked = append(picked, s)
+			delete(want, s.Name)
+		}
+	}
+	if len(want) > 0 {
+		missing := make([]string, 0, len(want))
+		for n := range want {
+			missing = append(missing, n)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("-only names no such source: %s", strings.Join(missing, ", "))
+	}
+	return picked, nil
 }
 
 // needsBrowser reports whether a platform is scraped through cloakserve.
@@ -190,36 +359,44 @@ func needsBrowser(platform string) bool {
 // fetchSource routes one source to the right adapter based on its kind.
 func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID string,
 	pp prefilter.Params, src config.Source, kind string, delay time.Duration, perSource int,
+	bg *budget,
 ) (int, error) {
 	maxPerThread := int(cfg.Thresholds.MaxCommentsPerThread)
 	switch {
 	case src.Platform == "reddit" && kind == "thread":
 		fmt.Printf("[live] reddit thread %s\n", src.URL)
-		comments, err := reddit.FetchThreadURL(ctx, src.URL, delay, cfg.Scraper.BlockedAction)
+		comments, post, err := reddit.FetchThreadURL(ctx, src.URL, delay,
+			cfg.Scraper.BlockedAction, cfg.Scraper.Warmups())
 		if err != nil {
 			return 0, err
 		}
 		threadID := reddit.ThreadIDFromPath(src.URL)
-		n := enqueueComments(st, runID, "reddit", src.URL, threadID, comments, pp, maxPerThread)
+		n := enqueueComments(st, runID, "reddit", src.URL, threadID, comments, post, pp, maxPerThread)
+		bg.add(n)
 		fmt.Printf("[live] enqueued %d kept comments (thread %s)\n", n, threadID)
 		return n, nil
 
 	case src.Platform == "reddit" && kind == "subreddit":
 		listing := strings.TrimRight(src.URL, "/") + "/new/"
 		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, perSource)
-		threads, err := reddit.ListThreads(ctx, listing, delay, perSource)
+		threads, err := reddit.ListThreads(ctx, listing, delay, perSource, cfg.Scraper.Warmups())
 		if err != nil {
 			return 0, err
 		}
 		total := 0
 		for _, threadURL := range threads {
-			comments, err := reddit.FetchThreadURL(ctx, threadURL, delay, cfg.Scraper.BlockedAction)
+			if bg.stop("thread") {
+				break
+			}
+			comments, post, err := reddit.FetchThreadURL(ctx, threadURL, delay,
+				cfg.Scraper.BlockedAction, cfg.Scraper.Warmups())
 			if err != nil {
 				fmt.Printf("[live]   thread %s skipped: %v\n", threadURL, err)
 				continue
 			}
 			threadID := reddit.ThreadIDFromPath(threadURL)
-			n := enqueueComments(st, runID, "reddit", threadURL, threadID, comments, pp, maxPerThread)
+			n := enqueueComments(st, runID, "reddit", threadURL, threadID, comments, post, pp, maxPerThread)
+			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (thread %s)\n", n, threadID)
 			total += n
 		}
@@ -227,14 +404,15 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "youtube" && kind == "video":
 		fmt.Printf("[live] youtube video %s\n", src.URL)
-		comments, err := youtube.FetchVideoComments(
+		comments, post, err := youtube.FetchVideoComments(
 			ctx, src.URL, delay, 5, cfg.Scraper.BlockedAction,
 		)
 		if err != nil {
 			return 0, err
 		}
 		videoID := youtube.VideoIDFromURL(src.URL)
-		n := enqueueComments(st, runID, "youtube", src.URL, videoID, comments, pp, maxPerThread)
+		n := enqueueComments(st, runID, "youtube", src.URL, videoID, comments, post, pp, maxPerThread)
+		bg.add(n)
 		fmt.Printf("[live] enqueued %d kept comments (video %s)\n", n, videoID)
 		return n, nil
 
@@ -246,7 +424,10 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		}
 		total := 0
 		for _, watchURL := range videos {
-			comments, err := youtube.FetchVideoComments(
+			if bg.stop("video") {
+				break
+			}
+			comments, post, err := youtube.FetchVideoComments(
 				ctx, watchURL, delay, 5, cfg.Scraper.BlockedAction,
 			)
 			if err != nil {
@@ -254,7 +435,8 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 				continue
 			}
 			videoID := youtube.VideoIDFromURL(watchURL)
-			n := enqueueComments(st, runID, "youtube", watchURL, videoID, comments, pp, maxPerThread)
+			n := enqueueComments(st, runID, "youtube", watchURL, videoID, comments, post, pp, maxPerThread)
+			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (video %s)\n", n, videoID)
 			total += n
 		}
@@ -279,16 +461,20 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		}
 		total := 0
 		for _, s := range stories {
+			if bg.stop("story") {
+				break
+			}
 			if s.ID == "" {
 				continue
 			}
-			comments, err := hn.FetchComments(ctx, s.ID)
+			comments, post, err := hn.FetchComments(ctx, s.ID)
 			if err != nil {
 				fmt.Printf("[live]   story %s skipped: %v\n", s.ID, err)
 				continue
 			}
 			n := enqueueComments(st, runID, "hackernews",
-				hackernews.SourceURL(s.ID), "hn-"+s.ID, comments, pp, maxPerThread)
+				hackernews.SourceURL(s.ID), "hn-"+s.ID, comments, post, pp, maxPerThread)
+			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (hn %s)\n", n, s.ID)
 			total += n
 			sleep(delay)
@@ -321,13 +507,17 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		}
 		total := 0
 		for _, t := range topics {
-			comments, err := dc.FetchPosts(ctx, base, t.ID)
+			if bg.stop("topic") {
+				break
+			}
+			comments, post, err := dc.FetchPosts(ctx, base, t.ID)
 			if err != nil {
 				fmt.Printf("[live]   topic %d skipped: %v\n", t.ID, err)
 				continue
 			}
 			n := enqueueComments(st, runID, "discourse",
-				discourse.TopicURL(base, t), fmt.Sprintf("dc-%d", t.ID), comments, pp, maxPerThread)
+				discourse.TopicURL(base, t), fmt.Sprintf("dc-%d", t.ID), comments, post, pp, maxPerThread)
+			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (topic %d)\n", n, t.ID)
 			total += n
 			sleep(delay)
@@ -349,7 +539,8 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 // queue honest about how much work is actually pending, and stops one busy
 // thread from crowding out every other source in a night's run.
 func enqueueComments(st *store.Store, runID, platform, source, threadID string,
-	comments []reddit.FetchedComment, pp prefilter.Params, maxPerThread int) int {
+	comments []reddit.FetchedComment, post *reddit.FetchedPost,
+	pp prefilter.Params, maxPerThread int) int {
 	var batch []store.Comment
 	dropped := 0
 	for _, c := range comments {
@@ -373,7 +564,7 @@ func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 		if err := st.MarkIngested(fp); err != nil {
 			fail("mark ingested: %v", err)
 		}
-		batch = append(batch, store.Comment{Body: c.Body, Fingerprint: fp, Upvotes: c.Score})
+		batch = append(batch, store.NewComment(fp, c))
 	}
 	if maxPerThread > 0 && len(batch) >= maxPerThread {
 		// R55/no-silent-caps: a truncated thread must say so, or the run reads
@@ -386,7 +577,7 @@ func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 	}
 	id, err := st.EnqueueBatch(store.Batch{
 		RunID: runID, Platform: platform, Source: source,
-		ThreadID: threadID, Index: 0, Comments: batch,
+		ThreadID: threadID, Index: 0, Comments: batch, Post: post,
 	})
 	if err != nil {
 		fail("enqueue: %v", err)
@@ -399,7 +590,6 @@ func fail(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "worker: "+format+"\n", a...)
 	os.Exit(1)
 }
-
 
 // sleep paces adapters that talk plain HTTP; the browser adapters pace inside
 // chromedp actions instead.

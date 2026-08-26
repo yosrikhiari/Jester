@@ -1,0 +1,69 @@
+/* De-chrome reset + global frame rules (JESTER-FRONTEND-SYSTEM-DESIGN §0, §5) */
+
+.jester-root,
+.jester-layer {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  min-block-size: 100%;
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  font-size: var(--jester-fs-body);
+  color: var(--jester-ink);
+  background: var(--jester-bg);
+}
+
+/* Page never scrolls horizontally. Board strip is the only inline scroller;
+   every flex/grid ancestor carries min-inline-size: 0. */
+.jester-root *,
+.jester-layer *,
+.jester-root *::before,
+.jester-layer *::after {
+  box-sizing: border-box;
+}
+
+.jester-root {
+  overflow-x: hidden;
+}
+
+/* Tabular figures on every numeric reading */
+.jester-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus ring is mandatory (§5) */
+.jester-focusable:focus-visible,
+.jester-root button:focus-visible,
+.jester-root a:focus-visible,
+.jester-root input:focus-visible,
+.jester-root [tabindex]:focus-visible {
+  outline: 2px solid var(--jester-gold);
+  outline-offset: 2px;
+}
+
+/* Signature "jingle" — bell-tilt on primary-action press / toast arrival */
+@keyframes jester-bell-tilt {
+  0%   { transform: rotate(0deg); }
+  35%  { transform: rotate(-7deg); }
+  70%  { transform: rotate(4deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes jester-data-draw {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduced-motion kill-switch (§5) */
+@media (prefers-reduced-motion: reduce) {
+  .jester-root *,
+  .jester-layer * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .jester-jingle,
+  .jester-data-in {
+    animation: none !important;
+  }
+}

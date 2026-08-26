@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/chromedp"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/chromedp"
+
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
+	"jester/internal/reddit"
 )
 
 const backoffSeconds = 5.0
@@ -77,11 +79,82 @@ func isBlockRelevant(url string) bool {
 
 // DOMJS mirrors python's comments_from_dom fallback: hydrated comment threads
 // carry author in #author-text and markdown body in #content-text.
+//
+// Everything else here was calibrated against a live watch page. The previous
+// version read author and body only, which meant a YouTube comment reached the
+// archive with NO engagement signal whatsoever — score stayed 0 for every one
+// of them, so the whole platform ranked below a Reddit comment with a single
+// upvote. `#vote-count-middle` carries the like count and always did.
+//
+// `#published-time-text a` is doing double duty: its text is the relative age
+// ("1 year ago" — the only form YouTube renders) and its href carries
+// `lc=<commentId>`, which is the comment's real id and its permalink.
+//
+// There is no dislike count to read. YouTube withdrew it in December 2021;
+// verified live on this DOM, the dislike control's aria-label is the bare
+// "Dislike this video" with no number on the page. Nothing is invented.
 const DOMJS = `
-() => [...document.querySelectorAll('ytd-comment-thread-renderer')].map(n => ({
-  author: ((n.querySelector('#author-text') || {}).innerText || '').trim(),
-  body: ((n.querySelector('#content-text') || {}).innerText || '').trim(),
-})).filter(c => c.body)
+() => [...document.querySelectorAll('ytd-comment-thread-renderer')].map(n => {
+  const q = s => n.querySelector(s);
+  const txt = s => { const e = q(s); return e ? e.innerText.trim() : ''; };
+  const timeA = q('#published-time-text a') || q('#published-time-text');
+  const href = timeA && timeA.getAttribute ? (timeA.getAttribute('href') || '') : '';
+  const lc = (href.match(/[?&]lc=([^&]+)/) || [])[1] || '';
+  const authorA = q('#author-text');
+  return {
+    author: txt('#author-text'),
+    author_url: authorA && authorA.getAttribute ? (authorA.getAttribute('href') || '') : '',
+    body: txt('#content-text'),
+    likes: txt('#vote-count-middle'),
+    published_raw: timeA ? timeA.innerText.trim() : '',
+    comment_id: lc,
+    permalink: href,
+    replies: txt('#more-replies'),
+    hearted: !!q('#creator-heart'),
+    pinned: !!q('#pinned-comment-badge'),
+    author_is_uploader: !!n.querySelector('[author-is-uploader]'),
+    author_badge: txt('#author-comment-badge')
+  };
+}).filter(c => c.body)
+`
+
+// VIDEO_META_JS reads the video's own metadata. None of this was captured
+// before, so the archive could not say which video a comment came from beyond
+// an id — not its title, its channel, its age, or how much engagement the
+// video itself drew.
+//
+// The like count comes out of the button's aria-label ("like this video along
+// with 19,352,172 other people") because the visible label is abbreviated to
+// "19M"; the aria text is exact. ld+json carries the canonical uploadDate and
+// view count, which is steadier than scraping the rendered info strip.
+const VIDEO_META_JS = `
+() => {
+  const q = s => document.querySelector(s);
+  const txt = s => { const e = q(s); return e ? e.innerText.trim() : ''; };
+  const owner = q('#owner #channel-name a');
+  const likeBtn = q('like-button-view-model button, #segmented-like-button button');
+  const dislikeBtn = q('dislike-button-view-model button, #segmented-dislike-button button');
+  let ld = null;
+  try { const s = q('script[type="application/ld+json"]');
+        if (s) ld = JSON.parse(s.textContent); } catch (e) { ld = null; }
+  return {
+    title: txt('h1.ytd-watch-metadata') || document.title.replace(/ - YouTube$/, ''),
+    channel: owner ? owner.innerText.trim() : '',
+    channel_url: owner ? (owner.getAttribute('href') || '') : '',
+    subscribers: txt('#owner-sub-count'),
+    info: txt('#info-container'),
+    published: txt('#info-strings yt-formatted-string'),
+    like_label: likeBtn ? (likeBtn.getAttribute('aria-label') || '') : '',
+    dislike_label: dislikeBtn ? (dislikeBtn.getAttribute('aria-label') || '') : '',
+    comment_count: txt('ytd-comments-header-renderer #count'),
+    description: txt('#description-inline-expander'),
+    upload_date: ld && ld.uploadDate ? ld.uploadDate : '',
+    duration: ld && ld.duration ? ld.duration : '',
+    ld_views: ld && ld.interactionStatistic ?
+        JSON.stringify(ld.interactionStatistic) : '',
+    genre: ld && ld.genre ? ld.genre : ''
+  };
+}
 `
 
 // VIDEO_HREF_JS discovers the first video link on a channel /videos tab.
@@ -132,7 +205,7 @@ func ListChannelVideos(ctx context.Context, channelURL string, delay time.Durati
 	listing := ChannelVideosURL(channelURL)
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(listing),
-		chromedp.Sleep(delay),
+		chromedp.Sleep(reddit.Pace(delay)),
 		// The grid is lazy: it only mounts in a visible tab, after a gesture.
 		chromedp.ActionFunc(func(actx context.Context) error {
 			return page.BringToFront().Do(actx)
@@ -215,7 +288,7 @@ func FetchVideoComments(
 	delay time.Duration,
 	scrolls int,
 	blockedAction string,
-) ([]FetchedComment, error) {
+) ([]FetchedComment, *FetchedPost, error) {
 
 	var mu sync.Mutex
 	var captured []capturedResponse
@@ -231,7 +304,7 @@ func FetchVideoComments(
 
 	tasks := []chromedp.Action{
 		chromedp.Navigate(videoURL),
-		chromedp.Sleep(delay),
+		chromedp.Sleep(reddit.Pace(delay)),
 		// Lazy-loaded modules only mount in a visible, foreground tab.
 		chromedp.ActionFunc(func(actx context.Context) error {
 			return page.BringToFront().Do(actx)
@@ -249,7 +322,7 @@ func FetchVideoComments(
 		)
 	}
 	if err := chromedp.Run(ctx, tasks...); err != nil {
-		return nil, fmt.Errorf("navigate video: %w", err)
+		return nil, nil, fmt.Errorf("navigate video: %w", err)
 	}
 
 	blocks := 0
@@ -266,32 +339,35 @@ func FetchVideoComments(
 			action = "pass_through"
 		}
 		if action == "fail" || action == "backoff" {
-			return nil, &BlockedError{URL: videoURL, Action: action}
+			return nil, nil, &BlockedError{URL: videoURL, Action: action}
 		}
 	}
 
 	// PRIMARY: hydrated comment threads straight from the live DOM.
 	raw, err := evalRaw(ctx, DOMJS)
 	if err != nil {
-		return nil, fmt.Errorf("dom extract: %w", err)
+		return nil, nil, fmt.Errorf("dom extract: %w", err)
 	}
 	var rows []map[string]any
 	if err := json.Unmarshal(raw, &rows); err != nil {
-		return nil, fmt.Errorf("dom decode: %w", err)
+		return nil, nil, fmt.Errorf("dom decode: %w", err)
 	}
-	comments := make([]FetchedComment, 0, len(rows))
-	for _, r := range rows {
-		author, _ := r["author"].(string)
-		bodyTxt, _ := r["body"].(string)
-		bodyTxt = strings.TrimSpace(bodyTxt)
-		if bodyTxt == "" {
-			continue
+	comments := CommentsFromDOM(rows, videoURL)
+
+	// The video's own metadata rides on the page already loaded: title,
+	// channel, age, view and like counts. Captured even when the comment
+	// extraction below fails, because "which video" is worth knowing either
+	// way — but read first so a decode error cannot cost us both.
+	var metaRow map[string]any
+	post := (*FetchedPost)(nil)
+	if metaRaw, merr := evalRaw(ctx, VIDEO_META_JS); merr == nil {
+		if json.Unmarshal(metaRaw, &metaRow) == nil {
+			post = PostFromMeta(metaRow, videoURL)
 		}
-		comments = append(comments, FetchedComment{ID: author + bodyTxt, Body: bodyTxt})
 	}
 
 	if len(comments) == 0 {
-		return nil, fmt.Errorf("no comments found on %s (domRows=%d)", videoURL, len(rows))
+		return nil, post, fmt.Errorf("no comments found on %s (domRows=%d)", videoURL, len(rows))
 	}
-	return comments, nil
+	return comments, post, nil
 }

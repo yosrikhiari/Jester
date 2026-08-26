@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jester-console",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-c",
+        "import sys; sys.path.insert(0, 'python'); from jester.console.server import main; main()",
+        "--db", "data/jester.db",
+        "--config", "config",
+        "--port", "8619"
+      ],
+      "port": 8619
+    }
+  ]
+}

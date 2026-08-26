@@ -28,7 +28,7 @@ func TestLiveFetchRealVideoComments(t *testing.T) {
 		t.Skip("cloakserve CDP endpoint not reachable")
 	}
 	videoURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-	comments, err := FetchVideoComments(
+	comments, _, err := FetchVideoComments(
 		ytSessionCtx(t), videoURL,
 		2*time.Second, 5, "backoff",
 	)

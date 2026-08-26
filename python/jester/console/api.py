@@ -6,7 +6,6 @@ Actions wrap CLI behaviour and translate SystemExit into {ok, code} payloads.
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import urllib.request
@@ -23,6 +22,12 @@ from jester.cli import (
     evaluate_doctor,
     evaluate_smoke,
 )
+from jester.llm import GROQ_CHAT_MODELS, GroqClient, provider_for
+from jester.config import (
+    EMBEDDING_PROVIDERS,
+    LLM_PROVIDERS,
+    ROLE_PROVIDER_KEYS,
+)
 from jester.config import (
     MODEL_ROLES,
     ConfigError,
@@ -32,6 +37,8 @@ from jester.config import (
     save_thresholds,
 )
 from jester.export import default_export_dir, export_csv
+from jester.worker import go_binary, ingest as worker_ingest
+from jester import schedule as _schedule
 from jester.fetchers.cloak import load_scraper_config
 from jester.llm import PROMPT_VERSIONS, RUBRIC_VERSION
 from jester.quota import day_key
@@ -48,6 +55,7 @@ from jester.sources import (
 )
 from jester.store import (
     get_idea,
+    run_activity,
     get_runs,
     list_ideas,
     list_nuggets,
@@ -59,6 +67,16 @@ from jester.store import (
 
 _LIVE_CONFIG_DIR = "config-live"
 _PLATFORMS = tuple(PLATFORM_KINDS)
+
+
+#: Knobs whose value is a closed vocabulary rather than a number. The console
+#: draws these as a <select>, so a new provider shows up in the UI the moment
+#: it is valid in code rather than the next time someone edits the JavaScript.
+_CHOICES = {
+    "llm_provider": list(LLM_PROVIDERS),
+    "embedding_provider": list(EMBEDDING_PROVIDERS),
+    "competitor_search_provider": ["none", "fake", "duckduckgo"],
+}
 
 
 class ConsoleAPI:
@@ -235,14 +253,37 @@ class ConsoleAPI:
 
     # ---- sources ----------------------------------------------------------
 
+    def _source_state(self):
+        """When the worker last walked each source, keyed by name.
+
+        `source_state` is one of the tables Go OWNS (§25.3/D-17), so a database
+        that has never seen the worker simply does not have it. Missing is a
+        normal state here, not an error — it means "nothing fetched yet".
+        """
+        try:
+            rows = self.db.execute(
+                "SELECT name, last_fetched_at, last_queued, visits FROM source_state"
+            ).fetchall()
+        except Exception:  # noqa: BLE001 - table absent until the worker runs
+            return {}
+        # Positional, not by name: row_factory is toggled between sqlite3.Row
+        # and the default by other readers on this same connection, so a
+        # name-keyed access here works or raises depending on call order.
+        return {r[0]: {"last_fetched_at": r[1], "last_queued": r[2], "visits": r[3]}
+                for r in rows}
+
     def sources(self):
         """The curated ingest list, plus the vocabulary the UI needs to render
         an add-form without hard-coding platform knowledge in JavaScript."""
         srcs = load_sources(self._sources_path)
+        state = self._source_state()
         return {
             "ok": True,
             "path": str(self._sources_path),
-            "sources": [s.to_dict() for s in srcs],
+            # The worker walks least-recently-fetched first, so "when was this
+            # last visited" is now the thing that decides run order — it has to
+            # be visible, or the rotation looks like randomness.
+            "sources": [{**s.to_dict(), "state": state.get(s.name)} for s in srcs],
             "platform_kinds": {k: list(v) for k, v in PLATFORM_KINDS.items()},
             "supported_kinds": [list(pair) for pair in sorted(SUPPORTED_KINDS)],
         }
@@ -330,10 +371,17 @@ class ConsoleAPI:
                 "critic_web_rate_limit": t.critic_web_rate_limit,
                 "critic_web_daily_budget": t.critic_web_daily_budget,
             },
+            # `_EDITABLE` is the write allow-list; this is the render list,
+            # and they are not the same set. The per-role providers stay
+            # writable through /api/thresholds but are drawn by the Agent
+            # models card, which offers the three valid values as a dropdown
+            # beside the model each one governs. Rendering them here too would
+            # be a second, typo-prone place to set one thing.
             "editable": {
                 key: {"type": caster.__name__, "range": Thresholds._RANGES.get(key),
-                      "value": getattr(t, key)}
+                      "value": getattr(t, key), "choices": _CHOICES.get(key)}
                 for key, caster in Thresholds._EDITABLE.items()
+                if key not in ROLE_PROVIDER_KEYS
             },
             "scraper": scraper,
             "sources": [s.to_dict() for s in load_sources(self._sources_path)],
@@ -399,6 +447,19 @@ class ConsoleAPI:
             return {"ok": False, "error": str(exc)}
         t = load_config(str(path)).thresholds
         installed = self.ollama_models()
+        # Which backends are in play once per-role overrides are resolved —
+        # keying this off `llm_provider` alone missed the whole point of the
+        # overrides, which exist so one role can use Groq while the rest do not.
+        in_use = {provider_for(t, role) for role in ("extractor", "synthesizer", "critic")}
+        groq_ready = None
+        groq_choices = []
+        if "groq" in in_use:
+            # Ask Groq what this key can actually reach. An empty list means
+            # "could not ask" (no key, no network), never "no models".
+            groq_choices = GroqClient().list_models()
+            groq_ready = bool(groq_choices)
+            if not groq_choices:
+                groq_choices = list(GROQ_CHAT_MODELS)
         current = {
             "extractor": t.extractor_model,
             "archivist": t.archivist_model,
@@ -406,6 +467,26 @@ class ConsoleAPI:
             "critic": t.critic_model,
             "embedding_model": t.embedding_model,
         }
+        # "Missing" means "configured but not pulled", which is only a
+        # question for an Ollama-served role. A Groq role has nothing to pull,
+        # so flagging it would be a permanent false alarm.
+        missing = set()
+        if installed is not None:
+            by_role = {
+                "extractor": t.extractor_model,
+                "synthesizer": t.synthesizer_model,
+                "critic": t.critic_model,
+            }
+            for role, name in by_role.items():
+                if provider_for(t, role) == "ollama" and name                         and not _model_installed(name, installed):
+                    missing.add(name)
+            # The archivist has no provider of its own; it follows llm_provider.
+            if t.llm_provider == "ollama" and t.archivist_model                     and not _model_installed(t.archivist_model, installed):
+                missing.add(t.archivist_model)
+            # Embedding is Ollama's job regardless of the chat provider.
+            if t.embedding_provider == "ollama" and t.embedding_model                     and not _model_installed(t.embedding_model, installed):
+                missing.add(t.embedding_model)
+        missing = sorted(missing)
         return {
             "ok": True,
             "profile": path.name,
@@ -417,15 +498,28 @@ class ConsoleAPI:
             ],
             "roles": list(MODEL_ROLES) + ["embedding_model"],
             "models": current,
+            "llm_provider": t.llm_provider,
+            "embedding_provider": t.embedding_provider,
+            # Which backend actually serves each chat role once its override is
+            # resolved. The UI must not re-implement that precedence.
+            "role_providers": {
+                role: provider_for(t, role) for role in ("extractor", "synthesizer", "critic")
+            },
             "ollama_up": installed is not None,
             "installed": installed or [],
+            # One catalogue per backend rather than one merged "available
+            # models" list: which of these applies is a per-role question, and
+            # the role's provider is the only thing that answers it.
+            "groq_choices": groq_choices,
+            "ollama_choices": installed or [],
+            "groq_ready": groq_ready,
             # Anything configured but not pulled would fail at run time — the
             # UI marks these rather than letting the run discover it. Ollama
-            # reports `name:latest`, so a bare `name` is the same model.
-            "missing": sorted({
-                name for name in current.values()
-                if name and not _model_installed(name, installed)
-            }) if installed is not None else [],
+            # reports `name:latest`, so a bare `name` is the same model. Only
+            # Ollama-served roles can be checked this way; Groq has nothing to
+            # pull, so an unreachable Groq is reported as `groq_ready: false`
+            # instead of marking every model "missing".
+            "missing": missing,
         }
 
     def update_models(self, patch, profile=None):
@@ -437,31 +531,36 @@ class ConsoleAPI:
         return {"ok": True, "applied": applied, "profile": path.name,
                 "written_to": str(path / "thresholds.yaml")}
 
-    def update_thresholds(self, patch):
+    def update_thresholds(self, patch, profile=None):
+        """Write threshold keys back to thresholds.yaml.
+
+        With no `profile` the shared facts mirror across config/ and
+        config-live/, which is what the Config page's knobs want. With one,
+        the write is scoped to that profile alone: a per-role provider is a
+        profile's own choice, exactly like its model names, and mirroring it
+        would erase the only difference between the two profiles.
+        """
         try:
+            if profile is not None:
+                paths = [self._resolve_profile(profile) / "thresholds.yaml"]
+            else:
+                paths = self._mirror_paths("thresholds.yaml")
             written = []
             applied = {}
-            for path in self._mirror_paths("thresholds.yaml"):
+            for path in paths:
                 applied = save_thresholds(path, patch)
                 written.append(str(path))
         except (ConfigError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
-        return {"ok": True, "applied": applied, "written_to": written}
+        return {"ok": True, "applied": applied, "written_to": written,
+                "profile": Path(paths[0]).parent.name}
 
     @staticmethod
     def _go_binary():
-        """Resolve the Go toolchain: GO_BIN, then PATH, then the vendored
-        Windows install. PATH used to be skipped, so a perfectly normal
-        `go` install reported the worker as unavailable."""
-        explicit = os.environ.get("GO_BIN")
-        if explicit and Path(explicit).exists():
-            return explicit
-        found = shutil.which("go")
-        if found:
-            return found
-        vendored = (Path(os.environ.get("LOCALAPPDATA", ""))
-                    / "Programs" / "go-toolchain" / "bin" / "go.exe")
-        return str(vendored) if vendored.exists() else None
+        """Resolve the Go toolchain. Kept as a method because tests and the
+        infra probe both reach for it; the resolution itself lives in
+        `jester.worker` alongside the code that runs the binary."""
+        return go_binary()
 
     def infra(self):
         def tcp(host, port, timeout=1.5):
@@ -490,21 +589,88 @@ class ConsoleAPI:
 
     # ---- actions ----------------------------------------------------------
 
-    def run_pipeline(self, live_models=False, run_id="console-run"):
-        """Full pipeline over pending batches. With no pending batches the
-        FixtureFetcher seeds the deterministic sample (mock corpus).
+    # The goal types the console offers. `posts` and `comments` are ingestion
+    # ceilings the Go worker enforces; `ideas` is a synthesis ceiling the
+    # Python pipeline enforces. Anything else is refused rather than dropped —
+    # a goal the operator set and the run ignored is the worst outcome.
+    _GOAL_TYPES = ("posts", "comments", "ideas")
 
-        Live *ingestion* is the Go worker's job (`worker -live`); this runs the
-        Python agent pipeline over whatever is already queued.
+    def run_pipeline(self, live_models=False, run_id="console-run",
+                     source_names=None, goal=None, ingest=None):
+        """One operator-facing run: optionally ingest the selected sources,
+        then run the Python agent pipeline over everything queued.
+
+        The console's own copy used to do only the second half. That reads fine
+        on day one and is inert forever after: `cmd_run` falls back to the
+        FixtureFetcher when nothing is pending, the skip-list rejects every
+        fixture comment the second time, and so each press completed in 0.2s
+        having archived nothing. Pressing "run pipeline" has to be able to
+        produce new work, which means it has to be able to fetch.
+
+        `source_names` selects which curated sources to fetch (None/empty =>
+        every enabled one). `goal` is `{"type": ..., "value": N}`.
+        `ingest` forces the fetch half on or off; the default fetches whenever
+        the operator named sources or the worker is reachable.
         """
+        steps = []
+        goal_type, goal_value = None, None
+        if goal:
+            goal_type = str(goal.get("type") or "").strip().lower()
+            if goal_type in ("", "none"):
+                goal_type = None
+            elif goal_type not in self._GOAL_TYPES:
+                return {"ok": False, "error": f"unknown goal type {goal_type!r}"}
+            else:
+                try:
+                    goal_value = int(goal.get("value"))
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": f"goal {goal_type!r} needs a whole number"}
+                if goal_value < 1:
+                    return {"ok": False, "error": f"goal {goal_type!r} must be at least 1"}
+
+        names = [str(n).strip() for n in (source_names or []) if str(n).strip()]
+        known = {s.name for s in load_sources(self._sources_path)}
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            return {"ok": False, "error": "no such source(s): " + ", ".join(sorted(unknown))}
+
+        infra = self.infra()
+        want_ingest = bool(names) if ingest is None else bool(ingest)
+        if want_ingest and not infra.get("worker_go_available"):
+            return {"ok": False,
+                    "error": "the Go worker is not available, so the selected sources "
+                             "cannot be fetched — install Go or set GO_BIN"}
+
+        if want_ingest:
+            step = self.ingest(
+                live=bool(infra.get("can_ingest_live")),
+                run_id=f"{run_id}-ingest",
+                only=names,
+                max_comments=goal_value if goal_type == "comments" else None,
+                max_posts=goal_value if goal_type == "posts" else None,
+            )
+            steps.append({"step": "ingest", **step})
+            if not step.get("ok"):
+                # A failed fetch must not be followed by a pipeline pass that
+                # reports "ok" over an empty queue.
+                return {"ok": False, "steps": steps,
+                        "error": "ingest failed: " + (step.get("error") or f"exit {step.get('code')}"),
+                        "overview": self.overview()["counts"]}
+
+        before = self._counts()
         args = type("Args", (), {})()
         args.db = self.db_path
         args.run = run_id
+        args.max_ideas = goal_value if goal_type == "ideas" else None
         args.config = (
             str(self.repo_root / _LIVE_CONFIG_DIR)
             if live_models
             else self.config_dir
         )
+        # Having just fetched, an empty queue is the answer, not a gap: seeding
+        # the canned fixture here would report scraped counts for a run that
+        # scraped nothing. A pipeline-only press keeps the demo fallback.
+        args.seed_fixtures = not want_ingest
         old_origin = os.environ.get("JESTER_ORIGIN")
         os.environ["JESTER_ORIGIN"] = "manual"
         try:
@@ -514,50 +680,204 @@ class ConsoleAPI:
                 os.environ.pop("JESTER_ORIGIN", None)
             else:
                 os.environ["JESTER_ORIGIN"] = old_origin
-        result["overview"] = self.overview()["counts"]
+
+        after = self._counts()
+        result["steps"] = steps
+        result["overview"] = after
+        result["archived"] = {
+            "nuggets": after["nuggets"] - before["nuggets"],
+            "ideas": after["ideas"] - before["ideas"],
+        }
+        # A run that archived nothing is the exact failure that made the
+        # console feel broken, and it is NOT an error — say plainly what
+        # happened so the next click is an informed one.
+        if result.get("ok") and not any(result["archived"].values()):
+            result["idle"] = True
+            result["note"] = (
+                "the run completed but archived nothing new — "
+                + ("every fetched comment was already in the skip-list"
+                   if want_ingest else
+                   "nothing was queued to process; fetch some sources first")
+            )
         return result
 
-    def ingest(self, live=False, run_id="console-ingest", timeout=900):
+    def ingest(self, live=False, run_id="console-ingest", timeout=900,
+               only=None, max_comments=None, max_posts=None):
         """Run the Go ingestion worker over the curated source list.
 
-        This is the missing half of the loop: adding a subreddit in the Sources
-        tab does nothing until something fetches it, and `run_pipeline` only
-        processes what is already queued.
+        The mechanics live in `jester.worker` so the scheduled job — which
+        goes through the CLI, not the console — fetches exactly the same way.
         """
-        go_bin = self._go_binary()
-        if not go_bin:
-            return {"ok": False, "error": "no Go toolchain found — install Go or set GO_BIN"}
-        cmd = [
-            go_bin, "run", "./cmd/worker",
-            "-config", os.path.abspath(self.config_dir),
-            "-db", self.db_path,
-            "-run", run_id,
-        ]
-        if live:
-            cmd.append("-live")
-        env = os.environ.copy()
-        if not live:
-            env["JESTER_MOCK"] = "1"
-        try:
-            proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
-                cmd, cwd=str(self.repo_root / "go"), env=env,
-                capture_output=True, text=True, timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": f"worker exceeded {timeout}s and was killed"}
-        except OSError as exc:
-            return {"ok": False, "error": f"could not start the worker: {exc}"}
-        out = (proc.stdout or "").strip()
-        err = (proc.stderr or "").strip()
+        return worker_ingest(
+            self.config_dir, self.db_path, run_id,
+            live=live, only=only, max_comments=max_comments,
+            max_posts=max_posts, timeout=timeout, counts=self._counts,
+        )
+
+    # ---- schedule ---------------------------------------------------------
+
+    #: Offered cadences. Free-form minutes are accepted too, but a picker with
+    #: sane steps stops someone scheduling a live scrape every minute against a
+    #: rate-limited API by mistyping one digit.
+    SCHEDULE_PRESETS = (15, 30, 60, 120, 360, 720)
+
+    def schedule(self):
+        """What the host scheduler actually has registered — never a guess."""
+        st = _schedule.status()
+        log = self.repo_root / "data" / "schedule.log"
+        tail = ""
+        if log.is_file():
+            try:
+                # The scheduled run's own account of itself. schtasks records
+                # an exit code and nothing else, so without this the console
+                # could say "installed" and nothing about whether it works.
+                tail = log.read_text(encoding="utf-8", errors="replace")[-4000:]
+            except OSError:
+                tail = ""
         return {
-            "ok": proc.returncode == 0,
-            "code": proc.returncode,
-            "live": bool(live),
-            "output": out[-4000:],
-            "error": err[-2000:] if proc.returncode != 0 else "",
-            "queued_new_comments": _queued_from_output(out),
-            "counts": self._counts(),
+            "ok": True,
+            "installed": st.get("installed", False),
+            "scheduler": st.get("scheduler", ""),
+            "next_run": st.get("next_run", ""),
+            "cadence": st.get("cadence", ""),
+            "interval_minutes": st.get("interval_minutes"),
+            # How many times it has actually fired, and what that should have
+            # been. A schedule that is registered and silent looks identical to
+            # a healthy one until you put these two numbers side by side.
+            "activity": self._schedule_activity(st.get("interval_minutes")),
+            "detail": st.get("detail", ""),
+            "presets": list(self.SCHEDULE_PRESETS),
+            # What the REGISTERED task will fetch, read back out of the launcher
+            # the scheduler actually runs — not what someone last typed into
+            # the form. The two diverge the moment a schedule is installed from
+            # the CLI or edited by hand.
+            "options": _schedule.installed_options() if st.get("installed") else {},
+            "scope_limits": {k: list(v) for k, v in self.SCOPE_LIMITS.items()},
+            "sources": [
+                {"name": s.name, "platform": s.platform, "kind": s.kind,
+                 "enabled": s.enabled, "supported": s.supported}
+                for s in load_sources(self._sources_path)
+            ],
+            "windows": _schedule.is_windows(),
+            "task_name": _schedule.TASK_NAME,
+            "log_path": str(log),
+            "log_tail": tail,
+            # The command a schedule runs is the whole point of the fix that
+            # created this page: `cycle` fetches AND processes.
+            "command": "jester cycle (ingest + pipeline)",
         }
+
+    #: Depth ceilings the schedule form offers, with the range each accepts.
+    #: An unattended job wants these far more than a manual one does: nobody is
+    #: watching it decide to walk sixteen sources at 3am.
+    SCOPE_LIMITS = {
+        "max_posts": (1, 500),
+        "max_comments": (1, 100000),
+        "max_ideas": (1, 1000),
+    }
+
+    def _scrape_scope(self, options):
+        """Validate a scope dict from the console. Returns (scope, error)."""
+        options = options or {}
+        names = [str(n).strip() for n in (options.get("only") or []) if str(n).strip()]
+        if names:
+            known = {s.name for s in load_sources(self._sources_path)}
+            unknown = [n for n in names if n not in known]
+            if unknown:
+                return None, "no such source(s): " + ", ".join(sorted(unknown))
+        scope = {"only": names}
+        for key, (lo, hi) in self.SCOPE_LIMITS.items():
+            raw = options.get(key)
+            if raw in (None, "", 0, "0"):
+                continue  # absent means no ceiling, which is not the same as 0
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return None, f"{key.replace('_', ' ')} must be a whole number"
+            if not (lo <= value <= hi):
+                return None, f"{key.replace('_', ' ')} must be between {lo} and {hi}"
+            scope[key] = value
+        return scope, None
+
+    def _schedule_activity(self, interval_minutes):
+        """How often the schedule actually ran, against how often it should have.
+
+        The count alone cannot tell a healthy schedule from a broken one — this
+        console spent months reporting "ok" for runs that archived nothing. The
+        expected figure is what turns a number into a verdict.
+        """
+        act = run_activity(self.db, origin="scheduled")
+        act["interval_minutes"] = interval_minutes
+
+        # A window is only a fair yardstick for the time the schedule has
+        # actually existed. Judging a job installed ten minutes ago against a
+        # full 24h window reports it as having missed 47 of 48 ticks, which is
+        # both false and the kind of red number people learn to ignore.
+        first = self.db.execute(
+            "SELECT MIN(started_at) FROM runs WHERE origin='scheduled'"
+        ).fetchone()[0]
+        act["first_run_at"] = first
+        act["age_minutes"] = None
+        if first:
+            row = self.db.execute(
+                "SELECT CAST((julianday('now') - julianday(?)) * 24 * 60 AS INTEGER)",
+                (first,),
+            ).fetchone()
+            act["age_minutes"] = max(0, row[0] or 0)
+
+        for hours, bucket in act["windows"].items():
+            window_minutes = int(hours) * 60
+            age = act["age_minutes"]
+            if not interval_minutes or age is None:
+                bucket["expected"] = None
+                bucket["partial"] = False
+                continue
+            span = min(window_minutes, age)
+            # +1 because the first run sits at the start of the span: a
+            # 46-minute-old 30-minute schedule should have fired at t=0 and
+            # t=30, which is two ticks, not one.
+            bucket["expected"] = int(span // interval_minutes) + 1
+            # True when the schedule is younger than the window, so the UI can
+            # say "since the first run" rather than implying a full window.
+            bucket["partial"] = age < window_minutes
+        return act
+
+    def schedule_install(self, every=None, at=None, options=None):
+        """Register the recurring scrape.
+
+        `every` is minutes, `at` is HH:MM, and `options` says WHAT to fetch and
+        HOW DEEP — the half the scheduler had no way to express, so every
+        unattended tick meant "every enabled source, no ceiling".
+        """
+        scope, err = self._scrape_scope(options)
+        if err:
+            return {"ok": False, "error": err}
+        extra = _schedule.scrape_flags(scope)
+        if every is not None:
+            try:
+                minutes = int(every)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"interval {every!r} is not a whole number"}
+            res = _schedule.install(db=self.db_path, config=self.config_dir,
+                                    every=minutes, extra=extra)
+        else:
+            when = str(at or _schedule.DEFAULT_TIME).strip()
+            if not re.match(r"^\d{1,2}:\d{2}$", when):
+                return {"ok": False, "error": f"time {when!r} is not HH:MM"}
+            res = _schedule.install(db=self.db_path, config=self.config_dir,
+                                    at=when, extra=extra)
+        return {"ok": res["ok"], "detail": res["detail"], "action": res["action"],
+                "schedule": self.schedule()}
+
+    def schedule_remove(self):
+        res = _schedule.remove()
+        return {"ok": res["ok"], "detail": res["detail"], "schedule": self.schedule()}
+
+    def schedule_run_now(self):
+        """Fire the registered task immediately — the only proof that the
+        thing the host will run at 3am actually works."""
+        res = _schedule.run_now()
+        return {"ok": res["ok"], "detail": res["detail"]}
 
     def export(self, out_dir=None):
         """CSV dump of the archive, split by content type and origin."""
@@ -627,20 +947,6 @@ def _model_installed(name: str, installed) -> bool:
         return False
     wanted = name if ":" in name else f"{name}:latest"
     return any(have in (name, wanted) for have in installed)
-
-
-_QUEUED_RE = re.compile(r"^\[live\] done: (\d+) comment", re.M)
-_MOCK_QUEUED_RE = re.compile(r"^enqueued batch id=\d+ with (\d+) kept comments", re.M)
-
-
-def _queued_from_output(text: str):
-    """Pull the worker's own tally out of its log so the console reports what
-    the worker actually did, rather than guessing from a DB delta."""
-    for pattern in (_QUEUED_RE, _MOCK_QUEUED_RE):
-        m = pattern.search(text or "")
-        if m:
-            return int(m.group(1))
-    return None
 
 
 def _same_dir(a: Path, b: Path) -> bool:

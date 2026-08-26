@@ -31,7 +31,13 @@ import (
 type FetchedComment = reddit.FetchedComment
 
 const (
-	SearchEndpoint = "https://hn.algolia.com/api/v1/search"
+	// search_by_date, NOT search. The plain /search endpoint ranks by
+	// relevance over ALL time, so a recurring run kept re-fetching the same
+	// famous threads — "Ask HN: I'm an FCC Commissioner" (2023), "Is S3
+	// down?" (2017) — every single tick. Dedup then discarded all of it, so
+	// the schedule fired on time and queued nothing new, forever. A feed read
+	// on a clock has to be ordered by the clock.
+	SearchEndpoint = "https://hn.algolia.com/api/v1/search_by_date"
 	ItemEndpoint   = "https://hn.algolia.com/api/v1/items/"
 	// ItemURL is where a human would read the thread; stored as the source URL.
 	ItemURL = "https://news.ycombinator.com/item?id="
@@ -118,8 +124,8 @@ type Story struct {
 	NumComments int
 }
 
-// ListStories returns up to `limit` recent stories for a tag, busiest first as
-// the API orders them.
+// ListStories returns up to `limit` stories for a tag, newest first — the
+// order search_by_date returns them in.
 func (c *Client) ListStories(ctx context.Context, tag string, limit int) ([]Story, error) {
 	body, err := c.get(ctx, c.SearchURL(tag, limit))
 	if err != nil {
@@ -147,56 +153,132 @@ func (c *Client) ListStories(ctx context.Context, tag string, limit int) ([]Stor
 
 // item mirrors the Algolia item tree. Comments nest arbitrarily deep.
 type item struct {
-	ID       int64  `json:"id"`
-	Text     string `json:"text"`
-	Author   string `json:"author"`
-	Points   *int   `json:"points"`
-	Type     string `json:"type"`
-	Title    string `json:"title"`
-	Children []item `json:"children"`
+	ID         int64  `json:"id"`
+	Text       string `json:"text"`
+	Author     string `json:"author"`
+	Points     *int   `json:"points"`
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	ParentID   *int64 `json:"parent_id"`
+	StoryID    *int64 `json:"story_id"`
+	CreatedAt  string `json:"created_at"`
+	CreatedAtI int64  `json:"created_at_i"`
+	Options    []any  `json:"options"`
+	Children   []item `json:"children"`
 }
+
+// itemURL is where a human reads one comment or story.
+func itemURL(id int64) string { return ItemURL + strconv.FormatInt(id, 10) }
 
 // flatten walks the whole comment tree. A reply three levels down is still a
 // person describing a problem, so depth is not a reason to drop it.
-func flatten(nodes []item, out *[]FetchedComment) {
+//
+// `depth` is derived from the walk rather than read from the payload: Algolia
+// publishes the tree, not a depth field, so the position in that tree IS the
+// depth — it is observed, not guessed.
+func flatten(nodes []item, depth int, out *[]FetchedComment) {
 	for _, n := range nodes {
 		body := htmltext.Plain(n.Text)
 		if body != "" {
-			// Algolia returns null points on comments; upvotes are never
-			// fabricated (R29) — absent means 0, not "guess from position".
-			score := int64(0)
-			if n.Points != nil {
-				score = int64(*n.Points)
+			c := FetchedComment{
+				ID:         "hn:" + strconv.FormatInt(n.ID, 10),
+				PlatformID: strconv.FormatInt(n.ID, 10),
+				Body:       body,
+				Author:     strings.TrimSpace(n.Author),
+				CreatedAt:  reddit.NormalizeTime(n.CreatedAt),
+				Permalink:  itemURL(n.ID),
+				Depth:      depth,
+				Replies:    reddit.I64(int64(len(n.Children))),
 			}
-			*out = append(*out, FetchedComment{
-				ID:    "hn:" + strconv.FormatInt(n.ID, 10),
-				Body:  body,
-				Score: score,
-			})
+			if c.CreatedAt == "" && n.CreatedAtI > 0 {
+				c.CreatedAt = reddit.FromUnix(n.CreatedAtI)
+			}
+			if c.Author != "" {
+				c.AuthorURL = "https://news.ycombinator.com/user?id=" + c.Author
+			}
+			if n.ParentID != nil {
+				c.ParentID = strconv.FormatInt(*n.ParentID, 10)
+			}
+			// Points: Algolia returns null for every COMMENT — HN does not
+			// publish per-comment scores at all (verified live). Recording a
+			// 0 there would say "nobody upvoted this", which is not what the
+			// API said; it said nothing. Score therefore stays 0 as the
+			// neutral sort key while Upvotes stays nil to mark it unknown.
+			if n.Points != nil {
+				c.Score = int64(*n.Points)
+				c.Upvotes = reddit.I64(int64(*n.Points))
+			}
+			*out = append(*out, c)
 		}
 		if len(n.Children) > 0 {
-			flatten(n.Children, out)
+			flatten(n.Children, depth+1, out)
 		}
 	}
 }
 
-// FetchComments returns every comment in one story's tree.
-func (c *Client) FetchComments(ctx context.Context, storyID string) ([]FetchedComment, error) {
+// postFrom maps the story node at the root of an item tree.
+func postFrom(it item) *reddit.FetchedPost {
+	if it.ID == 0 {
+		return nil
+	}
+	p := &reddit.FetchedPost{
+		ID:           strconv.FormatInt(it.ID, 10),
+		Title:        strings.TrimSpace(it.Title),
+		URL:          itemURL(it.ID),
+		Body:         htmltext.Plain(it.Text),
+		Author:       strings.TrimSpace(it.Author),
+		CreatedAt:    reddit.NormalizeTime(it.CreatedAt),
+		Kind:         strings.TrimSpace(it.Type),
+		Community:    "Hacker News",
+		CommunityURL: "https://news.ycombinator.com/",
+		CommentCount: reddit.I64(countComments(it.Children)),
+	}
+	if p.CreatedAt == "" && it.CreatedAtI > 0 {
+		p.CreatedAt = reddit.FromUnix(it.CreatedAtI)
+	}
+	if p.Author != "" {
+		p.AuthorURL = "https://news.ycombinator.com/user?id=" + p.Author
+	}
+	// Story points ARE public, unlike comment points.
+	if it.Points != nil {
+		p.Score = reddit.I64(int64(*it.Points))
+		p.Upvotes = reddit.I64(int64(*it.Points))
+	}
+	if it.URL != "" {
+		p.Extra = map[string]any{"target_url": it.URL}
+	}
+	return p
+}
+
+func countComments(nodes []item) int64 {
+	var n int64
+	for _, c := range nodes {
+		n++
+		n += countComments(c.Children)
+	}
+	return n
+}
+
+// FetchComments returns every comment in one story's tree, plus the story
+// itself. The story used to be discarded: a batch reached the archive knowing
+// the comment bodies but not the question they were answering.
+func (c *Client) FetchComments(ctx context.Context, storyID string) ([]FetchedComment, *reddit.FetchedPost, error) {
 	storyID = strings.TrimSpace(storyID)
 	if storyID == "" {
-		return nil, fmt.Errorf("empty HN story id")
+		return nil, nil, fmt.Errorf("empty HN story id")
 	}
 	body, err := c.get(ctx, ItemEndpoint+url.PathEscape(storyID))
 	if err != nil {
-		return nil, fmt.Errorf("hn item %s: %w", storyID, err)
+		return nil, nil, fmt.Errorf("hn item %s: %w", storyID, err)
 	}
 	var it item
 	if err := json.Unmarshal(body, &it); err != nil {
-		return nil, fmt.Errorf("hn item %s decode: %w", storyID, err)
+		return nil, nil, fmt.Errorf("hn item %s decode: %w", storyID, err)
 	}
 	var out []FetchedComment
-	flatten(it.Children, &out)
-	return out, nil
+	flatten(it.Children, 0, &out)
+	return out, postFrom(it), nil
 }
 
 // SourceURL is where a reviewer can read the thread the nugget came from.

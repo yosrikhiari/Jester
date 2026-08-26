@@ -161,3 +161,19 @@ duplicates.csv
 # committing it would ship a script with nothing to read.
 review.cjs
 .claude/settings.local.json
+
+# ── Windows stray-device artifacts ────────────────────────────────
+# `cmd ... 2>nul` run under a shell with no NUL device (Git Bash, MSYS)
+# creates a real 0-byte file called `nul` in the working directory instead
+# of discarding the output. It is never wanted, and on Windows it cannot be
+# deleted with a plain `rm` once committed.
+nul
+NUL
+
+# ── Editor / IDE local state ──────────────────────────────────────
+# `.claude/launch.json` is deliberately NOT ignored: it is shared project
+# config (how to launch the console), the same role .vscode/launch.json
+# plays. Only per-machine state below.
+.idea/
+.vscode/
+!.vscode/extensions.json

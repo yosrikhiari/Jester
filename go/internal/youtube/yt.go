@@ -45,7 +45,15 @@ func WalkCommentPayloads(node any, out *[]map[string]any) {
 }
 
 // CommentsFromPayloads maps raw entity payloads into FetchedComments.
-// Like counts are NOT fabricated (R29 spirit) — Score stays 0.
+//
+// The XHR route is the fallback; the DOM is primary (cloakserve's CDP returns
+// empty bodies for /youtubei/v1/next — see the package doc). It reads the same
+// detail the DOM path does, so a fall back does not quietly downgrade the
+// archive to bodies-only.
+//
+// Like counts come from the toolbar entity and are recorded when present. A
+// missing toolbar leaves them nil rather than zero (R29): "nobody liked it"
+// and "the payload did not carry it" are different facts.
 func CommentsFromPayloads(payload map[string]any) []FetchedComment {
 	var ceps []map[string]any
 	WalkCommentPayloads(payload, &ceps)
@@ -53,23 +61,57 @@ func CommentsFromPayloads(payload map[string]any) []FetchedComment {
 	for _, cep := range ceps {
 		key, _ := cep["key"].(string)
 		props, _ := cep["properties"].(map[string]any)
-		var body string
+		var body, published string
+		replyLevel := 0
 		if props != nil {
 			if content, ok := props["content"].(map[string]any); ok {
 				body, _ = content["content"].(string)
+			}
+			published, _ = props["publishedTime"].(string)
+			if lvl, ok := props["replyLevel"].(float64); ok {
+				replyLevel = int(lvl)
 			}
 		}
 		body = strings.TrimSpace(body)
 		if body == "" {
 			continue
 		}
+		author, _ := cep["author"].(map[string]any)
+		name, _ := author["displayName"].(string)
 		id := key
 		if id == "" {
-			author, _ := cep["author"].(map[string]any)
-			name, _ := author["displayName"].(string)
 			id = name + body
 		}
-		out = append(out, FetchedComment{ID: id, Body: body})
+		c := FetchedComment{
+			ID:         id,
+			PlatformID: key,
+			Body:       body,
+			Author:     strings.TrimSpace(name),
+			CreatedRaw: strings.TrimSpace(published),
+			Depth:      replyLevel,
+		}
+		if author != nil {
+			if ch, ok := author["channelId"].(string); ok && ch != "" {
+				c.AuthorURL = "https://www.youtube.com/channel/" + ch
+			}
+			if creator, ok := author["isCreator"].(bool); ok && creator {
+				c.AuthorIsOP = true
+			}
+		}
+		if toolbar, ok := cep["toolbar"].(map[string]any); ok {
+			if likes, ok := toolbar["likeCountNotliked"].(string); ok {
+				if n, ok := ParseCount(likes); ok {
+					c.Likes = reddit.I64(n)
+					c.Score = n
+				}
+			}
+			if replies, ok := toolbar["replyCount"].(string); ok {
+				if n, ok := ParseCount(replies); ok {
+					c.Replies = reddit.I64(n)
+				}
+			}
+		}
+		out = append(out, c)
 	}
 	return out
 }

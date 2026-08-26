@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from jester.console.api import ConsoleAPI
+from jester.env import load_env_once
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -126,6 +127,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/config": api.config,
             "/api/infra": api.infra,
             "/api/sources": api.sources,
+            "/api/schedule": api.schedule,
         }
         if path in routes:
             self._json(routes[path]())
@@ -156,10 +158,19 @@ class Handler(BaseHTTPRequestHandler):
             "/api/run": lambda: api.run_pipeline(
                 live_models=bool(body.get("live_models")),
                 run_id=body.get("run_id") or "console-run",
+                # The pipeline modal posts these. They were accepted and
+                # dropped, so ticking a source or setting a goal changed
+                # nothing about the run it started.
+                source_names=body.get("source_names"),
+                goal=body.get("goal"),
+                ingest=body.get("ingest"),
             ),
             "/api/ingest": lambda: api.ingest(
                 live=bool(body.get("live")),
                 run_id=body.get("run_id") or "console-ingest",
+                only=body.get("source_names"),
+                max_comments=body.get("max_comments"),
+                max_posts=body.get("max_posts"),
             ),
             "/api/export": lambda: api.export(body.get("out_dir") or None),
             "/api/smoke": api.smoke,
@@ -168,6 +179,13 @@ class Handler(BaseHTTPRequestHandler):
             "/api/migrate": api.migrate,
             "/api/retention": api.retention,
             "/api/seed-mock": api.seed_mock,
+            "/api/schedule/install": lambda: api.schedule_install(
+                every=body.get("every"), at=body.get("at"),
+                # What to fetch and how deep. Accepted-and-dropped here would
+                # be the pipeline-modal bug all over again.
+                options=body.get("options")),
+            "/api/schedule/remove": api.schedule_remove,
+            "/api/schedule/run": api.schedule_run_now,
             "/api/sources/add": lambda: api.add_source(
                 url=body.get("url", ""),
                 platform=body.get("platform", "auto"),
@@ -181,7 +199,8 @@ class Handler(BaseHTTPRequestHandler):
                    if k in body},
             ),
             "/api/sources/delete": lambda: api.delete_source(str(body.get("name", ""))),
-            "/api/thresholds": lambda: api.update_thresholds(body.get("patch") or {}),
+            "/api/thresholds": lambda: api.update_thresholds(
+                body.get("patch") or {}, body.get("profile")),
             "/api/models": lambda: api.update_models(body.get("patch") or {}, body.get("profile")),
         }
         if path in simple:
@@ -219,6 +238,7 @@ def serve(args):
 
 
 def main(argv=None):
+    load_env_once()  # GROQ_API_KEY et al. before the first request lands
     p = argparse.ArgumentParser(prog="jester-console")
     p.add_argument("--db", default=os.environ.get("JESTER_DB", "data/jester.db"))
     p.add_argument("--config", default=str(Path(__file__).resolve().parents[3] / "config"))

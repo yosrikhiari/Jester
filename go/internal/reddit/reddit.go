@@ -23,13 +23,6 @@ query ThreadComments($permalink: String!, $after: String, $limit: Int!) {
   }
 }`
 
-// FetchedComment is a normalized comment from the GraphQL response.
-type FetchedComment struct {
-	ID    string `json:"id"`
-	Body  string `json:"body"`
-	Score int64  `json:"score"`
-}
-
 // MockLoad reads a fixture file (testdata/*.json) containing a list of
 // FetchedComment and returns them. Used in mock mode so the full prefilter ->
 // enqueue path runs without a live browser.

@@ -68,13 +68,30 @@ def test_go_enqueue_writes_into_python_created_db(tmp_path):
     assert row == ("go-run", 0, "pending")
 
 
-def test_r31_wal_and_busy_timeout_on_file_dbs(tmp_path):
-    """R31: both sides open the DB in WAL mode with a busy_timeout so short
-    helper commands wait instead of failing on writer contention."""
+def test_r31_rollback_journal_and_busy_timeout_on_file_dbs(tmp_path):
+    """R31: both sides open the DB the SAME way, and busy_timeout absorbs
+    brief writer contention so short helper commands wait instead of failing.
+
+    Rollback journal, not WAL: the database is shared between the console and
+    the Go worker across processes and containers over a Windows bind mount,
+    which cannot arbitrate WAL's -wal/-shm sidecars. Go's store.Open sets the
+    identical pair — journal_mode is a persistent property of the FILE, so a
+    disagreement here would have each process flip it under the other.
+    """
     p = tmp_path / "j.db"
     db = open_db(str(p))
-    assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
     assert db.execute("PRAGMA busy_timeout").fetchone()[0] >= 5000
+
+
+def test_go_store_opens_with_the_same_journal_mode(tmp_path):
+    """Parity is only real if it is checked against Go's actual source."""
+    go_store = (
+        Path(__file__).resolve().parents[2] / "go" / "internal" / "store" / "store.go"
+    )
+    src = go_store.read_text(encoding="utf-8", errors="replace")
+    assert "PRAGMA journal_mode=DELETE" in src
+    assert "PRAGMA busy_timeout=5000" in src
 
 
 def test_retention_skips_and_logs_when_write_lock_held(tmp_path, capsys):

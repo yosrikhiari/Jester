@@ -15,9 +15,16 @@
   --nav-w:210px; --topbar-h:56px;
   --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017; --jester-crimson:#8B1A2B;
 }
+/* ===== JESTER NOIR — Black / Red / Gold =====
+   `--line` is the hairline that separates rows and panels; `--line-strong` is
+   the one that draws a control the user is meant to click into. Both were
+   referenced below while only the first was declared, which is why every input,
+   segmented control and secondary button rendered with the raw ink border the
+   cascade falls back to when a var() does not resolve. `--surface-3` is the
+   third recess step — pressed control, skeleton sheen — and had the same fault. */
 html[data-theme="light"]{
-  --bg:#FDF6E3; --surface:#FFFFFF; --surface-2:#F5E8C2;
-  --ink:#0F141E; --ink-mute:#6B6A7A; --line:#E8D5A8;
+  --bg:#FDF6E3; --surface:#FFFFFF; --surface-2:#F7EDD3; --surface-3:#EFE0B8;
+  --ink:#0F141E; --ink-mute:#6B6A7A; --line:#E8D5A8; --line-strong:#D6BE85;
   --gold:#8F6A0F; --plum:#C1272D; --teal:#C9A227; --coral:#9B1B30; --bell:#D4A017;
   --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017;
   --accent-ink:#FFFFFF;
@@ -26,18 +33,40 @@ html[data-theme="light"]{
   --shadow-2:0 6px 18px rgba(15,20,30,.12);
   --shadow-pop:0 16px 40px rgba(15,20,30,.22);
   --scrim:rgba(15,20,30,.34);
+  --ring:color-mix(in srgb,var(--plum) 32%,transparent);
+  /* ── status INK ramp ────────────────────────────────────────────────
+     One token per status family is one token short. The tint and the ink are
+     different jobs: a pill paints `color-mix(status 15%, transparent)` behind
+     text painted in that same `status`, so the ink is being asked to read
+     against a 15% wash of ITSELF — and every light-theme pill measured between
+     2.2:1 and 4.1:1 doing it. These are the same hues walked along L until the
+     worst pairing (18% tint over --surface-2) clears 4.6:1, so the fills below
+     — KPI caps, banner and toast edges, dots — keep the palette's values and
+     only the TEXT moves. */
+  --plum-ink:#A81F24; --coral-ink:#9B1B30;
+  --done-ink:#644B0A; --running-ink:#644B0A; --failed-ink:#A12025;
+  --queued-ink:#4E4E60; --requeued-ink:#0F141E; --mute-ink:#54535F;
 }
 html[data-theme="dark"]{
-  --bg:#080C14; --surface:#131A29; --surface-2:#1E2A3D;
-  --ink:#F5E6C2; --ink-mute:#A89B7E; --line:#2A3548;
+  --bg:#080C14; --surface:#131A29; --surface-2:#1E2A3D; --surface-3:#28374F;
+  --ink:#F5E6C2; --ink-mute:#A89B7E; --line:#2A3548; --line-strong:#3C4A63;
   --gold:#E8C05A; --plum:#E03A4E; --teal:#F0C75E; --coral:#C41E3A; --bell:#D4A017;
   --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017;
-  --accent-ink:#0F141E;
-  --queued:#8A8AA0; --running:#E8C05A; --done:#F0C75E; --failed:#E03A4E; --requeued:#0F141E;
+  --accent-ink:#FFFFFF;
+  --queued:#8A8AA0; --running:#E8C05A; --done:#F0C75E; --failed:#E03A4E; --requeued:#C9B78C;
   --shadow-1:0 1px 2px rgba(0,0,0,.5);
   --shadow-2:0 8px 22px rgba(0,0,0,.6);
   --shadow-pop:0 18px 48px rgba(0,0,0,.7);
   --scrim:rgba(2,5,10,.62);
+  --ring:color-mix(in srgb,var(--gold) 40%,transparent);
+  /* The red family is a FILL colour on both grounds and an INK colour only on
+     the cream one: --plum measures 4.05:1 and --coral 2.98:1 as text on the
+     obsidian surface. These two carry the same hue up to a readable luminance
+     so the nav's current page, a table target and the remove button stay legible
+     in dark without moving the palette out from under the fills that pass. */
+  --plum-ink:#FF6B7A; --coral-ink:#FF8A93;
+  --done-ink:#F0C75E; --running-ink:#E8C05A; --failed-ink:#EA7B89;
+  --queued-ink:#A5A5B6; --requeued-ink:#C9B78C; --mute-ink:#B4A990;
 }
 
 *{box-sizing:border-box}
@@ -46,13 +75,17 @@ body{
   margin:0;background:var(--bg);color:var(--ink);
   font-family:var(--font-ui);font-size:var(--fs-body);line-height:1.5;
   -webkit-font-smoothing:antialiased;
+  transition:background var(--t-base) var(--ease),color var(--t-base) var(--ease);
 }
 h1,h2,h3{font-family:var(--font-display);font-weight:600;line-height:1.15;margin:0}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:var(--r-sm)}
+/* Gold on the cream ground measures ~2.6:1 — the focus ring has to be the
+   signal colour in light, and the gold only survives against the dark ground. */
+:focus-visible{outline:2px solid var(--plum);outline-offset:2px;border-radius:var(--r-sm)}
+html[data-theme="dark"] :focus-visible{outline-color:var(--gold)}
 .num{font-variant-numeric:tabular-nums}
-.xs{font-size:var(--fs-xs);color:var(--ink-mute)}
+.xs{font-size:var(--fs-xs);color:var(--ink-mute);line-height:1.45}
 .sm{font-size:var(--fs-sm)}
 .mono{font-family:var(--font-mono);font-size:var(--fs-sm)}
 .mute{color:var(--ink-mute)}
@@ -67,8 +100,8 @@ button,input,select,textarea{font:inherit;color:inherit}
   position:sticky;inset-block-start:0;z-index:var(--z-top);
   display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);
   block-size:var(--topbar-h);padding:var(--s-4) var(--s-7);
-  background:color-mix(in srgb,var(--bg) 88%,transparent);
-  backdrop-filter:blur(10px);
+  background:color-mix(in srgb,var(--bg) 86%,transparent);
+  backdrop-filter:blur(12px) saturate(140%);
   border-block-end:2px solid color-mix(in srgb,var(--jester-gold) 55%, var(--line));
   box-shadow:0 1px 0 color-mix(in srgb,var(--jester-red) 18%,transparent);
 }
@@ -95,205 +128,355 @@ button,input,select,textarea{font:inherit;color:inherit}
   border-radius:inherit;color:#F5E6C2;
 }
 .brand strong{font-family:var(--font-display);font-size:var(--fs-h2);font-weight:600;letter-spacing:.01em}
-.brand em{font-style:normal;color:var(--ink-mute);font-size:var(--fs-xs)}
-.topbar-meta{display:flex;gap:var(--s-2);align-items:center;min-inline-size:0;overflow:hidden}
+.brand em{
+  font-style:normal;color:var(--ink-mute);font-size:var(--fs-xs);
+  text-transform:uppercase;letter-spacing:.08em;font-weight:600;
+  padding-inline-start:var(--s-4);margin-inline-start:var(--s-1);
+  border-inline-start:1px solid var(--line);
+}
+.topbar-meta{display:flex;gap:var(--s-3);align-items:center;min-inline-size:0;overflow:hidden}
 .topbar-actions{display:flex;gap:var(--s-3);align-items:center;flex:none}
 
 /* ── shell ──────────────────────────────────────────────────────────── */
 .shell{
-  display:flex;align-items:flex-start;gap:var(--s-6);
-  padding:var(--s-6);max-inline-size:1320px;margin:0 auto;min-inline-size:0;
+  display:flex;align-items:flex-start;gap:var(--s-7);
+  padding:var(--s-7) var(--s-6) var(--s-11);max-inline-size:1320px;margin:0 auto;min-inline-size:0;
 }
 .nav{
-  position:sticky;inset-block-start:calc(var(--topbar-h) + var(--s-6));
+  position:sticky;inset-block-start:calc(var(--topbar-h) + var(--s-7));
   inline-size:var(--nav-w);flex:none;
   padding-inline-end:var(--s-5);border-inline-end:1px solid var(--line);
 }
-.nav ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.nav ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .nav button{
+  position:relative;
   inline-size:100%;display:flex;align-items:center;gap:var(--s-3);
   padding:7px 10px;border:0;border-radius:var(--r-ctrl);background:transparent;
-  color:var(--ink-mute);cursor:pointer;font-weight:500;text-align:start;
+  color:var(--ink-mute);cursor:pointer;font-size:var(--fs-sm);font-weight:500;text-align:start;
   transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
 }
 .nav button:hover{background:var(--surface-2);color:var(--ink)}
 .nav button[aria-current="page"]{
-  background:color-mix(in srgb,var(--plum) 13%,transparent);color:var(--plum);font-weight:600;
+  background:color-mix(in srgb,var(--plum) 13%,transparent);color:var(--plum-ink);font-weight:600;
+}
+/* The active marker is a gold rule on the inline edge — the same 4px gold the
+   design system puts beside every section heading, so "where am I" and "what
+   is this" are told by one mark rather than two unrelated ones. */
+.nav button[aria-current="page"]::before{
+  content:"";position:absolute;inset-block:6px;inset-inline-start:-1px;
+  inline-size:3px;border-radius:var(--r-pill);background:var(--jester-gold);
 }
 .nav .ico{inline-size:16px;text-align:center;flex:none;opacity:.85}
 .nav .count{
   margin-inline-start:auto;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;
-  color:var(--ink-mute);background:var(--surface-2);border-radius:var(--r-pill);padding:1px 7px;
+  color:var(--ink-mute);background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-pill);padding:0 7px;line-height:16px;
+}
+/* The row is already a plum tint; tinting the counter again stacks two washes
+   under the same ink and drops it to 3.5:1. It sits on the flat surface instead
+   and reads as raised, which is also what it is — a count, not a second state. */
+.nav button[aria-current="page"] .count{
+  background:var(--surface);
+  border-color:color-mix(in srgb,var(--plum) 34%,transparent);color:var(--plum-ink);
 }
 .grp{
   font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;color:var(--ink-mute);
-  padding:var(--s-5) 10px var(--s-2);font-weight:600;
+  padding:var(--s-6) 10px var(--s-2);font-weight:700;opacity:.75;
 }
 .grp:first-child{padding-block-start:0}
-main{flex:1;display:flex;flex-direction:column;gap:var(--s-5);min-inline-size:0}
+main{flex:1;display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
+/* `display` on a bare type/child selector beats the UA sheet's `[hidden]`
+   rule, so this MUST stay scoped to the visible section or every page renders
+   stacked on top of the one the router chose. */
+main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
 
 /* ── page furniture ─────────────────────────────────────────────────── */
-.hero{display:flex;align-items:flex-end;gap:var(--s-4);flex-wrap:wrap}
-.hero h1{font-size:var(--fs-hero)}
-.hero p{margin:2px 0 0;font-size:var(--fs-sm);color:var(--ink-mute);max-inline-size:64ch}
+/* The hero is the design system's §hero: a panel, not bare text, carrying the
+   red/gold radial wash and the scanline the brand sheet establishes. Without
+   it every page opened on an unframed headline floating in the ground colour. */
+.hero{
+  position:relative;overflow:hidden;
+  display:flex;align-items:flex-end;gap:var(--s-6);flex-wrap:wrap;
+  padding:var(--s-8) var(--s-8) var(--s-7);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow-1);
+}
+.hero::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(560px 240px at 100% -30%,color-mix(in srgb,var(--jester-red) 16%,transparent),transparent),
+    radial-gradient(420px 200px at -6% 130%,color-mix(in srgb,var(--jester-gold) 16%,transparent),transparent);
+}
+.hero::after{
+  content:"";position:absolute;inset:0;opacity:.03;pointer-events:none;
+  background-image:repeating-linear-gradient(0deg,transparent 0 2px,var(--jester-gold) 2px 3px);
+  mask:linear-gradient(180deg,transparent,black 45%,black 88%,transparent);
+}
+/* The copy block takes the free space so the lead sets to its 66ch measure
+   instead of shrink-to-fit wrapping into a narrow column beside empty space. */
+.hero>*{position:relative;min-inline-size:0}
+.hero>div:first-child{flex:1 1 340px}
+.hero h1{
+  font-size:var(--fs-hero);
+  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
+}
+.hero p{
+  margin:var(--s-3) 0 0;color:var(--ink-mute);max-inline-size:70ch;
+  padding-inline-start:calc(var(--s-5) + 4px);
+}
 .hero .row-end{align-self:center}
 
 .card{
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  padding:var(--s-5);box-shadow:var(--shadow-1);min-inline-size:0;
+  padding:var(--s-6);box-shadow:var(--shadow-1);min-inline-size:0;
 }
 .card--flush{padding:0;overflow:hidden}
-.card h3{font-size:var(--fs-h2);margin-block-end:var(--s-3)}
+.card>h3,.card-head h3,.card-body>h3{
+  font-size:var(--fs-h2);
+  display:flex;align-items:center;gap:var(--s-3);
+}
+.card>h3{margin-block-end:var(--s-5)}
+.card>h3::before,.card-head h3::before,.card-body>h3::before{
+  content:"";inline-size:3px;block-size:.9em;flex:none;
+  border-radius:var(--r-pill);background:var(--jester-gold);
+}
 .card-head{
-  display:flex;align-items:center;gap:var(--s-3);flex-wrap:wrap;
-  padding:var(--s-4) var(--s-5);border-block-end:1px solid var(--line);background:var(--surface);
+  display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;
+  padding:var(--s-5) var(--s-6);border-block-end:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
 }
 .card-head h3{margin:0}
-.card-body{padding:var(--s-5)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:var(--s-4)}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:var(--s-3)}
+.card-body{padding:var(--s-6)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--s-5)}
+
+/* ── KPI tiles ──────────────────────────────────────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--s-4)}
 .kpi{
+  position:relative;overflow:hidden;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  padding:var(--s-4);box-shadow:var(--shadow-1);
+  padding:var(--s-5) var(--s-5) var(--s-4);box-shadow:var(--shadow-1);
+  transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
 }
+/* A 2px cap rather than a coloured number alone: at a glance the operator reads
+   the row of caps, not six numerals that all look the same weight. */
+.kpi::before{
+  content:"";position:absolute;inset-block-start:0;inset-inline:0;block-size:2px;
+  background:var(--line);
+}
+.kpi:hover{border-color:var(--line-strong);box-shadow:var(--shadow-2)}
 .kpi b{
-  display:block;font-family:var(--font-display);font-size:26px;line-height:1.1;
-  font-variant-numeric:tabular-nums;
+  display:block;font-family:var(--font-display);font-size:30px;line-height:1.05;
+  font-weight:600;font-variant-numeric:tabular-nums;
 }
-.kpi span{display:block;font-size:var(--fs-xs);color:var(--ink-mute);margin-block-start:2px}
+.kpi span{
+  display:block;font-size:var(--fs-xs);color:var(--ink-mute);margin-block-start:var(--s-3);
+  text-transform:uppercase;letter-spacing:.05em;font-weight:600;
+}
+.kpi--alert::before{background:var(--failed)}
 .kpi--alert b{color:var(--failed)}
+.kpi--live::before{background:var(--running)}
 .kpi--live b{color:var(--running)}
 
-.dl{display:grid;grid-template-columns:minmax(140px,auto) 1fr;gap:6px var(--s-4);margin:0;font-size:var(--fs-sm)}
+.dl{display:grid;grid-template-columns:minmax(130px,auto) 1fr;gap:var(--s-3) var(--s-5);margin:0;font-size:var(--fs-sm)}
 .dl dt{color:var(--ink-mute)}
-.dl dd{margin:0;font-variant-numeric:tabular-nums;word-break:break-word}
+.dl dd{margin:0;font-variant-numeric:tabular-nums;word-break:break-word;font-weight:500}
 
 /* ── buttons ────────────────────────────────────────────────────────── */
 .btn{
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-3);
   font-family:var(--font-ui);font-size:var(--fs-body);font-weight:600;
-  border-radius:var(--r-ctrl);padding:8px 14px;border:1px solid transparent;cursor:pointer;
-  transition:transform var(--t-fast) var(--ease),filter var(--t-fast),box-shadow var(--t-fast);
+  border-radius:var(--r-ctrl);padding:8px 15px;border:1px solid transparent;cursor:pointer;
+  transition:transform var(--t-fast) var(--ease),background var(--t-fast) var(--ease),
+             border-color var(--t-fast) var(--ease),filter var(--t-fast),box-shadow var(--t-fast);
   white-space:nowrap;
 }
 .btn:active{transform:translateY(1px)}
-.btn[disabled]{opacity:.5;cursor:not-allowed;transform:none}
-.btn--primary{background:var(--jester-gold);color:var(--jester-black);border-color:var(--jester-gold)}
-.btn--primary:hover:not([disabled]){filter:brightness(1.06);box-shadow:0 4px 14px color-mix(in srgb,var(--jester-gold) 30%,transparent)}
+.btn[disabled]{opacity:.5;cursor:not-allowed;transform:none;filter:grayscale(.3)}
+.btn--primary{
+  background:var(--jester-gold);color:var(--jester-black);border-color:var(--jester-gold);
+  box-shadow:0 1px 0 color-mix(in srgb,var(--jester-black) 20%,transparent);
+}
+.btn--primary:hover:not([disabled]){filter:brightness(1.06);box-shadow:0 4px 14px color-mix(in srgb,var(--jester-gold) 34%,transparent)}
 .btn--primary:active:not([disabled]){animation:bell-tilt var(--t-slow) var(--ease)}
-.btn--accent{background:var(--plum);color:var(--accent-ink);border-color:var(--plum)}
-.btn--accent:hover:not([disabled]){filter:brightness(1.08)}
+/* White ink on the dark theme's lifted --plum is 4.3:1; on the velvet red the
+   hat actually is, it is 5.84:1 in both themes. The accent fill is the brand red. */
+.btn--accent{background:var(--jester-red);color:var(--accent-ink);border-color:var(--jester-red)}
+.btn--accent:hover:not([disabled]){filter:brightness(1.1);box-shadow:0 4px 14px color-mix(in srgb,var(--jester-red) 38%,transparent)}
 .btn--secondary{background:var(--surface-2);color:var(--ink);border-color:var(--line-strong)}
-.btn--secondary:hover:not([disabled]){background:var(--surface-3)}
-.btn--ghost{background:transparent;color:var(--ink);border-color:var(--line)}
-.btn--ghost:hover:not([disabled]){background:var(--surface-2)}
-.btn--danger{background:transparent;color:var(--coral);border-color:color-mix(in srgb,var(--coral) 45%,transparent)}
-.btn--danger:hover:not([disabled]){background:color-mix(in srgb,var(--coral) 12%,transparent)}
-.btn--sm{padding:4px 10px;font-size:var(--fs-sm)}
+.btn--secondary:hover:not([disabled]){background:var(--surface-3);border-color:var(--gold)}
+.btn--ghost{background:transparent;color:var(--ink-mute);border-color:var(--line)}
+.btn--ghost:hover:not([disabled]){background:var(--surface-2);color:var(--ink);border-color:var(--line-strong)}
+.btn--danger{background:transparent;color:var(--coral-ink);border-color:color-mix(in srgb,var(--coral-ink) 40%,transparent)}
+.btn--danger:hover:not([disabled]){background:color-mix(in srgb,var(--coral-ink) 14%,transparent);border-color:var(--coral-ink)}
+.btn--sm{padding:5px 11px;font-size:var(--fs-sm);gap:var(--s-2)}
 .btn--icon{padding:6px 9px;font-size:var(--fs-sm)}
 @keyframes bell-tilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-3deg)}65%{transform:rotate(2.4deg)}}
 @media (prefers-reduced-motion:reduce){
-  *,*::before,*::after{animation-duration:.001ms !important;transition-duration:.001ms !important}
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
 }
 
-.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:var(--r-pill);overflow:hidden;background:var(--surface)}
-.seg button{
-  border:0;background:transparent;color:var(--ink);font-size:var(--fs-sm);
-  padding:5px 12px;cursor:pointer;font-weight:500;
+/* The design system's segmented control is a recessed track with a RAISED
+   active chip. A tinted flat pill reads as a row of links, not a switch. */
+.seg{
+  display:inline-flex;gap:2px;padding:3px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-ctrl);
 }
-.seg button:hover{background:var(--surface-2)}
-.seg button[aria-pressed="true"]{background:color-mix(in srgb,var(--plum) 14%,transparent);color:var(--plum);font-weight:600}
+.seg button{
+  border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-sm);
+  padding:5px 12px;border-radius:var(--r-sm);cursor:pointer;font-weight:600;white-space:nowrap;
+  transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
+}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
 
 /* ── pills & chips ──────────────────────────────────────────────────── */
 .pill{
-  display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:600;
-  padding:3px 10px;border-radius:var(--r-pill);white-space:nowrap;
-  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--ink-mute);
+  display:inline-flex;align-items:center;gap:var(--s-3);font-size:var(--fs-sm);font-weight:600;
+  padding:3px 11px;border-radius:var(--r-pill);white-space:nowrap;
+  border:1px solid transparent;font-variant-numeric:tabular-nums;
+  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--mute-ink);
 }
 .pill .dot{inline-size:7px;block-size:7px;border-radius:50%;background:currentColor;flex:none}
 .pill.tone-done,.pill.tone-completed,.pill.tone-ok,.pill.tone-pass{
-  background:color-mix(in srgb,var(--done) 15%,transparent);color:var(--done)}
+  background:color-mix(in srgb,var(--done) 15%,transparent);color:var(--done-ink);
+  border-color:color-mix(in srgb,var(--done) 26%,transparent)}
 .pill.tone-failed,.pill.tone-fail,.pill.tone-error{
-  background:color-mix(in srgb,var(--failed) 15%,transparent);color:var(--failed)}
+  background:color-mix(in srgb,var(--failed) 15%,transparent);color:var(--failed-ink);
+  border-color:color-mix(in srgb,var(--failed) 28%,transparent)}
 .pill.tone-running,.pill.tone-warn,.pill.tone-building{
-  background:color-mix(in srgb,var(--running) 18%,transparent);color:var(--running)}
+  background:color-mix(in srgb,var(--running) 18%,transparent);color:var(--running-ink);
+  border-color:color-mix(in srgb,var(--running) 28%,transparent)}
+/* A run that is actually moving should say so without waiting for a re-render. */
+.pill.tone-running .dot{animation:pulse 1.2s var(--ease) infinite}
 .pill.tone-queued,.pill.tone-pending,.pill.tone-new{
-  background:color-mix(in srgb,var(--queued) 18%,transparent);color:var(--queued)}
+  background:color-mix(in srgb,var(--queued) 18%,transparent);color:var(--queued-ink);
+  border-color:color-mix(in srgb,var(--queued) 28%,transparent)}
 .pill.tone-requeued,.pill.tone-reviewed{
-  background:color-mix(in srgb,var(--requeued) 18%,transparent);color:var(--requeued)}
+  background:color-mix(in srgb,var(--requeued) 18%,transparent);color:var(--requeued-ink);
+  border-color:color-mix(in srgb,var(--requeued) 28%,transparent)}
 .pill.tone-archived,.pill.tone-neutral,.pill.tone-off{
-  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--ink-mute)}
-.pill--sm{font-size:var(--fs-xs);padding:2px 8px}
+  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--mute-ink);
+  border-color:color-mix(in srgb,var(--ink-mute) 24%,transparent)}
+.pill--sm{font-size:var(--fs-xs);padding:2px 9px;gap:var(--s-2)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 .chip{
-  display:inline-block;padding:2px 9px;border-radius:var(--r-sm);border:1px solid var(--line);
-  font-size:var(--fs-xs);color:var(--ink-mute);background:var(--surface);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:var(--s-2);
+  padding:3px 10px;border-radius:var(--r-pill);border:1px solid var(--line);
+  font-size:var(--fs-xs);color:var(--ink-mute);background:var(--surface-2);white-space:nowrap;
 }
-.chip--warn{border-color:color-mix(in srgb,var(--running) 50%,transparent);color:var(--running)}
-.chip--bad{border-color:color-mix(in srgb,var(--failed) 50%,transparent);color:var(--failed)}
-.chiprow{display:flex;flex-wrap:wrap;gap:4px}
+.chip--warn{
+  border-color:color-mix(in srgb,var(--running) 45%,transparent);color:var(--running-ink);
+  background:color-mix(in srgb,var(--running) 10%,transparent)}
+.chip--bad{
+  border-color:color-mix(in srgb,var(--failed) 45%,transparent);color:var(--failed-ink);
+  background:color-mix(in srgb,var(--failed) 10%,transparent)}
+.chiprow{display:flex;flex-wrap:wrap;gap:var(--s-3)}
+.topbar-meta .chip{font-family:var(--font-mono);background:transparent}
 
-.score{font-family:var(--font-display);font-variant-numeric:tabular-nums;font-weight:600}
-.score--hi{color:var(--done)} .score--mid{color:var(--gold)} .score--lo{color:var(--coral)}
+.score{font-family:var(--font-display);font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-h2)}
+.score--hi{color:var(--done)} .score--mid{color:var(--gold)} .score--lo{color:var(--coral-ink)}
 
 /* ── tables ─────────────────────────────────────────────────────────── */
 .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{inline-size:100%;border-collapse:collapse;font-size:var(--fs-body)}
+table{inline-size:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 th{
   text-align:start;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;
-  color:var(--ink-mute);padding:9px 12px;border-block-end:1px solid var(--line);
-  white-space:nowrap;background:var(--surface);position:sticky;inset-block-start:0;
+  color:var(--ink-mute);font-weight:700;padding:9px 14px;
+  border-block-end:1px solid var(--line-strong);
+  white-space:nowrap;background:var(--surface-2);position:sticky;inset-block-start:0;z-index:1;
 }
 td{
-  padding:10px 12px;border-block-end:1px solid color-mix(in srgb,var(--line) 55%,transparent);
+  padding:11px 14px;border-block-end:1px solid color-mix(in srgb,var(--line) 55%,transparent);
   vertical-align:top;
 }
 tbody tr:last-child td{border-block-end:0}
-tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 60%,transparent)}
+tbody tr{transition:background var(--t-fast) var(--ease)}
+tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 55%,transparent)}
 td.num,th.num{text-align:end;font-variant-numeric:tabular-nums}
-.empty{padding:var(--s-8) var(--s-5);text-align:center;color:var(--ink-mute);font-size:var(--fs-sm)}
+/* Targets in the sources table are the one place a link is not the row itself. */
+td a[href]{
+  color:var(--plum-ink);text-decoration-line:underline;text-decoration-color:transparent;
+  text-underline-offset:2px;transition:text-decoration-color var(--t-fast) var(--ease);
+}
+td a[href]:hover{text-decoration-color:currentColor}
+.empty{padding:var(--s-9) var(--s-6);text-align:center;color:var(--ink-mute);font-size:var(--fs-sm)}
 
 /* ── forms ──────────────────────────────────────────────────────────── */
 .field{display:flex;flex-direction:column;gap:var(--s-2);min-inline-size:0}
-.field label{font-size:var(--fs-xs);font-weight:600;color:var(--ink-mute);text-transform:uppercase;letter-spacing:.05em}
+.field label{font-size:var(--fs-xs);font-weight:700;color:var(--ink-mute);text-transform:uppercase;letter-spacing:.05em}
 input,select,textarea{
   font-size:var(--fs-body);background:var(--bg);border:1px solid var(--line-strong);
-  border-radius:var(--r-ctrl);padding:8px 10px;inline-size:100%;
+  border-radius:var(--r-ctrl);padding:8px 11px;inline-size:100%;
+  transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
 }
-input:hover,select:hover{border-color:var(--gold)}
-input::placeholder{color:var(--ink-mute);opacity:.75}
-.formgrid{display:grid;grid-template-columns:170px minmax(220px,1fr) 190px auto;gap:var(--s-3);align-items:end}
-.switch{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-sm)}
-.switch input{inline-size:auto;accent-color:var(--gold);margin:0}
-.knobgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:var(--s-4)}
-.knob{display:flex;flex-direction:column;gap:var(--s-2)}
-.knob label{font-size:var(--fs-sm);font-weight:600}
-.knob .hint{font-size:var(--fs-xs);color:var(--ink-mute)}
-.knob input.dirty,.knob select.dirty{border-color:var(--gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--gold) 18%,transparent)}
+input:hover,select:hover,textarea:hover{border-color:var(--gold)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px var(--ring)}
+input::placeholder{color:var(--ink-mute);opacity:.7}
+.formgrid{display:grid;grid-template-columns:170px minmax(220px,1fr) 190px auto;gap:var(--s-4);align-items:end}
+
+/* A bare checkbox in a table cell IS the row's on/off switch, so it gets the
+   design system's track-and-knob rather than the platform default. */
+.switch{display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;font-size:var(--fs-sm)}
+.switch input[type="checkbox"]{
+  appearance:none;-webkit-appearance:none;margin:0;flex:none;cursor:pointer;
+  inline-size:36px;block-size:20px;border-radius:var(--r-pill);
+  background:var(--surface-3);border:1px solid var(--line-strong);position:relative;
+  transition:background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease);
+}
+.switch input[type="checkbox"]::after{
+  content:"";position:absolute;inset-block-start:2px;inset-inline-start:2px;
+  inline-size:14px;block-size:14px;border-radius:50%;background:var(--ink-mute);
+  transition:inset-inline-start var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
+}
+.switch input[type="checkbox"]:checked{
+  background:var(--jester-gold);border-color:var(--jester-gold);
+}
+/* The knob has to be the light half of the pair. Gold-on-30%-gold was one blob
+   with no readable knob position, which is the only thing a toggle has to say. */
+.switch input[type="checkbox"]:checked::after{inset-inline-start:18px;background:var(--jester-black)}
+
+.knobgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(224px,1fr));gap:var(--s-5)}
+.knob{
+  display:flex;flex-direction:column;gap:var(--s-2);
+  padding:var(--s-4);border:1px solid var(--line);border-radius:var(--r-ctrl);
+  background:color-mix(in srgb,var(--surface-2) 35%,var(--surface));
+  transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
+}
+.knob:focus-within{border-color:var(--gold);background:var(--surface)}
+.knob label{font-size:var(--fs-sm);font-weight:600;text-transform:none;letter-spacing:0;color:var(--ink)}
+.knob .hint{font-size:var(--fs-xs);color:var(--ink-mute);line-height:1.4}
+.knob input,.knob select{background:var(--surface)}
+.knob input.dirty,.knob select.dirty{
+  border-color:var(--gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--gold) 20%,transparent)}
+.knob:has(.dirty){border-color:var(--gold);background:color-mix(in srgb,var(--gold) 6%,var(--surface))}
 .savebar{
-  position:sticky;inset-block-end:0;z-index:var(--z-nav);
+  position:sticky;inset-block-end:var(--s-4);z-index:var(--z-nav);
   display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;
-  margin-block-start:var(--s-4);padding:var(--s-4) var(--s-5);
+  margin-block-start:var(--s-5);padding:var(--s-4) var(--s-5);
   background:var(--surface);border:1px solid var(--gold);border-radius:var(--r-card);
   box-shadow:var(--shadow-2);
 }
+.savebar b{font-variant-numeric:tabular-nums}
 
 /* ── banners, drawer, toasts ────────────────────────────────────────── */
 .banner{
-  display:flex;gap:var(--s-3);align-items:flex-start;
-  padding:var(--s-4) var(--s-5);border-radius:var(--r-card);font-size:var(--fs-sm);
+  display:flex;gap:var(--s-4);align-items:flex-start;
+  padding:var(--s-4) var(--s-5);border-radius:var(--r-ctrl);font-size:var(--fs-sm);
   background:color-mix(in srgb,var(--bell) 12%,var(--surface));
   border:1px solid color-mix(in srgb,var(--bell) 45%,transparent);
+  border-inline-start-width:3px;
 }
 .banner--bad{background:color-mix(in srgb,var(--failed) 10%,var(--surface));
   border-color:color-mix(in srgb,var(--failed) 45%,transparent)}
 .banner--ok{background:color-mix(in srgb,var(--done) 10%,var(--surface));
   border-color:color-mix(in srgb,var(--done) 40%,transparent)}
-.banner b{display:block}
+.banner b{display:block;font-weight:700}
 
 .scrim{
   position:fixed;inset:0;z-index:var(--z-scrim);background:var(--scrim);
   opacity:0;pointer-events:none;transition:opacity var(--t-base) var(--ease);
+  backdrop-filter:blur(2px);
 }
 .scrim.on{opacity:1;pointer-events:auto}
 .drawer{
@@ -306,91 +489,115 @@ input::placeholder{color:var(--ink-mute);opacity:.75}
 html[dir="rtl"] .drawer{transform:translateX(-102%)}
 .drawer.on{transform:none}
 .drawer-head{
-  display:flex;align-items:flex-start;gap:var(--s-3);
-  padding:var(--s-5);border-block-end:1px solid var(--line);
+  display:flex;align-items:flex-start;gap:var(--s-4);
+  padding:var(--s-6);border-block-end:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
 }
-.drawer-head h2{font-size:var(--fs-h1);min-inline-size:0}
-.drawer-body{padding:var(--s-5);overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-4)}
+.drawer-head h2{
+  font-size:var(--fs-h1);min-inline-size:0;
+  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
+}
+.drawer-body{padding:var(--s-6);overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-5)}
 .drawer-body p{margin:0}
+.drawer-body h3{font-size:var(--fs-h2)}
 .evidence{
-  border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--s-4);
+  border:1px solid var(--line);border-inline-start:3px solid var(--line-strong);
+  border-radius:var(--r-sm);padding:var(--s-5);
   background:var(--surface-2);font-size:var(--fs-sm);
 }
-.evidence--missing{border-color:var(--failed);background:color-mix(in srgb,var(--failed) 8%,var(--surface))}
+.evidence--missing{
+  border-color:color-mix(in srgb,var(--failed) 45%,transparent);
+  border-inline-start-color:var(--failed);
+  background:color-mix(in srgb,var(--failed) 8%,var(--surface));
+}
 
 .modal{
   position:fixed;inset:50% auto auto 50%;transform:translate(-50%,-50%);
   z-index:calc(var(--z-drawer) + 1);
-  inline-size:min(620px,calc(100vw - 32px));max-block-size:calc(100vh - 64px);
+  inline-size:min(640px,calc(100vw - 32px));max-block-size:calc(100vh - 64px);
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  box-shadow:var(--shadow-pop);color:var(--ink);
   display:none;flex-direction:column;padding:0;
 }
 .modal[open]{display:flex}
+.modal::backdrop{background:transparent}
 #modal-scrim{
   position:fixed;inset:0;z-index:var(--z-drawer);
   background:var(--scrim);display:none;
 }
 #modal-scrim.on{display:block}
 .modal-head{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:var(--s-6) var(--s-8);border-block-end:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);
+  padding:var(--s-6) var(--s-7);border-block-end:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
 }
-.modal-head h2{font-size:var(--fs-h1);margin:0}
-.modal-body{
-  padding:var(--s-8);overflow-y:auto;flex:1;
+.modal-head h2{
+  font-size:var(--fs-h1);margin:0;
+  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
 }
+.modal-body{padding:var(--s-7);overflow-y:auto;flex:1}
 .modal-body h3{
-  font-size:var(--fs-h2);margin-block:var(--s-8) var(--s-5);
+  font-size:var(--fs-h2);margin-block:var(--s-8) var(--s-3);
+  display:flex;align-items:center;gap:var(--s-3);
+}
+.modal-body h3::before{
+  content:"";inline-size:3px;block-size:.9em;flex:none;
+  border-radius:var(--r-pill);background:var(--jester-gold);
 }
 .modal-body h3:first-child{margin-block-start:0}
 .modal-body .field{margin-block-end:var(--s-5)}
 .modal-body .field label{
-  display:block;font-size:var(--fs-sm);font-weight:600;margin-block-end:6px;
+  display:block;font-size:var(--fs-sm);font-weight:600;margin-block-end:var(--s-3);
+  text-transform:none;letter-spacing:0;color:var(--ink);
 }
 .modal-body .field input[type="text"],
 .modal-body .field input[type="number"],
 .modal-body .field select{
-  width:100%;padding:9px 12px;border-radius:var(--r-ctrl);
-  border:1px solid var(--line);background:var(--bg);color:var(--ink);
+  inline-size:100%;padding:9px 12px;border-radius:var(--r-ctrl);
+  border:1px solid var(--line-strong);background:var(--bg);color:var(--ink);
   font-family:var(--font-ui);font-size:var(--fs-body);
-  transition:border-color var(--t-fast) var(--ease);
 }
-.modal-body .field input:focus,
-.modal-body .field select:focus{
-  outline:none;border-color:var(--gold);
-}
-.modal-body .field input::placeholder{
-  color:var(--ink-mute);opacity:0.6;
-}
-.modal-body .formgrid{
-  display:grid;gap:var(--s-5);grid-template-columns:1fr 1fr;
-}
+.modal-body .formgrid{display:grid;gap:var(--s-5);grid-template-columns:1fr 1fr;align-items:start}
 .modal-body .formgrid .field:last-child{grid-column:1/-1}
 .modal-footer{
   display:flex;gap:var(--s-3);justify-content:flex-end;
-  padding:var(--s-6) var(--s-8);border-block-start:1px solid var(--line);
+  padding:var(--s-5) var(--s-7);border-block-start:1px solid var(--line);
   background:var(--surface-2);
 }
+/* Checkboxes inside the modal pick items out of a list; they are choices, not
+   switches, so they keep the platform box the .switch rule above replaces. */
+/* GLOBAL, not modal-scoped. `input,select,textarea{inline-size:100%}` above is
+   right for a text field and catastrophic for a checkbox: it makes the box as
+   wide as its row and shoves everything after it to the far edge. That was
+   masked for months because the only checklist lived inside .modal-body, which
+   carried this override — the moment one appeared on a page, every row broke.
+   `.switch` re-opts into the track-and-knob look for the sources table. */
+input[type="checkbox"]:not(.switch input),
+input[type="radio"]{
+  appearance:auto;-webkit-appearance:auto;inline-size:auto;block-size:auto;flex:none;
+  accent-color:var(--jester-gold);margin-inline-end:var(--s-3);vertical-align:-2px;
+}
+.source-check{display:flex;align-items:center;gap:var(--s-2);padding:3px 0;font-size:var(--fs-sm)}
 
 .toasts{
-  position:fixed;inset-inline-end:var(--s-5);inset-block-end:var(--s-5);z-index:var(--z-toast);
-  display:flex;flex-direction:column;gap:var(--s-2);max-inline-size:min(420px,calc(100vw - 32px));
+  position:fixed;inset-inline-end:var(--s-6);inset-block-end:var(--s-6);z-index:var(--z-toast);
+  display:flex;flex-direction:column;gap:var(--s-3);max-inline-size:min(420px,calc(100vw - 32px));
 }
 .toast{
-  display:flex;gap:var(--s-3);align-items:flex-start;
+  display:flex;gap:var(--s-4);align-items:flex-start;
   background:var(--surface);border:1px solid var(--line);border-inline-start:3px solid var(--gold);
-  border-radius:var(--r-ctrl);padding:10px 12px;box-shadow:var(--shadow-pop);font-size:var(--fs-sm);
+  border-radius:var(--r-ctrl);padding:11px 13px;box-shadow:var(--shadow-pop);font-size:var(--fs-sm);
   animation:slidein var(--t-slow) var(--ease);
 }
 .toast--bad{border-inline-start-color:var(--failed)}
 .toast--ok{border-inline-start-color:var(--done)}
 .toast button{background:none;border:0;color:var(--ink-mute);cursor:pointer;padding:0 2px;line-height:1}
+.toast button:hover{color:var(--ink)}
 @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 pre{
   background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);
-  padding:var(--s-4);font-family:var(--font-mono);font-size:var(--fs-xs);
+  padding:var(--s-5);font-family:var(--font-mono);font-size:var(--fs-xs);line-height:1.55;
   overflow:auto;max-block-size:320px;margin:0;white-space:pre-wrap;word-break:break-word;
 }
 
@@ -413,7 +620,7 @@ pre{
 @media (max-width:960px){
   /* Column mode flips the cross axis to horizontal: without stretch the nav
      and main size to their content and the whole page scrolls sideways. */
-  .shell{flex-direction:column;align-items:stretch;gap:var(--s-4);padding:var(--s-4)}
+  .shell{flex-direction:column;align-items:stretch;gap:var(--s-5);padding:var(--s-5)}
   .nav{
     position:static;inline-size:100%;
     border-inline-end:0;border-block-end:1px solid var(--line);
@@ -421,15 +628,87 @@ pre{
   }
   .nav ul{flex-direction:row;overflow-x:auto;gap:var(--s-2);padding-block-end:2px}
   .nav button{inline-size:auto;white-space:nowrap}
-  .nav .count{margin-inline-start:6px}
+  /* The rail marker has to move to the block edge once the list is a strip. */
+  .nav button[aria-current="page"]::before{
+    inset:auto var(--s-4) 0;inline-size:auto;block-size:2px;
+  }
+  .nav .count{margin-inline-start:var(--s-3)}
   .grp{display:none}
   .formgrid{grid-template-columns:1fr}
+  .hero{padding:var(--s-7) var(--s-6)}
 }
 @media (max-width:600px){
   :root{--fs-hero:24px}
-  .topbar{padding-inline:var(--s-4);gap:var(--s-3)}
+  .topbar{padding-inline:var(--s-5);gap:var(--s-3)}
   .topbar-meta{display:none}
-  .kpis{grid-template-columns:repeat(auto-fit,minmax(108px,1fr))}
+  .brand em{display:none}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
   .dl{grid-template-columns:1fr}
   .dl dt{margin-block-start:var(--s-3)}
+  .modal-body .formgrid{grid-template-columns:1fr}
 }
+
+/* ── pipeline modal: source checklist ───────────────────────────────── */
+.modal-listhead{
+  margin-block:var(--s-4) var(--s-3);padding-block-end:var(--s-3);
+  border-block-end:1px solid var(--line);
+}
+.checkall{display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;font-weight:600}
+.checklist{
+  max-block-size:260px;overflow-y:auto;
+  border:1px solid var(--line);border-radius:var(--r-ctrl);
+  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
+  padding:var(--s-2);
+}
+.source-check-row{
+  display:flex;align-items:center;gap:var(--s-3);min-inline-size:0;
+  padding:5px var(--s-3);border-radius:var(--r-sm);cursor:pointer;
+  transition:background var(--t-fast) var(--ease);
+}
+.source-check-row:hover{background:var(--surface)}
+.source-check-row strong{font-weight:600;min-inline-size:0}
+.source-check-row .chip{flex:none}
+.source-check-row .xs{margin-inline-start:auto;flex:none;padding-inline-start:var(--s-3)}
+/* A source with no worker adapter cannot be fetched; it stays listed so the
+   list matches the Sources tab, but it reads as unavailable rather than
+   silently unticked. */
+.source-check-row.is-unsupported{opacity:.55;cursor:not-allowed}
+.source-check-row.is-unsupported strong{text-decoration:line-through}
+
+/* ── schedule ───────────────────────────────────────────────────────── */
+/* The cadence form has three narrow controls, not the wide URL field the
+   shared .formgrid ramp is sized for; left alone the time input stretched
+   across a whole 1fr column for four characters of content. */
+#schedule .formgrid{
+  grid-template-columns:repeat(auto-fit,minmax(150px,190px));
+  justify-content:start;align-items:end;
+}
+#schedule .formgrid .field:last-child{grid-column:auto}
+#sched-presets{margin-block-start:var(--s-4)}
+#sched-log{max-block-size:260px}
+/* A schedule that is not registered is the page's headline fact, so the
+   controls that only make sense once it is stay visibly inert. */
+#sched-remove[disabled],#sched-runnow[disabled]{opacity:.45}
+
+/* The scope checklist reuses the modal's row, so both stay in step. */
+.checkall{white-space:nowrap}
+#schedule .checklist{max-block-size:300px}
+/* Hints run to one or two lines; end-aligning staggers the inputs. */
+#schedule .formgrid{align-items:start}
+
+/* ── schedule activity ──────────────────────────────────────────────── */
+/* The KPI tile grew a third line here: a bare count cannot say whether a
+   schedule is healthy, so every tile carries what it should have been. */
+.kpi-sub{display:block;margin-block-start:2px;text-transform:none;letter-spacing:0;font-weight:400}
+.kpi--ok::before{background:var(--done)}
+.kpi--ok b{color:var(--done-ink)}
+#sched-kpis{grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
+#sched-ticks td{white-space:nowrap}
+/* A scheduled row should be findable in a ledger of mostly-manual runs. */
+.chip--sched{
+  border-color:color-mix(in srgb,var(--gold) 55%,transparent);
+  color:var(--running-ink);
+  background:color-mix(in srgb,var(--gold) 12%,transparent);
+}
+/* A timestamp broken across two lines is harder to scan than a wider column. */
+#runs-body td:first-child,#sched-ticks td:first-child{white-space:nowrap}

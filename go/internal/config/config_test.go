@@ -125,3 +125,44 @@ func TestGeoIPCountryCodeIsNotEnabled(t *testing.T) {
 		}
 	}
 }
+
+// warmup_navigations was parsed into the Scraper struct and then read by
+// nobody: the two Reddit call sites passed a hardcoded 2, so the documented
+// "0 disables the warm-up" disabled nothing and raising the number did
+// nothing either. These pin the resolution rule now that the worker uses it.
+func TestWarmupsDistinguishesAbsentFromExplicitZero(t *testing.T) {
+	var absent Scraper
+	if got := absent.Warmups(); got != defaultWarmupNavigations {
+		t.Errorf("absent key must keep warming (got %d, want %d)",
+			got, defaultWarmupNavigations)
+	}
+
+	zero := 0
+	if got := (Scraper{WarmupNavigations: &zero}).Warmups(); got != 0 {
+		t.Errorf("an explicit 0 must disable the warm-up, got %d", got)
+	}
+
+	three := 3
+	if got := (Scraper{WarmupNavigations: &three}).Warmups(); got != 3 {
+		t.Errorf("a configured count must be honoured, got %d", got)
+	}
+
+	neg := -2
+	if got := (Scraper{WarmupNavigations: &neg}).Warmups(); got != 0 {
+		t.Errorf("a negative count must clamp to off, got %d", got)
+	}
+}
+
+func TestScraperYAMLWarmupIsRead(t *testing.T) {
+	cfg, err := Load("../../../config")
+	if err != nil {
+		t.Fatalf("load repo config: %v", err)
+	}
+	if cfg.Scraper.WarmupNavigations == nil {
+		t.Fatal("config/scraper.yaml sets warmup_navigations; it must parse")
+	}
+	if cfg.Scraper.Warmups() != *cfg.Scraper.WarmupNavigations {
+		t.Errorf("Warmups()=%d disagrees with the file's %d",
+			cfg.Scraper.Warmups(), *cfg.Scraper.WarmupNavigations)
+	}
+}

@@ -80,6 +80,7 @@ const PAGES = [
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
+  { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
   { group: 'Health', id: 'doctor', label: 'Doctor', icon: '✚', load: loadDoctor, count: () => COUNTS.findings || null },
 ];
 
@@ -128,17 +129,31 @@ async function runAction(path, body, el) {
       || (res.findings ? `${res.findings.length} finding(s)` : '')
       || (res.code !== undefined ? `exit ${res.code}` : 'refused');
     toast(`${label}: ${why}`, 'bad');
+  } else if (res.idle) {
+    // A run that completed having archived nothing is not an error, but
+    // calling it "ok" is what made the console feel broken: the operator got a
+    // green toast every time and no new rows, forever.
+    toast(`${label}: ${res.note}`, 'bad');
   } else {
     const detail = [
       res.findings ? `${res.findings.length} finding(s)` : '',
       res.requeued !== undefined ? `${res.requeued} requeued` : '',
       res.fixed !== undefined ? `${res.fixed} reembedded` : '',
       res.queued_new_comments !== undefined ? `${res.queued_new_comments} new comment(s)` : '',
+      res.archived
+        ? `+${res.archived.nuggets} nugget(s), +${res.archived.ideas} idea(s)` : '',
       res.counts && res.out_dir
         ? `${res.counts.nuggets} nugget(s) + ${res.counts.ideas} idea(s) → ${res.out_dir}` : '',
     ].filter(Boolean).join(' · ');
     toast(`${label}: ok${detail ? ' — ' + detail : ''}`, 'ok');
   }
+  // A multi-step run reports each step's own log, not just the last one's.
+  (res.steps || []).forEach(st => {
+    if (st.queued_new_comments !== undefined) {
+      toast(`${st.step}: ${st.queued_new_comments} new comment(s) queued`,
+            st.queued_new_comments ? 'ok' : 'bad');
+    }
+  });
   if (res.findings && res.findings.length) res.findings.forEach(f => toast(f, 'bad'));
   // The worker's own log is the only account of which sources it reached.
   if (res.output) {
@@ -237,6 +252,13 @@ async function loadOverview() {
 $('#quick-actions').addEventListener('click', e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
+  // "run pipeline" is configured before it runs; every other action is
+  // immediate. openPipelineModal is defined further down — this listener only
+  // ever runs on a click, long after the module has finished evaluating.
+  if (btn.dataset.act === '/api/run' && !btn.dataset.liveModels) {
+    openPipelineModal();
+    return;
+  }
   const body = {};
   if (btn.dataset.runPrefix) body.run_id = `${btn.dataset.runPrefix}-${Date.now()}`;
   if (btn.dataset.liveModels) body.live_models = true;
@@ -245,6 +267,18 @@ $('#quick-actions').addEventListener('click', e => {
 });
 
 // ── sources ─────────────────────────────────────────────────────────────
+
+/** When the worker last walked this source, and what it yielded. The run order
+ *  is decided by this column, so it has to be readable — otherwise rotation
+ *  looks like the worker picking sources at random. */
+function fetchedCell(state) {
+  if (!state) return '<span class="xs">never · next in line</span>';
+  const yield_ = state.last_queued
+    ? `+${state.last_queued} comment(s)`
+    : 'nothing new';
+  return `<span class="mono xs">${esc(ago(state.last_fetched_at))}</span>` +
+    `<div class="xs">${esc(yield_)} · ${esc(state.visits)} visit(s)</div>`;
+}
 const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
   youtube: 'YouTube', tiktok: 'TikTok',
@@ -289,10 +323,11 @@ async function loadSources() {
              class="truncate" style="display:block;max-inline-size:34ch"
              title="${esc(s.url)}">${esc(s.url.replace(/^https?:\/\/(www\.)?/, ''))}</a>
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
+      <td>${fetchedCell(s.state)}</td>
       <td>${status}</td>
       <td><button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
     </tr>`;
-  }).join('') || emptyRow(7, 'No sources yet — add one above.');
+  }).join('') || emptyRow(8, 'No sources yet — add one above.');
 
   const unsupported = list.filter(s => s.enabled && !s.supported);
   $('#src-hint').innerHTML = unsupported.length
@@ -343,14 +378,30 @@ $('#src-form').addEventListener('submit', async e => {
 // ── runs ────────────────────────────────────────────────────────────────
 let RUNS = [];
 
-async function loadRuns() {
-  const res = await api('/api/runs');
-  if (res.ok === false) { toast(res.error, 'bad'); return; }
-  RUNS = res.runs || [];
-  COUNTS.runs = RUNS.length;
-  renderNav();
+// Origin is the difference between "I pressed this" and "the host did it at
+// 4am", which is the first thing you want to filter on once a schedule exists.
+let RUNS_ORIGIN = 'all';
 
-  $('#runs-body').innerHTML = RUNS.map(r => {
+function renderRunsFilter() {
+  const counts = { all: RUNS.length };
+  for (const r of RUNS) {
+    const o = r.origin || 'manual';
+    counts[o] = (counts[o] || 0) + 1;
+  }
+  // Only offer an origin the ledger actually contains; a "scheduled 0" tab on a
+  // box with no schedule is a dead control.
+  const origins = ['all', ...Object.keys(counts).filter(o => o !== 'all').sort()];
+  $('#runs-filter').innerHTML = origins.map(o =>
+    `<button data-origin="${esc(o)}" aria-pressed="${o === RUNS_ORIGIN}">` +
+    `${esc(o)} <span class="num">${counts[o] || 0}</span></button>`).join('');
+}
+
+function renderRuns() {
+  const rows = RUNS.filter(r =>
+    RUNS_ORIGIN === 'all' || (r.origin || 'manual') === RUNS_ORIGIN);
+  $('#runs-count').textContent = `${rows.length} of ${RUNS.length} run(s)`;
+
+  $('#runs-body').innerHTML = rows.map(r => {
     const funnel = Object.entries(r.prefilter_funnel_obj || {});
     const near = (r.top_near_misses_list || []).map(v => (+v).toFixed(2));
     const platforms = Object.entries(r.platform_counts_obj || {});
@@ -361,17 +412,40 @@ async function loadRuns() {
       near.length ? `<span class="chip">near ${esc(near.join(', '))}</span>` : '',
       r.error ? `<span class="chip chip--bad" title="${esc(r.error)}">error</span>` : '',
     ].filter(Boolean).join('');
+    const origin = r.origin || 'manual';
     return `<tr data-id="${r.id}" style="cursor:pointer" title="Click to view details">
-      <td>${esc(when(r.started_at))}<div class="xs">${esc(ago(r.started_at))} · ${int(r.n_posts)} post(s)</div></td>
+      <td><span class="mono">${esc(when(r.started_at))}</span>
+          <div class="xs">${esc(ago(r.started_at))} · ${int(r.n_posts)} post(s)</div></td>
       <td class="mono">${esc(r.run_id)}</td>
       <td>${pill(r.status)}</td>
       <td class="num">${int(r.n_nuggets_kept)} / ${int(r.n_ideas)}</td>
       <td class="num">${num(r.duration_actual_s, 1)}s<div class="xs">exp ${num(r.duration_expected_s, 1)}s</div></td>
-      <td><span class="chip">${esc(r.origin || 'manual')}</span></td>
+      <td><span class="chip${origin === 'scheduled' ? ' chip--sched' : ''}"
+            >${origin === 'scheduled' ? '◷ ' : ''}${esc(origin)}</span></td>
       <td><div class="chiprow">${signals || '<span class="xs">clean</span>'}</div></td>
     </tr>`;
-  }).join('') || emptyRow(7, 'No runs yet — hit ▶ run pipeline on the Overview tab.');
+  }).join('') || emptyRow(7, RUNS.length
+    ? `No ${esc(RUNS_ORIGIN)} runs yet.`
+    : 'No runs yet — hit ▶ run pipeline on the Overview tab.');
 }
+
+async function loadRuns() {
+  const res = await api('/api/runs');
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  RUNS = res.runs || [];
+  COUNTS.runs = RUNS.length;
+  renderNav();
+  renderRunsFilter();
+  renderRuns();
+}
+
+$('#runs-filter').addEventListener('click', e => {
+  const b = e.target.closest('button[data-origin]');
+  if (!b) return;
+  RUNS_ORIGIN = b.dataset.origin;
+  renderRunsFilter();
+  renderRuns();
+});
 
 $('#runs-body').addEventListener('click', e => {
   const tr = e.target.closest('tr[data-id]');
@@ -666,16 +740,13 @@ const KNOB_HELP = {
   critic_web_daily_budget: 'critic web calls per day',
   embedding_model: 'model name passed to the embedding provider',
   competitor_search_provider: 'verifies competition before scoring (M2.3/D-1); none keeps it unchecked',
-  llm_provider: 'fake (deterministic) or ollama (local daemon)',
+  llm_provider: 'default backend for the chat roles — fake (deterministic), ollama (local daemon) or groq (hosted). Override per role under Agent models.',
   embedding_provider: 'fake (deterministic) or ollama (local daemon)',
 };
-// Per-key choices: not every *_provider takes the same values, and offering
-// the llm choices for the competitor search would write an invalid config.
-const PROVIDER_CHOICES = {
-  llm_provider: ['fake', 'ollama'],
-  embedding_provider: ['fake', 'ollama'],
-  competitor_search_provider: ['none', 'fake', 'duckduckgo'],
-};
+// Per-key choices now arrive on each knob as `meta.choices`, because this
+// list was a copy of a vocabulary that lives in config.py and it went stale
+// the moment a third llm_provider existed: the console kept offering two.
+// Kept only as the fallback for a server that predates the field.
 let CFG_BASE = {};
 
 function cfgDirty() {
@@ -708,7 +779,7 @@ async function loadConfig() {
     .map(([key, meta]) => {
     CFG_BASE[key] = meta.value;
     const range = meta.range ? `${meta.range[0]} – ${meta.range[1]}` : '';
-    const choices = PROVIDER_CHOICES[key];
+    const choices = meta.choices;
     const control = choices
       ? `<select id="knob-${key}" data-knob="${key}">${choices.map(p =>
           `<option ${p === meta.value ? 'selected' : ''}>${p}</option>`).join('')}</select>`
@@ -738,12 +809,17 @@ async function loadConfig() {
 
 // ── agent models ────────────────────────────────────────────────────────
 const ROLE_HELP = {
-  extractor: 'turns one comment into a nugget',
+  extractor: 'turns one comment into a nugget — one call per comment, so this is the throughput role',
   archivist: 'dedups and files nuggets into the archive',
-  synthesizer: 'clusters nuggets into candidate ideas',
+  synthesizer: 'writes the problem and the proposed solution — one call per idea cluster',
   critic: 'scores an idea and checks competitors',
-  embedding_model: 'vectorises nuggets for dedup and search',
+  embedding_model: 'vectorises nuggets for dedup and search (Ollama only)',
 };
+// Roles served by a chat provider, and therefore overridable per role. The
+// embedding role is not one: Groq serves no embedding model.
+const CHAT_ROLES = ['extractor', 'synthesizer', 'critic'];
+const LLM_PROVIDER_OPTIONS = ['fake', 'ollama', 'groq'];
+let PROVIDERS_BASE = {};
 const CUSTOM = '__custom__';
 let MODELS_BASE = {};
 let MODELS_PROFILE = null;
@@ -763,8 +839,22 @@ function modelsDirty() {
   return out;
 }
 
+/** Per-role provider overrides, which live in thresholds.yaml rather than the
+ *  `models:` block and so save through a different endpoint. */
+function providersDirty() {
+  const out = {};
+  for (const [role, base] of Object.entries(PROVIDERS_BASE)) {
+    const sel = $(`[data-provider="${role}"]`);
+    if (!sel) continue;
+    const changed = sel.value !== base;
+    sel.classList.toggle('dirty', changed);
+    if (changed) out[`${role}_provider`] = sel.value;
+  }
+  return out;
+}
+
 function syncModelsBar() {
-  const n = Object.keys(modelsDirty()).length;
+  const n = Object.keys(modelsDirty()).length + Object.keys(providersDirty()).length;
   $('#models-savebar').classList.toggle('hidden', n === 0);
   $('#models-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
 }
@@ -786,15 +876,30 @@ async function loadModels(profile) {
   $('#models-grid').innerHTML = res.roles.map(role => {
     const value = res.models[role] || '';
     MODELS_BASE[role] = value;
-    // The configured model always appears, even when it is not pulled — the
-    // console must show what the file says, then flag the gap.
-    const options = [...new Set([...(res.installed || []), value].filter(Boolean))].sort();
+    // Which backend serves THIS role. The embedding role has no override —
+    // Groq serves no embedding model, so there is nothing to choose between.
+    const provider = CHAT_ROLES.includes(role)
+      ? (res.role_providers[role] || res.llm_provider) : res.embedding_provider;
+    if (CHAT_ROLES.includes(role)) PROVIDERS_BASE[role] = provider;
+    // A role served by Groq picks from Groq's catalogue; an Ollama role picks
+    // from what is pulled. Offering the wrong list is offering a choice that
+    // can only fail at run time.
+    const pool = provider === 'groq' ? (res.groq_choices || [])
+      : provider === 'ollama' ? (res.ollama_choices || []) : [];
+    // The configured model always appears, even when it is not available —
+    // the console must show what the file says, then flag the gap.
+    const options = [...new Set([...pool, value].filter(Boolean))].sort();
     const known = options.includes(value);
-    // The server decides what counts as pulled (`name` == `name:latest`).
-    const missing = res.ollama_up && (res.missing || []).includes(value);
+    // Only an Ollama-served role can be "not pulled"; Groq has nothing to pull.
+    const missing = (res.missing || []).includes(value);
+    const unreachable = provider === 'groq' && res.groq_ready === false;
     return `<div class="knob">
       <label for="model-${role}">${esc(role.replace('_model', '').replace(/_/g, ' '))}
-        ${missing ? '<span class="chip chip--warn">not pulled</span>' : ''}</label>
+        ${missing ? '<span class="chip chip--warn">not pulled</span>' : ''}
+        ${unreachable ? '<span class="chip chip--bad">groq unreachable</span>' : ''}</label>
+      ${CHAT_ROLES.includes(role) ? `<select data-provider="${role}" aria-label="Provider for ${role}">
+        ${LLM_PROVIDER_OPTIONS.map(o => `<option value="${esc(o)}" ${o === provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+      </select>` : ''}
       <select id="model-${role}" data-model="${role}">
         ${options.map(o => `<option value="${esc(o)}" ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}
         <option value="${CUSTOM}" ${known ? '' : 'selected'}>custom…</option>
@@ -804,6 +909,13 @@ async function loadModels(profile) {
       <span class="hint">${esc(ROLE_HELP[role] || '')}</span>
     </div>`;
   }).join('');
+
+  // Changing a role's provider changes which models are valid for it, so the
+  // grid is rebuilt from the server rather than re-filtered in place — the
+  // server owns which models each provider actually serves.
+  $$('#models-grid [data-provider]').forEach(sel => {
+    sel.onchange = () => { sel.classList.add('dirty'); syncModelsBar(); };
+  });
 
   $$('#models-grid [data-model]').forEach(sel => {
     sel.onchange = () => {
@@ -824,10 +936,22 @@ $('#models-profile').addEventListener('click', e => {
 });
 $('#models-save').onclick = async e => {
   const patch = modelsDirty();
-  if (!Object.keys(patch).length) return;
-  const res = await busy(e.currentTarget, () => api('/api/models', { patch, profile: MODELS_PROFILE }));
+  const providers = providersDirty();
+  if (!Object.keys(patch).length && !Object.keys(providers).length) return;
+  const res = await busy(e.currentTarget, async () => {
+    // Providers first: saving a Groq model name under an Ollama-served role
+    // would flag it "not pulled" for the moment between the two writes.
+    if (Object.keys(providers).length) {
+      const pr = await api('/api/thresholds', { patch: providers, profile: MODELS_PROFILE });
+      if (pr.ok === false) return pr;
+    }
+    return Object.keys(patch).length
+      ? api('/api/models', { patch, profile: MODELS_PROFILE })
+      : { ok: true, applied: {}, profile: MODELS_PROFILE };
+  });
   if (res.ok === false) { toast(res.error, 'bad'); return; }
-  toast(`saved ${Object.keys(res.applied).length} model(s) to ${res.profile}`, 'ok');
+  const n = Object.keys(res.applied || {}).length + Object.keys(providers).length;
+  toast(`saved ${n} setting(s) to ${res.profile || MODELS_PROFILE}`, 'ok');
   loadModels(MODELS_PROFILE);
 };
 $('#models-reset').onclick = () => loadModels(MODELS_PROFILE);
@@ -841,6 +965,250 @@ $('#cfg-save').onclick = async e => {
   loadConfig();
 };
 $('#cfg-reset').onclick = () => loadConfig();
+
+// ── schedule ────────────────────────────────────────────────────────────
+let SCHED = null;
+
+/** The scope of a schedule in one readable phrase, for the summary row. */
+function describeScope(opts, total) {
+  const names = (opts && opts.only) || [];
+  const where = names.length
+    ? `${names.length} of ${total} source${total === 1 ? '' : 's'}`
+    : 'every enabled source';
+  const depth = [];
+  if (opts && opts.max_posts) depth.push(`${opts.max_posts} post(s)`);
+  if (opts && opts.max_comments) depth.push(`${opts.max_comments} comment(s)`);
+  if (opts && opts.max_ideas) depth.push(`${opts.max_ideas} idea(s)`);
+  return where + ' · ' + (depth.length ? `max ${depth.join(', ')}` : 'no depth ceiling');
+}
+
+function renderSchedule(res) {
+  SCHED = res;
+  const on = res.installed;
+  const opts = res.options || {};
+  const sources = res.sources || [];
+
+  $('#sched-banner').innerHTML = on
+    ? `<div class="banner banner--ok"><span aria-hidden="true">✓</span><span>
+         <b>Scheduled</b>${esc(res.cadence || 'registered')} via ${esc(res.scheduler)},
+         scraping ${esc(describeScope(opts, sources.length))}.</span></div>`
+    : `<div class="banner"><span aria-hidden="true">◷</span><span>
+         <b>Nothing scheduled</b>Choose what to scrape and how often; the host scheduler
+         will run the full loop for you, with this console closed.</span></div>`;
+
+  $('#sched-state').innerHTML = [
+    ['status', on ? pill('installed') : pill('off')],
+    ['scheduler', esc(res.scheduler || '—')],
+    ['cadence', esc(res.cadence || '—')],
+    ['next run', esc(res.next_run || '—')],
+    // What it will FETCH, read back from the launcher the scheduler runs —
+    // not from this form, which may hold edits nobody has saved.
+    ['scrapes', on ? esc(describeScope(opts, sources.length)) : '—'],
+    ['task name', `<span class="mono">${esc(res.task_name)}</span>`],
+    ['runs', `<span class="mono">${esc(res.command)}</span>`],
+  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+  renderScheduleScope(res);
+  renderScheduleActivity(res);
+
+  $('#sched-presets').innerHTML = (res.presets || []).map(m =>
+    `<button class="btn btn--ghost btn--sm" data-preset="${m}">${labelMinutes(m)}</button>`).join('');
+
+  $('#sched-logpath').textContent = res.log_path || '';
+  $('#sched-log').textContent = res.log_tail
+    ? res.log_tail
+    : 'no scheduled run has written a log yet';
+
+  $('#sched-remove').disabled = !on;
+  $('#sched-runnow').disabled = !on;
+  // POSIX cannot be installed for you — jester will not edit a crontab behind
+  // your back, so the buttons print the line instead of pretending to work.
+  const manual = !res.windows;
+  $('#sched-install-every').textContent = manual ? 'show crontab line' : 'set interval';
+  $('#sched-install-daily').textContent = manual ? 'show daily line' : 'set daily';
+}
+
+function labelMinutes(m) {
+  if (m % 60 === 0) return `${m / 60}h`;
+  return `${m}m`;
+}
+
+
+/** Fill the scope form from what is REGISTERED, so opening the page shows the
+ *  live schedule rather than whatever the form last happened to hold. */
+
+/** Ran-vs-should-have-run for one window. The count alone cannot tell a healthy
+ *  schedule from a dead one; the pair can. */
+function renderScheduleActivity(res) {
+  const act = res.activity || {};
+  const w = act.windows || {};
+  const tile = (label, value, sub, cls) =>
+    `<div class="kpi ${cls || ''}"><b>${value}</b><span>${esc(label)}</span>
+       ${sub ? `<span class="kpi-sub xs">${sub}</span>` : ''}</div>`;
+
+  const bucket = (hours, label) => {
+    const b = w[hours];
+    if (!b) return '';
+    const exp = b.expected;
+    // Only colour the comparison once there is one to make. No cadence (a
+    // hand-made trigger) or no runs yet means no verdict, not a red tile.
+    let cls = '';
+    if (exp) {
+      if (b.runs >= exp) cls = 'kpi--ok';
+      else if (b.runs >= Math.ceil(exp * 0.6)) cls = 'kpi--live';
+      else cls = 'kpi--alert';
+    }
+    const sub = exp
+      ? `of ${exp} expected${b.partial ? ' so far' : ''}`
+      : 'no cadence to compare';
+    return tile(label, b.runs, sub, cls);
+  };
+
+  const last = act.last;
+  $('#sched-kpis').innerHTML = [
+    bucket('1', 'runs · last hour'),
+    bucket('24', 'runs · last 24h'),
+    tile('runs all time', act.total || 0,
+         act.first_run_at ? `since ${esc(when(act.first_run_at))}` : 'never run'),
+    tile('last tick', last ? esc(ago(last.started_at)) : '—',
+         last ? esc(when(last.started_at)) : 'no scheduled run yet'),
+    tile('archived · last 24h', `${(w['24'] || {}).nuggets || 0}`,
+         `${(w['24'] || {}).ideas || 0} idea(s)`),
+  ].join('');
+
+  const ticks = act.recent || [];
+  $('#sched-ticks').innerHTML = ticks.map(t => `
+    <tr>
+      <td class="mono">${esc(when(t.started_at))}<div class="xs">${esc(ago(t.started_at))}</div></td>
+      <td class="mono">${esc(t.run_id)}</td>
+      <td>${pill(t.status)}</td>
+      <td class="num">${int(t.n_comments)}</td>
+      <td class="num">${int(t.n_nuggets_kept)}</td>
+      <td class="num">${int(t.n_ideas)}</td>
+    </tr>`).join('')
+    || emptyRow(6, res.installed
+      ? 'Registered, but it has not fired yet — use “run it now” to prove it works.'
+      : 'Nothing scheduled yet.');
+}
+
+function renderScheduleScope(res) {
+  const opts = res.options || {};
+  const chosen = new Set(opts.only || []);
+  // An empty selection means "every enabled source", so that is what the
+  // boxes must show — an all-unticked list would read as "scrape nothing".
+  const all = !chosen.size;
+  const sources = res.sources || [];
+
+  $('#sched-sources').innerHTML = sources.map(s => `
+    <label class="source-check-row${s.supported ? '' : ' is-unsupported'}"
+           title="${s.supported ? '' : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet'}">
+      <input type="checkbox" class="sched-src" data-source-name="${esc(s.name)}"
+             ${s.supported && (all ? s.enabled : chosen.has(s.name)) ? 'checked' : ''}
+             ${s.supported ? '' : 'disabled'}>
+      <span class="chip">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
+      <strong class="truncate">${esc(s.name)}</strong>
+      <span class="xs">${esc(s.kind)}${s.supported ? '' : ' · no adapter'}</span>
+    </label>`).join('');
+
+  const off = sources.length - sources.filter(s => s.supported).length;
+  $('#sched-sources-hint').textContent = off
+    ? `${sources.length - off} of ${sources.length} can be fetched; `
+      + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
+    : `${sources.length} source(s) available.`;
+
+  $('#sched-max-posts').value = opts.max_posts || '';
+  $('#sched-max-comments').value = opts.max_comments || '';
+  $('#sched-max-ideas').value = opts.max_ideas || '';
+  syncSchedSelectAll();
+}
+
+function syncSchedSelectAll() {
+  const boxes = $$('.sched-src:not([disabled])');
+  const on = boxes.filter(b => b.checked).length;
+  const all = $('#sched-select-all');
+  all.checked = on > 0 && on === boxes.length;
+  all.indeterminate = on > 0 && on < boxes.length;
+  $('#sched-selected-count').textContent =
+    on === boxes.length ? 'all sources' : `${on} selected`;
+  // A schedule that fetches nothing is not a schedule.
+  $('#sched-install-every').disabled = on === 0;
+  $('#sched-install-daily').disabled = on === 0;
+}
+
+/** The scope the form is currently describing. Ticking every box posts an
+ *  empty list, which the worker reads as "walk the enabled list" — that keeps
+ *  a schedule following the Sources tab instead of freezing today's names. */
+function scheduleScope() {
+  const boxes = $$('.sched-src:not([disabled])');
+  const picked = boxes.filter(b => b.checked).map(b => b.dataset.sourceName);
+  const num = id => {
+    const v = parseInt($(id).value, 10);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+  return {
+    only: picked.length === boxes.length ? [] : picked,
+    max_posts: num('#sched-max-posts'),
+    max_comments: num('#sched-max-comments'),
+    max_ideas: num('#sched-max-ideas'),
+  };
+}
+
+$('#sched-select-all').addEventListener('change', e => {
+  $$('.sched-src:not([disabled])').forEach(cb => { cb.checked = e.target.checked; });
+  syncSchedSelectAll();
+});
+$('#sched-sources').addEventListener('change', syncSchedSelectAll);
+
+async function loadSchedule() {
+  const res = await api('/api/schedule');
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  renderSchedule(res);
+}
+
+$('#sched-presets').addEventListener('click', e => {
+  const b = e.target.closest('button[data-preset]');
+  if (!b) return;
+  $('#sched-every').value = b.dataset.preset;
+  $('#sched-install-every').click();
+});
+
+async function installSchedule(body, el) {
+  const res = await busy(el, () => api('/api/schedule/install', body));
+  // A POSIX install is `ok:false` with the crontab line as its detail — that
+  // is an instruction, not a failure, so it must not render as an error.
+  const manual = res.action === 'manual';
+  toast(res.detail || (res.ok ? 'scheduled' : 'could not schedule'),
+        res.ok ? 'ok' : (manual ? 'bad' : 'bad'));
+  if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
+}
+
+$('#sched-install-every').onclick = e => {
+  const every = parseInt($('#sched-every').value, 10);
+  if (!Number.isFinite(every) || every < 1 || every > 1439) {
+    toast('Interval must be a whole number of minutes between 1 and 1439', 'bad');
+    return;
+  }
+  installSchedule({ every, options: scheduleScope() }, e.currentTarget);
+};
+
+$('#sched-install-daily').onclick = e => {
+  const at = $('#sched-at').value.trim();
+  if (!/^\d{1,2}:\d{2}$/.test(at)) { toast('Time must be HH:MM', 'bad'); return; }
+  installSchedule({ at, options: scheduleScope() }, e.currentTarget);
+};
+
+$('#sched-remove').onclick = async e => {
+  const res = await busy(e.currentTarget, () => api('/api/schedule/remove', {}));
+  toast(res.detail || (res.ok ? 'removed' : 'could not remove'), res.ok ? 'ok' : 'bad');
+  if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
+};
+
+$('#sched-runnow').onclick = async e => {
+  const res = await busy(e.currentTarget, () => api('/api/schedule/run', {}));
+  toast(res.detail || (res.ok ? 'task triggered' : 'could not trigger'), res.ok ? 'ok' : 'bad');
+  // The task runs detached; give it a moment, then show what it wrote.
+  setTimeout(loadSchedule, 4000);
+};
 
 // ── doctor ──────────────────────────────────────────────────────────────
 async function loadDoctor() {
@@ -901,39 +1269,67 @@ let SOURCES_LIST = [];
 
 function openModal() {
   $('#pipeline-modal').showModal();
+  // `hidden` is the scrim's resting state in the markup so it cannot flash
+  // before this file runs; the class drives the fade. Both have to move, or
+  // whichever one is left behind wins and the page never dims.
+  $('#modal-scrim').hidden = false;
   $('#modal-scrim').classList.add('on');
 }
 
 function closeModal() {
   $('#pipeline-modal').close();
   $('#modal-scrim').classList.remove('on');
+  $('#modal-scrim').hidden = true;
 }
 
+// A source is identified by its NAME everywhere else in this file and in
+// sources.yaml — there is no `id` field on the payload, so the old
+// data-source-id="${s.id}" put the string "undefined" on all sixteen boxes.
 async function loadSourcesForModal() {
   const res = await api('/api/sources');
   if (res.ok === false) { toast('Failed to load sources', 'bad'); return; }
   SOURCES_LIST = res.sources || [];
 
-  const enabledSources = SOURCES_LIST.filter(s => s.enabled);
+  const selectable = SOURCES_LIST.filter(s => s.supported);
   $('#sources-checklist').innerHTML = SOURCES_LIST.map(s => `
-    <label style="display:block;padding:var(--s-2)">
-      <input type="checkbox" class="source-check" data-source-id="${s.id}"
-             ${s.enabled ? 'checked' : ''}>
-      <span class="chip" style="margin-inline-start:var(--s-2)">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
-      <strong>${esc(s.name)}</strong>
-      <span class="xs" style="opacity:0.7">${esc(s.kind)}</span>
+    <label class="source-check-row${s.supported ? '' : ' is-unsupported'}"
+           title="${s.supported ? esc(s.url)
+                 : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet'}">
+      <input type="checkbox" class="source-check" data-source-name="${esc(s.name)}"
+             ${s.supported && s.enabled ? 'checked' : ''} ${s.supported ? '' : 'disabled'}>
+      <span class="chip">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
+      <strong class="truncate">${esc(s.name)}</strong>
+      <span class="xs">${esc(s.kind)}${s.supported ? '' : ' · no adapter'}</span>
     </label>
   `).join('');
 
-  // Update select-all checkbox state
-  const allChecked = enabledSources.length === SOURCES_LIST.length;
-  $('#select-all-sources').checked = allChecked;
+  syncSelectAll();
+  const off = SOURCES_LIST.length - selectable.length;
+  $('#sources-hint').textContent = off
+    ? `${selectable.length} of ${SOURCES_LIST.length} can be fetched; `
+      + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
+    : `${SOURCES_LIST.length} source(s) available.`;
+}
+
+// The header box reflects the boxes below it in both directions, including the
+// in-between state — "select all" that silently means "none of the 4 I ticked"
+// is how an operator starts a run over the wrong list.
+function syncSelectAll() {
+  const boxes = $$('.source-check:not([disabled])');
+  const on = boxes.filter(b => b.checked).length;
+  const all = $('#select-all-sources');
+  all.checked = on > 0 && on === boxes.length;
+  all.indeterminate = on > 0 && on < boxes.length;
+  $('#modal-run').disabled = on === 0;
+  $('#selected-count').textContent = `${on} selected`;
 }
 
 $('#select-all-sources').addEventListener('change', e => {
   const checked = e.target.checked;
-  $$('.source-check').forEach(cb => { cb.checked = checked; });
+  $$('.source-check:not([disabled])').forEach(cb => { cb.checked = checked; });
+  syncSelectAll();
 });
+$('#sources-checklist').addEventListener('change', syncSelectAll);
 
 $('#goal-type').addEventListener('change', e => {
   const showValue = e.target.value !== 'none';
@@ -944,58 +1340,46 @@ $('#modal-close').onclick = closeModal;
 $('#modal-cancel').onclick = closeModal;
 $('#modal-scrim').onclick = closeModal;
 
-$('#modal-run').onclick = async () => {
-  const selectedSources = $$('.source-check:checked').map(cb => cb.dataset.sourceId);
+function openPipelineModal() {
+  loadSourcesForModal();
+  openModal();
+}
 
+$('#modal-run').onclick = async () => {
+  // `source_names`, not `source_ids`: the server matches these against
+  // sources.yaml by name and refuses the run if one is unknown, so a typo can
+  // never quietly become a zero-source fetch.
+  const selectedSources = $$('.source-check:checked').map(cb => cb.dataset.sourceName);
   if (selectedSources.length === 0) {
-    toast('Please select at least one source', 'bad');
+    toast('Select at least one source', 'bad');
     return;
   }
 
   const goalType = $('#goal-type').value;
-  const goalValue = goalType !== 'none' ? parseInt($('#goal-value').value, 10) : null;
-  const runId = $('#run-id-input').value.trim() || `console-${Date.now()}`;
-
   const body = {
-    run_id: runId,
-    source_ids: selectedSources,
+    run_id: $('#run-id-input').value.trim() || `console-${Date.now()}`,
+    source_names: selectedSources,
   };
 
-  if (goalType !== 'none' && goalValue > 0) {
+  if (goalType !== 'none') {
+    const goalValue = parseInt($('#goal-value').value, 10);
+    if (!Number.isFinite(goalValue) || goalValue < 1) {
+      toast('The run goal needs a whole number of 1 or more', 'bad');
+      return;
+    }
     body.goal = { type: goalType, value: goalValue };
   }
 
   closeModal();
-
-  // Find the run pipeline button and run the action
-  const btn = $('button[data-act="/api/run"]');
-  await runAction('/api/run', body, btn);
+  await runAction('/api/run', body, $('button[data-act="/api/run"]'));
 };
 
-// Intercept run pipeline button to show modal instead
-const originalQuickActionsHandler = $('#quick-actions').onclick;
-$('#quick-actions').removeEventListener('click', originalQuickActionsHandler);
-
-$('#quick-actions').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-act]');
-  if (!btn) return;
-
-  // If it's the run pipeline button, show modal instead
-  if (btn.dataset.act === '/api/run' && !btn.dataset.liveModels) {
-    e.preventDefault();
-    e.stopPropagation();
-    loadSourcesForModal();
-    openModal();
-    return;
-  }
-
-  // Otherwise handle normally
-  const body = {};
-  if (btn.dataset.runPrefix) body.run_id = `${btn.dataset.runPrefix}-${Date.now()}`;
-  if (btn.dataset.liveModels) body.live_models = true;
-  if (btn.dataset.live) body.live = true;
-  runAction(btn.dataset.act, body, btn);
-});
+// The modal interception lives INSIDE the single #quick-actions listener
+// above, not in a second one. A second listener on the same node cannot
+// cancel the first — stopPropagation does not stop other handlers on the same
+// element, and the first was registered first anyway — so the earlier
+// arrangement fired a real run and then opened the modal to configure the run
+// it had just started.
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -1007,7 +1391,7 @@ document.addEventListener('keydown', e => {
   if ((t instanceof Element && t.matches('input, select, textarea, [contenteditable]'))
       || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'r') $('#refresh-btn').click();
-  const idx = '1234567'.indexOf(e.key);
+  const idx = '12345678'.indexOf(e.key);
   if (idx >= 0 && PAGES[idx]) go(PAGES[idx].id);
 });
 

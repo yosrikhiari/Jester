@@ -37,7 +37,7 @@ func TestLiveFetchRealThread(t *testing.T) {
 
 	listing := "https://www.reddit.com/r/selfhosted/new/"
 	comments, threadURL, threadID, err := FetchThread(
-		sess.Ctx, listing, 2*time.Second, ThreadIDFromPath, "backoff",
+		sess.Ctx, listing, 2*time.Second, ThreadIDFromPath, "backoff", 2,
 	)
 	if err != nil {
 		t.Fatalf("live fetch: %v", err)
