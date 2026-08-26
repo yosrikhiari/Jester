@@ -824,18 +824,58 @@ async function openCluster(id) {
 
 $('#clusters-q').addEventListener('input', renderClusters);
 
+/** Poll a background job to completion, reporting what it says as it goes. */
+async function followJob(jobId, onDone) {
+  const btn = $('#clusters-run');
+  const restore = btn ? btn.textContent : '';
+  if (btn) btn.disabled = true;
+  let last = '';
+  // 2s: the work runs for minutes, so a tighter poll buys nothing and just
+  // adds requests. Ten minutes of ceiling covers the measured 577s pass with
+  // room, and stops a hung job polling until the tab closes.
+  for (let i = 0; i < 300; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const res = await api(`/api/job/${jobId}`);
+    if (res.ok === false) { toast(res.error, 'bad'); break; }
+    const j = res.job;
+    if (j.progress && j.progress !== last) {
+      last = j.progress;
+      if (btn) btn.textContent = `⟳ ${j.progress}`;
+    }
+    if (j.status === 'done') {
+      if (btn) { btn.disabled = false; btn.textContent = restore; }
+      onDone(j.result || {});
+      return;
+    }
+    if (j.status === 'error') {
+      if (btn) { btn.disabled = false; btn.textContent = restore; }
+      // The first line is the message; the rest is a traceback nobody wants
+      // in a toast but which is on the job row for whoever needs it.
+      toast(String(j.error || 'job failed').split(String.fromCharCode(10))[0], 'bad');
+      return;
+    }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = restore; }
+  toast('still running — check the Jobs list', 'warn');
+}
+
 $('#clusters-run').addEventListener('click', async () => {
-  toast('regrouping the archive — embedding takes a moment…');
+  // Starts a background job and returns at once: the pass takes minutes and
+  // used to hold one request open for all of it, so the browser gave up long
+  // before the work finished.
   const res = await api('/api/cluster/run', {});
   if (res.ok === false) {
     // A refusal carries the knob that fixes it; showing only "failed" would
     // send someone hunting.
-    toast(res.fix ? `${res.error} — ${res.fix}` : res.error, 'bad');
+    toast(res.detail ? `${res.error} — ${res.detail}` : res.error, 'bad');
     return;
   }
-  toast(`${res.clusters} theme(s) from ${res.nuggets} nugget(s); ` +
-        `${res.ungrouped_nuggets} did not group`, 'ok');
-  await loadClusters();
+  toast('regrouping in the background — this takes a few minutes');
+  followJob(res.job_id, async out => {
+    toast(`${out.clusters} theme(s) from ${out.nuggets} nugget(s); ` +
+          `${out.ungrouped_nuggets} did not group`, 'ok');
+    await loadClusters();
+  });
 });
 
 $('#clusters-body').addEventListener('click', async e => {

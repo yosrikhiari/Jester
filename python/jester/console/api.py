@@ -296,6 +296,57 @@ class ConsoleAPI:
         ]
         return {"ok": True, "cluster": d}
 
+    def cluster_run_async(self, threshold=None, min_size=None, min_nuggets=None,
+                          limit=None, run_id="console-cluster"):
+        """Start a regroup in the background and return immediately.
+
+        The synchronous version holds one HTTP request for the whole pass —
+        577 seconds measured on 1,763 nuggets, most of it embedding. The
+        browser abandons the request long before that, so the work completed
+        and nobody ever saw the result.
+        """
+        from jester.jobs import start_job
+
+        def work(progress):
+            progress("embedding and clustering the archive")
+            # A fresh API bound to the same database, built INSIDE the thread:
+            # sqlite3 connections belong to the thread that opened them, and
+            # `self.db` was opened on the request thread. Reusing it fails with
+            # "SQLite objects created in a thread can only be used in that same
+            # thread" the moment the job touches the archive.
+            worker_api = ConsoleAPI(self.db_path, self.config_dir)
+            out = worker_api.cluster_run(
+                threshold=threshold, min_size=min_size,
+                min_nuggets=min_nuggets, limit=limit, run_id=run_id,
+            )
+            if out.get("ok") is False:
+                # Surface a refusal as a job failure rather than a "done" job
+                # carrying an error nobody reads.
+                raise RuntimeError(out.get("error") or "clustering failed")
+            progress(
+                f"{out.get('clusters', 0)} theme(s) from "
+                f"{out.get('nuggets', 0)} nugget(s)"
+            )
+            return out
+
+        return start_job(self.db_path, "cluster", work)
+
+    def job(self, job_id: int):
+        from jester.jobs import get_job
+
+        got = get_job(self.db, int(job_id))
+        if got is None:
+            return {"ok": False, "error": f"no job {job_id}"}
+        return {"ok": True, "job": got}
+
+    def jobs(self, limit: int = 10):
+        from jester.jobs import reap_stale_jobs, recent_jobs
+
+        # A daemon thread does not survive a restart; a row still saying
+        # "running" after one is a job nobody is working on.
+        reap_stale_jobs(self.db)
+        return {"ok": True, "jobs": recent_jobs(self.db, limit)}
+
     def cluster_run(self, threshold=None, min_size=None, min_nuggets=None,
                     limit=None, run_id="console-cluster"):
         """Regroup the archive. The console's copy of `jester cluster`.

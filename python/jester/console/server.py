@@ -128,6 +128,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/sources": api.sources,
             "/api/schedule": api.schedule,
             "/api/clusters": api.clusters,
+            "/api/jobs": api.jobs,
         }
         if path in routes:
             self._json(routes[path]())
@@ -141,6 +142,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/models":
             profile = parse_qs(query).get("profile", [None])[0]
             self._json(api.models(profile))
+            return
+        if path.startswith("/api/job/"):
+            tail = path.rsplit("/", 1)[1]
+            if not tail.isdigit():
+                self._json({"ok": False, "error": f"bad job id {tail!r}"}, 400)
+                return
+            self._json(api.job(int(tail)))
             return
         if path.startswith("/api/cluster/"):
             tail = path.rsplit("/", 1)[1]
@@ -187,7 +195,16 @@ class Handler(BaseHTTPRequestHandler):
             ),
             "/api/export": lambda: api.export(body.get("out_dir") or None),
             # Regroup the archive by meaning. Same call the CLI makes.
-            "/api/cluster/run": lambda: api.cluster_run(
+            # Async by default: the synchronous pass holds one request for
+            # ~577s on this archive and the browser gives up first.
+            "/api/cluster/run": lambda: api.cluster_run_async(
+                threshold=body.get("threshold"),
+                min_size=body.get("min_size"),
+                min_nuggets=body.get("min_nuggets"),
+                limit=body.get("limit"),
+                run_id=body.get("run_id") or "console-cluster",
+            ),
+            "/api/cluster/run-sync": lambda: api.cluster_run(
                 threshold=body.get("threshold"),
                 min_size=body.get("min_size"),
                 min_nuggets=body.get("min_nuggets"),
