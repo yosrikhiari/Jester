@@ -74,6 +74,15 @@ max_threads_per_platform:
   # Reddit near 25 — and Reddit is the one platform where more depth is a real
   # DMCA §1201 exposure, on a stealth-browser path with no licence key. It
   # stays a minority voice by choice, which is the entire strategic point.
+  #
+  # Note that this number USED to be a coincidence rather than a setting. A
+  # shreddit paint renders exactly three posts — not the ~25 assumed — and
+  # scrolling adds none at any viewport, so the adapter returned 3 whatever
+  # this said. Raising it to 10 changed nothing and nothing reported that.
+  # ListThreads now pages with ?after= (three posts a page, no overlap), so
+  # the number is honoured: 15 asked for is 15 returned, at the cost of five
+  # navigations through the stealth browser. The value stays at 3 by choice,
+  # not by ceiling.
   reddit: 3
   youtube: 2
 # Steam's depth, and it is a REVIEW count — a Steam source IS one app, so

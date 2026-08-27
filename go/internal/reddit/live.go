@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -189,6 +190,38 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 type listingRow struct {
 	Permalink string `json:"permalink"`
 	Comments  string `json:"comments"`
+	// Fullname is the post's `t3_xxxxx` id, which is the cursor `?after=`
+	// takes. It comes off the element's own id attribute.
+	Fullname string `json:"fullname"`
+}
+
+// listingPageURL is the listing with a pagination cursor applied.
+//
+// MEASURED, not assumed. This plan said Reddit's listing renders "roughly 25
+// posts" and that the adapter merely failed to scroll. Neither half held up: a
+// paint renders exactly THREE posts, scrolling adds none however tall the
+// viewport (verified at 1440x2400, where the document is shorter than the
+// window), and old.reddit.com answers this session with a "Welcome to Reddit"
+// interstitial. The number was invisible because max_threads_per_platform.reddit
+// is also 3 — the adapter looked like it was honouring its depth setting while
+// actually being pinned at the platform's floor, and raising the knob would
+// have changed nothing.
+//
+// What does work is `?after=`, which is server-side and does not depend on the
+// client rendering more of a virtualised feed: three posts a page, no overlap,
+// twelve unique across four pages.
+func listingPageURL(base, after string, seen int) string {
+	if after == "" {
+		return base
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	// `count` is how many the caller has already been shown. Reddit uses it
+	// for the "prev" link and for consistent slicing; omitting it works but
+	// leaving it accurate costs nothing.
+	return fmt.Sprintf("%s%safter=%s&count=%d", base, sep, url.QueryEscape(after), seen)
 }
 
 // ListThreads returns up to `limit` thread URLs from a subreddit listing,
@@ -230,32 +263,83 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 	out := make([]string, 0, limit)
 	seen := map[string]bool{}
 	quiet := 0
-	for _, row := range permalinks {
-		p := row.Permalink
-		if p == "" {
-			continue
-		}
-		// An ABSENT count is not a zero: only a published number may exclude a
-		// thread. Reddit renders comment-count on every post, but a layout
-		// change that dropped it must degrade to fetching everything rather
-		// than silently skipping the whole feed.
-		if minComments > 0 && row.Comments != "" {
-			if n, err := strconv.Atoi(strings.TrimSpace(row.Comments)); err == nil && n < minComments {
-				quiet++
+	// collect drains one rendered page into `out`, and reports the cursor to
+	// page from next. Returns false once `limit` is met.
+	collect := func(rows []listingRow) (after string, room bool) {
+		for _, row := range rows {
+			if row.Fullname != "" {
+				after = row.Fullname
+			}
+			p := row.Permalink
+			if p == "" {
 				continue
 			}
+			// An ABSENT count is not a zero: only a published number may
+			// exclude a thread. Reddit renders comment-count on every post,
+			// but a layout change that dropped it must degrade to fetching
+			// everything rather than silently skipping the whole feed.
+			if minComments > 0 && row.Comments != "" {
+				if n, err := strconv.Atoi(strings.TrimSpace(row.Comments)); err == nil && n < minComments {
+					quiet++
+					continue
+				}
+			}
+			if strings.HasPrefix(p, "/") {
+				p = "https://www.reddit.com" + p
+			}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+			if len(out) == limit {
+				return after, false
+			}
 		}
-		if strings.HasPrefix(p, "/") {
-			p = "https://www.reddit.com" + p
-		}
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, p)
-		if len(out) == limit {
+		return after, true
+	}
+
+	after, room := collect(permalinks)
+	// PAGINATE. One paint gives three posts, so a depth setting above three
+	// used to be silently unreachable — the knob said 10 and the run got 3
+	// with nothing anywhere saying so. Each page is a full navigation through
+	// the stealth browser, which is the expensive, fingerprint-visible path,
+	// so the walk stops the moment it has enough and never speculates ahead.
+	//
+	// maxListingPages bounds the damage if Reddit ever serves a cursor that
+	// does not advance: without it a stationary `after` is an infinite loop of
+	// navigations against a bot detector.
+	const maxListingPages = 12
+	for page := 1; room && len(out) < limit && after != "" && page < maxListingPages; page++ {
+		var next []listingRow
+		if err := chromedp.Run(ctx,
+			chromedp.Navigate(listingPageURL(listingURL, after, len(seen)+quiet)),
+			chromedp.Sleep(Pace(delay)),
+			waitPresent(`shreddit-post[permalink]`),
+			chromedp.ActionFunc(func(actx context.Context) error {
+				return evalInto(actx, PERMALINKS_JS, &next)
+			}),
+		); err != nil {
+			// A page that will not load is the end of the walk, not a failed
+			// run: whatever was already collected is real and usable.
+			fmt.Printf("[live]   listing page %d unavailable, stopping: %v\n", page+1, err)
 			break
 		}
+		before := len(out)
+		nextAfter, more := collect(next)
+		room = more
+		if len(out) == before || nextAfter == after || nextAfter == "" {
+			// Nothing new, or a cursor that did not move. Either way the feed
+			// is exhausted for this session.
+			break
+		}
+		after = nextAfter
+	}
+	if len(out) < limit {
+		// R55. "Asked for 10, got 3" is a fact about the platform, and it was
+		// invisible for as long as the configured depth happened to equal the
+		// number Reddit hands over.
+		fmt.Printf("[live]   listing offered %d of %d thread(s) asked for\n", len(out), limit)
 	}
 	if quiet > 0 {
 		// R55: a skipped thread is reported, never silent. "0 comments queued"

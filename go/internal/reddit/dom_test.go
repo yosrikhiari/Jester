@@ -5,6 +5,7 @@ package reddit
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,66 @@ func TestPermalinksJSAsksForTheCommentCount(t *testing.T) {
 	// It must still be the permalink that identifies a row, not the count.
 	if !strings.Contains(PERMALINKS_JS, "permalink") {
 		t.Fatal("permalink is still the identity")
+	}
+}
+
+// ── listing pagination (A9) ──────────────────────────────────────────────────
+
+// The plan assumed Reddit's listing renders "roughly 25 posts" and that the
+// adapter merely failed to scroll. Measured live, neither half held: a paint
+// renders exactly THREE, scrolling adds none at any viewport (checked at
+// 1440x2400, where the document is shorter than the window), and
+// old.reddit.com answers this session with a "Welcome to Reddit" interstitial.
+// The number was invisible because max_threads_per_platform.reddit is also 3 —
+// the adapter looked like it honoured its depth setting while being pinned at
+// the platform's floor.
+func TestListingPageURLBuildsTheAfterCursor(t *testing.T) {
+	base := "https://www.reddit.com/r/datascience/new/"
+	if got := listingPageURL(base, "", 0); got != base {
+		t.Errorf("the first page carries no cursor, got %q", got)
+	}
+	got := listingPageURL(base, "t3_1vz462h", 3)
+	want := base + "?after=t3_1vz462h&count=3"
+	if got != want {
+		t.Errorf("listingPageURL = %q, want %q", got, want)
+	}
+	// A listing URL that already carries a query must not grow a second "?".
+	got = listingPageURL("https://www.reddit.com/r/x/new/?sort=new", "t3_abc", 6)
+	want = "https://www.reddit.com/r/x/new/?sort=new&after=t3_abc&count=6"
+	if got != want {
+		t.Errorf("listingPageURL = %q, want %q", got, want)
+	}
+}
+
+func TestListingPageURLEscapesTheCursor(t *testing.T) {
+	// The fullname comes off the page, so it is untrusted input on its way
+	// back into a URL.
+	got := listingPageURL("https://www.reddit.com/r/x/new/", "t3_a&b=c", 3)
+	if strings.Contains(got, "t3_a&b=c") {
+		t.Errorf("the cursor was not escaped: %s", got)
+	}
+	if !strings.Contains(got, "after=t3_a%26b%3Dc") {
+		t.Errorf("want an escaped cursor, got %s", got)
+	}
+}
+
+// The cursor is the post's own element id, so the listing read has to return
+// it. Without this field the walk has nothing to page from and silently stops
+// at one page — which is exactly the state this fixed.
+func TestPermalinksJSReturnsThePaginationCursor(t *testing.T) {
+	if !strings.Contains(PERMALINKS_JS, "fullname") {
+		t.Fatal("PERMALINKS_JS must expose the post fullname for ?after=")
+	}
+	if !strings.Contains(PERMALINKS_JS, "p.id") {
+		t.Fatal("the fullname comes from the element id attribute")
+	}
+	var row listingRow
+	if err := json.Unmarshal(
+		[]byte(`{"permalink":"/r/x/comments/1/a/","comments":"12","fullname":"t3_1"}`),
+		&row); err != nil {
+		t.Fatalf("listingRow must decode what the page returns: %v", err)
+	}
+	if row.Fullname != "t3_1" {
+		t.Fatalf("fullname did not decode: %+v", row)
 	}
 }

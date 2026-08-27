@@ -99,7 +99,8 @@ const PERMALINK_JS = `() => { const p = document.querySelector('shreddit-post[pe
 const PERMALINKS_JS = `() => [...document.querySelectorAll('shreddit-post[permalink]')]
     .map(p => ({
       permalink: p.getAttribute('permalink') || '',
-      comments: p.getAttribute('comment-count') || ''
+      comments: p.getAttribute('comment-count') || '',
+      fullname: p.id || ''
     }))
     .filter(x => x.permalink)`
 
