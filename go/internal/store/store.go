@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS source_state (
   name TEXT PRIMARY KEY,
   last_fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_queued INTEGER NOT NULL DEFAULT 0,
+  -- CUMULATIVE yield, which is the number that can condemn a source.
+  -- last_queued alone cannot: "visited five times, never produced anything"
+  -- and "visited five times, produced plenty on the second" look identical
+  -- through it. With 90 configured sources, a dead one silently burns a
+  -- rotation slot every run and nobody can tell which.
+  total_queued INTEGER NOT NULL DEFAULT 0,
+  -- How many of those visits are actually COUNTED in total_queued. On a
+  -- database written before total_queued existed the two disagree: the
+  -- lifetime yield of those earlier visits was never recorded and cannot be
+  -- recovered (ingest_batch.source holds a thread URL, not a source name, so
+  -- there is nothing to join against). Reading "visits=9, total_queued=0" as
+  -- a dead source would condemn every source in a database that has been
+  -- working for weeks, so the health verdict counts measured visits only and
+  -- an unmeasured history simply says nothing either way.
+  measured_visits INTEGER NOT NULL DEFAULT 0,
   visits INTEGER NOT NULL DEFAULT 0
 );
 `
@@ -70,6 +85,8 @@ CREATE TABLE IF NOT EXISTS source_state (
 // duplicate error is the expected outcome on an up-to-date database.
 var addColumns = []string{
 	"ALTER TABLE ingest_batch ADD COLUMN thread_meta TEXT",
+	"ALTER TABLE source_state ADD COLUMN total_queued INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE source_state ADD COLUMN measured_visits INTEGER NOT NULL DEFAULT 0",
 }
 
 // isDuplicateColumn reports whether err is SQLite's "this column is already
@@ -284,12 +301,14 @@ func (s *Store) TouchSource(name string, queued int) error {
 		return nil
 	}
 	_, err := s.db.Exec(`
-INSERT INTO source_state(name, last_fetched_at, last_queued, visits)
-VALUES(?, datetime('now'), ?, 1)
+INSERT INTO source_state(name, last_fetched_at, last_queued, total_queued, measured_visits, visits)
+VALUES(?, datetime('now'), ?, ?, 1, 1)
 ON CONFLICT(name) DO UPDATE SET
   last_fetched_at = datetime('now'),
   last_queued     = excluded.last_queued,
-  visits          = source_state.visits + 1`, name, queued)
+  total_queued    = source_state.total_queued + excluded.last_queued,
+  measured_visits = source_state.measured_visits + 1,
+  visits          = source_state.visits + 1`, name, queued, queued)
 	return err
 }
 
@@ -335,33 +354,37 @@ func (s *Store) SourceOrder(names []string) ([]string, error) {
 	return order, nil
 }
 
-// SourceStates is the whole table, for the console's Sources view.
-func (s *Store) SourceStates() (map[string]struct {
+// SourceState is one row of source_state: when a curated source was last
+// walked, what that visit yielded, what every visit has yielded, and how many
+// times it has been walked at all.
+type SourceState struct {
 	LastFetchedAt string
 	LastQueued    int
-	Visits        int
-}, error) {
-	out := map[string]struct {
-		LastFetchedAt string
-		LastQueued    int
-		Visits        int
-	}{}
-	rows, err := s.db.Query("SELECT name, last_fetched_at, last_queued, visits FROM source_state")
+	TotalQueued   int
+	// MeasuredVisits is the subset of Visits whose yield is included in
+	// TotalQueued, and it is the one a health verdict may divide by.
+	MeasuredVisits int
+	Visits         int
+}
+
+// SourceStates is the whole table, for the console's Sources view.
+func (s *Store) SourceStates() (map[string]SourceState, error) {
+	out := map[string]SourceState{}
+	rows, err := s.db.Query(
+		"SELECT name, last_fetched_at, last_queued, total_queued, measured_visits, visits " +
+			"FROM source_state")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var n, at string
-		var q, v int
-		if err := rows.Scan(&n, &at, &q, &v); err != nil {
+		var st SourceState
+		var n string
+		if err := rows.Scan(&n, &st.LastFetchedAt, &st.LastQueued, &st.TotalQueued,
+			&st.MeasuredVisits, &st.Visits); err != nil {
 			return nil, err
 		}
-		out[n] = struct {
-			LastFetchedAt string
-			LastQueued    int
-			Visits        int
-		}{at, q, v}
+		out[n] = st
 	}
 	return out, rows.Err()
 }

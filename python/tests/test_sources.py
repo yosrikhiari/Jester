@@ -16,6 +16,7 @@ from jester.sources import (
     PLATFORM_KINDS,
     Source,
     SourceError,
+    duplicate_names,
     load_sources,
     parse_source,
     save_sources,
@@ -661,3 +662,96 @@ def test_go_only_knobs_are_still_editable_from_the_console():
     assert Thresholds(min_comments_per_thread=8).validate().min_comments_per_thread == 8
     with pytest.raises(ConfigError, match="min_comments_per_thread"):
         Thresholds(min_comments_per_thread=-1).validate()
+
+
+# ── source names must be unique ──────────────────────────────────────────────
+# Go keys source_state by name. Two sources sharing one share a last-fetched
+# timestamp, a visit count and a cumulative yield, so rotation treats them as
+# one stop and a productive source makes a dead one look alive. The shipped
+# file grew two collisions (reddit r/devops vs devops.stackexchange.com, and
+# lemmy.world/c/linux vs lemmy.ml/c/linux) purely from hand-editing.
+
+def test_shipped_sources_have_unique_names():
+    srcs = load_sources(REPO_CONFIG / "sources.yaml")
+    assert srcs, "the shipped source list should not be empty"
+    assert duplicate_names(srcs) == []
+
+
+def test_duplicate_names_reports_each_clash_once():
+    srcs = [
+        Source(name="a", platform="reddit", url="https://reddit.com/r/a", kind="subreddit"),
+        Source(name="a", platform="lemmy", url="https://lemmy.world/c/a", kind="community"),
+        Source(name="a", platform="github", url="https://github.com/x/a", kind="repo"),
+        Source(name="b", platform="reddit", url="https://reddit.com/r/b", kind="subreddit"),
+    ]
+    assert duplicate_names(srcs) == ["a"]
+
+
+def test_blank_names_are_not_a_clash():
+    # An unnamed source is a different defect, and TouchSource already ignores
+    # a blank name rather than creating a row for it.
+    srcs = [
+        Source(name="", platform="reddit", url="https://reddit.com/r/a", kind="subreddit"),
+        Source(name="  ", platform="reddit", url="https://reddit.com/r/b", kind="subreddit"),
+    ]
+    assert duplicate_names(srcs) == []
+
+
+# ── per-source health (A13) ──────────────────────────────────────────────────
+
+def test_never_visited_is_not_a_verdict():
+    for state in (None, {}, {"visits": 0, "total_queued": 0, "measured_visits": 0}):
+        status, _ = ConsoleAPI._source_health(state)
+        assert status == "unknown", state
+
+
+def test_a_quiet_round_does_not_condemn_a_producing_source():
+    # last_queued is 0 — the only signal before total_queued existed — but this
+    # source has produced plenty. Parking it would be the bug.
+    status, _ = ConsoleAPI._source_health(
+        {"visits": 9, "measured_visits": 9, "last_queued": 0, "total_queued": 240})
+    assert status == "producing"
+
+
+def test_barren_only_after_enough_visits():
+    n = ConsoleAPI.PARK_AFTER_BARREN_VISITS
+    below = {"visits": n - 1, "measured_visits": n - 1, "total_queued": 0}
+    at = {"visits": n, "measured_visits": n, "total_queued": 0}
+    assert ConsoleAPI._source_health(below)[0] == "quiet"
+    assert ConsoleAPI._source_health(at)[0] == "barren"
+
+
+def test_sources_payload_carries_health_and_clashes(api):
+    res = api.sources()
+    assert res["ok"]
+    assert res["duplicate_names"] == []
+    assert res["park_after_barren_visits"] == ConsoleAPI.PARK_AFTER_BARREN_VISITS
+    # No worker has run against this database, so every source is unknown —
+    # and every one of them still carries the field.
+    assert all("health" in s and "health_reason" in s for s in res["sources"])
+    assert {s["health"] for s in res["sources"]} == {"unknown"}
+
+
+def test_health_survives_a_database_without_the_column(api):
+    """source_state is Go-owned and may predate total_queued, or be absent
+    entirely. Neither may take the Sources tab down."""
+    api.db.execute(
+        "CREATE TABLE source_state (name TEXT PRIMARY KEY, last_fetched_at TEXT, "
+        "last_queued INTEGER, visits INTEGER)")
+    api.db.execute(
+        "INSERT INTO source_state VALUES ('hn-ask', datetime('now'), 3, 5)")
+    api.db.commit()
+    res = api.sources()
+    assert res["ok"]
+    hn = next(s for s in res["sources"] if s["name"] == "hn-ask")
+    # The visit history is real and must survive. The yield behind those visits
+    # was never recorded and cannot be recovered, so the verdict withholds
+    # judgement instead of reading a column default as evidence of death.
+    assert hn["state"]["visits"] == 5
+    assert hn["state"]["measured_visits"] == 0
+    assert hn["health"] == "unmeasured"
+    assert "before yields were recorded" in hn["health_reason"]
+    # And it must not be conflated with a source nobody has ever walked — the
+    # page shows those two side by side and they say different things.
+    untouched = next(s for s in res["sources"] if s["name"] != "hn-ask")
+    assert untouched["health"] == "unknown"

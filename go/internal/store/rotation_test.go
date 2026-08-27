@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,5 +158,133 @@ func TestTouchIgnoresABlankName(t *testing.T) {
 	}
 	if len(states) != 0 {
 		t.Fatalf("blank name must not create a row: %v", states)
+	}
+}
+
+// last_queued answers "what did the last visit yield", which cannot condemn a
+// source: "walked three times, never produced anything" and "walked three
+// times, produced plenty on the second" both end on a zero. With 90 configured
+// sources the difference is the whole point — one deserves parking, the other
+// is merely quiet this round.
+func TestTotalQueuedSeparatesDeadSourcesFromQuietOnes(t *testing.T) {
+	st := testStore(t)
+	for _, y := range []int{0, 0, 0} {
+		if err := st.TouchSource("dead", y); err != nil {
+			t.Fatalf("touch: %v", err)
+		}
+	}
+	for _, y := range []int{0, 7, 0} {
+		if err := st.TouchSource("quiet", y); err != nil {
+			t.Fatalf("touch: %v", err)
+		}
+	}
+	states, err := st.SourceStates()
+	if err != nil {
+		t.Fatalf("states: %v", err)
+	}
+	if states["dead"].LastQueued != states["quiet"].LastQueued {
+		t.Fatalf("premise broken: the two must be indistinguishable through last_queued")
+	}
+	if states["dead"].TotalQueued != 0 {
+		t.Fatalf("dead source has produced nothing ever, got %d", states["dead"].TotalQueued)
+	}
+	if states["quiet"].TotalQueued != 7 {
+		t.Fatalf("want the sum of every visit (7), got %d", states["quiet"].TotalQueued)
+	}
+}
+
+// CREATE TABLE IF NOT EXISTS never widens a table that already exists, so a
+// database written before total_queued existed keeps the old four columns and
+// every INSERT naming the new one fails on it. Only the idempotent ALTER list
+// saves it, and only a database built WITHOUT the column can prove that.
+func TestSourceStateMigratesAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE source_state (
+  name TEXT PRIMARY KEY,
+  last_fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_queued INTEGER NOT NULL DEFAULT 0,
+  visits INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO source_state(name, last_queued, visits) VALUES('legacy', 4, 2);`); err != nil {
+		t.Fatalf("seed old schema: %v", err)
+	}
+	db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open must migrate, not fail: %v", err)
+	}
+	defer st.Close()
+	if err := st.TouchSource("legacy", 3); err != nil {
+		t.Fatalf("touch after migration: %v", err)
+	}
+	states, err := st.SourceStates()
+	if err != nil {
+		t.Fatalf("states: %v", err)
+	}
+	if got := states["legacy"].TotalQueued; got != 3 {
+		t.Fatalf("want 3 counted from the first post-migration visit, got %d", got)
+	}
+	if states["legacy"].Visits != 3 {
+		t.Fatalf("migration must preserve the old visit count, got %d", states["legacy"].Visits)
+	}
+}
+
+// A database that has been working for weeks migrates with total_queued at its
+// DEFAULT of 0 on every row. Reading that as "walked nine times, never produced
+// anything" would offer to park every source in it. The pre-migration yield is
+// genuinely unrecoverable — ingest_batch.source holds a thread URL, not a
+// source name, so there is nothing to recover it from — so the guard is that
+// the verdict counts only visits that were actually measured.
+func TestMigrationDoesNotMakeAWorkingSourceLookDead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "working.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE source_state (
+  name TEXT PRIMARY KEY,
+  last_fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_queued INTEGER NOT NULL DEFAULT 0,
+  visits INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO source_state(name, last_queued, visits) VALUES('busy', 0, 9);`); err != nil {
+		t.Fatalf("seed working database: %v", err)
+	}
+	db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	states, err := st.SourceStates()
+	if err != nil {
+		t.Fatalf("states: %v", err)
+	}
+	if states["busy"].Visits != 9 {
+		t.Fatalf("the lifetime visit count is real and must survive, got %d", states["busy"].Visits)
+	}
+	if got := states["busy"].MeasuredVisits; got != 0 {
+		t.Fatalf("none of those nine visits recorded a yield, want 0 measured, got %d", got)
+	}
+
+	// One real visit, and only that one counts as evidence.
+	if err := st.TouchSource("busy", 5); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	states, _ = st.SourceStates()
+	if states["busy"].MeasuredVisits != 1 || states["busy"].TotalQueued != 5 {
+		t.Fatalf("want 1 measured visit worth 5, got %d/%d",
+			states["busy"].MeasuredVisits, states["busy"].TotalQueued)
+	}
+	if states["busy"].Visits != 10 {
+		t.Fatalf("lifetime visits keep counting from where they were, got %d", states["busy"].Visits)
 	}
 }

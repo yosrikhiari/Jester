@@ -300,12 +300,44 @@ function fetchedCell(state) {
   const yield_ = state.last_queued
     ? `+${state.last_queued} comment(s)`
     : 'nothing new';
+  const total = Number(state.total_queued || 0);
+  const measured = Number(state.measured_visits || 0);
+  const lifetime = total ? `${total} total`
+    : measured ? 'none ever' : 'lifetime not recorded';
   return `<span class="mono xs">${esc(ago(state.last_fetched_at))}</span>` +
-    `<div class="xs">${esc(yield_)} · ${esc(state.visits)} visit(s)</div>`;
+    `<div class="xs">${esc(yield_)} · ${esc(state.visits)} visit(s) · ${esc(lifetime)}</div>`;
 }
+/** The verdict the server drew from source_state. `unknown` is shown as its
+ *  own thing rather than folded into a bad one: a source nobody has walked yet
+ *  has produced no evidence, and dressing that up as a health reading is the
+ *  fastest way to park a source that was simply never tried. */
+const HEALTH_TAG = {
+  producing: ['done', 'producing'],
+  quiet: ['', 'quiet'],
+  barren: ['warn', 'nothing yet'],
+  unmeasured: ['off', 'yield not recorded'],
+  unknown: ['off', 'not yet visited'],
+};
+function healthTag(s) {
+  const [cls, label] = HEALTH_TAG[s.health] || HEALTH_TAG.unknown;
+  return `<span class="pill pill--sm ${cls ? 'pill--' + cls : ''}"
+    title="${esc(s.health_reason || '')}">${esc(label)}</span>`;
+}
+
+/** Parking is OFFERED, never applied. A barren source may be barren because
+ *  the site was down for a week, and a console that quietly switches sources
+ *  off leaves the operator with a shrinking list and no idea why. */
+function parkButton(s) {
+  if (!s.enabled || s.health !== 'barren') return '';
+  return `<button class="btn btn--sm" data-park
+    title="${esc(s.health_reason || '')} — pause it until you say otherwise"
+    aria-label="Park ${esc(s.name)}">park</button>`;
+}
+
 const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
-  youtube: 'YouTube', tiktok: 'TikTok',
+  youtube: 'YouTube', tiktok: 'TikTok', stackexchange: 'Stack Exchange',
+  github: 'GitHub', lemmy: 'Lemmy',
 };
 // Platforms the parser accepts are served by the API, so adding an adapter
 // never needs a matching edit here.
@@ -329,14 +361,15 @@ async function loadSources() {
   $('#src-path').textContent = res.path || '';
   $('#src-count').textContent = `${COUNTS.sources} enabled / ${list.length} total`;
 
-  const order = { hackernews: 0, reddit: 1, discourse: 2, youtube: 3, tiktok: 4 };
+  const order = { hackernews: 0, reddit: 1, discourse: 2, stackexchange: 3,
+                  github: 4, lemmy: 5, youtube: 6, tiktok: 7 };
   const sorted = [...list].sort((a, b) =>
     (order[a.platform] ?? 9) - (order[b.platform] ?? 9) || a.name.localeCompare(b.name));
 
   $('#src-body').innerHTML = sorted.map(s => {
     const status = !s.enabled ? tag('off', 'paused', 'pill--sm')
-      : s.supported ? tag('done', 'ingesting', 'pill--sm')
-        : tag('warn', 'no adapter yet', 'pill--sm');
+      : !s.supported ? tag('warn', 'no adapter yet', 'pill--sm')
+        : healthTag(s);
     return `<tr data-name="${esc(s.name)}">
       <td><label class="switch"><input type="checkbox" data-toggle ${s.enabled ? 'checked' : ''}
           aria-label="Enable ${esc(s.name)}"></label></td>
@@ -349,16 +382,33 @@ async function loadSources() {
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
       <td>${fetchedCell(s.state)}</td>
       <td>${status}</td>
-      <td><button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
+      <td class="row-actions">${parkButton(s)}<button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
     </tr>`;
   }).join('') || emptyRow(8, 'No sources yet — add one above.');
 
   const unsupported = list.filter(s => s.enabled && !s.supported);
-  $('#src-hint').innerHTML = unsupported.length
-    ? `<span class="chip chip--warn">heads up</span> ${unsupported.length} enabled source(s)
-       (${esc(unsupported.map(s => s.name).join(', '))}) have no worker adapter yet — the run will
-       report them as skipped rather than quietly ingest nothing.`
-    : 'Changes are written to <span class="mono">sources.yaml</span> immediately; the worker picks them up on its next run.';
+  const barren = list.filter(s => s.enabled && s.health === 'barren');
+  const dupes = res.duplicate_names || [];
+  const notes = [];
+  if (dupes.length) {
+    // Worth saying first: it makes every other number on this page wrong.
+    notes.push(`<span class="chip chip--warn">name clash</span> ${dupes.length} name(s)
+      (${esc(dupes.join(', '))}) are used twice. The worker keys a source's fetch history by
+      name, so those sources share one history and one rotation slot — rename one of each.`);
+  }
+  if (unsupported.length) {
+    notes.push(`<span class="chip chip--warn">heads up</span> ${unsupported.length} enabled source(s)
+      (${esc(unsupported.map(s => s.name).join(', '))}) have no worker adapter yet — the run will
+      report them as skipped rather than quietly ingest nothing.`);
+  }
+  if (barren.length) {
+    notes.push(`<span class="chip">quiet list</span> ${barren.length} enabled source(s)
+      (${esc(barren.map(s => s.name).join(', '))}) have been walked
+      ${res.park_after_barren_visits || 3}+ times and never queued a comment. Each one still
+      costs a rotation slot every run — “park” pauses it without removing it.`);
+  }
+  $('#src-hint').innerHTML = notes.join('<br>')
+    || 'Changes are written to <span class="mono">sources.yaml</span> immediately; the worker picks them up on its next run.';
 }
 
 $('#src-body').addEventListener('change', async e => {
@@ -372,6 +422,15 @@ $('#src-body').addEventListener('change', async e => {
 });
 
 $('#src-body').addEventListener('click', async e => {
+  const park = e.target.closest('button[data-park]');
+  if (park) {
+    const name = park.closest('tr').dataset.name;
+    const res = await api('/api/sources/update', { name, enabled: false });
+    if (res.ok === false) { toast(res.error, 'bad'); return; }
+    toast(`${name} parked — re-enable it any time with the switch`, 'ok');
+    loadSources();
+    return;
+  }
   const btn = e.target.closest('button[data-delete]');
   if (!btn) return;
   const name = btn.closest('tr').dataset.name;

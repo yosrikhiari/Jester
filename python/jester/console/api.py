@@ -47,6 +47,7 @@ from jester.sources import (
     PLATFORM_KINDS,
     SUPPORTED_KINDS,
     SourceError,
+    duplicate_names,
     find as find_source,
     load_sources,
     parse_source,
@@ -607,15 +608,67 @@ class ConsoleAPI:
         """
         try:
             rows = self.db.execute(
-                "SELECT name, last_fetched_at, last_queued, visits FROM source_state"
+                "SELECT name, last_fetched_at, last_queued, total_queued, "
+                "measured_visits, visits FROM source_state"
             ).fetchall()
-        except Exception:  # noqa: BLE001 - table absent until the worker runs
-            return {}
+        except Exception:  # noqa: BLE001 - table absent, or predates the columns
+            # The worker adds both columns on its next Open, but until then the
+            # rest of the row is still true and dropping it would reset every
+            # visit count on this page to "never visited". Retry without them:
+            # zero measured visits is exactly right for a history that was
+            # never measured, and the verdict below then withholds judgement
+            # rather than guessing.
+            try:
+                rows = [(r[0], r[1], r[2], 0, 0, r[3]) for r in self.db.execute(
+                    "SELECT name, last_fetched_at, last_queued, visits FROM source_state"
+                ).fetchall()]
+            except Exception:  # noqa: BLE001 - table absent until the worker runs
+                return {}
         # Positional, not by name: row_factory is toggled between sqlite3.Row
         # and the default by other readers on this same connection, so a
         # name-keyed access here works or raises depending on call order.
-        return {r[0]: {"last_fetched_at": r[1], "last_queued": r[2], "visits": r[3]}
+        return {r[0]: {"last_fetched_at": r[1], "last_queued": r[2],
+                       "total_queued": r[3], "measured_visits": r[4],
+                       "visits": r[5]}
                 for r in rows}
+
+    #: Visits a source gets before a run of zeroes is treated as evidence
+    #: rather than luck. Two is too few — a subreddit can genuinely have
+    #: nothing new twice running, and Reddit's own 403s cost a visit without
+    #: saying anything about the source.
+    PARK_AFTER_BARREN_VISITS = 3
+
+    @staticmethod
+    def _source_health(state):
+        """A verdict on one source's row of source_state.
+
+        Returns (status, reason). None of them is a soft `dead`: two separate
+        states mean "no evidence", and they are separate because they read
+        differently to an operator. `unknown` is a source nobody has walked.
+        `unmeasured` is one that WAS walked, before the worker recorded what
+        those visits yielded — showing that as "not yet visited" next to a
+        row reading "3 visits" is a straight contradiction on the page.
+        """
+        if not state:
+            return "unknown", "never visited"
+        if int(state.get("visits") or 0) == 0:
+            return "unknown", "never visited"
+        # Only visits whose yield was actually recorded can support a verdict.
+        # A database that predates the yield counters has real visits behind it
+        # and no measurement of them, and calling that barren would park a
+        # source on the strength of a column default.
+        measured = int(state.get("measured_visits") or 0)
+        total = int(state.get("total_queued") or 0)
+        if total > 0:
+            return "producing", f"{total} comment(s) queued across {measured} measured visit(s)"
+        if measured == 0:
+            visits = int(state.get("visits") or 0)
+            return "unmeasured", (
+                f"{visits} visit(s), all before yields were recorded")
+        if measured >= ConsoleAPI.PARK_AFTER_BARREN_VISITS:
+            return "barren", f"{measured} measured visits, nothing ever queued"
+        # Zero so far, but not yet enough measured visits to mean anything.
+        return "quiet", f"{measured} measured visit(s), nothing queued yet"
 
     def sources(self):
         """The curated ingest list, plus the vocabulary the UI needs to render
@@ -628,10 +681,23 @@ class ConsoleAPI:
             # The worker walks least-recently-fetched first, so "when was this
             # last visited" is now the thing that decides run order — it has to
             # be visible, or the rotation looks like randomness.
-            "sources": [{**s.to_dict(), "state": state.get(s.name)} for s in srcs],
+            "sources": [self._with_health(s, state.get(s.name)) for s in srcs],
             "platform_kinds": {k: list(v) for k, v in PLATFORM_KINDS.items()},
             "supported_kinds": [list(pair) for pair in sorted(SUPPORTED_KINDS)],
+            # source_state is keyed by name, so two sources sharing one share a
+            # health row and a rotation slot — each hides the other's yield.
+            # The console's own add/rename path calls unique_name(), so this
+            # can only arrive from a hand-edited file; it is reported rather
+            # than silently repaired, because which one to rename is a
+            # judgement about the list, not about the collision.
+            "duplicate_names": duplicate_names(srcs),
+            "park_after_barren_visits": self.PARK_AFTER_BARREN_VISITS,
         }
+
+    def _with_health(self, src, state):
+        status, reason = self._source_health(state)
+        return {**src.to_dict(), "state": state,
+                "health": status, "health_reason": reason}
 
     def _write_sources(self, srcs):
         written = []

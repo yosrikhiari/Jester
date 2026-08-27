@@ -712,3 +712,12 @@ pre{
 }
 /* A timestamp broken across two lines is harder to scan than a wider column. */
 #runs-body td:first-child,#sched-ticks td:first-child{white-space:nowrap}
+
+/* Two buttons in the actions cell now — park sits beside remove, and only
+   appears on a source the worker has actually measured as barren. */
+.row-actions {
+  display: flex;
+  gap: .35rem;
+  align-items: center;
+  justify-content: flex-end;
+}

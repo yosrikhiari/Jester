@@ -182,7 +182,7 @@ sources:
   enabled: true
   notes: 'database operators: slow queries, replication, lock contention'
 - platform: stackexchange
-  name: devops
+  name: stackexchange-devops
   kind: site
   url: https://devops.stackexchange.com
   enabled: true
@@ -530,7 +530,7 @@ sources:
   enabled: true
   notes: deployment and CI pain
 - platform: lemmy
-  name: lemmy-linux
+  name: lemmy-ml-linux
   kind: community
   url: https://lemmy.ml/c/linux
   enabled: true

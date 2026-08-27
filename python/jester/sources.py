@@ -519,6 +519,25 @@ def load_sources(path) -> List[Source]:
     return out
 
 
+def duplicate_names(sources: Iterable[Source]) -> List[str]:
+    """Names carried by more than one source, in first-seen order.
+
+    Go's `source_state` table is keyed by name, so a collision is not cosmetic:
+    the two sources share one last-fetched timestamp, one visit count and one
+    cumulative yield. Rotation then treats them as a single stop, and a
+    productive source can make a dead one look alive indefinitely.
+    """
+    seen, dupes = set(), []
+    for src in sources:
+        name = (src.name or "").strip()
+        if not name:
+            continue
+        if name in seen and name not in dupes:
+            dupes.append(name)
+        seen.add(name)
+    return dupes
+
+
 def save_sources(path, sources: Iterable[Source]) -> None:
     """Atomic write: a crashed console never leaves a half-written config."""
     path = Path(path)
