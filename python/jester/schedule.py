@@ -149,7 +149,14 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         'set "JESTER_ORIGIN=scheduled"\r\n'
         f'cd /d "{root}"\r\n'
         f'echo [%DATE% %TIME%] jester {command} starting>>"{log}"\r\n'
-        f'"{py}" -m jester.cli {command} --db "{db}" --config "{config}"{args} '
+        # -u, because this stdout goes to a FILE. Python block-buffers a
+        # redirected stream, so a `treat` run that spends an hour in synthesis
+        # — which is the normal pace when nearly every Groq call comes back 429
+        # and waits out the retry cap — writes nothing to the log until it
+        # exits. From outside, a healthy long run and a hung one look identical,
+        # and the console only says "running". One flag makes the difference
+        # between the two visible while it is still happening.
+        f'"{py}" -u -m jester.cli {command} --db "{db}" --config "{config}"{args} '
         f'>>"{log}" 2>&1\r\n'
         f'echo [%DATE% %TIME%] jester {command} exited %ERRORLEVEL%>>"{log}"\r\n'
     )

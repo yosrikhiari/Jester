@@ -94,6 +94,11 @@ def test_install_registers_a_daily_task_with_the_environment_it_needs(monkeypatc
     # `cycle`, never `run`: `run` drains a queue that nothing fills, so the
     # job fired on time for months and archived nothing.
     assert "jester.cli cycle" in script
+    # -u, because this stdout is redirected to a FILE and Python block-buffers
+    # a redirected stream. Without it a `treat` run that spends an hour in
+    # synthesis writes nothing to the log until it exits, and a healthy long
+    # run is indistinguishable from a hung one while it is still happening.
+    assert "-u -m jester.cli" in script
 
 
 def test_install_surfaces_a_scheduler_failure(monkeypatch):
