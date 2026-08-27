@@ -1,0 +1,176 @@
+<rss xmlns:ns0="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:ns1="http://www.w3.org/2005/Atom" xmlns:ns2="https://podcastindex.org/namespace/1.0" version="2.0">
+    <channel>
+        <title>Talk Python To Me</title>
+        <description>Talk Python to Me is a weekly podcast hosted by developer and entrepreneur Michael Kennedy. We dive
+            deep into the popular packages and software developers, data scientists, and incredible hobbyists doing
+            amazing things with Python. If you're new to Python, you'll quickly learn the ins and outs of the community
+            by hearing from the leaders. And if you've been Pythoning for years, you'll learn about your favorite
+            packages and the hot new ones coming out of open source.
+        </description>
+        <link>https://talkpython.fm/</link>
+        <language>en-us</language>
+        <copyright>Copyright 2015-2026</copyright>
+        <lastBuildDate>Wed, 26 Aug 2026 20:04:24 +0000</lastBuildDate>
+        <pubDate>Wed, 26 Aug 2026 20:04:24 +0000</pubDate>
+        <docs>https://talkpython.fm</docs>
+        <webMaster>mikeckennedy@gmail.com (Michael Kennedy)</webMaster>
+        <ttl>60</ttl>
+        <ns0:author>Michael Kennedy</ns0:author>
+        <ns0:subtitle>Python conversations for passionate developers</ns0:subtitle>
+        <ns0:summary>Talk Python to Me is a weekly podcast hosted by developer and entrepreneur Michael Kennedy. We
+            dive deep into the popular packages and software developers, data scientists, and incredible hobbyists doing
+            amazing things with Python. If you're new to Python, you'll quickly learn the ins and outs of the community
+            by hearing from the leaders. And if you've been Pythoning for years, you'll learn about your favorite
+            packages and the hot new ones coming out of open source.
+        </ns0:summary>
+        <ns0:owner>
+            <ns0:name>Michael Kennedy</ns0:name>
+            <ns0:email>mikeckennedy@gmail.com</ns0:email>
+        </ns0:owner>
+        <ns0:explicit>false</ns0:explicit>
+        <ns0:image href="https://cdn-podcast.talkpython.fm/static/img/talk-python-3000.jpg" />
+        <ns0:category text="Technology" />
+        <ns1:link href="https://talkpython.fm/episodes/rss" rel="self" type="application/rss+xml" />
+        <ns0:type>episodic</ns0:type>
+        <ns2:locked owner="mikeckennedy@gmail.com">yes</ns2:locked>
+        <ns2:guid>1cda4dc9-ca77-5461-b0f6-11c9335480e1</ns2:guid>
+        <item>
+            <title>#560: Building a Research OS: From Django to 30,000 Samples</title>
+            <link>https://talkpython.fm/episodes/show/560/building-a-research-os-from-django-to-30-000-samples</link>
+            <guid isPermaLink="false">cfdb8bc8-cb52-411f-ae9e-fae7c49d3bc0</guid>
+            <enclosure url="https://talkpython.fm/episodes/download/560/building-a-research-os-from-django-to-30-000-samples.mp3" length="60519533" type="audio/mpeg" />
+            <category>Technology</category>
+            <pubDate>Wed, 26 Aug 2026 20:04:24 +0000</pubDate>
+            <ns0:author>Michael Kennedy (@mkennedy)</ns0:author>
+            <ns0:title>Building a Research OS: From Django to 30,000 Samples</ns0:title>
+            <ns0:episode>560</ns0:episode>
+            <ns0:explicit>false</ns0:explicit>
+            <ns0:subtitle />
+            <ns0:summary>In 2020, a gastroenterologist in Glasgow did the math on his new research study and came up with 30,000 samples, arriving over two years from three cities and a dozen hospitals. He asked around about how researchers keep track of that. The answer was Microsoft Excel. Shaun Chuah had written some HTML by hand in Notepad back in high school and that was about the whole of his programming experience, so he opened the Django tutorial and started reading. Six years later that app is Foundry120, holding 10 terabytes of clinical and genomics data with an agentic AI running on top of it.</ns0:summary>
+            <ns0:duration>3769</ns0:duration>
+            <ns0:image href="https://cdn-podcast.talkpython.fm/static/img/talk-python-3000.jpg" />
+            <ns0:keywords>python, pycharm, python3, python2, software, programming, web, web development, developer,
+                ide, podcast, software developer, training, course, online, online course, data science, nosql, mongodb,
+                cloud computing
+            </ns0:keywords>
+            <description>
+                In 2020, a gastroenterologist in Glasgow did the math on his new research study and came up with 30,000 samples, arriving over two years from three cities and a dozen hospitals. He asked around about how researchers keep track of that. The answer was Microsoft Excel. Shaun Chuah had written some HTML by hand in Notepad back in high school and that was about the whole of his programming experience, so he opened the Django tutorial and started reading. Six years later that app is Foundry120, holding 10 terabytes of clinical and genomics data with an agentic AI running on top of it.&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Episode sponsors&lt;/strong&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;a href='https://talkpython.fm/sentry'&gt;Sentry Error Monitoring, Code talkpython26&lt;/a&gt;&lt;br&gt;
+&lt;a href='https://talkpython.fm/course-certifications'&gt;Talk Python Courses&lt;/a&gt;&lt;br&gt;
+&lt;a href='https://talkpython.fm/training'&gt;Talk Python Courses&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;h2 class="links-heading mb-4"&gt;Links from the show&lt;/h2&gt;
+&lt;div&gt;&lt;strong&gt;Guest&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;Shaun Chuah&lt;/strong&gt;: &lt;a href="https://github.com/shaunchuah?featured_on=talkpython" target="_blank" &gt;github.com&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Up and Running with Rust Course&lt;/strong&gt;: &lt;a href="https://training.talkpython.fm/courses/up-and-running-with-rust" target="_blank" &gt;talkpython.fm&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Foundry120&lt;/strong&gt;: &lt;a href="https://www.foundry120.com/?featured_on=talkpython" target="_blank" &gt;www.foundry120.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Designing Data Intensive Applications&lt;/strong&gt;: &lt;a href="https://www.oreilly.com/library/view/designing-data-intensive-applications/9781491903063/?featured_on=talkpython" target="_blank" &gt;www.oreilly.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Microsoft Foundry&lt;/strong&gt;: &lt;a href="https://ai.azure.com/home?featured_on=talkpython" target="_blank" &gt;ai.azure.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;ChatIBD&lt;/strong&gt;: &lt;a href="https://www.chatibd.com/?featured_on=talkpython" target="_blank" &gt;www.chatibd.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Blog&lt;/strong&gt;: &lt;a href="https://shaunchuah.github.io/?featured_on=talkpython" target="_blank" &gt;shaunchuah.github.io&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;@drshaunchuah&lt;/strong&gt;: &lt;a href="https://x.com/drshaunchuah?featured_on=talkpython" target="_blank" &gt;x.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;github.com/shaunchuah&lt;/strong&gt;: &lt;a href="http://github.com/shaunchuah?featured_on=talkpython" target="_blank" &gt;github.com&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Watch this episode on YouTube&lt;/strong&gt;: &lt;a href="https://www.youtube.com/watch?v=zwL1-VQMUo0" target="_blank" &gt;youtube.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Episode #560 deep-dive&lt;/strong&gt;: &lt;a href="https://talkpython.fm/episodes/show/560/building-a-research-os-from-django-to-30-000-samples#takeaways-anchor" target="_blank" &gt;talkpython.fm/560&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Episode transcripts&lt;/strong&gt;: &lt;a href="https://talkpython.fm/episodes/transcript/560/building-a-research-os-from-django-to-30-000-samples" target="_blank" &gt;talkpython.fm&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Theme Song: Developer Rap&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;🥁 Served in a Flask 🎸&lt;/strong&gt;: &lt;a href="https://talkpython.fm/flasksong" target="_blank" &gt;talkpython.fm/flasksong&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;---==  Don't be a stranger  ==---&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;YouTube&lt;/strong&gt;: &lt;a href="https://talkpython.fm/youtube" target="_blank" &gt;&lt;i class="fa-brands fa-youtube"&gt;&lt;/i&gt; youtube.com/@talkpython&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Bluesky&lt;/strong&gt;: &lt;a href="https://bsky.app/profile/talkpython.fm" target="_blank" &gt;@talkpython.fm&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Mastodon&lt;/strong&gt;: &lt;a href="https://fosstodon.org/web/@talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-mastodon"&gt;&lt;/i&gt; @talkpython@fosstodon.org&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;X.com&lt;/strong&gt;: &lt;a href="https://x.com/talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-twitter"&gt;&lt;/i&gt; @talkpython&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Michael on Bluesky&lt;/strong&gt;: &lt;a href="https://bsky.app/profile/mkennedy.codes?featured_on=talkpython" target="_blank" &gt;@mkennedy.codes&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Michael on Mastodon&lt;/strong&gt;: &lt;a href="https://fosstodon.org/web/@mkennedy" target="_blank" &gt;&lt;i class="fa-brands fa-mastodon"&gt;&lt;/i&gt; @mkennedy@fosstodon.org&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Michael on X.com&lt;/strong&gt;: &lt;a href="https://x.com/mkennedy?featured_on=talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-twitter"&gt;&lt;/i&gt; @mkennedy&lt;/a&gt;&lt;br/&gt;&lt;/div&gt;
+            </description>
+            
+            <ns2:transcript url="https://talkpython.fm/episodes/show/560/building-a-research-os-from-django-to-30-000-samples.vtt" type="text/vtt" />
+        </item>
+        <item>
+            <title>#559: 12 Things You Should (and Shouldn't) Do in AWS</title>
+            <link>https://talkpython.fm/episodes/show/559/12-things-you-should-and-shouldnt-do-in-aws</link>
+            <guid isPermaLink="false">56b7e80e-442f-4988-8299-f04aa9dd5398</guid>
+            <enclosure url="https://talkpython.fm/episodes/download/559/12-things-you-should-and-shouldnt-do-in-aws.mp3" length="65353394" type="audio/mpeg" />
+            <category>Technology</category>
+            <pubDate>Wed, 19 Aug 2026 18:57:47 +0000</pubDate>
+            <ns0:author>Michael Kennedy (@mkennedy)</ns0:author>
+            <ns0:title>12 Things You Should (and Shouldn't) Do in AWS</ns0:title>
+            <ns0:episode>559</ns0:episode>
+            <ns0:explicit>false</ns0:explicit>
+            <ns0:subtitle />
+            <ns0:summary>Your site is down. It's 3am. Is it a bug, a bill, or a breach? You can't tell yet, and everyone is watching you find out. Matt Lea has spent fifteen years being the person companies call when an outage is costing them real money per hour, and his whole argument is that everything you'd want in that moment gets decided months earlier, on ordinary afternoons, when someone chose the convenient thing. We walk his top twelve dos and don'ts in AWS - infrastructure as code, IAM roles instead of access keys, private subnets, no wildcards, no public buckets - and I push on which of them actually matter if you're one person on a small VPS. Then we get to Cloud War Games, where Matt breaks things on purpose so your team's first real incident isn't their first incident. Let's get into it.</ns0:summary>
+            <ns0:duration>4071</ns0:duration>
+            <ns0:image href="https://cdn-podcast.talkpython.fm/static/img/talk-python-3000.jpg" />
+            <ns0:keywords>python, pycharm, python3, python2, software, programming, web, web development, developer,
+                ide, podcast, software developer, training, course, online, online course, data science, nosql, mongodb,
+                cloud computing
+            </ns0:keywords>
+            <description>
+                Your site is down. It's 3am. Is it a bug, a bill, or a breach? You can't tell yet, and everyone is watching you find out. Matt Lea has spent fifteen years being the person companies call when an outage is costing them real money per hour, and his whole argument is that everything you'd want in that moment gets decided months earlier, on ordinary afternoons, when someone chose the convenient thing. We walk his top twelve dos and don'ts in AWS - infrastructure as code, IAM roles instead of access keys, private subnets, no wildcards, no public buckets - and I push on which of them actually matter if you're one person on a small VPS. Then we get to Cloud War Games, where Matt breaks things on purpose so your team's first real incident isn't their first incident. Let's get into it.&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Episode sponsors&lt;/strong&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;a href='https://talkpython.fm/sentry'&gt;Sentry Error Monitoring, Code talkpython26&lt;/a&gt;&lt;br&gt;
+&lt;a href='https://talkpython.fm/course-certifications'&gt;Talk Python Courses&lt;/a&gt;&lt;br&gt;
+&lt;a href='https://talkpython.fm/training'&gt;Talk Python Courses&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;h2 class="links-heading mb-4"&gt;Links from the show&lt;/h2&gt;
+&lt;div&gt;&lt;strong&gt;Guest&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;Matt Lea&lt;/strong&gt;: &lt;a href="https://www.linkedin.com/in/schematical/?featured_on=talkpython" target="_blank" &gt;linkedin.com&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Talk Python Certificates&lt;/strong&gt;: &lt;a href="https://training.talkpython.fm/certificates" target="_blank" &gt;training.talkpython.fm/certificates&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Schematical&lt;/strong&gt;: &lt;a href="https://schematical.com?featured_on=talkpython" target="_blank" &gt;schematical.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;CloudWarGames.com&lt;/strong&gt;: &lt;a href="https://cloudwargames.com?featured_on=talkpython" target="_blank" &gt;cloudwargames.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Zero to Hero on AWS Security&lt;/strong&gt;: &lt;a href="https://www.oreilly.com/videos/zero-to-hero/0642572107789/?featured_on=talkpython" target="_blank" &gt;www.oreilly.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Repo&lt;/strong&gt;: &lt;a href="https://github.com/schematical/sc-terraform/tree/main/_course?featured_on=talkpython" target="_blank" &gt;github.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Custom Wheel Offset&lt;/strong&gt;: &lt;a href="https://customwheeloffset.com?featured_on=talkpython" target="_blank" &gt;customwheeloffset.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;2012 TechCrunch Disrupt Hackathon&lt;/strong&gt;: &lt;a href="http://techcrunch.com/2012/09/09/meet-the-disrupt-sf-2012-hackathon-winners-livebolt-takes-grand-prize-auctopus-and-heatdata-are-runners-up/?featured_on=talkpython" target="_blank" &gt;techcrunch.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;tech comics&lt;/strong&gt;: &lt;a href="https://schematical.com/comics?featured_on=talkpython" target="_blank" &gt;schematical.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;shhgit&lt;/strong&gt;: &lt;a href="https://github.com/eth0izzle/shhgit?featured_on=talkpython" target="_blank" &gt;github.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Zero Trust in 200ms: Implementing Identity-Per-Transaction&lt;/strong&gt;: &lt;a href="https://us.pycon.org/2026/schedule/presentation/140/?featured_on=talkpython" target="_blank" &gt;us.pycon.org&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Coolify&lt;/strong&gt;: &lt;a href="https://coolify.io/?featured_on=talkpython" target="_blank" &gt;coolify.io&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;returned to full GA Nov 2025&lt;/strong&gt;: &lt;a href="https://aws.amazon.com/blogs/devops/aws-codecommit-returns-to-general-availability?featured_on=talkpython" target="_blank" &gt;aws.amazon.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Signed URLs/cookies&lt;/strong&gt;: &lt;a href="https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-overview.html?featured_on=talkpython" target="_blank" &gt;docs.aws.amazon.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Cloudflare&lt;/strong&gt;: &lt;a href="https://www.cloudflare.com/?featured_on=talkpython" target="_blank" &gt;www.cloudflare.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Bunny Shield&lt;/strong&gt;: &lt;a href="https://bunny.net/shield/?featured_on=talkpython" target="_blank" &gt;bunny.net&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Cloud War Games One&lt;/strong&gt;: &lt;a href="https://www.youtube.com/watch?v=91z1pn7fEjM" target="_blank" &gt;www.youtube.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Cloud War Games Two&lt;/strong&gt;: &lt;a href="https://www.youtube.com/watch?v=xHXjiTi4nCA" target="_blank" &gt;www.youtube.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;LinkedIn&lt;/strong&gt;: &lt;a href="https://linkedin.com/in/schematical?featured_on=talkpython" target="_blank" &gt;linkedin.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;YouTube&lt;/strong&gt;: &lt;a href="https://youtube.com/schematical" target="_blank" &gt;youtube.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;KnocKnoc&lt;/strong&gt;: &lt;a href="https://knocknoc.io?featured_on=talkpython" target="_blank" &gt;knocknoc.io&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Watch this episode on YouTube&lt;/strong&gt;: &lt;a href="https://www.youtube.com/watch?v=NTedSITJyRo" target="_blank" &gt;youtube.com&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Episode #559 deep-dive&lt;/strong&gt;: &lt;a href="https://talkpython.fm/episodes/show/559/12-things-you-should-and-shouldnt-do-in-aws#takeaways-anchor" target="_blank" &gt;talkpython.fm/559&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Episode transcripts&lt;/strong&gt;: &lt;a href="https://talkpython.fm/episodes/transcript/559/12-things-you-should-and-shouldnt-do-in-aws" target="_blank" &gt;talkpython.fm&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Theme Song: Developer Rap&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;🥁 Served in a Flask 🎸&lt;/strong&gt;: &lt;a href="https://talkpython.fm/flasksong" target="_blank" &gt;talkpython.fm/flasksong&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;---==  Don't be a stranger  ==---&lt;/strong&gt;&lt;br/&gt;
+&lt;strong&gt;YouTube&lt;/strong&gt;: &lt;a href="https://talkpython.fm/youtube" target="_blank" &gt;&lt;i class="fa-brands fa-youtube"&gt;&lt;/i&gt; youtube.com/@talkpython&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Bluesky&lt;/strong&gt;: &lt;a href="https://bsky.app/profile/talkpython.fm" target="_blank" &gt;@talkpython.fm&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Mastodon&lt;/strong&gt;: &lt;a href="https://fosstodon.org/web/@talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-mastodon"&gt;&lt;/i&gt; @talkpython@fosstodon.org&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;X.com&lt;/strong&gt;: &lt;a href="https://x.com/talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-twitter"&gt;&lt;/i&gt; @talkpython&lt;/a&gt;&lt;br/&gt;
+&lt;br/&gt;
+&lt;strong&gt;Michael on Bluesky&lt;/strong&gt;: &lt;a href="https://bsky.app/profile/mkennedy.codes?featured_on=talkpython" target="_blank" &gt;@mkennedy.codes&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Michael on Mastodon&lt;/strong&gt;: &lt;a href="https://fosstodon.org/web/@mkennedy" target="_blank" &gt;&lt;i class="fa-brands fa-mastodon"&gt;&lt;/i&gt; @mkennedy@fosstodon.org&lt;/a&gt;&lt;br/&gt;
+&lt;strong&gt;Michael on X.com&lt;/strong&gt;: &lt;a href="https://x.com/mkennedy?featured_on=talkpython" target="_blank" &gt;&lt;i class="fa-brands fa-twitter"&gt;&lt;/i&gt; @mkennedy&lt;/a&gt;&lt;br/&gt;&lt;/div&gt;
+            </description>
+            
+            <ns2:transcript url="https://talkpython.fm/episodes/show/559/12-things-you-should-and-shouldnt-do-in-aws.vtt" type="text/vtt" />
+        </item>
+        </channel>
+</rss>

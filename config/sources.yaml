@@ -546,3 +546,16 @@ sources:
   url: https://store.steampowered.com/app/431960/
   enabled: true
   notes: desktop utility - performance, multi-monitor and startup friction
+- platform: podcast
+  name: talkpython-fm
+  kind: show
+  url: https://talkpython.fm/episodes/rss
+  enabled: true
+  notes: 559/559 episodes publish a VTT transcript with speaker names
+
+- platform: podcast
+  name: changelog-com
+  kind: show
+  url: https://changelog.com/podcast/feed
+  enabled: true
+  notes: 777/1013 episodes publish a transcript - practitioners on what broke

@@ -1,0 +1,1534 @@
+WEBVTT
+
+00:00:00.020 --> 00:00:05.520
+<v Michael Kennedy>In 2020, a gastroenterologist in Glasgow did the math on his new research study and came up with
+
+00:00:05.840 --> 00:00:10.640
+<v Michael Kennedy>30,000 samples arriving over two years from three cities and dozens of hospitals.
+
+00:00:11.420 --> 00:00:16.160
+<v Michael Kennedy>He asked around about how researchers kept track of that. The answer was Microsoft Excel.
+
+00:00:17.000 --> 00:00:23.760
+<v Michael Kennedy>Sean Chua had written some HTML by hand in Notepad way back in high school. That was about the
+
+00:00:23.940 --> 00:00:29.320
+<v Michael Kennedy>entirety of his programming experience. Even so, he opened the Django tutorial and started reading.
+
+00:00:29.620 --> 00:00:35.980
+<v Michael Kennedy>Six years later, that app is Foundry 120, holding 10 terabytes of clinical and genomics data with
+
+00:00:36.240 --> 00:00:43.960
+<v Michael Kennedy>agentic AI running on top of it. This is Talk Python To Me, episode 560, recorded August 26th,
+
+00:00:44.380 --> 00:00:51.640
+<v Music>2026. Talk Python To Me. Yeah, we ready to roll. Upgrading the code. No fear of getting old.
+
+00:00:52.040 --> 00:00:57.400
+<v Music>Async in the air. New frameworks in sight. Geeky rap on deck. Quartz crew. It's time to unite.
+
+00:00:57.520 --> 00:01:02.280
+<v Music>We started in Pyramid, cruising old school lanes, had that stable base, yes sir.
+
+00:01:02.320 --> 00:01:06.680
+<v Michael Kennedy>Welcome to Talk Python To Me, the number one Python podcast for developers and data scientists.
+
+00:01:07.200 --> 00:01:08.580
+<v Michael Kennedy>This is your host, Michael Kennedy.
+
+00:01:09.020 --> 00:01:12.500
+<v Michael Kennedy>I'm a PSF fellow who's been coding for over 25 years.
+
+00:01:13.140 --> 00:01:14.260
+<v Michael Kennedy>Let's connect on social media.
+
+00:01:14.580 --> 00:01:17.740
+<v Michael Kennedy>You'll find me and Talk Python on Mastodon, Bluesky, and X.
+
+00:01:17.910 --> 00:01:19.860
+<v Michael Kennedy>The social links are all in your show notes.
+
+00:01:20.620 --> 00:01:24.140
+<v Michael Kennedy>You can find over 10 years of past episodes at talkpython.fm.
+
+00:01:24.240 --> 00:01:27.520
+<v Michael Kennedy>And if you want to be part of the show, you can join our recording live streams.
+
+00:01:27.940 --> 00:01:28.340
+<v Michael Kennedy>That's right.
+
+00:01:28.600 --> 00:01:31.800
+<v Michael Kennedy>We live stream the raw uncut version of each episode on YouTube.
+
+00:01:32.420 --> 00:01:36.800
+<v Michael Kennedy>Just visit talkpython.fm/youtube to see the schedule of upcoming events.
+
+00:01:36.980 --> 00:01:40.680
+<v Michael Kennedy>Be sure to subscribe there and press the bell so you'll get notified anytime we're recording.
+
+00:01:41.840 --> 00:01:45.400
+<v Michael Kennedy>Let me quickly tell you about a new course we have running over at Talk Python.
+
+00:01:46.040 --> 00:01:47.460
+<v Michael Kennedy>Up and running with Rust.
+
+00:01:48.100 --> 00:01:53.200
+<v Michael Kennedy>The tools reshaping how you write Python, Ruff, uv, Firefly, ty, Pixie, and others.
+
+00:01:53.780 --> 00:01:56.040
+<v Michael Kennedy>and the libraries pushing past its performance ceilings.
+
+00:01:56.500 --> 00:01:59.200
+<v Michael Kennedy>Polars Pydantic, Cryptography, and Granian
+
+00:01:59.620 --> 00:02:01.800
+<v Michael Kennedy>increasingly share one secret under the hood.
+
+00:02:02.140 --> 00:02:03.060
+<v Michael Kennedy>They're written in Rust.
+
+00:02:03.920 --> 00:02:05.620
+<v Michael Kennedy>That code that used to be written in C
+
+00:02:05.800 --> 00:02:07.280
+<v Michael Kennedy>when Python needed real speed now
+
+00:02:07.540 --> 00:02:09.479
+<v Michael Kennedy>is more and more being written in Rust.
+
+00:02:10.160 --> 00:02:13.300
+<v Michael Kennedy>So having some Rust proficiency is a great skill
+
+00:02:13.700 --> 00:02:14.960
+<v Michael Kennedy>as a Python developer.
+
+00:02:15.440 --> 00:02:17.040
+<v Michael Kennedy>Christopher Trudeau is back
+
+00:02:17.180 --> 00:02:19.500
+<v Michael Kennedy>with the Up and Running with Rust course.
+
+00:02:20.080 --> 00:02:22.360
+<v Michael Kennedy>Check it out over at talkpython.fm.
+
+00:02:22.580 --> 00:02:24.960
+<v Michael Kennedy>Just click it courses in the top and you'll find it right there.
+
+00:02:25.410 --> 00:02:27.220
+<v Michael Kennedy>I hope you love this new Rust course.
+
+00:02:27.900 --> 00:02:31.240
+<v Michael Kennedy>Getting a course at Talk Python is one of the best ways to support the show.
+
+00:02:32.100 --> 00:02:33.640
+<v Michael Kennedy>This episode is brought to you by Sentry.
+
+00:02:34.380 --> 00:02:37.400
+<v Michael Kennedy>You know Sentry for the error monitoring, but they now have logs too.
+
+00:02:37.670 --> 00:02:40.400
+<v Michael Kennedy>And with Sentry, your logs become way more usable,
+
+00:02:40.940 --> 00:02:44.780
+<v Michael Kennedy>interleaving into your error reports to enhance debugging and understanding.
+
+00:02:45.300 --> 00:02:48.460
+<v Michael Kennedy>Get started today at talkpython.fm/sentry.
+
+00:02:48.960 --> 00:02:51.840
+<v Michael Kennedy>And it's also brought to you by Talk Python Courses.
+
+00:02:52.460 --> 00:02:54.660
+<v Michael Kennedy>Course completion certificates are now live.
+
+00:02:54.810 --> 00:02:59.100
+<v Michael Kennedy>If you finished a course, there's a certificate waiting for you on your account page right now.
+
+00:02:59.580 --> 00:03:05.320
+<v Michael Kennedy>Download it as a PDF or add it to your LinkedIn profile with one click under licenses and certifications.
+
+00:03:06.020 --> 00:03:07.200
+<v Michael Kennedy>Same section as your formal degrees.
+
+00:03:08.380 --> 00:03:12.220
+<v Michael Kennedy>Visit training.Talk Python.fm account to see what you've already earned.
+
+00:03:13.180 --> 00:03:14.600
+<v Michael Kennedy>John, welcome to Talk Python To Me.
+
+00:03:14.790 --> 00:03:15.200
+<v Michael Kennedy>How are you doing?
+
+00:03:15.560 --> 00:03:15.800
+<v Michael Kennedy>Great.
+
+00:03:16.260 --> 00:03:17.060
+<v Shaun Chuah>Thanks very much, Michael.
+
+00:03:17.350 --> 00:03:18.420
+<v Shaun Chuah>A big fan of the show.
+
+00:03:18.680 --> 00:03:21.940
+<v Shaun Chuah>Keen to be here to share a few things of what we've learned.
+
+00:03:22.400 --> 00:03:26.660
+<v Michael Kennedy>Amazing. Thank you so much. And now you're here creating the show. It's going to be amazing.
+
+00:03:27.120 --> 00:03:32.720
+<v Michael Kennedy>And you're doing really interesting work with biological and medical research, Python,
+
+00:03:33.340 --> 00:03:38.360
+<v Michael Kennedy>Django, AI. I think there's a lot of cool things that we're going to dive into here. So
+
+00:03:38.620 --> 00:03:43.040
+<v Michael Kennedy>I know even for people who are not in medical research, I think there's going to be some
+
+00:03:43.230 --> 00:03:45.580
+<v Michael Kennedy>super interesting angles that will translate for them.
+
+00:03:46.060 --> 00:03:47.420
+<v Shaun Chuah>Fantastic. Looking forward to it.
+
+00:03:48.300 --> 00:03:51.900
+<v Michael Kennedy>Now, before we dive into that, as usual, just tell people about yourself.
+
+00:03:51.960 --> 00:03:52.340
+<v Michael Kennedy>Who are you?
+
+00:03:52.560 --> 00:03:53.300
+<v Shaun Chuah>So I'm Sean.
+
+00:03:53.720 --> 00:03:57.220
+<v Shaun Chuah>I'm a gastroenterologist, and I'm a clinical researcher as well.
+
+00:03:57.620 --> 00:04:02.680
+<v Shaun Chuah>So my primary area of practice is in the field of inflammatory bowel disease that comprises
+
+00:04:02.960 --> 00:04:09.280
+<v Shaun Chuah>ulcerative colitis and Crohn's disease as the kind of conditions that we deal with when
+
+00:04:09.280 --> 00:04:10.480
+<v Shaun Chuah>we see patients in clinic.
+
+00:04:10.740 --> 00:04:15.539
+<v Shaun Chuah>But in parallel, I also work in research, trying to find out the causes of these conditions
+
+00:04:16.019 --> 00:04:20.220
+<v Shaun Chuah>together with the GUT Translational Research Group here at the University of Glasgow.
+
+00:04:20.700 --> 00:04:25.400
+<v Shaun Chuah>Personally, for this podcast, we use Python a lot in our work, both for research,
+
+00:04:25.760 --> 00:04:29.640
+<v Shaun Chuah>so trying to analyze the data that we're doing, but also as well as for the infrastructure that
+
+00:04:29.670 --> 00:04:33.540
+<v Shaun Chuah>we're running. So how do we actually deliver the research studies that we have to deliver?
+
+00:04:34.300 --> 00:04:39.680
+<v Shaun Chuah>And personally, as a researcher, I've also got an interest in agentic AI and machine learning,
+
+00:04:39.730 --> 00:04:43.739
+<v Shaun Chuah>and that's what attracted me to try to use some of these techniques to see if we can find
+
+00:04:43.980 --> 00:04:48.700
+<v Shaun Chuah>new breakthroughs that can bring, you know, new treatments for our patients that we see in clinic
+
+00:04:48.960 --> 00:04:53.460
+<v Michael Kennedy>every day. Awesome. Very cool research. That's the kind of stuff that can make a big difference
+
+00:04:53.680 --> 00:04:58.040
+<v Michael Kennedy>for people's lives. If you can make them better, right? It's like, I couldn't leave the house,
+
+00:04:58.260 --> 00:05:02.780
+<v Michael Kennedy>but now I'm back with my friends or whatever, right? Yeah. I mean, you know, the work that we
+
+00:05:02.960 --> 00:05:09.139
+<v Shaun Chuah>do is motivated in the patients that we see day to day. Inflammatory bowel disease is not very
+
+00:05:09.160 --> 00:05:15.140
+<v Shaun Chuah>common. It is rare, but it is growing not just in developed countries, but also in the developing
+
+00:05:15.440 --> 00:05:20.200
+<v Shaun Chuah>world. And we see a great burden of this disease coming the next 10 to 20 years. What do you think?
+
+00:05:20.480 --> 00:05:26.000
+<v Michael Kennedy>Diet? Environment? Why is it growing? Obviously, that's the research a little bit, right? But
+
+00:05:26.320 --> 00:05:30.840
+<v Michael Kennedy>what is your ideas here? Well, these are really complex conditions, and the environment is
+
+00:05:31.020 --> 00:05:36.340
+<v Shaun Chuah>absolutely a major player in this. The diet that we're eating nowadays is different from what we
+
+00:05:36.280 --> 00:05:41.000
+<v Shaun Chuah>used to eat. But when we dive into the science of it, it's a lot more complex than just that.
+
+00:05:41.280 --> 00:05:46.120
+<v Shaun Chuah>There are some patients who have genetic susceptibility, although not all. And we know
+
+00:05:46.120 --> 00:05:51.420
+<v Shaun Chuah>that there is this problem that happens when the immune system reacts to our environment. And for
+
+00:05:51.560 --> 00:05:55.940
+<v Shaun Chuah>some reason, the alarms don't switch off and the inflammation keeps happening, which leads to the
+
+00:05:56.300 --> 00:06:03.379
+<v Michael Kennedy>symptoms and the problems that we see every day in clinic. So let's start by examining all the
+
+00:06:03.400 --> 00:06:09.340
+<v Michael Kennedy>the research and the work you did and maybe the 2020 version of your research projects.
+
+00:06:09.680 --> 00:06:10.820
+<v Michael Kennedy>It all started with Django, right?
+
+00:06:11.260 --> 00:06:11.460
+<v Shaun Chuah>Yes.
+
+00:06:12.300 --> 00:06:15.820
+<v Shaun Chuah>So back in 2020, I was still training as a gastroenterologist.
+
+00:06:16.140 --> 00:06:20.320
+<v Shaun Chuah>So over here, we do a period of registrar training, we call it.
+
+00:06:20.880 --> 00:06:27.180
+<v Shaun Chuah>And as part of my developing interest in understanding these medical conditions, I sign up to do a
+
+00:06:27.300 --> 00:06:30.660
+<v Shaun Chuah>research study with one of the principal investigators.
+
+00:06:31.280 --> 00:06:37.620
+<v Shaun Chuah>And the proposed study was basically to recruit quite a few patients from three different cities,
+
+00:06:38.120 --> 00:06:43.660
+<v Shaun Chuah>multiple hospitals, and collect extra samples that we can run science experiments on to work
+
+00:06:43.780 --> 00:06:51.160
+<v Shaun Chuah>out what's going on with an immune system. So when we first started, that was 2020. And I know
+
+00:06:51.600 --> 00:06:57.379
+<v Shaun Chuah>we all remember that in 2020, you know, we had COVID and COVID had a significant impact both on
+
+00:06:57.400 --> 00:07:02.660
+<v Shaun Chuah>hospital operations, but also on research operations. And when I sat down to look at
+
+00:07:02.830 --> 00:07:07.300
+<v Shaun Chuah>what we were supposed to do in terms of the research studies, the first challenge that I
+
+00:07:07.500 --> 00:07:12.120
+<v Shaun Chuah>faced was calculating the number of samples we were going to do. So we were going to recruit about
+
+00:07:12.400 --> 00:07:17.440
+<v Shaun Chuah>200 people and we're going to follow them up every three months. And at every time point,
+
+00:07:17.550 --> 00:07:22.999
+<v Shaun Chuah>we would take extra blood samples, extra stool samples, and saliva samples. So that was a lot
+
+00:07:23.020 --> 00:07:29.280
+<v Shaun Chuah>of extra samples and a simple back of the envelope calculation came to about 30,000 samples that we
+
+00:07:29.280 --> 00:07:33.180
+<v Shaun Chuah>were going to generate over a couple of years. Now, when I first saw that challenge, I started
+
+00:07:33.460 --> 00:07:37.640
+<v Shaun Chuah>asking everybody around me, how are we going to keep track of all that? How are we actually going
+
+00:07:37.800 --> 00:07:44.760
+<v Shaun Chuah>to deliver that problem? How do we solve that problem? And from my chat with a lot of people,
+
+00:07:45.180 --> 00:07:48.920
+<v Shaun Chuah>the common way that researchers track the samples is to use Microsoft Excel.
+
+00:07:49.540 --> 00:07:53.180
+<v Michael Kennedy>That's exactly what I was thinking is like, how big is the Excel file?
+
+00:07:53.400 --> 00:07:56.820
+<v Michael Kennedy>And, you know, how many little worksheet tabs does it have?
+
+00:07:57.160 --> 00:08:01.960
+<v Shaun Chuah>Yeah, I mean, most research teams do not really have a lab system because lab systems, you
+
+00:08:01.960 --> 00:08:06.260
+<v Shaun Chuah>know, enterprise software, which is really expensive to procure, it'll take you like
+
+00:08:06.440 --> 00:08:07.420
+<v Shaun Chuah>six months to set it up.
+
+00:08:07.620 --> 00:08:12.180
+<v Shaun Chuah>And it's usually designed really for hospital operations where you're taking, you know,
+
+00:08:12.540 --> 00:08:13.280
+<v Shaun Chuah>millions of samples.
+
+00:08:13.480 --> 00:08:18.500
+<v Shaun Chuah>And it's not really designed for a one-off research study across a lot of different spaces.
+
+00:08:18.960 --> 00:08:23.840
+<v Shaun Chuah>So then I started looking into what are the, you know, are there off the shelf options or
+
+00:08:24.280 --> 00:08:26.540
+<v Shaun Chuah>stuff that we could use to just get up and running?
+
+00:08:26.980 --> 00:08:32.180
+<v Shaun Chuah>But after looking at a few different options, I think I had to bite the bullet and decided
+
+00:08:32.479 --> 00:08:36.479
+<v Shaun Chuah>that, you know, the best thing was to go and write a web application with Django.
+
+00:08:38.060 --> 00:08:40.400
+<v Michael Kennedy>What was your programming experience at this point?
+
+00:08:40.840 --> 00:08:41.979
+<v Michael Kennedy>How good of a programmer were you?
+
+00:08:42.940 --> 00:08:45.080
+<v Shaun Chuah>So I wasn't very good of a programmer.
+
+00:08:45.140 --> 00:08:50.500
+<v Shaun Chuah>I mean, what I did was basically, you know, write some websites in high school.
+
+00:08:51.000 --> 00:08:53.080
+<v Shaun Chuah>And back in those days, we used to use Notepad.
+
+00:08:53.340 --> 00:08:57.200
+<v Shaun Chuah>We used to open the brackets of HTML manually by hand.
+
+00:08:57.460 --> 00:08:58.040
+<v Michael Kennedy>It was rough.
+
+00:08:58.240 --> 00:08:59.860
+<v Michael Kennedy>Those were tough times, I remember.
+
+00:09:00.240 --> 00:09:03.380
+<v Shaun Chuah>Yeah, I don't know how many people listening to this podcast can relate.
+
+00:09:03.800 --> 00:09:06.000
+<v Shaun Chuah>But we used to write, you know, the head, the body and stuff.
+
+00:09:06.240 --> 00:09:11.020
+<v Shaun Chuah>And then later on, I did use a bit of programming to do some, you know, statistics, a bit of,
+
+00:09:12.120 --> 00:09:15.200
+<v Shaun Chuah>writing an R script or a Python script just to generate a graph.
+
+00:09:15.490 --> 00:09:19.180
+<v Shaun Chuah>So that's probably that level of programming experience when I was
+
+00:09:19.560 --> 00:09:22.580
+<v Shaun Chuah>looking at how do we actually write a web app with Django.
+
+00:09:23.440 --> 00:09:27.460
+<v Michael Kennedy>Yeah, okay. So a Django web app was kind of a
+
+00:09:27.550 --> 00:09:31.340
+<v Shaun Chuah>pretty big stretch at that point, right? Yes, but the Django...
+
+00:09:31.420 --> 00:09:35.260
+<v Michael Kennedy>How'd you get started? I mean, this predates all the AI, agentic stuff.
+
+00:09:35.480 --> 00:09:39.259
+<v Michael Kennedy>You had to earn it for this one. Yeah, definitely. I mean, when I first
+
+00:09:39.280 --> 00:09:44.580
+<v Shaun Chuah>visited a Django website. It's the web framework for perfectionists with deadlines. And I think
+
+00:09:44.700 --> 00:09:50.140
+<v Shaun Chuah>that described exactly what a situation I was in. You know, I came out program and we had about a
+
+00:09:50.140 --> 00:09:54.700
+<v Shaun Chuah>two year time period to deliver a study. And you can't spend forever trying to get this up and
+
+00:09:54.840 --> 00:10:00.440
+<v Shaun Chuah>running. You just have to get the study going. So the Django tutorial was where I started. But
+
+00:10:00.680 --> 00:10:03.960
+<v Shaun Chuah>actually, I just want to take this opportunity to thank a lot of people in the community and those
+
+00:10:04.120 --> 00:10:09.240
+<v Shaun Chuah>listening because it's the documentation, the YouTube tutorial, your podcast. I've been listening
+
+00:10:09.260 --> 00:10:16.000
+<v Shaun Chuah>for five years. Books that were written, Two Scoops of Django, famously. I read a ton of books just
+
+00:10:16.240 --> 00:10:22.420
+<v Michael Kennedy>to be able to get things up and running. Yeah, the books are great. And honestly, YouTube is really
+
+00:10:22.440 --> 00:10:27.840
+<v Michael Kennedy>good. People knock YouTube for many reasons. You know, it's one of the ills of social media that's
+
+00:10:27.920 --> 00:10:33.380
+<v Michael Kennedy>like scrambling their brains. But if you use YouTube for education, it's an incredible resource.
+
+00:10:33.940 --> 00:10:37.740
+<v Shaun Chuah>Yeah. I mean, there are a lot of creators on YouTube that are just, you know, teaching lots
+
+00:10:37.760 --> 00:10:43.240
+<v Shaun Chuah>of different things. And it's so helpful. But I also think some of the textbooks are great, you
+
+00:10:43.260 --> 00:10:47.840
+<v Shaun Chuah>know, for things like test-driven development. You know, back in the days, I think you would only
+
+00:10:48.140 --> 00:10:52.160
+<v Shaun Chuah>read about it in textbooks rather than on YouTube videos because it's not really an attractive topic.
+
+00:10:53.040 --> 00:10:58.060
+<v Michael Kennedy>Yeah, you mentioned Obey the Testing Goat, which is a really fun book. And you also talked about
+
+00:10:58.820 --> 00:11:05.660
+<v Michael Kennedy>using designing data-intensive applications. And that's by Martin Klepman. I haven't heard of that
+
+00:11:05.640 --> 00:11:08.360
+<v Michael Kennedy>That's a pretty interesting one that people might want to check out.
+
+00:11:08.620 --> 00:11:12.780
+<v Shaun Chuah>Yeah, down the line, as our studies matured and we started dealing with the data, I started
+
+00:11:13.160 --> 00:11:17.800
+<v Shaun Chuah>reading some of the other data textbooks like Data Warehouse Toolkit by Kimball.
+
+00:11:17.920 --> 00:11:23.180
+<v Shaun Chuah>I think that's the one that all data engineers used to talk about dimensional modeling and
+
+00:11:23.200 --> 00:11:24.000
+<v Shaun Chuah>all that kind of stuff.
+
+00:11:24.420 --> 00:11:25.220
+<v Shaun Chuah>So lots of textbooks.
+
+00:11:25.900 --> 00:11:29.800
+<v Shaun Chuah>I think they're really helpful because they give you a kind of a holistic, fundamental
+
+00:11:30.180 --> 00:11:35.600
+<v Shaun Chuah>approach to learning the basics and making sure you don't have gaps in what you're doing
+
+00:11:35.620 --> 00:11:36.700
+<v Shaun Chuah>to build some of these things.
+
+00:11:36.980 --> 00:11:39.720
+<v Michael Kennedy>When you come from the background of programming that you did,
+
+00:11:39.880 --> 00:11:43.740
+<v Michael Kennedy>which, by the way, that's a very similar story to me as well.
+
+00:11:43.960 --> 00:11:46.820
+<v Michael Kennedy>I studied math, and then I got involved helping people
+
+00:11:46.960 --> 00:11:50.500
+<v Michael Kennedy>with research projects and working for a scientific research
+
+00:11:50.620 --> 00:11:51.640
+<v Michael Kennedy>and visualization company.
+
+00:11:52.060 --> 00:11:54.860
+<v Michael Kennedy>So you kind of build up the pieces as you go,
+
+00:11:54.860 --> 00:11:55.460
+<v Michael Kennedy>and it's super fun.
+
+00:11:55.880 --> 00:11:56.420
+<v Michael Kennedy>It's really neat.
+
+00:11:56.640 --> 00:12:00.820
+<v Michael Kennedy>But there's a lot of gaps in your sort of data integrity,
+
+00:12:01.560 --> 00:12:04.880
+<v Michael Kennedy>programming, like what is the foreign key relationship?
+
+00:12:05.360 --> 00:12:06.040
+<v Michael Kennedy>All that.
+
+00:12:06.300 --> 00:12:06.720
+<v Michael Kennedy>Yeah, yeah.
+
+00:12:07.100 --> 00:12:09.520
+<v Michael Kennedy>So I think books are really important,
+
+00:12:09.840 --> 00:12:11.720
+<v Michael Kennedy>especially for self-taught people like us.
+
+00:12:12.040 --> 00:12:13.040
+<v Michael Kennedy>Definitely, definitely.
+
+00:12:13.800 --> 00:12:16.140
+<v Shaun Chuah>You do learn a lot as you go.
+
+00:12:16.660 --> 00:12:19.520
+<v Shaun Chuah>And it's quite important to be aware of what you don't know
+
+00:12:19.740 --> 00:12:21.120
+<v Shaun Chuah>and try and close those gaps
+
+00:12:21.800 --> 00:12:23.420
+<v Shaun Chuah>so that the applications that you write
+
+00:12:23.560 --> 00:12:26.260
+<v Shaun Chuah>end up being reliable enough for people to depend on.
+
+00:12:26.520 --> 00:12:29.240
+<v Michael Kennedy>Let's talk about Django for a second
+
+00:12:29.500 --> 00:12:31.040
+<v Michael Kennedy>because you shouted out, Django,
+
+00:12:31.540 --> 00:12:33.720
+<v Michael Kennedy>some of the features of it that kind of made that possible.
+
+00:12:33.880 --> 00:12:37.880
+<v Michael Kennedy>I think this is one of the reasons that people choose Django, especially when they're getting started.
+
+00:12:38.320 --> 00:12:40.400
+<v Michael Kennedy>You know, it's like it's got the built-in migrations.
+
+00:12:40.940 --> 00:12:43.380
+<v Michael Kennedy>It's got the automatic database management, the admin.
+
+00:12:43.860 --> 00:12:46.280
+<v Michael Kennedy>So what was it about Django that drew you to this?
+
+00:12:46.600 --> 00:12:52.980
+<v Shaun Chuah>So I think, you know, when we looked at the landscape back in 2020, Django definitely stood out because it was a mature project.
+
+00:12:53.380 --> 00:13:02.720
+<v Shaun Chuah>It's been around for a long time and it's batteries included, which is really important because, you know, I'm conscious that, you know, as a non-programmer coming into trying to write these things,
+
+00:13:03.080 --> 00:13:05.560
+<v Shaun Chuah>You want your authentication framework to be battle tested.
+
+00:13:05.980 --> 00:13:08.000
+<v Shaun Chuah>Database and migration is incredibly important.
+
+00:13:08.050 --> 00:13:09.100
+<v Shaun Chuah>You can't lose any data.
+
+00:13:09.480 --> 00:13:11.620
+<v Shaun Chuah>And I think just on those two features alone,
+
+00:13:11.880 --> 00:13:13.420
+<v Shaun Chuah>we haven't even come to the admin dashboard,
+
+00:13:13.780 --> 00:13:14.980
+<v Shaun Chuah>but just those two features alone,
+
+00:13:15.190 --> 00:13:18.680
+<v Shaun Chuah>I think was enough to persuade me that Django is the right framework
+
+00:13:18.920 --> 00:13:20.640
+<v Shaun Chuah>for the problem that we're dealing with.
+
+00:13:21.540 --> 00:13:22.380
+<v Michael Kennedy>Okay, very interesting.
+
+00:13:22.710 --> 00:13:25.840
+<v Michael Kennedy>And by the way, just big news for Django folks.
+
+00:13:26.120 --> 00:13:27.280
+<v Michael Kennedy>Is it on their blog, maybe?
+
+00:13:27.560 --> 00:13:30.219
+<v Michael Kennedy>Big news for Django is they just announced
+
+00:13:30.220 --> 00:13:33.680
+<v Michael Kennedy>that they're switching the Django long-term support
+
+00:13:34.779 --> 00:13:37.300
+<v Michael Kennedy>to yearly releases, just like Python itself,
+
+00:13:38.059 --> 00:13:39.060
+<v Michael Kennedy>and calendar version.
+
+00:13:39.160 --> 00:13:41.860
+<v Michael Kennedy>So there'll be Django 2028, Django 2029,
+
+00:13:42.260 --> 00:13:44.140
+<v Michael Kennedy>and every single release is a long-term support,
+
+00:13:44.360 --> 00:13:46.140
+<v Michael Kennedy>whereas now you're kind of juggling like,
+
+00:13:46.260 --> 00:13:48.520
+<v Michael Kennedy>well, 5.2 is a long-term, but the one before it.
+
+00:13:48.740 --> 00:13:50.320
+<v Michael Kennedy>I think that'll also make it a little simpler
+
+00:13:50.440 --> 00:13:51.360
+<v Michael Kennedy>for people who are coming,
+
+00:13:51.520 --> 00:13:53.620
+<v Michael Kennedy>like they don't have to decipher the versioning
+
+00:13:53.900 --> 00:13:54.500
+<v Michael Kennedy>and what it means.
+
+00:13:54.760 --> 00:13:55.720
+<v Michael Kennedy>Definitely, yep.
+
+00:13:56.020 --> 00:13:56.800
+<v Michael Kennedy>Yeah, yeah, that'd be cool.
+
+00:13:57.660 --> 00:13:57.960
+<v Michael Kennedy>What else?
+
+00:13:58.800 --> 00:14:04.680
+<v Michael Kennedy>What else did you run into trying to navigate this world of becoming, running one of these
+
+00:14:05.060 --> 00:14:11.000
+<v Michael Kennedy>like real web apps rather than just Excel or buying some off the shelf, you know, square
+
+00:14:11.260 --> 00:14:14.400
+<v Michael Kennedy>peg round hole type of system that doesn't really fit what you're trying to do?
+
+00:14:14.800 --> 00:14:19.120
+<v Shaun Chuah>Yeah, I mean, I think one of the steep learning curves is how do you go from a local host
+
+00:14:19.360 --> 00:14:22.260
+<v Shaun Chuah>development project into something that's in production?
+
+00:14:22.940 --> 00:14:25.000
+<v Shaun Chuah>Because production is obviously a whole different ballgame.
+
+00:14:25.580 --> 00:14:29.560
+<v Shaun Chuah>you need to ensure your infrastructure in production is reliable.
+
+00:14:30.140 --> 00:14:31.360
+<v Shaun Chuah>It's secure. It's accessible.
+
+00:14:32.380 --> 00:14:34.960
+<v Shaun Chuah>You've got backups running, all sorts of things.
+
+00:14:35.940 --> 00:14:39.440
+<v Shaun Chuah>And for us, one of the key things that enabled us
+
+00:14:39.660 --> 00:14:42.760
+<v Shaun Chuah>is continuous integration and continuous deployment practices.
+
+00:14:42.920 --> 00:14:46.300
+<v Shaun Chuah>So using GitHub Actions to deploy continuously
+
+00:14:46.460 --> 00:14:50.620
+<v Shaun Chuah>so we can fix problems, get it into production in minutes
+
+00:14:50.800 --> 00:14:53.860
+<v Shaun Chuah>rather than trying to do any of these things by hand manually.
+
+00:14:54.340 --> 00:14:56.580
+<v Michael Kennedy>Yeah, the CI-CD stuff, I think, is really valuable.
+
+00:14:56.940 --> 00:15:01.300
+<v Michael Kennedy>It's valuable for big teams, but it's also really valuable for people who are really new.
+
+00:15:01.640 --> 00:15:07.240
+<v Michael Kennedy>Because if all I have to do is save my work to GitHub, and now that's the new stuff that's out there.
+
+00:15:07.520 --> 00:15:09.120
+<v Michael Kennedy>That takes a lot of the complexity out.
+
+00:15:09.260 --> 00:15:13.840
+<v Michael Kennedy>People forget just how intimidating logging into a Linux computer is.
+
+00:15:14.120 --> 00:15:14.560
+<v Michael Kennedy>Oh, yeah.
+
+00:15:15.140 --> 00:15:15.500
+<v Michael Kennedy>Now what?
+
+00:15:15.860 --> 00:15:15.960
+<v Michael Kennedy>Yeah?
+
+00:15:16.200 --> 00:15:18.700
+<v Shaun Chuah>Yeah, I had to learn how to use Linux on a terminal, right?
+
+00:15:19.640 --> 00:15:19.940
+<v Michael Kennedy>Exactly.
+
+00:15:20.060 --> 00:15:22.060
+<v Michael Kennedy>It was like, where is the UI?
+
+00:15:22.620 --> 00:15:25.060
+<v Michael Kennedy>This is very different.
+
+00:15:25.380 --> 00:15:27.700
+<v Michael Kennedy>How am I supposed to accomplish anything with just the terminal?
+
+00:15:27.920 --> 00:15:31.320
+<v Michael Kennedy>And, you know, you get used to it and it's amazing in its own special way,
+
+00:15:31.440 --> 00:15:34.280
+<v Michael Kennedy>but it doesn't feel amazing at the beginning most of the time, I think.
+
+00:15:34.420 --> 00:15:35.520
+<v Shaun Chuah>Well, I'm reminded of the...
+
+00:15:35.520 --> 00:15:36.140
+<v Shaun Chuah>It feels intimidating.
+
+00:15:36.480 --> 00:15:36.600
+<v Shaun Chuah>Yeah.
+
+00:15:36.840 --> 00:15:39.680
+<v Shaun Chuah>Every time I teach somebody how to use the Linux or the terminal,
+
+00:15:40.440 --> 00:15:43.900
+<v Shaun Chuah>it's a big jump, I think, for people who are not familiar with CLI,
+
+00:15:44.100 --> 00:15:46.580
+<v Shaun Chuah>which is, I think, the vast majority of people in the population.
+
+00:15:47.320 --> 00:15:47.480
+<v Michael Kennedy>Yeah.
+
+00:15:47.860 --> 00:15:51.919
+<v Michael Kennedy>Well, and things like people being primarily on phones for their computing device
+
+00:15:51.940 --> 00:15:57.000
+<v Michael Kennedy>don't make that easier. It's only harder, right? This portion of Talk Python To Me is brought to
+
+00:15:57.000 --> 00:16:01.520
+<v Michael Kennedy>you by Sentry. You know Sentry for their great error monitoring, but let's talk about logs.
+
+00:16:02.180 --> 00:16:07.060
+<v Michael Kennedy>Logs are messy. Trying to grep through them and line them up with traces and dashboards just to
+
+00:16:07.200 --> 00:16:13.340
+<v Michael Kennedy>understand one issue isn't easy. Did you know that Sentry has logs too? And your logs just became
+
+00:16:13.640 --> 00:16:19.279
+<v Michael Kennedy>way more usable. Sentry's logs are trace connected and structured, so you can follow the request flow
+
+00:16:19.300 --> 00:16:20.620
+<v Michael Kennedy>and filter by what matters.
+
+00:16:21.320 --> 00:16:23.100
+<v Michael Kennedy>And because Sentry surfaces the context
+
+00:16:23.400 --> 00:16:24.120
+<v Michael Kennedy>right where you're debugging,
+
+00:16:24.380 --> 00:16:26.180
+<v Michael Kennedy>the trace, relevant logs, the error,
+
+00:16:26.660 --> 00:16:29.380
+<v Michael Kennedy>and even the session replay all land in one timeline.
+
+00:16:29.900 --> 00:16:31.980
+<v Michael Kennedy>No timestamp matching, no tool hopping.
+
+00:16:32.580 --> 00:16:33.860
+<v Michael Kennedy>From front end to mobile to backend,
+
+00:16:34.080 --> 00:16:34.700
+<v Michael Kennedy>whatever you're debugging,
+
+00:16:34.980 --> 00:16:36.480
+<v Michael Kennedy>Sentry gives you the context you need
+
+00:16:36.620 --> 00:16:38.740
+<v Michael Kennedy>so you can fix the problem and move on.
+
+00:16:39.220 --> 00:16:41.520
+<v Michael Kennedy>More than 4.5 million developers use Sentry,
+
+00:16:41.840 --> 00:16:43.720
+<v Michael Kennedy>including teams at Anthropic and Disney+.
+
+00:16:44.420 --> 00:16:46.479
+<v Michael Kennedy>Get started with Sentry logs and error monitoring
+
+00:16:46.500 --> 00:16:53.220
+<v Michael Kennedy>today at talkpython.fm/sentry. Be sure to use our code talkpython26. The link is in your
+
+00:16:53.350 --> 00:16:59.720
+<v Michael Kennedy>podcast player show notes. Thank you to Sentry for supporting the show. Let's talk about your project
+
+00:17:00.300 --> 00:17:08.199
+<v Michael Kennedy>Boundary 120. So when you started, you built this bespoke Django app for, was this for the music
+
+00:17:08.839 --> 00:17:14.539
+<v Michael Kennedy>study or which study was this for? This was for the music IBD study. And the first version was
+
+00:17:14.560 --> 00:17:19.640
+<v Shaun Chuah>really to track samples and to come up with an efficient way for our teams to handle the, you
+
+00:17:19.640 --> 00:17:24.600
+<v Shaun Chuah>know, the 30,000 that we are projecting to sort out. So one of the key functionalities that we
+
+00:17:25.060 --> 00:17:29.760
+<v Shaun Chuah>wrote in at the start was this ability to, you know, stick a QR code, stick it onto a sample
+
+00:17:29.920 --> 00:17:34.760
+<v Shaun Chuah>label, scan it in, and that will register it into a database. And then we could move the sample
+
+00:17:34.980 --> 00:17:39.299
+<v Shaun Chuah>around between sites and scan it and update. So that's where it started out as a sample tracking
+
+00:17:39.320 --> 00:17:45.980
+<v Shaun Chuah>platform. So nothing too amazing. It was just kind of a really basic operational problem that just
+
+00:17:46.160 --> 00:17:51.820
+<v Shaun Chuah>needed to be solved. But over time, when you get samples, the next thing that happens to the sample
+
+00:17:51.900 --> 00:17:56.660
+<v Shaun Chuah>is that it gets processed into an experimental pipeline and you get data out of it. So the
+
+00:17:56.860 --> 00:18:02.100
+<v Shaun Chuah>lifecycle of an experimental sample then leads you on to dealing with the data that comes back.
+
+00:18:02.400 --> 00:18:06.239
+<v Shaun Chuah>Now, because we were taking so many different types of samples, one of the key challenges that
+
+00:18:06.260 --> 00:18:11.660
+<v Shaun Chuah>faced our team was how do you handle the data that was coming back at us? Because we have stool
+
+00:18:11.800 --> 00:18:18.340
+<v Shaun Chuah>samples that becomes, you know, microbiome data. We have blood samples that become genomics data.
+
+00:18:18.650 --> 00:18:22.600
+<v Shaun Chuah>And every data type that comes back just looks a little bit different, comes back in different
+
+00:18:22.980 --> 00:18:28.520
+<v Shaun Chuah>formats, you know. And one of the difficulties as well is the size of the data that we get.
+
+00:18:28.710 --> 00:18:34.860
+<v Shaun Chuah>So for my personal research project during that time, I was looking at sequencing out the cell-free
+
+00:18:34.900 --> 00:18:40.160
+<v Shaun Chuah>DNA. So the DNA fragments that you have floating around your blood and each sequencing file for a
+
+00:18:40.400 --> 00:18:44.260
+<v Shaun Chuah>participant will be about five to 10 gigabytes of data. And it comes back in a, you know,
+
+00:18:44.560 --> 00:18:49.580
+<v Shaun Chuah>in a fast QGZ format, and that has to go into a bioinformatic pipeline. So it's the one of the
+
+00:18:49.660 --> 00:18:54.480
+<v Shaun Chuah>key challenges is how we build that data. So Foundry 120 actually became a project that
+
+00:18:54.720 --> 00:19:01.159
+<v Shaun Chuah>started from sample tracking into data management and handling. And in 20, you know, in the last year
+
+00:19:01.180 --> 00:19:07.700
+<v Shaun Chuah>too, it's also become a platform where we can apply agentic AI into it to kind of accelerate
+
+00:19:07.830 --> 00:19:12.900
+<v Michael Kennedy>our workflows. Yeah, it's a really neat platform. And I'm definitely going to dive into it. I think
+
+00:19:13.000 --> 00:19:18.400
+<v Michael Kennedy>it's neat how you had this smaller bespoke thing and you're like, all right, let's sort of pull
+
+00:19:18.600 --> 00:19:24.659
+<v Michael Kennedy>out the essence of it and make it useful for all kinds of scientific research. Going back to the
+
+00:19:24.680 --> 00:19:29.360
+<v Michael Kennedy>samples. You said each one is five to six gigabytes. That's each of the 30,000?
+
+00:19:30.340 --> 00:19:37.620
+<v Shaun Chuah>Not all the 30,000. So a subset of them, but it depends on what essays were being run on which
+
+00:19:37.800 --> 00:19:43.140
+<v Shaun Chuah>samples. And there could be a ton of essays all running different types of samples. And each of
+
+00:19:43.140 --> 00:19:51.279
+<v Shaun Chuah>them will have their own data type that comes back. So for my cell-free DNA work, we ran it on a subset
+
+00:19:51.280 --> 00:19:53.260
+<v Shaun Chuah>of the population, not the entire population.
+
+00:19:53.730 --> 00:19:57.480
+<v Shaun Chuah>But for some of the other larger scale things like genotyping, we would genotype the whole
+
+00:19:57.700 --> 00:19:57.940
+<v Shaun Chuah>population.
+
+00:19:58.200 --> 00:20:04.680
+<v Shaun Chuah>So there are lots of moving parts and tiny little details here that cause so much operational
+
+00:20:04.940 --> 00:20:05.120
+<v Shaun Chuah>problems.
+
+00:20:06.000 --> 00:20:06.820
+<v Michael Kennedy>That's a lot of data.
+
+00:20:07.370 --> 00:20:11.660
+<v Michael Kennedy>Where did you, how much did you end up with at the end and how did you store it and manage
+
+00:20:11.780 --> 00:20:11.880
+<v Michael Kennedy>it?
+
+00:20:12.080 --> 00:20:19.899
+<v Shaun Chuah>So currently we have about 10 terabytes of data and we've only, you know, processed only
+
+00:20:19.920 --> 00:20:26.100
+<v Shaun Chuah>a fraction of those 30,000 is still being processed because some pipelines takes a human
+
+00:20:26.740 --> 00:20:32.340
+<v Shaun Chuah>12 hours to process a couple of samples. So there's still a lot of work to be done.
+
+00:20:32.960 --> 00:20:38.160
+<v Shaun Chuah>But yeah, it's about 10 terabytes of data that we're handling. And initially, it would be scattered
+
+00:20:38.300 --> 00:20:42.800
+<v Shaun Chuah>across our group. Somebody's doing a microbiome project, it would be on their laptop. Otherwise,
+
+00:20:42.940 --> 00:20:48.759
+<v Shaun Chuah>it'd be on a shared drive, on a file share somewhere in the university server. So data
+
+00:20:48.780 --> 00:20:53.020
+<v Shaun Chuah>tends to be scattered. So if somebody is doing a specific experiment, they might create an Excel
+
+00:20:53.240 --> 00:20:58.420
+<v Shaun Chuah>file with the readings from certain essays, and that would be the data set. And that's, I think,
+
+00:20:58.420 --> 00:21:03.140
+<v Michael Kennedy>one of the big problems that we face in biomedical research today. Yeah, that's a lot of data. Are
+
+00:21:03.260 --> 00:21:09.440
+<v Michael Kennedy>using things like blob storage? I know this Foundry 120 project is pretty strongly based in
+
+00:21:09.740 --> 00:21:15.519
+<v Michael Kennedy>the Azure cloud. Are you using Azure blob storage and stuff like that? Or is it really just all on
+
+00:21:15.540 --> 00:21:18.440
+<v Michael Kennedy>on-premise with regard to the university?
+
+00:21:19.160 --> 00:21:22.540
+<v Shaun Chuah>So back in the days, that was the situation that we were in.
+
+00:21:22.840 --> 00:21:25.920
+<v Shaun Chuah>But today, we're now migrated everything into Azure Blob Storage.
+
+00:21:26.570 --> 00:21:29.220
+<v Shaun Chuah>That just gives us a scalable way of not worrying, you know,
+
+00:21:29.730 --> 00:21:33.160
+<v Shaun Chuah>how much space we had in our shared drives.
+
+00:21:33.920 --> 00:21:35.320
+<v Shaun Chuah>Because back in the days, you know,
+
+00:21:35.590 --> 00:21:37.580
+<v Shaun Chuah>the university would give you a quota on your shared drive
+
+00:21:37.670 --> 00:21:40.240
+<v Shaun Chuah>and you have to email somebody in IT to get it increased.
+
+00:21:40.700 --> 00:21:45.080
+<v Shaun Chuah>So you might have a terabyte cap on your file share.
+
+00:21:45.400 --> 00:21:52.880
+<v Shaun Chuah>But with Azure Blob Storage, what you end up having is just a bill at the end of the month rather than hard limits.
+
+00:21:52.880 --> 00:21:54.260
+<v Michael Kennedy>You have a bill instead of a limit.
+
+00:21:54.580 --> 00:21:55.080
+<v Michael Kennedy>Yeah, yeah, yeah.
+
+00:21:55.980 --> 00:21:56.180
+<v Michael Kennedy>Interesting.
+
+00:21:57.220 --> 00:22:03.780
+<v Michael Kennedy>When I was working way back when I was in college, in university, working in this math research lab.
+
+00:22:03.840 --> 00:22:06.820
+<v Michael Kennedy>I told this story a couple of times, but it's been a while, so maybe I'll share it again.
+
+00:22:06.900 --> 00:22:13.780
+<v Michael Kennedy>And the whole of the math research department got access to the Silicon Graphics mainframe
+
+00:22:14.340 --> 00:22:15.080
+<v Michael Kennedy>beast of a computer.
+
+00:22:15.520 --> 00:22:19.440
+<v Michael Kennedy>We all had shared sort of workstation access to it.
+
+00:22:19.720 --> 00:22:24.060
+<v Michael Kennedy>And one of the students, grad students, was having a problem with their code.
+
+00:22:24.130 --> 00:22:26.120
+<v Michael Kennedy>And so they started logging out what it was doing.
+
+00:22:26.490 --> 00:22:28.500
+<v Michael Kennedy>And they got it into an infinite loop and ran it.
+
+00:22:28.660 --> 00:22:30.800
+<v Michael Kennedy>You would run stuff overnight and come see it in the morning.
+
+00:22:31.140 --> 00:22:34.040
+<v Michael Kennedy>We came back one day and it just wouldn't turn on or it wouldn't respond.
+
+00:22:34.290 --> 00:22:36.000
+<v Michael Kennedy>And nobody could figure out why.
+
+00:22:36.380 --> 00:22:40.460
+<v Michael Kennedy>The students, we had no, the reason I'm telling you this, we had no quotas, no limits.
+
+00:22:41.100 --> 00:22:46.240
+<v Michael Kennedy>The student used up the entire hard drive of the Silicon Graphics machine to the very last
+
+00:22:46.440 --> 00:22:50.140
+<v Michael Kennedy>byte, and apparently it needed a few temp files to operate the operating system.
+
+00:22:50.480 --> 00:22:51.180
+<v Michael Kennedy>And it just died.
+
+00:22:51.560 --> 00:22:56.680
+<v Shaun Chuah>And nobody could get it to come, it took a day or two for it to come back because somebody
+
+00:22:56.900 --> 00:22:57.300
+<v Michael Kennedy>destroyed it.
+
+00:22:57.400 --> 00:22:59.940
+<v Michael Kennedy>Well, these limits, they have a reason they're there, you know?
+
+00:23:00.500 --> 00:23:01.100
+<v Shaun Chuah>They do.
+
+00:23:01.600 --> 00:23:08.140
+<v Shaun Chuah>But when we look at the next five to 10 years of biomedical research, file storage is actually a big problem.
+
+00:23:09.040 --> 00:23:09.900
+<v Shaun Chuah>Is it? Okay.
+
+00:23:10.100 --> 00:23:14.620
+<v Shaun Chuah>Some of the newer technologies are generating like a terabyte of data for a single sample.
+
+00:23:14.960 --> 00:23:16.760
+<v Michael Kennedy>Wow. Yeah, that's absolutely crazy.
+
+00:23:17.340 --> 00:23:23.320
+<v Michael Kennedy>You know, this also goes to reproducibility and long-term viability of this research, right?
+
+00:23:23.440 --> 00:23:31.900
+<v Michael Kennedy>Because if you have 100 terabytes of data, it's one thing to say, well, here's the Excel file and here's the Parquet file and here's the Docker image that runs it.
+
+00:23:32.300 --> 00:23:37.660
+<v Michael Kennedy>Save that as a, you know, you can stamp these as like, here's what the paper was published on, right?
+
+00:23:37.690 --> 00:23:38.740
+<v Michael Kennedy>And here's the digital assets.
+
+00:23:39.130 --> 00:23:42.460
+<v Michael Kennedy>But when it's 100 terabytes, it doesn't matter if you can name it or not.
+
+00:23:42.560 --> 00:23:43.600
+<v Michael Kennedy>That's a hard thing to store.
+
+00:23:43.920 --> 00:23:45.620
+<v Shaun Chuah>Yes, definitely a big problem.
+
+00:23:46.700 --> 00:23:50.900
+<v Shaun Chuah>And I think the question then becomes what is the most valuable data that you store?
+
+00:23:51.220 --> 00:23:54.280
+<v Shaun Chuah>because perhaps you don't need to store the raw files
+
+00:23:54.540 --> 00:23:56.220
+<v Shaun Chuah>and you want to process files
+
+00:23:56.570 --> 00:23:59.340
+<v Shaun Chuah>because who wants to run another 100 terabyte pipeline anyway?
+
+00:24:00.020 --> 00:24:01.600
+<v Shaun Chuah>But yeah, these are challenging questions.
+
+00:24:01.900 --> 00:24:02.660
+<v Shaun Chuah>There are no easy answers.
+
+00:24:03.800 --> 00:24:07.440
+<v Shaun Chuah>And most groups, we do cost our data storage,
+
+00:24:08.080 --> 00:24:10.140
+<v Shaun Chuah>but for most grants, we cost it out for 10 years.
+
+00:24:10.940 --> 00:24:14.220
+<v Shaun Chuah>And beyond that, it becomes a challenge to maintain all this data.
+
+00:24:14.520 --> 00:24:15.300
+<v Michael Kennedy>Yeah. What are you going to do?
+
+00:24:15.600 --> 00:24:18.059
+<v Michael Kennedy>I guess the only bonus is in general
+
+00:24:18.080 --> 00:24:21.060
+<v Michael Kennedy>that storage is getting cheaper by a lot.
+
+00:24:21.880 --> 00:24:23.700
+<v Michael Kennedy>And I say by in general,
+
+00:24:23.810 --> 00:24:24.860
+<v Michael Kennedy>because the last couple of years
+
+00:24:25.040 --> 00:24:26.700
+<v Michael Kennedy>or last year and a half, that's not true.
+
+00:24:26.840 --> 00:24:28.460
+<v Michael Kennedy>Yeah, I was going to say the AI revolution
+
+00:24:28.650 --> 00:24:32.620
+<v Shaun Chuah>might not keep that falling price curve the same.
+
+00:24:33.520 --> 00:24:35.780
+<v Michael Kennedy>It might change things just a little bit.
+
+00:24:36.160 --> 00:24:38.120
+<v Michael Kennedy>All right, so let's talk about this Foundry project.
+
+00:24:38.210 --> 00:24:40.000
+<v Michael Kennedy>So this is sort of the next generation
+
+00:24:40.240 --> 00:24:42.700
+<v Michael Kennedy>of what you maybe dreamed of building.
+
+00:24:44.380 --> 00:24:47.520
+<v Michael Kennedy>Also maybe a little bit in the agentic age as well, right?
+
+00:24:47.580 --> 00:24:48.080
+<v Michael Kennedy>Yeah, definitely.
+
+00:24:48.740 --> 00:24:50.700
+<v Michael Kennedy>Okay, so tell us about this Foundry 120.
+
+00:24:51.100 --> 00:24:51.820
+<v Michael Kennedy>So Foundry 120.
+
+00:24:51.900 --> 00:24:53.580
+<v Michael Kennedy>People will find it at foundry120.com.
+
+00:24:54.140 --> 00:24:57.400
+<v Shaun Chuah>It's a research operating system for translational science teams.
+
+00:24:57.580 --> 00:24:58.980
+<v Shaun Chuah>So I've got to explain that a bit.
+
+00:24:59.560 --> 00:25:04.540
+<v Shaun Chuah>So translational science is basically when you're trying to discover things by recruiting
+
+00:25:05.150 --> 00:25:09.820
+<v Shaun Chuah>humans with a problem and you're taking samples, bringing them back to the lab and running all
+
+00:25:09.960 --> 00:25:14.780
+<v Shaun Chuah>sorts of experiments to just kind of understand the biology behind disease and then find out
+
+00:25:14.780 --> 00:25:18.820
+<v Shaun Chuah>whether there are mechanisms that we can target for therapeutic development and things like that.
+
+00:25:19.480 --> 00:25:20.920
+<v Shaun Chuah>So that's kind of translational science.
+
+00:25:21.190 --> 00:25:26.160
+<v Shaun Chuah>And Foundry 120 is a platform that allows teams to operate seamlessly
+
+00:25:26.790 --> 00:25:29.200
+<v Shaun Chuah>and use AI to accelerate their workflows.
+
+00:25:29.800 --> 00:25:31.060
+<v Shaun Chuah>It's built around three ideas.
+
+00:25:31.600 --> 00:25:33.400
+<v Shaun Chuah>The first idea is to organize everything.
+
+00:25:33.610 --> 00:25:38.980
+<v Shaun Chuah>So you organize your samples, your studies, your participants into a database
+
+00:25:39.380 --> 00:25:42.020
+<v Shaun Chuah>that just helps you keep track of everything.
+
+00:25:42.440 --> 00:25:46.980
+<v Shaun Chuah>And then the second bit is the idea of centralizing all your data outputs into a single platform.
+
+00:25:47.440 --> 00:25:53.640
+<v Shaun Chuah>So this will be things like clinical data, including radiology images, endoscopy videos,
+
+00:25:54.360 --> 00:25:59.780
+<v Shaun Chuah>digital pathology slides, and then the scientific outputs such as spatial transcriptomics,
+
+00:26:00.240 --> 00:26:05.620
+<v Shaun Chuah>genomics, microbiome, or all the data volume that we're seeing from all the different scientific
+
+00:26:06.000 --> 00:26:11.080
+<v Shaun Chuah>modalities are just going up exponentially. But as we know in the AIH, if you can bring all your
+
+00:26:11.080 --> 00:26:18.480
+<v Shaun Chuah>context into a single platform, then you can let AI connect to that and operate on that to answer
+
+00:26:18.720 --> 00:26:24.520
+<v Shaun Chuah>questions that researchers might have. So, I mean, I'll give you a concrete example. For example,
+
+00:26:24.730 --> 00:26:29.620
+<v Shaun Chuah>you know, if one of my scientific colleagues were looking for, you know, do we have any samples that
+
+00:26:29.720 --> 00:26:35.420
+<v Shaun Chuah>belong to a participant who's been treated with this drug? Can we find that? And historically,
+
+00:26:35.480 --> 00:26:41.220
+<v Shaun Chuah>what you would have to do is to take the clinical data set, join it with your sample database,
+
+00:26:41.900 --> 00:26:47.020
+<v Shaun Chuah>and then filter that through and find the samples that you want. And that usually would have taken
+
+00:26:47.060 --> 00:26:51.980
+<v Shaun Chuah>a couple of days to do. But this is a great use case, I think, for agentic AI, where you can just,
+
+00:26:52.600 --> 00:26:58.140
+<v Shaun Chuah>you know, access the data, put it into a sandbox, write the code to do the join, and then just give
+
+00:26:58.140 --> 00:27:03.659
+<v Shaun Chuah>you the answer that you want. So just eliminate all the steps in between and get you to the answer
+
+00:27:03.680 --> 00:27:08.700
+<v Michael Kennedy>faster. And that's the whole concept behind the platform. Sounds great. It's a really nice looking
+
+00:27:09.180 --> 00:27:15.060
+<v Michael Kennedy>web app too. What's its current status? It's available not just for you all, but for others,
+
+00:27:15.940 --> 00:27:22.080
+<v Michael Kennedy>but it doesn't have quite a just create an account, get started. So you have a request a platform
+
+00:27:22.420 --> 00:27:28.380
+<v Michael Kennedy>walkthrough. What's the situation here? Can other research teams use it? Is it a paid product? Is it
+
+00:27:28.280 --> 00:27:34.420
+<v Michael Kennedy>just sort of gated because it's not ready for people overwhelming it? So it's quite early stage
+
+00:27:34.440 --> 00:27:40.720
+<v Shaun Chuah>at the moment. So over the last six to 12 months, we've made the entire foundation generalizable
+
+00:27:41.280 --> 00:27:46.560
+<v Shaun Chuah>beyond just our group and beyond just disease. So what I mean by that is, you know, for another
+
+00:27:46.620 --> 00:27:51.280
+<v Shaun Chuah>group to join, they would need the access controls to be in place. So they need a way of managing
+
+00:27:51.720 --> 00:27:58.240
+<v Shaun Chuah>their team, being able to assign permissions to individuals, you know, without me having to do it
+
+00:27:58.480 --> 00:28:13.320
+<v Shaun Chuah>But I think more importantly is that onboarding a team into this platform is actually quite a hands-on process because it really depends on what data you're handling, the volumes that you're dealing with, what modalities of data you need to do.
+
+00:28:13.660 --> 00:28:20.880
+<v Shaun Chuah>And also the other major thing that we have to look at if you want to join the platform is the governance around your data.
+
+00:28:21.420 --> 00:28:28.160
+<v Shaun Chuah>So in clinical research, there are strict rules around how you handle data and where that data can sit, where can it be processed.
+
+00:28:28.840 --> 00:28:33.100
+<v Shaun Chuah>And these are subject to your research ethics approval.
+
+00:28:33.810 --> 00:28:40.280
+<v Shaun Chuah>So before a team can join us, we do want to review all those things to make sure that we're in compliance before anybody can join.
+
+00:28:40.500 --> 00:28:46.940
+<v Shaun Chuah>So that's the reason why it's not just a simple, you know, I can sign up, pay a monthly fee and start using the platform.
+
+00:28:47.440 --> 00:28:52.120
+<v Shaun Chuah>There's a lot more issues that have to be looked at before we can bring a team on board.
+
+00:28:52.320 --> 00:28:58.860
+<v Shaun Chuah>But we're willing to do the work to kind of review the situation and start getting other people access to it.
+
+00:28:59.000 --> 00:28:59.720
+<v Michael Kennedy>Makes a lot of sense.
+
+00:28:59.910 --> 00:29:02.460
+<v Michael Kennedy>You've got IRB research stuff.
+
+00:29:02.820 --> 00:29:06.500
+<v Michael Kennedy>You've got HIPAA and the equivalent in all the other countries.
+
+00:29:07.200 --> 00:29:09.800
+<v Michael Kennedy>And yeah, so you don't want to get in trouble.
+
+00:29:10.000 --> 00:29:10.260
+<v Shaun Chuah>Yes.
+
+00:29:10.570 --> 00:29:14.360
+<v Shaun Chuah>And you did mention earlier that this is quite tied into Azure at the moment.
+
+00:29:14.900 --> 00:29:18.960
+<v Shaun Chuah>And that's because we run on the University of Glasgow's Azure Tenancy.
+
+00:29:19.330 --> 00:29:25.400
+<v Shaun Chuah>So everything has to be located specifically for our studies within the UK data centers and things.
+
+00:29:25.540 --> 00:29:27.780
+<v Shaun Chuah>So we have all the controls in place to do that.
+
+00:29:28.330 --> 00:29:32.600
+<v Shaun Chuah>And that's backend infrastructure for the people who are listening on the podcast.
+
+00:29:34.520 --> 00:29:38.000
+<v Michael Kennedy>This portion of Talk Python is brought to you by Talk Python Courses.
+
+00:29:38.380 --> 00:29:39.780
+<v Michael Kennedy>Here's the thing that always bug me.
+
+00:29:40.040 --> 00:29:44.620
+<v Michael Kennedy>You finish one of our courses, that's hours of video, a pile of code you actually wrote,
+
+00:29:44.740 --> 00:29:48.140
+<v Michael Kennedy>and real skills you didn't have a month before, and then nothing happens.
+
+00:29:48.480 --> 00:29:51.120
+<v Michael Kennedy>No paper, no credential, nothing to show for it.
+
+00:29:51.660 --> 00:29:52.300
+<v Michael Kennedy>So we fixed it.
+
+00:29:52.740 --> 00:29:56.440
+<v Michael Kennedy>Every Talk Python course now generates a completion certificate automatically.
+
+00:29:56.880 --> 00:29:58.840
+<v Michael Kennedy>Go to your account page in your dashboard section,
+
+00:29:59.380 --> 00:30:02.500
+<v Michael Kennedy>scroll down to your completed courses, and click Certificate.
+
+00:30:02.820 --> 00:30:03.620
+<v Michael Kennedy>That's the whole process.
+
+00:30:04.600 --> 00:30:07.200
+<v Michael Kennedy>Two things you can do with these course completion certificates.
+
+00:30:07.560 --> 00:30:12.640
+<v Michael Kennedy>download the full PDF, which is handy if your employer reimburses training or gives you credit
+
+00:30:12.650 --> 00:30:18.300
+<v Michael Kennedy>for finishing it. Or you can make the certificate public and hit share on LinkedIn, which adds it to
+
+00:30:18.300 --> 00:30:22.700
+<v Michael Kennedy>your LinkedIn profile under licenses and certifications. Not a poster that scrolls away
+
+00:30:22.710 --> 00:30:27.360
+<v Michael Kennedy>in a day, an actual credential sitting on your profile where your manager and recruiters can see
+
+00:30:27.440 --> 00:30:31.980
+<v Michael Kennedy>it. Plus, if you've been taking our courses for a while, you've probably earned several of these
+
+00:30:32.090 --> 00:30:37.440
+<v Michael Kennedy>without even knowing they existed. Just visit training.talkpython.fm/account and collect
+
+00:30:37.460 --> 00:30:42.640
+<v Michael Kennedy>them. Thanks to all of you who have taken a Talk Python course. It's a great way to support the podcast.
+
+00:30:44.280 --> 00:30:49.260
+<v Michael Kennedy>What a different time it is for universities. And I think they're going through a similar
+
+00:30:49.980 --> 00:30:54.400
+<v Michael Kennedy>upheaval, I guess is the word. When I was in university, and we're talking like 90s,
+
+00:30:54.840 --> 00:31:00.680
+<v Michael Kennedy>there was a giant Cray supercomputer or maybe a couple of supercomputers at the heart of the
+
+00:31:00.940 --> 00:31:05.019
+<v Michael Kennedy>university in some basement, and you could get access to that if you needed mega computing
+
+00:31:05.020 --> 00:31:12.120
+<v Michael Kennedy>resources. And now it's just scaled into some ginormous cloud infrastructure. And the limit
+
+00:31:12.130 --> 00:31:16.440
+<v Michael Kennedy>is really just how much are they going to give you, not what does the university have in its
+
+00:31:16.620 --> 00:31:20.940
+<v Michael Kennedy>basement or something like that, which is really interesting. Well, I mean, there are still some
+
+00:31:21.220 --> 00:31:25.700
+<v Shaun Chuah>universities that are trying to build their own clusters. But I think if you look at the economics
+
+00:31:25.920 --> 00:31:32.659
+<v Shaun Chuah>of it, it is way more cost efficient to be running on the cloud compared to on the cluster, because
+
+00:31:32.560 --> 00:31:37.760
+<v Shaun Chuah>many of the analysis that we do in the universities once off. So you might process a ton of data,
+
+00:31:38.130 --> 00:31:42.360
+<v Shaun Chuah>but that might be after a year or two years before you get that amount of data to process.
+
+00:31:42.880 --> 00:31:46.560
+<v Shaun Chuah>So if you look at a workload, the IT workload within the university, I think the cloud is
+
+00:31:46.570 --> 00:31:50.560
+<v Shaun Chuah>quite an attractive proposition. That's an interesting angle. Yeah, of course, because
+
+00:31:51.100 --> 00:31:55.160
+<v Michael Kennedy>you're going to process your samples. Maybe you're like, ah, we really want to try a different
+
+00:31:55.500 --> 00:31:59.860
+<v Michael Kennedy>algorithm and you'll run it all through again. But generally speaking, it's not steady state.
+
+00:32:00.360 --> 00:32:11.500
+<v Michael Kennedy>Whereas if you're going to go buy your own hardware and then put it in a basement and it's kind of a steady state situation, then you could really predict, you know, we're saving, you know, 50% less expensive to run on this.
+
+00:32:11.570 --> 00:32:13.280
+<v Michael Kennedy>And just, yeah, didn't really think about that.
+
+00:32:13.280 --> 00:32:17.880
+<v Michael Kennedy>And so I said, there's another such wave coming because this was, you know, when was the cloud?
+
+00:32:17.950 --> 00:32:20.980
+<v Michael Kennedy>The cloud is 10 years ago, 2008, I think.
+
+00:32:21.140 --> 00:32:24.620
+<v Michael Kennedy>A little bit, a little bit, really caught going a little bit after that.
+
+00:32:25.150 --> 00:32:27.320
+<v Michael Kennedy>But it's been a little while.
+
+00:32:27.360 --> 00:32:45.740
+<v Michael Kennedy>Now we've got all this AI stuff going and we're proving, you know, unsolved airdosh mathematical problems and all sorts of things, you know, with AI and other, you know, trying to do protein folding and other things that are really computational, but also really different.
+
+00:32:45.970 --> 00:32:54.340
+<v Michael Kennedy>And so I feel like this whole AI wave, especially the agentic AI, is going to roil what's happening at the universities all over again.
+
+00:32:54.480 --> 00:32:58.780
+<v Shaun Chuah>I mean, if you look at the data center economics around AI, it's quite interesting, actually.
+
+00:32:59.150 --> 00:33:02.400
+<v Shaun Chuah>Like a single rack from Nvidia is like a couple million dollars, right?
+
+00:33:03.240 --> 00:33:03.980
+<v Shaun Chuah>It's crazy.
+
+00:33:04.130 --> 00:33:06.640
+<v Shaun Chuah>And you need a power plant to plug it into.
+
+00:33:07.500 --> 00:33:11.400
+<v Shaun Chuah>I can't see any university building their own AI data center in the future.
+
+00:33:11.590 --> 00:33:17.900
+<v Shaun Chuah>So I think cloud adoption is inevitable in the sense that the economics of trying to
+
+00:33:17.900 --> 00:33:23.400
+<v Shaun Chuah>use agentic AI doesn't make sense to try and build your own AI computer, unless you have
+
+00:33:23.360 --> 00:33:30.220
+<v Shaun Chuah>specific governance requirements, which do apply to certain studies and certain aspects of work.
+
+00:33:30.940 --> 00:33:35.980
+<v Shaun Chuah>But even then, you might contract a local AI company to do it and then share it between
+
+00:33:36.400 --> 00:33:40.400
+<v Shaun Chuah>businesses and universities rather than having a university do it on its own.
+
+00:33:40.760 --> 00:33:45.520
+<v Michael Kennedy>Yeah. People talk about the AI bubble. I don't know if there's actually an AI bubble. This stuff
+
+00:33:45.660 --> 00:33:51.559
+<v Michael Kennedy>is so productive. The last bubble we had that was tech-related was the dot-com bubble. And there
+
+00:33:51.480 --> 00:33:57.160
+<v Michael Kennedy>was really stupid stuff with a lot of money spent on it you know like there's always the pest.com or
+
+00:33:57.170 --> 00:34:01.900
+<v Michael Kennedy>the weird investments you know thing and people are spending millions of dollars on ads to just
+
+00:34:02.120 --> 00:34:06.520
+<v Michael Kennedy>like have dancing monkeys running it was a weird time and this is also a weird time but I feel like
+
+00:34:06.840 --> 00:34:12.120
+<v Michael Kennedy>there's actually something legitimately at the core of it that is really changing the way people
+
+00:34:12.300 --> 00:34:17.300
+<v Michael Kennedy>work and and do research and so on so I don't know it's going to bust if there is a bubble and I don't
+
+00:34:17.240 --> 00:34:22.240
+<v Michael Kennedy>know if the bubble is going to burst. But if it does, I think that's also going to create an

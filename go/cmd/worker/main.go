@@ -21,6 +21,7 @@ import (
 	"jester/internal/github"
 	"jester/internal/hackernews"
 	"jester/internal/lemmy"
+	"jester/internal/podcast"
 	"jester/internal/prefilter"
 	"jester/internal/reddit"
 	"jester/internal/stackexchange"
@@ -574,6 +575,45 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 				fmt.Sprintf("lemmy-%d", lp.ID), comments, post, pp, maxPerThread)
 			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (lemmy %d)\n", n, lp.ID)
+			total += n
+			sleep(delay)
+		}
+		return total, nil
+
+	case src.Platform == "podcast":
+		pc := podcast.New()
+		pc.Delay = delay
+		pc.MaxEpisodes = perSource
+		show, eps, noTranscript, err := pc.ListEpisodes(ctx, src.URL)
+		if err != nil {
+			return 0, err
+		}
+		fmt.Printf("[live] podcast %s (%d episode(s) with a transcript)\n",
+			show.Title, len(eps))
+		if noTranscript > 0 {
+			// R55: a walk that silently ignored episodes reads as a complete one.
+			fmt.Printf("[live]   %d episode(s) publish no transcript and were skipped\n",
+				noTranscript)
+		}
+		total := 0
+		for _, ep := range eps {
+			if bg.stop("episode") {
+				break
+			}
+			turns, post, err := pc.FetchEpisode(ctx, show, ep)
+			if err != nil {
+				fmt.Printf("[live]   episode %q skipped: %v\n", ep.Title, err)
+				continue
+			}
+			id := ep.GUID
+			if id == "" {
+				id = ep.Link
+			}
+			n := enqueueComments(st, runID, "podcast", ep.Link, "pod-"+id,
+				turns, post, pp, maxPerThread)
+			bg.add(n)
+			fmt.Printf("[live]   enqueued %d kept turn(s) of %d (%.50s)\n",
+				n, len(turns), ep.Title)
 			total += n
 			sleep(delay)
 		}

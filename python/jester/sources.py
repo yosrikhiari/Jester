@@ -46,6 +46,9 @@ PLATFORM_KINDS = {
     # product's negative reviews; there is no second kind, because a single
     # review is not worth naming as a source.
     "steam": ("app",),
+    # Long-form practitioner talk, from shows that publish a machine-readable
+    # transcript in their own feed. `show` walks the newest episodes.
+    "podcast": ("show",),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -67,6 +70,7 @@ SUPPORTED_KINDS = frozenset({
     ("lemmy", "instance"),
     ("lemmy", "community"),
     ("steam", "app"),
+    ("podcast", "show"),
 })
 
 #: Why a platform the parser accepts still has no adapter. A platform in
@@ -421,6 +425,27 @@ def _parse_lemmy(raw: str):
     return "instance", "https://%s" % host, slugify(host.split(".")[0])
 
 
+def _parse_podcast(raw: str):
+    """A show, named by its RSS feed URL.
+
+    There is no shorthand to accept: a podcast has no canonical host or handle
+    the way a subreddit or a Steam app does, and the feed URL is the only thing
+    that identifies it. The name comes from the host plus the path, so
+    talkpython.fm/episodes/rss becomes `talkpython-fm`.
+    """
+    text = raw.strip()
+    low = text.lower()
+    if not low.startswith(("http://", "https://")):
+        raise SourceError(
+            "%r is not a podcast feed — paste the RSS URL, e.g. "
+            "https://talkpython.fm/episodes/rss" % raw
+        )
+    host = low.split("://", 1)[1].split("/")[0]
+    if not host or "." not in host:
+        raise SourceError("%r has no host" % raw)
+    return "show", text, slugify(host)
+
+
 def _parse_steam(raw: str):
     """One app's reviews, named by its store link or its bare numeric id.
 
@@ -461,6 +486,7 @@ _PARSERS = {
     "github": _parse_github,
     "lemmy": _parse_lemmy,
     "steam": _parse_steam,
+    "podcast": _parse_podcast,
 }
 
 

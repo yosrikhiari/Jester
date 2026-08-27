@@ -181,7 +181,7 @@ def test_sources_payload_carries_the_ui_vocabulary(api):
     assert payload["ok"] is True
     assert set(payload["platform_kinds"]) == {
         "reddit", "hackernews", "discourse", "youtube", "tiktok",
-        "stackexchange", "github", "lemmy", "steam"}
+        "stackexchange", "github", "lemmy", "steam", "podcast"}
     assert ["reddit", "subreddit"] in payload["supported_kinds"]
     # Stack Exchange and GitHub are sanctioned APIs, so unlike tiktok they
     # ship with adapters behind them rather than as configurable placeholders.
