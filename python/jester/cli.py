@@ -1004,7 +1004,8 @@ def cmd_treat(args):
     from jester import llm_quota
 
     db = open_db(args.db)
-    provider = "groq"
+    # The console's Queue page reads the block back under this same key.
+    provider = llm_quota.TREATMENT_PROVIDER
 
     pending = len(pending_batches(db))
     if not pending:

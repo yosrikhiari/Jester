@@ -252,6 +252,170 @@ class ConsoleAPI:
             "truncated": len(out) < total,
         }
 
+    # ---- queue (what has been scraped but not yet treated) ----------------
+
+    #: Batches listed on the Queue page in one response.
+    #:
+    #: The bodies are NOT included — 646 batches hold tens of megabytes of
+    #: comment JSON, and a page that has to parse all of it to show a count is
+    #: a page nobody opens twice. The summary reads counts; opening one batch
+    #: fetches that batch.
+    QUEUE_PAGE_SIZE = 300
+
+    def _queue_rows(self, status, limit):
+        """Batch metadata plus a comment COUNT, without the comments.
+
+        json_array_length does the counting inside SQLite. Selecting the blob
+        and calling len() in Python would move every byte of the queue across
+        for a number the database can produce on its own.
+        """
+        try:
+            return self.db.execute(
+                "SELECT id, run_id, platform, source, thread_id, status, "
+                "       created_at, claimed_at, attempts, error, "
+                "       CASE WHEN json_valid(comments) "
+                "            THEN json_array_length(comments) ELSE NULL END AS n_comments "
+                "FROM ingest_batch WHERE status = ? "
+                "ORDER BY id LIMIT ?",
+                (status, int(limit)),
+            ).fetchall()
+        except Exception:  # noqa: BLE001 - table absent until the worker runs
+            return []
+
+    def _queue_totals(self):
+        """Per-status batch and comment counts for the whole queue."""
+        out = {}
+        try:
+            rows = self.db.execute(
+                "SELECT status, COUNT(*), "
+                "       COALESCE(SUM(CASE WHEN json_valid(comments) "
+                "                    THEN json_array_length(comments) ELSE 0 END), 0) "
+                "FROM ingest_batch GROUP BY status"
+            ).fetchall()
+        except Exception:  # noqa: BLE001
+            return out
+        for status, batches, comments in rows:
+            out[status] = {"batches": batches, "comments": comments}
+        return out
+
+    def _queue_by_platform(self, status):
+        """Where the waiting work came from.
+
+        This is the number that matters most on the page: a queue that is 93%
+        one platform is not a backlog, it is a skew waiting to be baked into
+        the archive, and it should be visible before it is treated rather than
+        discovered afterwards.
+        """
+        try:
+            rows = self.db.execute(
+                "SELECT platform, COUNT(*), "
+                "       COALESCE(SUM(CASE WHEN json_valid(comments) "
+                "                    THEN json_array_length(comments) ELSE 0 END), 0) "
+                "FROM ingest_batch WHERE status = ? GROUP BY platform "
+                "ORDER BY 3 DESC",
+                (status,),
+            ).fetchall()
+        except Exception:  # noqa: BLE001
+            return []
+        return [{"platform": r[0], "batches": r[1], "comments": r[2]} for r in rows]
+
+    def _treatment_block(self):
+        """When treatment can next run, straight from the recorded block.
+
+        Without this the Queue page shows a number going nowhere and says
+        nothing about why. "9,000 waiting" and "9,000 waiting, treatment
+        resumes in 22 minutes" are different situations.
+        """
+        from jester import llm_quota
+
+        # "groq" and not the CONFIGURED provider, because cmd_treat records the
+        # block under that literal name whatever thresholds.yaml says — and it
+        # is the only writer. Reading the configured one instead looked up
+        # "fake" against a block filed under "groq" and reported a queue that
+        # was free to drain while treatment was in fact shut until 12:08.
+        # The two must agree; this is the side that has to follow.
+        provider = llm_quota.TREATMENT_PROVIDER
+        try:
+            st = llm_quota.status(self.db, provider)
+        except Exception:  # noqa: BLE001 - table absent before the first block
+            return {"provider": provider, "blocked": False}
+        waiting = int(st.get("seconds_remaining") or 0)
+        return {
+            "provider": provider,
+            "blocked": bool(st.get("blocked")) and waiting > 0,
+            "seconds_remaining": waiting,
+            "human": llm_quota.human(waiting) if waiting > 0 else "",
+            "blocked_until": st.get("blocked_until") or "",
+            "reason": st.get("reason") or "",
+        }
+
+    def queue(self, status="pending", limit=None):
+        """Everything scraped and not yet treated.
+
+        The gap this fills: ingestion and treatment run on separate clocks by
+        design — scraping is cheap and bounded by politeness, treatment is
+        bounded by a token quota that resets on someone else's schedule — so
+        the queue between them is a real, long-lived thing. It was visible
+        only as a single number on the Overview page.
+        """
+        cap = int(limit or self.QUEUE_PAGE_SIZE)
+        rows = self._queue_rows(status, cap)
+        totals = self._queue_totals()
+        here = totals.get(status, {"batches": 0, "comments": 0})
+        return {
+            "ok": True,
+            "status": status,
+            "totals": totals,
+            "by_platform": self._queue_by_platform(status),
+            "treatment": self._treatment_block(),
+            # R55: the page says what it is showing versus what exists, so a
+            # capped list can never read as the whole queue.
+            "shown": len(rows),
+            "total_batches": here["batches"],
+            "total_comments": here["comments"],
+            "truncated": len(rows) < here["batches"],
+            "batches": [
+                {
+                    "id": r[0], "run_id": r[1], "platform": r[2], "source": r[3],
+                    "thread_id": r[4], "status": r[5], "created_at": r[6],
+                    "claimed_at": r[7], "attempts": r[8], "error": r[9],
+                    "n_comments": r[10],
+                }
+                for r in rows
+            ],
+        }
+
+    def queue_batch(self, batch_id):
+        """One batch's actual comments, plus the post they came from."""
+        row = self.db.execute(
+            "SELECT id, run_id, platform, source, thread_id, status, created_at, "
+            "       attempts, error, comments, thread_meta "
+            "FROM ingest_batch WHERE id = ?",
+            (int(batch_id),),
+        ).fetchone()
+        if row is None:
+            return {"ok": False, "error": f"batch #{batch_id} not found"}
+        try:
+            comments = json.loads(row[9] or "[]")
+        except (TypeError, ValueError) as exc:
+            # A batch whose JSON will not parse is why it is stuck. Saying so
+            # beats an empty list that looks like an empty batch.
+            return {"ok": False, "error": f"batch #{batch_id} holds unreadable JSON: {exc}"}
+        try:
+            post = json.loads(row[10]) if row[10] else None
+        except (TypeError, ValueError):
+            post = None
+        return {
+            "ok": True,
+            "batch": {
+                "id": row[0], "run_id": row[1], "platform": row[2], "source": row[3],
+                "thread_id": row[4], "status": row[5], "created_at": row[6],
+                "attempts": row[7], "error": row[8],
+            },
+            "post": post,
+            "comments": comments,
+        }
+
     # ---- clusters (semantic regrouping) ---------------------------------
 
     def clusters(self):

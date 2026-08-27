@@ -216,6 +216,56 @@
     <div id="clusters-body" class="stack"></div>
   </section>
 
+  <!-- ── queue ────────────────────────────────────────────────────── -->
+  <section data-page="queue" hidden>
+    <div class="hero">
+      <div>
+        <h1>Queue</h1>
+        <p>Scraped and waiting to be treated. Ingestion and treatment run on
+          separate clocks by design &mdash; scraping is cheap and bounded by
+          politeness, treatment is bounded by a token quota that resets on
+          someone else&rsquo;s schedule &mdash; so this gap is a real, long-lived
+          thing rather than a moment between steps.</p>
+        <p id="queue-count" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <div class="seg" id="queue-status" role="group" aria-label="Queue status"></div>
+        <button class="btn btn--sm" id="queue-refresh">refresh</button>
+      </div>
+    </div>
+
+    <!-- Whether treatment can run at all. A number going nowhere with no
+         explanation is what this line exists to prevent. -->
+    <div id="queue-treatment"></div>
+
+    <div class="card">
+      <div class="card-head"><h3>Where it came from</h3></div>
+      <p class="xs">A queue that is mostly one platform is not a backlog, it is a
+        skew about to be baked into the archive &mdash; better seen before it is
+        treated than found afterwards.</p>
+      <div id="queue-mix" class="stack"></div>
+    </div>
+
+    <div class="card card--flush">
+      <div class="card-head">
+        <h3>Batches</h3>
+        <span class="row-end xs" id="queue-shown"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>#</th><th>source</th><th>comments</th><th>queued</th>
+            <th>run</th><th>status</th><th></th>
+          </tr></thead>
+          <tbody id="queue-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Filled when a batch is opened: the actual comments waiting in it. -->
+    <div id="queue-detail"></div>
+  </section>
+
   <!-- ── nuggets ──────────────────────────────────────────────────── -->
   <section data-page="nuggets" hidden>
     <div class="hero">

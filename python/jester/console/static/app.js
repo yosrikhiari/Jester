@@ -197,6 +197,7 @@ function toast(msg, tone = 'ok') {
 const PAGES = [
   { group: 'Pipeline', id: 'overview', label: 'Overview', icon: '◈', load: loadOverview },
   { group: 'Pipeline', id: 'runs', label: 'Runs', icon: '▷', load: loadRuns, count: () => COUNTS.runs },
+  { group: 'Pipeline', id: 'queue', label: 'Queue', icon: '⧗', load: loadQueue, count: () => COUNTS.pending },
   { group: 'Archive', id: 'ideas', label: 'Ideas', icon: '✦', load: loadIdeas, count: () => COUNTS.ideas },
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
@@ -1180,6 +1181,173 @@ $('#clusters-body').addEventListener('click', async e => {
     if (id) await openCluster(id);
     await loadClusters();
   }
+});
+
+// ── queue ───────────────────────────────────────────────────────────────
+// What has been scraped and not yet treated. This was visible only as a single
+// number on the Overview page, which is thin for something that legitimately
+// holds tens of thousands of comments for days: ingestion and treatment run on
+// separate clocks, so the gap between them is a standing state, not a moment.
+
+let QUEUE_STATUS = 'pending';
+const QUEUE_STATUSES = ['pending', 'failed', 'done'];
+let QUEUE_OPEN = null;
+
+function renderQueueStatuses() {
+  $('#queue-status').innerHTML = QUEUE_STATUSES.map(st =>
+    `<button data-qs="${esc(st)}" aria-pressed="${QUEUE_STATUS === st}">${esc(st)}</button>`).join('');
+}
+
+/** Whether treatment can run at all, and when it next can. */
+function renderTreatment(t) {
+  const box = $('#queue-treatment');
+  if (!t) { box.innerHTML = ''; return; }
+  if (!t.blocked) {
+    box.innerHTML = `<div class="card"><span class="chip chip--ok">clear</span>
+      ${esc(t.provider || 'the provider')} is not rate-limited &mdash; treatment drains this
+      queue on its own schedule.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="card">
+    <span class="chip chip--warn">treatment paused</span>
+    <b>${esc(t.human)}</b> until ${esc(when(t.blocked_until))}.
+    ${t.reason ? `<div class="xs">${esc(t.reason)}</div>` : ''}
+    <div class="xs">Nothing is lost while it waits &mdash; the queue is the buffer, and
+      <span class="mono">treat</span> exits in a second and a half rather than
+      grinding against an exhausted quota.</div>
+  </div>`;
+}
+
+/** Where the waiting work came from, as a share of the whole. */
+function renderQueueMix(rows, totalComments) {
+  const box = $('#queue-mix');
+  if (!rows || !rows.length) {
+    box.innerHTML = '<p class="xs">Nothing queued.</p>';
+    return;
+  }
+  box.innerHTML = rows.map(r => {
+    const share = totalComments ? Math.round((r.comments / totalComments) * 100) : 0;
+    // The bar is the point: a dominant platform should be obvious without
+    // reading the numbers.
+    return `<div class="qmix">
+      <span class="chip">${esc(PLATFORM_LABEL[r.platform] || r.platform)}</span>
+      <div class="qbar" aria-hidden="true"><i style="inline-size:${share}%"></i></div>
+      <span class="xs mono">${r.comments.toLocaleString()} comment(s) · ${r.batches} batch(es) · ${share}%</span>
+    </div>`;
+  }).join('');
+}
+
+function queueRow(b) {
+  const tone = b.status === 'failed' ? 'bad' : b.status === 'done' ? 'done' : 'warn';
+  // A NULL count means the batch's JSON would not parse — which is a defect,
+  // not an empty batch, so it must not render as 0.
+  const n = b.n_comments === null || b.n_comments === undefined
+    ? '<span class="chip chip--bad">unreadable</span>'
+    : `<span class="mono">${Number(b.n_comments).toLocaleString()}</span>`;
+  return `<tr data-batch="${b.id}">
+    <td class="mono xs">${b.id}</td>
+    <td><span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform || '—')}</span>
+        <div class="xs truncate" style="max-inline-size:38ch" title="${esc(b.source || '')}">${esc(b.thread_id || b.source || '')}</div></td>
+    <td>${n}</td>
+    <td class="xs">${esc(ago(b.created_at))}</td>
+    <td class="mono xs">${esc(b.run_id || '')}</td>
+    <td>${tag(tone, b.status, 'pill--sm')}${b.attempts ? `<div class="xs">${b.attempts} attempt(s)</div>` : ''}
+        ${b.error ? `<div class="xs" title="${esc(b.error)}">${esc(String(b.error).slice(0, 60))}</div>` : ''}</td>
+    <td><button class="btn btn--sm" data-open-batch="${b.id}">open</button></td>
+  </tr>`;
+}
+
+function renderQueue(res) {
+  const batches = res.batches || [];
+  $('#queue-body').innerHTML = batches.map(queueRow).join('')
+    || emptyRow(7, `Nothing ${esc(res.status)} in the queue.`);
+
+  // R55: always say what is on screen against what exists.
+  const parts = [`${(res.total_batches || 0).toLocaleString()} batch(es)`,
+                 `${(res.total_comments || 0).toLocaleString()} comment(s)`];
+  if (res.truncated) parts.push(`showing the oldest ${res.shown}`);
+  $('#queue-shown').textContent = parts.join(' · ');
+
+  const t = res.totals || {};
+  $('#queue-count').textContent = QUEUE_STATUSES
+    .filter(st => t[st])
+    .map(st => `${t[st].batches.toLocaleString()} ${st} (${t[st].comments.toLocaleString()} comment(s))`)
+    .join(' · ') || 'the queue is empty';
+
+  renderTreatment(res.treatment);
+  renderQueueMix(res.by_platform, res.total_comments);
+}
+
+async function loadQueue() {
+  const res = await api(`/api/queue?status=${encodeURIComponent(QUEUE_STATUS)}`);
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  COUNTS.pending = (res.totals && res.totals.pending) ? res.totals.pending.batches : 0;
+  renderNav();
+  renderQueueStatuses();
+  renderQueue(res);
+  if (QUEUE_OPEN) await openBatch(QUEUE_OPEN);
+}
+
+/** One batch's actual comments — fetched only when opened, because the list
+ *  deliberately carries counts rather than bodies. */
+async function openBatch(id) {
+  const res = await api(`/api/queue/batch/${id}`);
+  if (res.ok === false) { toast(res.error, 'bad'); $('#queue-detail').innerHTML = ''; return; }
+  QUEUE_OPEN = id;
+  const b = res.batch, post = res.post || {};
+  const rows = (res.comments || []).map(c => {
+    const d = c.detail || {};
+    const meta = [d.author, d.created_at ? when(d.created_at) : '',
+                  d.upvotes !== undefined && d.upvotes !== null ? `${d.upvotes} up` : '',
+                  d.depth ? `depth ${d.depth}` : '']
+      .filter(Boolean).join(' · ');
+    return `<tr>
+      <td class="xs mono">${esc((c.fingerprint || '').slice(0, 10))}</td>
+      <td style="max-inline-size:62ch">${esc(c.body || d.body || '')}
+        ${meta ? `<div class="xs">${esc(meta)}</div>` : ''}</td>
+    </tr>`;
+  }).join('') || emptyRow(2, 'This batch carries no comments.');
+
+  $('#queue-detail').innerHTML = `<div class="card card--flush">
+    <div class="card-head">
+      <h3>Batch #${b.id}</h3>
+      <span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform)}</span>
+      <span class="row-end"><button class="btn btn--sm" data-close-batch>close</button></span>
+    </div>
+    <p class="xs" style="padding:0 var(--s-5)">
+      ${post.title ? `<b>${esc(post.title)}</b> — ` : ''}
+      ${post.community ? esc(post.community) + ' · ' : ''}
+      <a href="${esc(b.source || '')}" target="_blank" rel="noopener noreferrer">${esc(b.source || '')}</a>
+    </p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>fingerprint</th><th>comment</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+  $('#queue-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+$('#queue-status').addEventListener('click', e => {
+  const b = e.target.closest('button[data-qs]');
+  if (!b) return;
+  QUEUE_STATUS = b.dataset.qs;
+  QUEUE_OPEN = null;
+  $('#queue-detail').innerHTML = '';
+  loadQueue();
+});
+$('#queue-refresh').onclick = loadQueue;
+$('#queue-body').addEventListener('click', e => {
+  const b = e.target.closest('button[data-open-batch]');
+  if (b) openBatch(Number(b.dataset.openBatch));
+});
+// Delegated, because the close button is rendered by openBatch and does not
+// exist at load. A `$('#queue-close')` here would also be a lookup nothing can
+// verify — the console's own id test checks every such lookup against the
+// markup, and a dynamic id would have to be exempted from it.
+$('#queue-detail').addEventListener('click', e => {
+  if (!e.target.closest('button[data-close-batch]')) return;
+  QUEUE_OPEN = null;
+  $('#queue-detail').innerHTML = '';
 });
 
 // ── nuggets ─────────────────────────────────────────────────────────────

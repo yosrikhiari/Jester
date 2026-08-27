@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -232,7 +233,14 @@ def test_every_element_id_the_console_script_wants_exists():
     import re
 
     js, html = _static("app.js"), _static("index.html")
-    wanted = sorted(set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'", js)))
+    # Scan CODE, not prose. A comment explaining why a lookup was avoided
+    # contains the very pattern this searches for, and flagging that as a
+    # missing element would make the test dictate how comments are worded.
+    code = "\n".join(
+        line for line in js.splitlines()
+        if not line.lstrip().startswith(("//", "*", "/*"))
+    )
+    wanted = sorted(set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'", code)))
     assert wanted, "expected app.js to look elements up by id"
     have = set(re.findall(r'id="([^"]+)"', html))
     assert [i for i in wanted if i not in have] == []
@@ -247,3 +255,132 @@ def test_console_markup_declares_no_duplicate_ids():
     # $() returns the FIRST match, so a duplicate id silently wires half the
     # page to the wrong element.
     assert dupes == []
+
+
+# ── the queue (scraped, not yet treated) ─────────────────────────────────────
+# Ingestion and treatment run on separate clocks by design, so the gap between
+# them is a standing state that can hold tens of thousands of comments for
+# days. It was visible only as one number on the Overview page.
+
+def _seed_queue(api, rows):
+    """rows: (status, platform, source, comments_json)"""
+    api.db.execute(
+        "CREATE TABLE IF NOT EXISTS ingest_batch ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, platform TEXT, source TEXT,"
+        " thread_id TEXT, batch_index INTEGER DEFAULT 0, comments TEXT, thread_meta TEXT,"
+        " status TEXT DEFAULT 'pending', claimed_at TEXT, attempts INTEGER DEFAULT 0,"
+        " error TEXT, created_at TEXT DEFAULT (datetime('now')))"
+    )
+    for status, platform, source, comments in rows:
+        api.db.execute(
+            "INSERT INTO ingest_batch (run_id, platform, source, thread_id, comments, status)"
+            " VALUES ('r1', ?, ?, ?, ?, ?)",
+            (platform, source, source, comments, status),
+        )
+    api.db.commit()
+
+
+def test_queue_counts_without_loading_the_bodies(api):
+    """646 batches hold tens of megabytes of comment JSON. A page that parses
+    all of it to show a count is a page nobody opens twice, so the list carries
+    counts and the bodies are fetched one batch at a time."""
+    big = json.dumps([{"body": "x" * 50, "fingerprint": f"f{i}"} for i in range(40)])
+    _seed_queue(api, [("pending", "hackernews", "hn-1", big),
+                      ("pending", "reddit", "r-1", json.dumps([{"body": "a"}]))])
+    res = api.queue()
+    assert res["ok"]
+    assert res["total_batches"] == 2
+    assert res["total_comments"] == 41
+    for b in res["batches"]:
+        assert "comments" not in b, "the list must not carry comment bodies"
+        assert b["n_comments"] is not None
+
+
+def test_queue_says_what_it_is_showing(api):
+    """R55: a capped list must never read as the whole queue."""
+    _seed_queue(api, [("pending", "hackernews", f"hn-{i}", json.dumps([{"body": "b"}]))
+                      for i in range(12)])
+    res = api.queue(limit=5)
+    assert res["shown"] == 5
+    assert res["total_batches"] == 12
+    assert res["truncated"] is True
+    assert api.queue(limit=50)["truncated"] is False
+
+
+def test_queue_shows_where_the_backlog_came_from(api):
+    """A queue that is mostly one platform is a skew about to be baked into the
+    archive, not a backlog — better seen before it is treated."""
+    hn = json.dumps([{"body": "b"} for _ in range(90)])
+    rd = json.dumps([{"body": "b"} for _ in range(10)])
+    _seed_queue(api, [("pending", "hackernews", "hn-1", hn),
+                      ("pending", "reddit", "r-1", rd)])
+    mix = {r["platform"]: r for r in api.queue()["by_platform"]}
+    assert mix["hackernews"]["comments"] == 90
+    assert mix["reddit"]["comments"] == 10
+    # Ordered by weight, so the dominant one leads.
+    assert api.queue()["by_platform"][0]["platform"] == "hackernews"
+
+
+def test_queue_separates_statuses(api):
+    _seed_queue(api, [("pending", "hackernews", "a", json.dumps([{"body": "b"}])),
+                      ("failed", "reddit", "b", json.dumps([{"body": "b"}])),
+                      ("done", "lemmy", "c", json.dumps([{"body": "b"}]))])
+    assert api.queue("pending")["total_batches"] == 1
+    assert api.queue("failed")["total_batches"] == 1
+    assert api.queue("done")["total_batches"] == 1
+    # And the totals name all three, so the page can show the whole picture.
+    assert set(api.queue()["totals"]) == {"pending", "failed", "done"}
+
+
+def test_an_unreadable_batch_is_not_reported_as_empty(api):
+    """A batch whose JSON will not parse is WHY it is stuck. Counting it as 0
+    comments hides a defect behind a plausible number."""
+    _seed_queue(api, [("pending", "reddit", "broken", "{not json")])
+    res = api.queue()
+    assert res["batches"][0]["n_comments"] is None
+    detail = api.queue_batch(res["batches"][0]["id"])
+    assert detail["ok"] is False
+    assert "unreadable" in detail["error"]
+
+
+def test_opening_a_batch_returns_its_comments_and_post(api):
+    _seed_queue(api, [("pending", "steam", "app-1",
+                       json.dumps([{"body": "crashes on export", "fingerprint": "f1"}]))])
+    bid = api.queue()["batches"][0]["id"]
+    api.db.execute("UPDATE ingest_batch SET thread_meta=? WHERE id=?",
+                   (json.dumps({"title": "Aseprite", "community": "Aseprite"}), bid))
+    api.db.commit()
+    res = api.queue_batch(bid)
+    assert res["ok"]
+    assert res["comments"][0]["body"] == "crashes on export"
+    assert res["post"]["title"] == "Aseprite"
+
+
+def test_a_missing_batch_is_refused(api):
+    _seed_queue(api, [])
+    assert api.queue_batch(99999)["ok"] is False
+
+
+def test_the_queue_reads_the_block_the_treat_command_writes(api):
+    """The console originally looked up thresholds.llm_provider, which is
+    "fake" in the default profile — so it read nothing and showed a queue as
+    free to drain while treatment was in fact shut for another 22 minutes.
+    cmd_treat files the block under one literal name and this must match it."""
+    from jester import llm_quota
+
+    _seed_queue(api, [])
+    llm_quota.record_block(api.db, llm_quota.TREATMENT_PROVIDER, 900, reason="daily cap")
+    t = api.queue()["treatment"]
+    assert t["provider"] == llm_quota.TREATMENT_PROVIDER
+    assert t["blocked"] is True
+    assert t["seconds_remaining"] > 0
+    assert "daily cap" in t["reason"]
+
+
+def test_a_queue_on_a_database_with_no_batches_table_is_empty_not_an_error(api):
+    """ingest_batch is Go-owned; a database the worker has never opened does
+    not have it, and the Queue page must still render."""
+    res = api.queue()
+    assert res["ok"] is True
+    assert res["total_batches"] == 0
+    assert res["batches"] == []

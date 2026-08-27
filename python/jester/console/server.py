@@ -139,6 +139,20 @@ class Handler(BaseHTTPRequestHandler):
             # and ignored by the code. Absent means every nugget.
             self._json(api.nuggets(parse_qs(query).get("limit", [None])[0]))
             return
+        if path == "/api/queue":
+            qs = parse_qs(query)
+            self._json(api.queue(
+                status=qs.get("status", ["pending"])[0],
+                limit=qs.get("limit", [None])[0],
+            ))
+            return
+        if path.startswith("/api/queue/batch/"):
+            tail = path.rsplit("/", 1)[1]
+            if not tail.isdigit():
+                self._json({"ok": False, "error": f"bad batch id {tail!r}"}, 400)
+                return
+            self._json(api.queue_batch(int(tail)))
+            return
         if path == "/api/search":
             qs = parse_qs(query)
             self._json(api.search(

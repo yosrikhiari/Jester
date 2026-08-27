@@ -771,3 +771,25 @@ pre{
 .grp-label{color:var(--jester-gold)}
 .grp--2 .grp-label{color:var(--ink)}
 .grp-meta{color:var(--ink-mute);font-weight:400;margin-inline-start:auto}
+
+/* ── queue mix ──────────────────────────────────────────────────────── */
+/* The bar is the point: a queue that is mostly one platform should be obvious
+   without reading the numbers, because that is a skew about to be baked into
+   the archive rather than a backlog. */
+.qmix{
+  display:grid;
+  grid-template-columns:minmax(7rem,auto) minmax(4rem,1fr) minmax(14rem,auto);
+  align-items:center;gap:var(--s-4);
+}
+.qbar{
+  block-size:8px;border-radius:var(--r-pill);
+  background:color-mix(in srgb,var(--ink-mute) 18%,transparent);
+  overflow:hidden;min-inline-size:3rem;
+}
+.qbar i{
+  display:block;block-size:100%;
+  background:var(--jester-gold);border-radius:inherit;
+}
+@media (max-width:640px){
+  .qmix{grid-template-columns:1fr;gap:var(--s-3)}
+}

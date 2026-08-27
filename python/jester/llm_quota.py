@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS llm_quota (
 #: in seconds; the daily one does not.
 LONG_BLOCK_SECONDS = 120
 
+#: The provider key treatment blocks are filed under.
+#:
+#: A CONSTANT because two sides have to agree on it and they are in different
+#: files: `cmd_treat` writes the block, the console's Queue page reads it. The
+#: console originally looked up whatever `thresholds.llm_provider` said, which
+#: is "fake" in the default profile — so it read nothing, and showed a queue
+#: as free to drain while treatment was in fact shut for another 22 minutes.
+#:
+#: Deliberately not the configured provider: the quota being tracked is Groq's
+#: daily token allowance, which is a fact about an account rather than about
+#: whichever model role happens to be pointed where.
+TREATMENT_PROVIDER = "groq"
+
 
 def ensure_schema(db) -> None:
     db.executescript(SCHEMA)
