@@ -669,6 +669,21 @@ pre{
 .source-check-row strong{font-weight:600;min-inline-size:0}
 .source-check-row .chip{flex:none}
 .source-check-row .xs{margin-inline-start:auto;flex:none;padding-inline-start:var(--s-3)}
+/* Grouped by platform: the header ticks its whole platform, so "every
+   subreddit" is one click instead of eighteen, and the list's composition is
+   readable without counting rows. */
+.source-check-row.source-grp{
+  margin-block-start:var(--s-3);
+  border-block-end:1px solid var(--line);
+  border-radius:0;
+}
+.source-check-row.source-grp:first-child{margin-block-start:0}
+.source-check-row.source-grp strong{
+  color:var(--jester-gold);text-transform:uppercase;
+  font-size:var(--fs-xs);letter-spacing:.05em;font-weight:700;
+}
+.source-check-row.is-child{padding-inline-start:calc(var(--s-3) * 3)}
+
 /* A source with no worker adapter cannot be fetched; it stays listed so the
    list matches the Sources tab, but it reads as unavailable rather than
    silently unticked. */
@@ -721,3 +736,38 @@ pre{
   align-items: center;
   justify-content: flex-end;
 }
+
+/* ── grouped tables ─────────────────────────────────────────────────── */
+/* Sources and nuggets are lists-of-lists: a platform, then the communities
+   inside it. The header rows carry the counts, so the shape of the corpus is
+   readable without scrolling, and fold so a big platform can be set aside. */
+.grp > td{
+  padding:0;
+  border-block-end:1px solid var(--line-strong);
+  background:var(--surface-2);
+}
+.grp--2 > td{
+  background:color-mix(in srgb,var(--surface-2) 55%,transparent);
+  border-block-end:1px solid color-mix(in srgb,var(--line) 70%,transparent);
+}
+/* A sticky <th> already owns z-index 1; group heads sit below it and above
+   the ordinary rows they scroll past. */
+.grp{position:sticky;inset-block-start:33px;z-index:0}
+.grp--2{inset-block-start:66px}
+
+.grp-btn{
+  inline-size:100%;display:flex;align-items:center;gap:var(--s-3);
+  padding:9px 14px;border:0;background:transparent;color:var(--ink);
+  font:inherit;font-weight:700;cursor:pointer;text-align:start;
+}
+.grp--2 .grp-btn{padding-inline-start:34px;font-weight:600;font-size:var(--fs-sm)}
+.grp-btn:hover{background:color-mix(in srgb,var(--ink-mute) 10%,transparent)}
+.grp-btn:focus-visible{outline:2px solid var(--jester-gold);outline-offset:-2px}
+
+.grp-caret{
+  display:inline-block;inline-size:1em;color:var(--ink-mute);
+  font-size:var(--fs-xs);flex:none;
+}
+.grp-label{color:var(--jester-gold)}
+.grp--2 .grp-label{color:var(--ink)}
+.grp-meta{color:var(--ink-mute);font-weight:400;margin-inline-start:auto}

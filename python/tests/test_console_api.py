@@ -212,3 +212,38 @@ def test_search_limit_is_bounded(api):
     _seed_searchable(api.db)
     assert api.search(q="the", limit=99999)["returned"] <= 200
     assert api.search(q="the", limit="nonsense")["ok"] is True
+
+
+# ── console static assets ────────────────────────────────────────────────────
+# app.js is not covered by any test runner, so a typo in an element id is
+# invisible until the page is opened — and because the module wires listeners
+# at load, one `$('#missing').addEventListener` throws and blanks EVERY tab,
+# not just the one that owns the element. These two checks are cheap and catch
+# the whole class.
+
+STATIC = Path(__file__).resolve().parents[1] / "jester" / "console" / "static"
+
+
+def _static(name):
+    return (STATIC / name).read_text(encoding="utf-8")
+
+
+def test_every_element_id_the_console_script_wants_exists():
+    import re
+
+    js, html = _static("app.js"), _static("index.html")
+    wanted = sorted(set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'", js)))
+    assert wanted, "expected app.js to look elements up by id"
+    have = set(re.findall(r'id="([^"]+)"', html))
+    assert [i for i in wanted if i not in have] == []
+
+
+def test_console_markup_declares_no_duplicate_ids():
+    import re
+    from collections import Counter
+
+    ids = re.findall(r'id="([^"]+)"', _static("index.html"))
+    dupes = sorted(n for n, c in Counter(ids).items() if c > 1)
+    # $() returns the FIRST match, so a duplicate id silently wires half the
+    # page to the wrong element.
+    assert dupes == []

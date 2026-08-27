@@ -33,6 +33,109 @@ function ago(stamp) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// ── grouped tables ──────────────────────────────────────────────────────
+// Two long lists on this page are really lists-of-lists: 91 sources across
+// seven platforms, and thousands of nuggets across the communities they were
+// read from. Flat, both bury the shape of the corpus — "how much of this is
+// Reddit" was a question you had to answer by scrolling.
+
+/** Which group headers are folded shut, by key. Lives for the session: a
+ *  fold is a reading position, not a setting worth persisting. */
+const FOLDED = new Set();
+
+/** Bucket items by a key function, preserving first-seen order within each
+ *  bucket (so a newest-first list stays newest-first inside its group). */
+function groupBy(items, keyFn) {
+  const out = new Map();
+  for (const it of items) {
+    const k = keyFn(it);
+    if (!out.has(k)) out.set(k, []);
+    out.get(k).push(it);
+  }
+  return out;
+}
+
+/** A foldable header row spanning the whole table.
+ *  `depth` 1 is a platform, 2 a community inside it. */
+function groupRow({ key, depth = 1, label, meta = '', count, span }) {
+  const shut = FOLDED.has(key);
+  return `<tr class="grp grp--${depth}${shut ? ' is-shut' : ''}" data-fold="${esc(key)}">
+    <td colspan="${span}">
+      <button type="button" class="grp-btn" aria-expanded="${!shut}">
+        <span class="grp-caret" aria-hidden="true">${shut ? '▸' : '▾'}</span>
+        <span class="grp-label">${label}</span>
+        <span class="pill pill--sm tone-neutral">${esc(count.toLocaleString())}</span>
+        ${meta ? `<span class="xs grp-meta">${meta}</span>` : ''}
+      </button>
+    </td></tr>`;
+}
+
+/** Delegated fold/unfold for any table using groupRow(). */
+function bindFolding(tbodySel, rerender) {
+  $(tbodySel).addEventListener('click', e => {
+    const head = e.target.closest('[data-fold]');
+    if (!head) return;
+    const key = head.dataset.fold;
+    FOLDED.has(key) ? FOLDED.delete(key) : FOLDED.add(key);
+    rerender();
+  });
+}
+
+/** A checkbox list of sources, grouped under a per-platform header whose own
+ *  box ticks the whole platform. Two of these lists exist (the run modal and
+ *  the schedule scope) and both were 91 flat rows, so "every subreddit" was
+ *  eighteen clicks and "how much of this list is Discourse" was unanswerable.
+ *
+ *  `boxClass` is the class the page's own sync code already looks for, so the
+ *  grouping is purely additive: the leaf checkboxes keep their identity.
+ */
+function checklistHTML(sources, { boxClass, checked, title }) {
+  return [...groupBy(sources, s => s.platform || 'unknown')].map(([platform, rows]) => {
+    const usable = rows.filter(s => s.supported).length;
+    const head = `
+      <label class="source-check-row source-grp${usable ? '' : ' is-unsupported'}">
+        <input type="checkbox" class="grp-all" data-platform="${esc(platform)}"
+               data-box="${esc(boxClass)}" ${usable ? '' : 'disabled'}
+               aria-label="Select every ${esc(PLATFORM_LABEL[platform] || platform)} source">
+        <strong>${esc(PLATFORM_LABEL[platform] || platform)}</strong>
+        <span class="xs">${rows.length} source(s)${usable === rows.length ? '' : ` · ${usable} fetchable`}</span>
+      </label>`;
+    return head + rows.map(s => `
+      <label class="source-check-row is-child${s.supported ? '' : ' is-unsupported'}"
+             title="${title(s)}">
+        <input type="checkbox" class="${esc(boxClass)}" data-source-name="${esc(s.name)}"
+               data-platform="${esc(s.platform || 'unknown')}"
+               ${s.supported && checked(s) ? 'checked' : ''} ${s.supported ? '' : 'disabled'}>
+        <strong class="truncate">${esc(s.name)}</strong>
+        <span class="xs">${esc(s.kind)}${s.supported ? '' : ' · no adapter'}</span>
+      </label>`).join('');
+  }).join('');
+}
+
+/** Reflect the leaf boxes back into their platform header, including the
+ *  in-between state — a header reading "on" over a half-ticked platform is how
+ *  an operator starts a run over the wrong list. */
+function syncChecklistGroups(containerSel, boxClass) {
+  for (const head of $$(`${containerSel} .grp-all`)) {
+    const boxes = $$(`${containerSel} .${boxClass}:not([disabled])`)
+      .filter(b => b.dataset.platform === head.dataset.platform);
+    const on = boxes.filter(b => b.checked).length;
+    head.checked = on > 0 && on === boxes.length;
+    head.indeterminate = on > 0 && on < boxes.length;
+  }
+}
+
+/** Ticking a platform header ticks its platform. Returns true if it handled
+ *  the event, so the caller can skip its own leaf-level sync ordering. */
+function handleGroupToggle(e, containerSel) {
+  const head = e.target.closest('.grp-all');
+  if (!head) return false;
+  $$(`${containerSel} .${head.dataset.box}:not([disabled])`)
+    .filter(b => b.dataset.platform === head.dataset.platform)
+    .forEach(b => { b.checked = head.checked; });
+  return true;
+}
+
 /** tone drives the colour, label is what the operator reads. */
 const tag = (tone, label, extra = '') =>
   `<span class="pill ${extra} tone-${esc(String(tone || 'neutral').toLowerCase())}">` +
@@ -350,14 +453,24 @@ function renderPlatformOptions(platformKinds) {
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
 
+//: The last /api/sources response, so folding a platform open or shut is a
+//: re-render rather than a round trip — and so a fold survives one.
+let SOURCES_RES = { sources: [] };
+
 async function loadSources() {
   const res = await api('/api/sources');
   if (res.ok === false) { toast(res.error, 'bad'); return; }
+  SOURCES_RES = res;
+  renderPlatformOptions(res.platform_kinds);
+  renderSources();
+}
+
+function renderSources() {
+  const res = SOURCES_RES;
   const list = res.sources || [];
   COUNTS.sources = list.filter(s => s.enabled).length;
   renderNav();
 
-  renderPlatformOptions(res.platform_kinds);
   $('#src-path').textContent = res.path || '';
   $('#src-count').textContent = `${COUNTS.sources} enabled / ${list.length} total`;
 
@@ -366,14 +479,35 @@ async function loadSources() {
   const sorted = [...list].sort((a, b) =>
     (order[a.platform] ?? 9) - (order[b.platform] ?? 9) || a.name.localeCompare(b.name));
 
-  $('#src-body').innerHTML = sorted.map(s => {
+  // Grouped by platform, because that is how the list is actually reasoned
+  // about — "is Reddit still carrying this corpus" is one glance, not a scroll
+  // through 91 rows. The sort above already clusters them; the headers make
+  // the clusters countable and foldable.
+  const byPlatform = groupBy(sorted, s => s.platform || 'unknown');
+  $('#src-body').innerHTML = [...byPlatform].map(([platform, rows]) => {
+    const key = `src:${platform}`;
+    const on = rows.filter(r => r.enabled).length;
+    const queued = rows.reduce((t, r) => t + Number(r.state?.total_queued || 0), 0);
+    const barren = rows.filter(r => r.enabled && r.health === 'barren').length;
+    const meta = [
+      on === rows.length ? 'all enabled' : `${on} enabled`,
+      queued ? `${queued.toLocaleString()} comment(s) queued` : '',
+      barren ? `${barren} barren` : '',
+    ].filter(Boolean).join(' · ');
+    const head = groupRow({
+      key, depth: 1, span: 7, count: rows.length, meta: esc(meta),
+      label: esc(PLATFORM_LABEL[platform] || platform),
+    });
+    return head + (FOLDED.has(key) ? '' : rows.map(sourceRow).join(''));
+  }).join('') || emptyRow(7, 'No sources yet — add one above.');
+
+  function sourceRow(s) {
     const status = !s.enabled ? tag('off', 'paused', 'pill--sm')
       : !s.supported ? tag('warn', 'no adapter yet', 'pill--sm')
         : healthTag(s);
     return `<tr data-name="${esc(s.name)}">
       <td><label class="switch"><input type="checkbox" data-toggle ${s.enabled ? 'checked' : ''}
           aria-label="Enable ${esc(s.name)}"></label></td>
-      <td>${esc(PLATFORM_LABEL[s.platform] || s.platform)}</td>
       <td class="mono">${esc(s.name)}</td>
       <td><span class="chip">${esc(s.kind || 'unknown')}</span></td>
       <td><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"
@@ -384,7 +518,7 @@ async function loadSources() {
       <td>${status}</td>
       <td class="row-actions">${parkButton(s)}<button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
     </tr>`;
-  }).join('') || emptyRow(8, 'No sources yet — add one above.');
+  }
 
   const unsupported = list.filter(s => s.enabled && !s.supported);
   const barren = list.filter(s => s.enabled && s.health === 'barren');
@@ -410,6 +544,8 @@ async function loadSources() {
   $('#src-hint').innerHTML = notes.join('<br>')
     || 'Changes are written to <span class="mono">sources.yaml</span> immediately; the worker picks them up on its next run.';
 }
+
+bindFolding('#src-body', renderSources);
 
 $('#src-body').addEventListener('change', async e => {
   const box = e.target.closest('input[data-toggle]');
@@ -1044,10 +1180,63 @@ let NUGGET_TOTAL = 0;
 let NUGGET_TRUNCATED = false;
 let NUGGET_FILTER = 'all';
 const NUGGET_FILTERS = ['all', 'flagged', 'trivial', 'needs reembed'];
+//: Grouping by source trades the archive's global newest-first order for its
+//: shape, which is the right default but not always the right view — so it is
+//: a toggle, not a decision made once on the operator's behalf.
+let NUGGET_GROUPED = true;
 
 function renderNuggetFilter() {
   $('#nuggets-filter').innerHTML = NUGGET_FILTERS.map(f =>
     `<button data-f="${esc(f)}" aria-pressed="${NUGGET_FILTER === f}">${esc(f)}</button>`).join('');
+}
+
+//: `community` is the sub-source a nugget was read from — r/datascience,
+//: discuss.python.org, unix. It was added after the archive already held
+//: thousands of rows, so the older ones carry nothing and get a bucket that
+//: says exactly that rather than being lumped in with a real community.
+const NO_COMMUNITY = 'source not recorded';
+
+function nuggetRow(g) {
+  const flags = [
+    g.trivial ? '<span class="chip chip--warn">trivial</span>' : '',
+    g.needs_reembed ? '<span class="chip chip--bad">needs reembed</span>' : '',
+    g.synthesized_at ? '' : '<span class="chip">unprocessed</span>',
+  ].filter(Boolean).join('');
+  return `<tr>
+    <td class="mono xs">${esc(g.unique_key)}${g.source_url
+      ? `<div><a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer" class="xs">source ↗</a></div>` : ''}</td>
+    <td>${esc(g.platform || '—')}</td>
+    <td><span class="chip">${esc(g.category || 'uncategorised')}</span></td>
+    <td style="max-inline-size:52ch">${esc(g.extracted_insight || '')}</td>
+    <td><div class="chiprow">${flags || '<span class="xs">—</span>'}</div></td>
+  </tr>`;
+}
+
+/** Platform, then the community inside it. Groups are ordered by size, so the
+ *  platforms actually carrying the archive sit at the top; rows keep the
+ *  newest-first order they arrived in. */
+function groupedNuggets(rows) {
+  const bySize = (a, b) => b[1].length - a[1].length;
+  return [...groupBy(rows, g => g.platform || 'unknown')].sort(bySize)
+    .map(([platform, inPlatform]) => {
+      const pKey = `nug:${platform}`;
+      const communities = [...groupBy(inPlatform, g => g.community || NO_COMMUNITY)].sort(bySize);
+      const head = groupRow({
+        key: pKey, depth: 1, span: 5, count: inPlatform.length,
+        label: esc(PLATFORM_LABEL[platform] || platform),
+        meta: esc(`${communities.length} source(s)`),
+      });
+      if (FOLDED.has(pKey)) return head;
+      return head + communities.map(([community, items]) => {
+        const cKey = `${pKey}:${community}`;
+        const sub = groupRow({
+          key: cKey, depth: 2, span: 5, count: items.length,
+          label: community === NO_COMMUNITY
+            ? `<span class="mute">${esc(community)}</span>` : esc(community),
+        });
+        return sub + (FOLDED.has(cKey) ? '' : items.map(nuggetRow).join(''));
+      }).join('');
+    }).join('');
 }
 
 function renderNuggets() {
@@ -1057,26 +1246,15 @@ function renderNuggets() {
     if (NUGGET_FILTER === 'needs reembed' && !g.needs_reembed) return false;
     if (NUGGET_FILTER === 'flagged' && !g.trivial && !g.needs_reembed) return false;
     if (!q) return true;
-    return `${g.unique_key} ${g.category || ''} ${g.extracted_insight || ''}`.toLowerCase().includes(q);
+    return `${g.unique_key} ${g.category || ''} ${g.community || ''} ${g.extracted_insight || ''}`
+      .toLowerCase().includes(q);
   });
 
-  $('#nuggets-body').innerHTML = rows.map(g => {
-    const flags = [
-      g.trivial ? '<span class="chip chip--warn">trivial</span>' : '',
-      g.needs_reembed ? '<span class="chip chip--bad">needs reembed</span>' : '',
-      g.synthesized_at ? '' : '<span class="chip">unprocessed</span>',
-    ].filter(Boolean).join('');
-    return `<tr>
-      <td class="mono xs">${esc(g.unique_key)}${g.source_url
-        ? `<div><a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer" class="xs">source ↗</a></div>` : ''}</td>
-      <td>${esc(g.platform || '—')}</td>
-      <td><span class="chip">${esc(g.category || 'uncategorised')}</span></td>
-      <td style="max-inline-size:52ch">${esc(g.extracted_insight || '')}</td>
-      <td><div class="chiprow">${flags || '<span class="xs">—</span>'}</div></td>
-    </tr>`;
-  }).join('') || emptyRow(5, NUGGETS.length
-    ? 'No nugget matches that filter.'
-    : 'No nuggets archived yet.');
+  $('#nuggets-body').innerHTML =
+    (NUGGET_GROUPED ? groupedNuggets(rows) : rows.map(nuggetRow).join(''))
+    || emptyRow(5, NUGGETS.length
+      ? 'No nugget matches that filter.'
+      : 'No nuggets archived yet.');
 
   // Always say what is on screen versus what exists. A row count that only
   // ever describes itself cannot tell you something is missing.
@@ -1084,6 +1262,11 @@ function renderNuggets() {
   if (note) {
     const shown = rows.length;
     const parts = [`${shown.toLocaleString()} shown`];
+    if (NUGGET_GROUPED && shown) {
+      const platforms = new Set(rows.map(g => g.platform || 'unknown'));
+      const communities = new Set(rows.map(g => `${g.platform}/${g.community || NO_COMMUNITY}`));
+      parts.push(`${platforms.size} platform(s), ${communities.size} source(s)`);
+    }
     if (shown !== NUGGETS.length) parts.push(`${NUGGETS.length.toLocaleString()} loaded`);
     if (NUGGET_TRUNCATED) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive — response was capped`);
     else if (NUGGET_TOTAL !== NUGGETS.length) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive`);
@@ -1104,8 +1287,24 @@ async function loadNuggets() {
   COUNTS.nuggets = NUGGET_TOTAL;
   renderNav();
   renderNuggetFilter();
+  renderNuggetGrouping();
   renderNuggets();
 }
+
+bindFolding('#nuggets-body', renderNuggets);
+
+function renderNuggetGrouping() {
+  $('#nuggets-grouping').innerHTML = [['grouped', true], ['flat', false]].map(([label, on]) =>
+    `<button data-grouped="${on}" aria-pressed="${NUGGET_GROUPED === on}">${label}</button>`).join('');
+}
+
+$('#nuggets-grouping').addEventListener('click', e => {
+  const b = e.target.closest('button[data-grouped]');
+  if (!b) return;
+  NUGGET_GROUPED = b.dataset.grouped === 'true';
+  renderNuggetGrouping();
+  renderNuggets();
+});
 
 $('#nuggets-q').addEventListener('input', renderNuggets);
 $('#nuggets-filter').addEventListener('click', e => {
@@ -1494,16 +1693,12 @@ function renderScheduleScope(res) {
   const all = !chosen.size;
   const sources = res.sources || [];
 
-  $('#sched-sources').innerHTML = sources.map(s => `
-    <label class="source-check-row${s.supported ? '' : ' is-unsupported'}"
-           title="${s.supported ? '' : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet'}">
-      <input type="checkbox" class="sched-src" data-source-name="${esc(s.name)}"
-             ${s.supported && (all ? s.enabled : chosen.has(s.name)) ? 'checked' : ''}
-             ${s.supported ? '' : 'disabled'}>
-      <span class="chip">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
-      <strong class="truncate">${esc(s.name)}</strong>
-      <span class="xs">${esc(s.kind)}${s.supported ? '' : ' · no adapter'}</span>
-    </label>`).join('');
+  $('#sched-sources').innerHTML = checklistHTML(sources, {
+    boxClass: 'sched-src',
+    checked: s => (all ? s.enabled : chosen.has(s.name)),
+    title: s => s.supported ? esc(s.url)
+      : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet',
+  });
 
   const off = sources.length - sources.filter(s => s.supported).length;
   $('#sched-sources-hint').textContent = off
@@ -1520,6 +1715,7 @@ function renderScheduleScope(res) {
 function syncSchedSelectAll() {
   const boxes = $$('.sched-src:not([disabled])');
   const on = boxes.filter(b => b.checked).length;
+  syncChecklistGroups('#sched-sources', 'sched-src');
   const all = $('#sched-select-all');
   all.checked = on > 0 && on === boxes.length;
   all.indeterminate = on > 0 && on < boxes.length;
@@ -1552,7 +1748,10 @@ $('#sched-select-all').addEventListener('change', e => {
   $$('.sched-src:not([disabled])').forEach(cb => { cb.checked = e.target.checked; });
   syncSchedSelectAll();
 });
-$('#sched-sources').addEventListener('change', syncSchedSelectAll);
+$('#sched-sources').addEventListener('change', e => {
+  handleGroupToggle(e, '#sched-sources');
+  syncSchedSelectAll();
+});
 
 async function loadSchedule() {
   const res = await api('/api/schedule');
@@ -1686,17 +1885,12 @@ async function loadSourcesForModal() {
   SOURCES_LIST = res.sources || [];
 
   const selectable = SOURCES_LIST.filter(s => s.supported);
-  $('#sources-checklist').innerHTML = SOURCES_LIST.map(s => `
-    <label class="source-check-row${s.supported ? '' : ' is-unsupported'}"
-           title="${s.supported ? esc(s.url)
-                 : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet'}">
-      <input type="checkbox" class="source-check" data-source-name="${esc(s.name)}"
-             ${s.supported && s.enabled ? 'checked' : ''} ${s.supported ? '' : 'disabled'}>
-      <span class="chip">${esc(PLATFORM_LABEL[s.platform] || s.platform)}</span>
-      <strong class="truncate">${esc(s.name)}</strong>
-      <span class="xs">${esc(s.kind)}${s.supported ? '' : ' · no adapter'}</span>
-    </label>
-  `).join('');
+  $('#sources-checklist').innerHTML = checklistHTML(SOURCES_LIST, {
+    boxClass: 'source-check',
+    checked: s => s.enabled,
+    title: s => s.supported ? esc(s.url)
+      : 'no worker adapter for ' + esc(s.platform) + '/' + esc(s.kind) + ' yet',
+  });
 
   syncSelectAll();
   const off = SOURCES_LIST.length - selectable.length;
@@ -1712,6 +1906,7 @@ async function loadSourcesForModal() {
 function syncSelectAll() {
   const boxes = $$('.source-check:not([disabled])');
   const on = boxes.filter(b => b.checked).length;
+  syncChecklistGroups('#sources-checklist', 'source-check');
   const all = $('#select-all-sources');
   all.checked = on > 0 && on === boxes.length;
   all.indeterminate = on > 0 && on < boxes.length;
@@ -1724,7 +1919,10 @@ $('#select-all-sources').addEventListener('change', e => {
   $$('.source-check:not([disabled])').forEach(cb => { cb.checked = checked; });
   syncSelectAll();
 });
-$('#sources-checklist').addEventListener('change', syncSelectAll);
+$('#sources-checklist').addEventListener('change', e => {
+  handleGroupToggle(e, '#sources-checklist');
+  syncSelectAll();
+});
 
 $('#goal-type').addEventListener('change', e => {
   const showValue = e.target.value !== 'none';

@@ -217,6 +217,45 @@ func flatten(nodes []item, depth int, out *[]FetchedComment) {
 	}
 }
 
+// FeedName is the human name of an Algolia tag, used as the community a story
+// was read from. Hacker News has no subreddits, so without this every one of
+// its stories lands in a single bucket named after the whole site and the
+// console can only say "2,923 nuggets, from Hacker News" — but Ask HN, Show HN
+// and the front page are three different rooms with three different intents,
+// and that is exactly the distinction a grouped archive is for.
+//
+// The feed is known to the caller, not to the item: Algolia's story node says
+// nothing about which listing it was found through, so this cannot live in
+// postFrom.
+func FeedName(tag string) string {
+	switch tag {
+	case "ask_hn":
+		return "Ask HN"
+	case "show_hn":
+		return "Show HN"
+	case "front_page":
+		return "HN front page"
+	default:
+		return ""
+	}
+}
+
+// FeedURL is the listing a FeedName came from, so the console can link the
+// community it groups by. An unknown name gets the site root rather than a
+// guessed path.
+func FeedURL(feed string) string {
+	switch feed {
+	case "Ask HN":
+		return "https://news.ycombinator.com/ask"
+	case "Show HN":
+		return "https://news.ycombinator.com/show"
+	case "HN front page":
+		return "https://news.ycombinator.com/news"
+	default:
+		return "https://news.ycombinator.com/"
+	}
+}
+
 // postFrom maps the story node at the root of an item tree.
 func postFrom(it item) *reddit.FetchedPost {
 	if it.ID == 0 {

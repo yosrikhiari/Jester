@@ -454,10 +454,14 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			hn.MinComments = cfg.Thresholds.MinCommentsPerThread
 		}
 		stories := []hackernews.Story{}
+		// Which listing these came from. Empty for a single pasted thread,
+		// where there is no feed to name and guessing one would be invention.
+		feed := ""
 		if kind == "story" {
 			stories = append(stories, hackernews.Story{ID: hackernewsIDFromURL(src.URL)})
 		} else {
 			tag := hackernewsTagFromURL(src.URL)
+			feed = hackernews.FeedName(tag)
 			fmt.Printf("[live] hacker news %s (up to %d thread(s))\n", tag, perSource)
 			found, err := hn.ListStories(ctx, tag, perSource)
 			if err != nil {
@@ -477,6 +481,12 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			if err != nil {
 				fmt.Printf("[live]   story %s skipped: %v\n", s.ID, err)
 				continue
+			}
+			// Which room this was read in. postFrom cannot know: Algolia's
+			// story node says nothing about the listing it was found through.
+			if post != nil && feed != "" {
+				post.Community = feed
+				post.CommunityURL = hackernews.FeedURL(feed)
 			}
 			n := enqueueComments(st, runID, "hackernews",
 				hackernews.SourceURL(s.ID), "hn-"+s.ID, comments, post, pp, maxPerThread)

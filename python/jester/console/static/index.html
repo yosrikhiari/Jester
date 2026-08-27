@@ -83,8 +83,9 @@
   <!-- ── sources ──────────────────────────────────────────────────── -->
   <section data-page="sources" hidden>
     <div class="hero">
-      <div><h1>Sources</h1><p>The curated ingest list the live worker walks — least recently
-        fetched first, so a run with a depth ceiling spreads across the list instead of
+      <div><h1>Sources</h1><p>The curated ingest list the live worker walks, grouped by
+        platform — fold one shut to read the rest. Within a run the worker takes the least
+        recently fetched first, so a depth ceiling spreads across the list instead of
         re-walking the top of it. Paste a subreddit, a thread, a YouTube channel or video,
         or a TikTok profile — anything the parser recognises.</p></div>
     </div>
@@ -119,7 +120,7 @@
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th>on</th><th>platform</th><th>name</th><th>kind</th><th>target</th>
+            <th>on</th><th>name</th><th>kind</th><th>target</th>
             <th>last fetched</th><th>status</th><th></th>
           </tr></thead>
           <tbody id="src-body"></tbody>
@@ -220,7 +221,7 @@
     <div class="hero">
       <div>
         <h1>Nuggets</h1>
-        <p>Archived pain signals, newest first. Trivial and reembed flags shown inline.</p>
+        <p>Archived pain signals, grouped by the platform and community they were read from &mdash; newest first inside each. Switch to <b>flat</b> for one newest-first list across everything. Trivial and reembed flags shown inline.</p>
         <!-- Filled by renderNuggets: what is on screen vs what the archive
              holds. Silence here is what let a capped view pass for the whole
              archive. -->
@@ -228,6 +229,7 @@
       </div>
       <div class="row row-end">
         <input id="nuggets-q" placeholder="filter nuggets…" style="inline-size:200px" autocomplete="off">
+        <div class="seg" id="nuggets-grouping" role="group" aria-label="Group nuggets"></div>
         <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>
       </div>
     </div>

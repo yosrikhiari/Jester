@@ -159,3 +159,32 @@ func TestSourceURLPointsAtTheThread(t *testing.T) {
 		t.Errorf("SourceURL=%q", got)
 	}
 }
+
+// Hacker News has no subreddits, so without a feed name every story it yields
+// lands in one bucket named after the whole site — the grouped archive then
+// says "2,923 nuggets, from Hacker News" and stops. Ask HN, Show HN and the
+// front page are three different rooms.
+func TestFeedNameAndURL(t *testing.T) {
+	cases := map[string]struct{ name, url string }{
+		"ask_hn":     {"Ask HN", "https://news.ycombinator.com/ask"},
+		"show_hn":    {"Show HN", "https://news.ycombinator.com/show"},
+		"front_page": {"HN front page", "https://news.ycombinator.com/news"},
+	}
+	for tag, want := range cases {
+		if got := FeedName(tag); got != want.name {
+			t.Errorf("FeedName(%q) = %q, want %q", tag, got, want.name)
+		}
+		if got := FeedURL(want.name); got != want.url {
+			t.Errorf("FeedURL(%q) = %q, want %q", want.name, got, want.url)
+		}
+	}
+	// A tag nobody mapped must produce nothing, not a plausible-looking label.
+	// The caller then leaves the community alone rather than writing a guess
+	// into the archive.
+	if got := FeedName("who_knows"); got != "" {
+		t.Errorf("an unmapped tag must not be named, got %q", got)
+	}
+	if got := FeedURL(""); got != "https://news.ycombinator.com/" {
+		t.Errorf("unknown feed should fall back to the site root, got %q", got)
+	}
+}
