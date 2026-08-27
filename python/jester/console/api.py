@@ -1200,7 +1200,7 @@ class ConsoleAPI:
             )
         return result
 
-    def ingest(self, live=False, run_id="console-ingest", timeout=900,
+    def ingest(self, live=False, run_id="console-ingest", timeout=None,
                only=None, max_comments=None, max_posts=None):
         """Run the Go ingestion worker over the curated source list.
 
@@ -1223,16 +1223,27 @@ class ConsoleAPI:
     def schedule(self):
         """What the host scheduler actually has registered — never a guess."""
         st = _schedule.status()
-        log = self.repo_root / "data" / "schedule.log"
-        tail = ""
-        if log.is_file():
+        # One log per scheduled command now — they used to share a file, and
+        # cmd.exe grants no write sharing on a `>>` target, so a long run made
+        # every other task's logging fail and report failure. Read whichever
+        # exist, newest last, and keep the legacy single file so history
+        # written before the split is not silently dropped from this view.
+        candidates = [self.repo_root / "data" / "schedule.log"]
+        candidates += sorted(self.repo_root.glob("data/schedule-*.log"))
+        chunks = []
+        for log in candidates:
+            if not log.is_file():
+                continue
             try:
                 # The scheduled run's own account of itself. schtasks records
                 # an exit code and nothing else, so without this the console
                 # could say "installed" and nothing about whether it works.
-                tail = log.read_text(encoding="utf-8", errors="replace")[-4000:]
+                body = log.read_text(encoding="utf-8", errors="replace")[-4000:]
             except OSError:
-                tail = ""
+                continue
+            if body.strip():
+                chunks.append(f"--- {log.name} ---\n{body}")
+        tail = "\n".join(chunks)[-8000:]
         return {
             "ok": True,
             "installed": st.get("installed", False),

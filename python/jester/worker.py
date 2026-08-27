@@ -123,6 +123,23 @@ def worker_argv(
     return cmd
 
 
+#: How long one ingestion run may take before it is killed.
+#:
+#: 900s was set when the list was sixteen sources of forum threads. It is now
+#: 95 sources across nine platforms, and three of the additions are individually
+#: slow: podcast episodes are a megabyte of transcript each, the Reddit listing
+#: now pages with ?after= (a full stealth-browser navigation per page), and the
+#: comment tree is expanded before it is read. A full walk went past 900s and
+#: was killed mid-run — "ingest failed: worker exceeded 900s and was killed",
+#: which loses whatever the run had not yet enqueued.
+#:
+#: A kill is not a safety mechanism here. The worker already bounds itself by
+#: depth ceilings and the run budget, so the timeout exists only to stop a
+#: genuinely hung fetch — and an hour is still far short of any healthy run
+#: while being long enough that a slow one finishes rather than dying.
+DEFAULT_INGEST_TIMEOUT = 3600
+
+
 def ingest(
     config_dir,
     db_path,
@@ -132,7 +149,7 @@ def ingest(
     only=None,
     max_comments=None,
     max_posts=None,
-    timeout=900,
+    timeout=DEFAULT_INGEST_TIMEOUT,
     counts=None,
 ):
     """Run the Go worker once. Returns the same dict shape the console renders.
@@ -140,6 +157,10 @@ def ingest(
     Never raises: a scheduled job that dies on a missing toolchain leaves no
     account of itself, so every failure comes back as `{"ok": False, "error"}`.
     """
+    # An explicit None means "the caller has no opinion", not "run forever" —
+    # which is what subprocess.run would do with it.
+    if timeout is None:
+        timeout = DEFAULT_INGEST_TIMEOUT
     go_bin = go_binary()
     if not go_bin:
         return {

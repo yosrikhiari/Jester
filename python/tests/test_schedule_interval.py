@@ -126,8 +126,35 @@ def test_launcher_captures_output():
     """schtasks records an exit code and nothing else, so without this a
     scheduled run leaves no account of itself."""
     script = S.launcher_script("db", "cfg", "py.exe")
-    assert "schedule.log" in script
+    assert "schedule-cycle.log" in script
     assert "2>&1" in script
+
+
+def test_each_command_logs_to_its_own_file():
+    """They used to share data/schedule.log, and cmd.exe grants no write
+    sharing on a `>>` target — so while a long run held it, every other task's
+    very FIRST echo failed with a sharing violation, the line vanished, and
+    because that echo is the batch's last statement the task reported failure.
+    A 2h21m treat run made both other tasks look broken."""
+    logs = {c: str(S.log_path(c)) for c in ("cycle", "ingest", "treat")}
+    assert len(set(logs.values())) == 3, logs
+    for command, log in logs.items():
+        assert log in S.launcher_script("db", "cfg", "py.exe", command=command)
+
+
+def test_the_exit_code_survives_the_redirect():
+    """Written the natural way — `echo ... %ERRORLEVEL%>>"log"` — cmd parses
+    the digit immediately before `>>` as a FILE HANDLE, so `1>>` redirects
+    stdout instead of printing the code. Every single-digit exit code this
+    scheduler produced was swallowed that way; 9009 was the only one that ever
+    reached the log, because four digits are not a handle number."""
+    script = S.launcher_script("db", "cfg", "py.exe", command="treat")
+    assert "%ERRORLEVEL%" in script
+    # The redirect must come BEFORE the echo, never after the variable.
+    assert '%ERRORLEVEL%>>' not in script
+    assert '%ERRORLEVEL% >>' not in script
+    exit_line = next(l for l in script.splitlines() if "exited" in l)
+    assert exit_line.startswith(">>"), exit_line
 
 
 def test_launcher_uses_crlf():
@@ -326,3 +353,22 @@ def test_installed_options_reads_the_file_the_scheduler_runs(tmp_path, monkeypat
 def test_installed_options_is_empty_when_nothing_is_registered(tmp_path, monkeypatch):
     monkeypatch.setattr(S, "repo_root", lambda: tmp_path)
     assert S.installed_options() == {}
+
+
+def test_an_ingest_run_is_given_room_to_finish():
+    """900s was set when the list was sixteen sources of forum threads. It is
+    now 95 across nine platforms, three of them individually slow — podcast
+    transcripts are a megabyte each, the Reddit listing pages with ?after=
+    (a full stealth-browser navigation per page), and the comment tree is
+    expanded before it is read. A full walk went past 900s and was killed
+    mid-run, losing whatever it had not yet enqueued."""
+    from jester import worker
+
+    assert worker.DEFAULT_INGEST_TIMEOUT >= 3600
+    # A caller with no opinion must get the default, not subprocess.run's
+    # "no timeout at all".
+    import inspect
+
+    src = inspect.getsource(worker.ingest)
+    assert "if timeout is None" in src
+    assert "timeout = DEFAULT_INGEST_TIMEOUT" in src
