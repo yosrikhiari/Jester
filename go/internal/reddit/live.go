@@ -370,6 +370,55 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 	return out, nil
 }
 
+// expandComments clicks the tree open until it stops growing, and returns how
+// many comments that added.
+//
+// Bounded at three rounds because it CONVERGES: measured live, round one takes
+// a 31-comment thread from 25 to 30 and rounds two and three add nothing while
+// still clicking a dozen controls each. Without the growth check it would
+// happily keep pressing the same buttons for as long as the loop allowed, on a
+// page served by a bot detector.
+//
+// Failures are swallowed on purpose. Everything here is best-effort on top of
+// a thread that has ALREADY loaded: if the expansion errors, the caller still
+// reads the 25 comments it would have had before this existed. Returning an
+// error would turn a bonus into a reason to lose the whole thread.
+func expandComments(ctx context.Context) int {
+	const maxRounds = 3
+	before, err := evalInt(ctx, COUNT_JS)
+	if err != nil {
+		return 0
+	}
+	have := before
+	for round := 0; round < maxRounds; round++ {
+		var clicked int
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(actx context.Context) error {
+			return evalInto(actx, EXPAND_JS, &clicked)
+		})); err != nil || clicked == 0 {
+			break
+		}
+		// The partials load over the network, so the count cannot be read back
+		// immediately. Pace() is the same politeness the rest of this file uses.
+		if err := chromedp.Run(ctx, chromedp.Sleep(Pace(2*time.Second))); err != nil {
+			break
+		}
+		now, err := evalInt(ctx, COUNT_JS)
+		if err != nil || now <= have {
+			// Clicked things and nothing appeared: the tree is fully open, and
+			// another round would just press the same controls again.
+			break
+		}
+		have = now
+	}
+	if have > before {
+		// R55: say what the expansion bought. A silent gain is indistinguishable
+		// from a no-op the day the selectors stop matching.
+		fmt.Printf("[live]   expanded %d more comment(s) from the collapsed tree (%d -> %d)\n",
+			have-before, before, have)
+	}
+	return have - before
+}
+
 // FetchThreadURL extracts comments from one already-resolved thread URL.
 // This is the path a `kind: thread` source takes — no listing walk at all.
 func FetchThreadURL(ctx context.Context, threadURL string, delay time.Duration,
@@ -380,11 +429,16 @@ func FetchThreadURL(ctx context.Context, threadURL string, delay time.Duration,
 		chromedp.Navigate(threadURL),
 		chromedp.Sleep(Pace(delay)),
 		waitPresent(`shreddit-comment`),
-		chromedp.ActionFunc(func(actx context.Context) error {
-			return evalInto(actx, DOMJS, &raw)
-		}),
 	); err != nil {
 		return nil, nil, fmt.Errorf("navigate thread: %w", err)
+	}
+	// Reveal the hidden tail of the tree BEFORE reading it. Skipping this is
+	// what capped every Reddit thread at 25 comments and depth 2.
+	expandComments(ctx)
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(actx context.Context) error {
+		return evalInto(actx, DOMJS, &raw)
+	})); err != nil {
+		return nil, nil, fmt.Errorf("read thread: %w", err)
 	}
 
 	// A cold fingerprint burns its first navigation on the challenge (see

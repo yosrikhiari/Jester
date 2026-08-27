@@ -11,6 +11,42 @@ import (
 	"strings"
 )
 
+// EXPAND_JS clicks every control that reveals more of the comment tree, and
+// returns how many it pressed.
+//
+// MEASURED. A thread page renders exactly 25 comments however many the thread
+// holds — both threads sampled hit that number precisely — and what is missing
+// is the DEEP end, which is the half worth having. One pass of this on a
+// 31-comment thread took it from 25 comments across depths 0-2 to 30 across
+// depths 0-3: 97% of the thread instead of 81%, and a whole level of replies
+// that had never once been reachable. The archive's Reddit rows stopped at
+// depth 2 while Lemmy's reached 6, on the same kind of discussion.
+//
+// Matching on TEXT rather than on a stable selector is deliberate and is the
+// weak point: shreddit renders these as faceplate-partial, button, summary and
+// anchor depending on where in the tree they sit, and the only thing they
+// reliably share is saying "more replies" / "N more". A layout change breaks
+// this into a no-op — which degrades to today's behaviour rather than to a
+// wrong answer, and the caller reports what it gained so a silent zero is
+// visible rather than assumed.
+const EXPAND_JS = `() => {
+    let n = 0;
+    const hit = (e) => { try { e.click(); n++; } catch (_) {} };
+    for (const p of document.querySelectorAll('faceplate-partial')) {
+      const src = p.getAttribute('src') || '';
+      if (!src.includes('more-comments')) continue;
+      hit(p.querySelector('button, summary, a') || p);
+    }
+    for (const e of document.querySelectorAll('button, summary, a')) {
+      if (/more repl|more comment|view more|load more|[0-9]+ more/i.test(e.textContent || '')) hit(e);
+    }
+    return n;
+  }`
+
+// COUNT_JS is how many comments are currently in the DOM, used to tell an
+// expansion that worked from one that only clicked things.
+const COUNT_JS = `() => document.querySelectorAll('shreddit-comment').length`
+
 // DOMJS evaluates inside the loaded thread page and returns normalized rows.
 //
 // The attribute list is not guesswork: it is what a live r/selfhosted thread

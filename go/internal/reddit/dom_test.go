@@ -179,3 +179,53 @@ func TestPermalinksJSReturnsThePaginationCursor(t *testing.T) {
 		t.Fatalf("fullname did not decode: %+v", row)
 	}
 }
+
+// ── comment-tree expansion (A11) ─────────────────────────────────────────────
+
+// A thread page renders exactly 25 comments however many the thread holds —
+// both threads sampled hit that number precisely — and what is missing is the
+// deep end. The archive's Reddit rows stopped at depth 2 while Lemmy's reached
+// 6 on the same kind of discussion. Measured live, one expansion pass took a
+// 31-comment thread from 25 across depths 0-2 to 31 across depths 0-3.
+func TestExpandJSPressesEveryKindOfRevealControl(t *testing.T) {
+	// shreddit renders these as faceplate-partial, button, summary and anchor
+	// depending on where in the tree they sit. Missing any one of them leaves
+	// part of the tree closed.
+	for _, want := range []string{
+		"faceplate-partial", "more-comments", "button", "summary",
+		"more repl", "load more",
+	} {
+		if !strings.Contains(EXPAND_JS, want) {
+			t.Errorf("EXPAND_JS does not reach %q", want)
+		}
+	}
+	// It must report how many it pressed, or the caller cannot tell a tree
+	// that was already open from selectors that stopped matching.
+	if !strings.Contains(EXPAND_JS, "return n") {
+		t.Error("EXPAND_JS must return the number of controls pressed")
+	}
+	// A click that throws must not abandon the rest of the tree.
+	if !strings.Contains(EXPAND_JS, "catch") {
+		t.Error("one unclickable control must not stop the pass")
+	}
+}
+
+func TestCountJSCountsRenderedComments(t *testing.T) {
+	// The growth check is what stops the loop: EXPAND_JS happily keeps
+	// pressing the same buttons, so only a count that fails to rise can say
+	// the tree is fully open.
+	if !strings.Contains(COUNT_JS, "shreddit-comment") {
+		t.Error("COUNT_JS must count the same elements DOMJS reads")
+	}
+	if !strings.Contains(COUNT_JS, "length") {
+		t.Error("COUNT_JS must return a count")
+	}
+}
+
+func TestExpandAndReadAgreeOnWhatACommentIs(t *testing.T) {
+	// If these ever diverge, the loop would measure growth in one population
+	// and extract from another — and could spin until its round cap every time.
+	if !strings.Contains(DOMJS, "shreddit-comment") || !strings.Contains(COUNT_JS, "shreddit-comment") {
+		t.Fatal("DOMJS and COUNT_JS must agree on the comment element")
+	}
+}
