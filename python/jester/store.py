@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS nuggets (
     platform           TEXT,
     run_id             TEXT,
     embedding_model    TEXT,
+    extractor_model    TEXT,
     synthesized_at     TEXT,
     trivial            INTEGER DEFAULT 0,
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
@@ -173,6 +174,9 @@ _ADD_COLUMNS = [
     "ALTER TABLE nuggets ADD COLUMN thread_id TEXT",
     "ALTER TABLE nuggets ADD COLUMN engagement_score REAL",
     "ALTER TABLE nuggets ADD COLUMN timestamp TEXT",
+    # Which extractor produced the insight. Without it a run that crossed its
+    # daily allowance halfway leaves real and stand-in rows indistinguishable.
+    "ALTER TABLE nuggets ADD COLUMN extractor_model TEXT",
     "ALTER TABLE runs ADD COLUMN trivial_share REAL",
     "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
     "ALTER TABLE runs ADD COLUMN n_posts INTEGER",
@@ -581,7 +585,8 @@ def _detail_value(n: Nugget, col: str):
 def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
     base_cols = [
         "unique_key", "category", "raw_text", "extracted_insight", "source_url",
-        "platform", "run_id", "embedding_model", "synthesized_at", "trivial",
+        "platform", "run_id", "embedding_model", "extractor_model",
+        "synthesized_at", "trivial",
         "needs_reembed", "embedding_id", "thread_id", "engagement_score",
         "timestamp", "extra",
     ]
@@ -594,6 +599,7 @@ def insert_nugget(db: sqlite3.Connection, n: Nugget) -> None:
         n.platform,
         n.run_id,
         "nomic-embed-text",
+        n.extractor_model or "",
         n.synthesized_at if n.synthesized_at else None,
         _nugget_trivial(n),
         1 if n.needs_reembed else 0,
@@ -807,7 +813,7 @@ def list_nuggets(
     sql = (
         "SELECT unique_key, category, raw_text, extracted_insight, platform, "
         "source_url, thread_id, run_id, trivial, needs_reembed, "
-        "engagement_score, synthesized_at, created_at, "
+        "engagement_score, synthesized_at, created_at, extractor_model, "
         # Everything the scrapers now capture. Selecting it here is what lets
         # the console and the CSV export show it instead of holding it in a
         # column nothing reads.

@@ -111,6 +111,9 @@ def extract(
             extracted_insight=draft.extracted_insight or body[:200],
             category=category,
             engagement_score=float(c.get("score", c.get("upvotes", 0)) or 0),
+            # Provenance travels WITH the row. A run-level count of fallbacks
+            # cannot say which of 9,000 nuggets was one of them.
+            extractor_model=draft.model,
             timestamp=now,
             synthesized_at="",  # R41/R50: NULL until a synthesizer claims this nugget
             needs_reembed=False,

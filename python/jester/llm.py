@@ -15,6 +15,20 @@ from jester.models import Idea, Nugget
 class NuggetDraft:
     extracted_insight: str
     category: str
+    #: WHICH model produced this, or "fake-llm" for the deterministic stand-in.
+    #:
+    #: Every Groq agent falls back to that stand-in on a bad call, which is
+    #: right for one failure and invisible in aggregate: the extractor runs
+    #: once per comment against a 1,000-request daily allowance, so a run over
+    #: a 17,000-comment queue gets real extraction for the first thousand and
+    #: truncated raw bodies for the rest — archived as ordinary nuggets with
+    #: nothing on the row to say which is which.
+    #:
+    #: Synthesis already refuses to archive its own degraded output ("NOT
+    #: archived: 63 group(s)"). Extraction could not, because by the time a
+    #: draft reached the archivist the difference had been thrown away. This
+    #: is that difference, kept.
+    model: str = ""
 
 
 ALLOWED_CATEGORIES = {
@@ -139,7 +153,11 @@ class FakeLLM:
             category = "pain_point"
         else:
             category = "pain_point"
-        return NuggetDraft(extracted_insight=comment_body.strip()[:200], category=category)
+        return NuggetDraft(
+            extracted_insight=comment_body.strip()[:200],
+            category=category,
+            model=self.name,
+        )
 
 
 class OllamaLLM:
@@ -185,7 +203,9 @@ class OllamaLLM:
             category = obj.get("category")
             if category not in ALLOWED_CATEGORIES:
                 category = "pain_point"  # mirror extractor.extract's coercion rule
-            return NuggetDraft(extracted_insight=insight, category=category)
+            return NuggetDraft(
+                extracted_insight=insight, category=category, model=self._model
+            )
         return FakeLLM().extract(body)  # deterministic fallback: dead model != dead run
 
 
@@ -705,7 +725,10 @@ class GroqLLM(_GroqAgent):
             category = obj.get("category")
             if category not in ALLOWED_CATEGORIES:
                 category = "pain_point"  # mirror extractor.extract's coercion rule
-            return NuggetDraft(extracted_insight=insight, category=category)
+            return NuggetDraft(
+                extracted_insight=insight, category=category, model=self._model
+            )
+        # The stand-in names itself, so the row records what actually ran.
         return FakeLLM().extract(body)
 
 

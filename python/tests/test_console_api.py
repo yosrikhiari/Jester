@@ -384,3 +384,66 @@ def test_a_queue_on_a_database_with_no_batches_table_is_empty_not_an_error(api):
     assert res["ok"] is True
     assert res["total_batches"] == 0
     assert res["batches"] == []
+
+
+# ── extraction provenance (D1 groundwork) ────────────────────────────────────
+# The extractor runs once per comment against a 1,000-request daily allowance,
+# so any run over the 17,000-comment queue crosses into the deterministic
+# stand-in partway through. Synthesis has refused to archive its own degraded
+# output for months; extraction archived it silently, and nothing on the row
+# said which rows were real.
+
+def test_every_draft_names_the_model_that_made_it():
+    from jester.llm import FakeLLM, NuggetDraft
+
+    d = FakeLLM().extract("the backup fails silently every single week")
+    assert d.model == FakeLLM.name
+    # The field exists on the dataclass rather than being bolted on by callers.
+    assert "model" in NuggetDraft.__dataclass_fields__
+
+
+def test_a_real_extractor_names_itself_and_its_fallback_names_the_standin():
+    from jester.llm import FakeLLM, OllamaLLM
+
+    class Answers:
+        def chat(self, **kw):
+            return {"message": {"content":
+                    '{"category":"pain_point","insight":"Backups fail silently."}'}}
+
+    class Refuses:
+        def chat(self, **kw):
+            return {"message": {"content": "not json at all"}}
+
+    good = OllamaLLM(model="some-model", client=Answers()).extract("x")
+    assert good.model == "some-model"
+    assert good.extracted_insight == "Backups fail silently."
+
+    bad = OllamaLLM(model="some-model", client=Refuses()).extract("x")
+    # The row must say the STAND-IN produced it, not the model that failed.
+    assert bad.model == FakeLLM.name
+
+
+def test_the_nugget_carries_the_extractor_that_made_it():
+    from jester.agents.extractor import extract
+    from jester.llm import FakeLLM
+
+    nuggets = extract(
+        [{"body": "every deploy breaks the staging database", "fingerprint": "f1"}],
+        FakeLLM(), platform="reddit", thread_id="t1",
+        source_url="https://example.invalid/t1", run_id="r1",
+    )
+    assert nuggets[0].extractor_model == FakeLLM.name
+
+
+def test_provenance_survives_a_round_trip_through_the_archive(api):
+    from jester.models import Nugget
+    from jester.store import insert_nugget, list_nuggets
+
+    insert_nugget(api.db, Nugget(
+        unique_key="reddit:t1:c1", platform="reddit", raw_text="x",
+        extracted_insight="y", category="pain_point",
+        extractor_model="openai/gpt-oss-20b",
+    ))
+    api.db.commit()
+    row = next(r for r in list_nuggets(api.db) if r["unique_key"] == "reddit:t1:c1")
+    assert row["extractor_model"] == "openai/gpt-oss-20b"

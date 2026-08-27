@@ -25,6 +25,8 @@ from jester.fetchers import FixtureFetcher, MOCK_SAMPLE  # noqa: F401 (re-export
 from jester.llm import (
     PROMPT_VERSIONS,
     RUBRIC_VERSION,
+    FakeLLM,
+    provider_for,
     select_critic_llm,
     select_extractor_llm,
     select_synthesizer_llm,
@@ -136,8 +138,11 @@ def _idea_vector_for(cfg, db_path):
 def _platform_counts(meta):
     """M3.2: kept comments per platform, from the post-prefilter metadata."""
     counts = {}
-    for platform, _source, _thread, _fp in meta:
-        key = platform or "unknown"
+    # Positional slice rather than a fixed unpack: the row grew a batch id so a
+    # degraded extraction can leave its own batch queued, and this only ever
+    # wanted the first field.
+    for row in meta:
+        key = row[0] or "unknown"
         counts[key] = counts.get(key, 0) + 1
     return dict(sorted(counts.items()))
 
@@ -317,6 +322,11 @@ def cmd_run(args):
                     r["source"] or "",
                     r["thread_id"] or "",
                     c.get("fingerprint"),
+                    # Which batch this comment came from. Needed so a run that
+                    # crosses its extractor allowance can leave the affected
+                    # batches PENDING instead of marking them done with
+                    # stand-in output inside.
+                    r["id"],
                 )
             )
             raw_comments.append(
@@ -369,9 +379,13 @@ def cmd_run(args):
         prefilter_funnel=funnel,
     )
 
-    nuggets = []
-    for (platform, source, thread_id, _fp), c in zip(meta, comments):
-        nuggets += extract(
+    # Which extractor was ASKED for. A configured stand-in is a choice; a
+    # stand-in result from a configured real model is a failure, and the two
+    # must not be archived the same way.
+    extractor_provider = provider_for(cfg.thresholds, "extractor")
+    nuggets, degraded_batches, degraded = [], set(), 0
+    for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
+        produced = extract(
             [c],
             llm,
             platform=platform,
@@ -379,6 +393,18 @@ def cmd_run(args):
             source_url=source,
             run_id=args.run,
         )
+        for n in produced:
+            if extractor_provider != "fake" and n.extractor_model == FakeLLM.name:
+                # R29/R40: the model was asked and did not answer — most often
+                # because a 1,000-request daily allowance ran out partway
+                # through a 17,000-comment queue. Archiving the stand-in's
+                # truncated body here would put a row in the corpus that looks
+                # exactly like a real extraction and is not one. Synthesis has
+                # refused to do this for months; extraction now does too.
+                degraded += 1
+                degraded_batches.add(batch_id)
+                continue
+            nuggets.append(n)
 
     # R37: tag triviality pre-archive. Floor, not gate — nothing is filtered.
     for n in nuggets:
@@ -389,11 +415,24 @@ def cmd_run(args):
     kept = archivist.run(nuggets)
 
     for r, payload in readable:
+        if r["id"] in degraded_batches:
+            # Leave it queued, and leave its comments OUT of the skip-list:
+            # marking either would make this material unreachable forever on
+            # the strength of a rate limit.
+            continue
         mark_batch_processed(db, r["id"])
         mark_comments_ingested(
             db,
             r["thread_id"],
             [c.get("fingerprint") for c in payload if isinstance(c, dict)],
+        )
+    if degraded:
+        # No silent caps. "kept 812" on a run that quietly dropped 4,000
+        # comments to a rate limit is the same line as a clean run.
+        print(
+            f"NOT archived: {degraded} comment(s) whose extraction fell back to "
+            f"the deterministic stand-in; {len(degraded_batches)} batch(es) stay "
+            "queued for a run with allowance left"
         )
 
     update_run_summary(

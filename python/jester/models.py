@@ -21,6 +21,14 @@ class Nugget:
     needs_reembed: bool = False
     run_id: str = ""
     trivial: Optional[bool] = None  # R37 judge verdict; None = unset (legacy fallback)
+    #: Which extractor actually produced `extracted_insight`, or "fake-llm" for
+    #: the deterministic stand-in. Empty on rows written before this existed.
+    #:
+    #: The archive is only as trustworthy as its ability to say which rows are
+    #: real. With a 1,000-request daily allowance and a 17,000-comment queue,
+    #: any run long enough to matter WILL cross into the stand-in partway
+    #: through, and without this the two are the same row.
+    extractor_model: str = ""
 
     # ---- what the platform published about the comment --------------------
     # Every count here is Optional and defaults to None, which means "this
