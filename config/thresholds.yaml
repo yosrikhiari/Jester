@@ -28,22 +28,52 @@ max_threads_per_source: 3
 #
 # Raising the bottom two is the one change here that could get a fingerprint
 # flagged; they stay where they were.
+# Depth is balanced by measured YIELD, not by "where is fetching cheap".
+#
+# The first version of this table optimised for the latter and made corpus
+# concentration WORSE. Measured comments kept per post:
+#
+#   hackernews   70.3      discourse  13.4      reddit  6.3      youtube  1.0
+#
+# At depth 40, one Hacker News turn implies 2,814 comments against a run
+# budget of 1,200 — so a single HN source consumed the entire run, the
+# staleness rotation never reached the other 82 sources, and HN went from 78%
+# to 85% of the archive on the day 55 new sources were added.
+#
+# The rule now: depth x avg-yield should land near the same figure for every
+# platform, so a turn at any source costs a comparable slice of the budget and
+# the rotation actually rotates. Reddit and Stack Exchange stay below their
+# balanced share on purpose — Reddit because more depth there is the one real
+# §1201 risk, Stack Exchange because it is quota-metered.
 max_threads_per_platform:
-  hackernews: 40
+  # 3 x 70.3 = ~211
+  hackernews: 3
   # Stack Exchange is sanctioned and keyless, but METERED, which none of the
   # others are. Each question costs two requests (question, then answers) plus
   # one listing per site per run, so depth 3 is 7 requests per site per run.
   # Against the keyless 300/day-per-IP quota that is already tight across six
   # sites on a 30-minute schedule. Set STACKEXCHANGE_KEY (free, no approval)
   # to raise the ceiling to 10,000/day and this can go much higher.
-  # GitHub: 60 core requests/hour and 10 search/minute UNAUTHENTICATED. Each
-  # issue costs two core requests plus one search per repo per run, so depth 3
-  # is 7 requests per repo. Ten repos would exhaust the hourly budget in one
-  # run. GITHUB_TOKEN (a scopeless personal access token - it authenticates
-  # the rate limit, not any permission) raises it to 5,000/hour.
-  github: 3
-  stackexchange: 3
-  discourse: 25
+  # GitHub issues are nearly as dense as HN: 255 comments from 3 rclone
+  # issues, ~85 each. 2 x 85 = ~170.
+  #
+  # It is also rate-limited: 60 core requests/hour unauthenticated, and each
+  # issue costs two core requests plus one search per repo. Ten repos at this
+  # depth is 50 requests — most of the hourly budget in a single run.
+  # GITHUB_TOKEN (a scopeless personal access token; it authenticates the rate
+  # limit, not any permission) raises the ceiling to 5,000/hour.
+  github: 2
+  # 12 x 13.4 = ~161
+  discourse: 12
+  # Deliberately BELOW its balanced share. Stack Exchange yields little per
+  # question after prefiltering, so balance would argue for 20+ — but it is
+  # metered at 300 requests/day keyless and each question costs two.
+  # STACKEXCHANGE_KEY lifts that to 10,000/day and this can rise.
+  stackexchange: 4
+  # Also deliberately below balance. At 6.3 comments/post, balance would put
+  # Reddit near 25 — and Reddit is the one platform where more depth is a real
+  # DMCA §1201 exposure, on a stealth-browser path with no licence key. It
+  # stays a minority voice by choice, which is the entire strategic point.
   reddit: 3
   youtube: 2
 # Skip threads too quiet to be worth a fetch. Only the API-backed adapters

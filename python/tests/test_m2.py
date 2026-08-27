@@ -35,10 +35,10 @@ def test_r29_competition_imputed_when_unchecked():
         assert SCORE_MIN <= compute_overall(d, f, None) <= SCORE_MAX
 
 
-def test_r48_golden_gate_structural(tmp_path):
+def test_r48_golden_gate_structural(tmp_path, offline_config):
     db_path = tmp_path / "j.db"
     cfg = load_config(REPO_CONFIG)
-    cmd_run(_ns(config=str(REPO_CONFIG), db=str(db_path), run="gate-run"))
+    cmd_run(_ns(config=str(offline_config), db=str(db_path), run="gate-run"))
 
     db = open_db(db_path)
     ideas = list_ideas(db)
@@ -78,10 +78,10 @@ def test_load_thresholds_merges_model_block():
     assert SCORE_MIN <= thr.good_idea_min <= SCORE_MAX
 
 
-def test_cmd_mark_updates_status(tmp_path):
+def test_cmd_mark_updates_status(tmp_path, offline_config):
     db_path = tmp_path / "j.db"
     cfg = load_config(REPO_CONFIG)
-    cmd_run(_ns(config=str(REPO_CONFIG), db=str(db_path), run="mark-run"))
+    cmd_run(_ns(config=str(offline_config), db=str(db_path), run="mark-run"))
     db = open_db(db_path)
     idea_id = list_ideas(db)[0]["id"]
 
@@ -167,3 +167,88 @@ def test_r48_golden_gate_enforced_in_run(tmp_path):
 
     # Nothing was persisted when the gate rejected the idea.
     assert list_ideas(db) == []
+
+
+# ---- degraded synthesis must not reach the archive -----------------------
+
+
+def test_a_fallback_group_is_not_archived():
+    """A stand-in "idea" is a truncated comment with a score attached.
+
+    Seen live: a Groq daily token limit turned one night's run into 26
+    archived ideas titled things like "[hackernews] bro how is this different
+    from just asking Claude?". The run summary DID report degrading 36 times;
+    the ideas were written anyway, and the summary is not what anyone reads a
+    week later.
+    """
+    from jester.agents.synthesizer import Synthesizer
+    from jester.llm import FakeCriticLLM, IdeaDraft
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db = open_db(":memory:")
+    for i in range(3):
+        insert_nugget(db, Nugget(unique_key=f"k{i}", platform="reddit",
+                                 thread_id="t1", raw_text=f"pain {i}",
+                                 extracted_insight=f"pain {i}"))
+
+    class AlwaysFallsBack:
+        name = "model-that-is-rate-limited"
+
+        def __init__(self):
+            self.fallbacks = 0
+
+        def synthesize(self, nuggets):
+            # Exactly what _GroqAgent does on a 429: bump the counter and
+            # return the deterministic stand-in's output.
+            self.fallbacks += 1
+            return IdeaDraft(title="[reddit] pain 0", problem_statement="p",
+                             proposed_solution="s")
+
+    synth = Synthesizer(db, load_thresholds(REPO_THRESHOLDS))
+    llm = AlwaysFallsBack()
+    ideas = synth.run(llm, FakeCriticLLM(), run_id="degraded")
+
+    assert ideas == [], "a stand-in idea must not be archived"
+    assert synth.skipped_fallback == 1, "the skip must be counted, not silent"
+    assert db.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] == 0
+
+    # …and the nuggets stay unclaimed, so a later run with a working model
+    # picks them up rather than losing them.
+    unclaimed = db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE synthesized_at IS NULL"
+    ).fetchone()[0]
+    assert unclaimed == 3, "skipped nuggets must stay queued"
+
+
+def test_a_healthy_group_is_still_archived():
+    """The guard must not swallow good output: only a group whose OWN call
+    fell back is skipped."""
+    from jester.agents.synthesizer import Synthesizer
+    from jester.llm import FakeCriticLLM, IdeaDraft
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db = open_db(":memory:")
+    for i in range(3):
+        insert_nugget(db, Nugget(unique_key=f"k{i}", platform="reddit",
+                                 thread_id="t1", raw_text=f"pain {i}",
+                                 extracted_insight=f"pain {i}"))
+
+    class Healthy:
+        name = "a-real-model"
+        # A counter that exists but never increments — the shape a working
+        # _GroqAgent has after a successful call.
+        fallbacks = 0
+
+        def synthesize(self, nuggets):
+            return IdeaDraft(title="Backup Sentinel",
+                             problem_statement="backups fail silently",
+                             proposed_solution="watch and alert")
+
+    synth = Synthesizer(db, load_thresholds(REPO_THRESHOLDS))
+    ideas = synth.run(Healthy(), FakeCriticLLM(), run_id="healthy")
+
+    assert len(ideas) == 1
+    assert synth.skipped_fallback == 0
+    assert ideas[0].title == "Backup Sentinel"

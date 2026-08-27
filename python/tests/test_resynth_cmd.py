@@ -77,14 +77,14 @@ def test_run_rows_clusters_exactly_the_given_rows(tmp_path):
 
 # --- Tasks 2-3: cmd_resynth -------------------------------------------------------
 
-def test_resynth_creates_new_idea_preserving_original(tmp_path):
+def test_resynth_creates_new_idea_preserving_original(tmp_path, offline_config):
     from jester.cli import cmd_resynth
 
     p = tmp_path / "j.db"
     db = open_db(str(p))
     iid = _seed_grouped_idea(db)
 
-    cmd_resynth(_ns(db=str(p), config=str(REPO_CONFIG), id=iid))
+    cmd_resynth(_ns(db=str(p), config=str(offline_config), id=iid))
 
     db2 = open_db(str(p))
     ideas = db2.execute("SELECT id, title FROM ideas ORDER BY id").fetchall()
@@ -97,7 +97,7 @@ def test_resynth_creates_new_idea_preserving_original(tmp_path):
     assert got == ["reddit:t1:c0", "reddit:t1:c1"]
 
 
-def test_resynth_refuses_while_run_active(tmp_path):
+def test_resynth_refuses_while_run_active(tmp_path, offline_config):
     from jester.cli import cmd_resynth
 
     p = tmp_path / "j.db"
@@ -106,11 +106,11 @@ def test_resynth_refuses_while_run_active(tmp_path):
     start_run(db, "active")
 
     with pytest.raises(SystemExit) as exc:
-        cmd_resynth(_ns(db=str(p), config=str(REPO_CONFIG), id=iid))
+        cmd_resynth(_ns(db=str(p), config=str(offline_config), id=iid))
     assert exc.value.code == 1
 
 
-def test_resynth_loud_fail_on_null_raw_text(tmp_path):
+def test_resynth_loud_fail_on_null_raw_text(tmp_path, offline_config):
     from jester.cli import cmd_resynth
 
     p = tmp_path / "j.db"
@@ -120,16 +120,16 @@ def test_resynth_loud_fail_on_null_raw_text(tmp_path):
     db.commit()
 
     with pytest.raises(SystemExit) as exc:
-        cmd_resynth(_ns(db=str(p), config=str(REPO_CONFIG), id=iid))
+        cmd_resynth(_ns(db=str(p), config=str(offline_config), id=iid))
     assert exc.value.code == 1
 
 
-def test_resynth_unknown_id_exits_one(tmp_path):
+def test_resynth_unknown_id_exits_one(tmp_path, offline_config):
     from jester.cli import cmd_resynth
 
     p = tmp_path / "j.db"
     open_db(str(p))
 
     with pytest.raises(SystemExit) as exc:
-        cmd_resynth(_ns(db=str(p), config=str(REPO_CONFIG), id=999))
+        cmd_resynth(_ns(db=str(p), config=str(offline_config), id=999))
     assert exc.value.code == 1

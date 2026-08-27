@@ -81,6 +81,11 @@ class Synthesizer:
         # returned as ideas — nothing new was archived — so without this the
         # run would report "0 ideas" on a night that did real work.
         self.merged: List[MergeResult] = []
+        #: Groups whose synthesis fell back to the deterministic stand-in and
+        #: were therefore NOT archived. Reported by the caller: "0 ideas
+        #: because the model was rate-limited" and "0 ideas because nothing
+        #: qualified" are different nights.
+        self.skipped_fallback: int = 0
         # True when a `max_ideas` ceiling ended run() with groups still
         # unclustered, so the caller can say so instead of implying the pool
         # was exhausted.
@@ -109,6 +114,7 @@ class Synthesizer:
         # §37.28 resynth: cluster an explicit subset (manual nugget selection)
         # instead of the NULL-pool. Lone-nugget R50 skip still applies.
         self.merged = []
+        self.skipped_fallback = 0
         if rows is None:
             rows = unprocessed_nuggets(self.db)
         if not rows:
@@ -134,7 +140,27 @@ class Synthesizer:
                 continue
 
             nuggets = [row_to_nugget(r) for r in group_rows]
+
+            # Count fallbacks either side of the call, so a group synthesised
+            # by the deterministic stand-in can be told from one the model
+            # actually wrote.
+            before_fallbacks = int(getattr(synth_llm, "fallbacks", 0) or 0)
             draft = synth_llm.synthesize(nuggets)
+            fell_back = int(getattr(synth_llm, "fallbacks", 0) or 0) > before_fallbacks
+
+            if fell_back:
+                # A stand-in "idea" is a truncated comment with a score
+                # attached. Archiving it is worse than producing nothing:
+                # nothing is visibly nothing, while this looks like output.
+                #
+                # Seen live — a Groq daily token limit turned one night's run
+                # into 26 archived ideas titled things like "[hackernews] bro
+                # how is this different from just asking Claude?". The run
+                # summary DID say it had degraded 36 times; the ideas were
+                # written to the archive regardless, and the summary is not
+                # what anyone reads a week later.
+                self.skipped_fallback += 1
+                continue
 
             platforms = sorted({n.platform for n in nuggets})
             threads = sorted({n.thread_id for n in nuggets})

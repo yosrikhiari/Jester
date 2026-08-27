@@ -130,12 +130,12 @@ def test_compute_floor_flags_failed_batches():
 
 
 # --- Task 5: cmd_run records summary + flags + guard exit on FAILED_BATCHES ---
-def test_cmd_run_records_summary_and_flags(tmp_path):
+def test_cmd_run_records_summary_and_flags(tmp_path, offline_config):
     from jester.cli import cmd_run
     from jester.store import get_runs
 
     db_path = tmp_path / "j.db"
-    cmd_run(_ns(config=str(REPO_CONFIG), db=str(db_path), run="ops-run"))
+    cmd_run(_ns(config=str(offline_config), db=str(db_path), run="ops-run"))
 
     runs = get_runs(open_db(str(db_path)))
     assert runs, "cmd_run must record a run"

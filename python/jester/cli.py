@@ -454,6 +454,16 @@ def cmd_run(args):
             f"stopped at the {args.max_ideas}-idea goal; "
             f"unclustered nuggets stay queued for the next run"
         )
+    if synthesizer.skipped_fallback:
+        # "0 ideas because the model was rate-limited" and "0 ideas because
+        # nothing qualified" are different nights, and only one of them is
+        # worth acting on. The nuggets stay unclaimed, so a later run with a
+        # working model picks them up.
+        print(
+            f"NOT archived: {synthesizer.skipped_fallback} group(s) whose "
+            "synthesis fell back to the deterministic stand-in — those nuggets "
+            "stay queued rather than becoming ideas nobody can trust"
+        )
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
     checkpoint("synthesize")
