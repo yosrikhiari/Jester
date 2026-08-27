@@ -410,6 +410,48 @@ def _http_error_detail(exc) -> str:
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
+class GroqRateLimited(GroqError):
+    """The rate limit outlasted our retries.
+
+    Distinct from GroqError because the two call for opposite responses. A
+    malformed reply or a dead socket is one bad call in an otherwise healthy
+    run, and falling back to the deterministic stand-in for that one comment is
+    right. An exhausted quota is not: falling back there would process the
+    entire backlog into mechanical output, mark it done, and destroy the
+    material — the queue rows are gone and there is no second attempt.
+
+    `retry_after` is what the server said, so a caller can record when it is
+    worth waking up instead of guessing.
+    """
+
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _reset_seconds(exc):
+    """How long the server says until the limit clears, or None.
+
+    Deliberately NOT clamped the way `_retry_delay` is: that cap exists so one
+    comment cannot stall a run for minutes, whereas this feeds a decision about
+    when to attempt the NEXT run — and a daily quota really does reset hours
+    from now. Clamping it to 30s would send treatment back immediately, to be
+    refused again, forever.
+    """
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    for key in (
+        "retry-after",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-reset-tokens",
+    ):
+        seconds = _parse_duration(headers.get(key))
+        if seconds is not None:
+            return seconds
+    return None
+
+
 def _retry_delay(exc, attempt):
     """Honour Retry-After when Groq sends one; otherwise back off 1s, 2s, 4s.
 
@@ -523,8 +565,18 @@ class GroqClient:
                     # `exc` wraps a one-shot file object, so the detail is read
                     # only on the attempt that raises — reading it per attempt
                     # left the final message with an empty body to report.
+                    detail = _http_error_detail(exc)
+                    if exc.code == 429:
+                        # Report what the server said about the reset, so the
+                        # caller can decide between "wait a moment" and "come
+                        # back when the quota rolls over" rather than guessing.
+                        raise GroqRateLimited(
+                            "groq HTTP 429 after %d retries: %s"
+                            % (self.max_retries, detail),
+                            retry_after=_reset_seconds(exc),
+                        ) from exc
                     raise GroqError(
-                        "groq HTTP %s: %s" % (exc.code, _http_error_detail(exc))) from exc
+                        "groq HTTP %s: %s" % (exc.code, detail)) from exc
                 last = GroqError("groq HTTP %s" % exc.code)
                 self._sleep(_retry_delay(exc, attempt))
             except GroqError:
@@ -571,6 +623,12 @@ class _GroqAgent:
         #: the run summary exists to catch — `cmd_run` reports this.
         self.fallbacks = 0
         self.fallback_reasons = []
+        #: Calls lost specifically to an exhausted rate limit, and the longest
+        #: reset the server reported. A caller reads these to decide whether to
+        #: STOP — see GroqRateLimited on why a quota exhaustion must not be
+        #: treated as an ordinary fallback.
+        self.rate_limited = 0
+        self.retry_after = None
 
     @property
     def name(self):
@@ -591,10 +649,25 @@ class _GroqAgent:
         return _chat_content(resp)
 
     def _obj(self, system, user, temperature=0.4):
-        """The parsed object, or None having recorded why on `last_error`."""
+        """The parsed object, or None having recorded why on `last_error`.
+
+        A rate-limit exhaustion is recorded on `rate_limited` as well, because
+        the caller must be able to tell "one call failed, we substituted"
+        from "the quota is gone and everything after this is a substitution".
+        The second is not a degraded run, it is a run that should not have
+        continued.
+        """
         self.last_error = None
         try:
             obj = _parse_json_object(self._complete(system, user, temperature))
+        except GroqRateLimited as exc:
+            self.rate_limited += 1
+            # Keep the LONGEST reset seen: several agents share one key, and
+            # the caller should wait out the worst of them, not the first.
+            if exc.retry_after is not None:
+                self.retry_after = max(self.retry_after or 0.0, float(exc.retry_after))
+            self._note_fallback(str(exc))
+            return None
         except GroqError as exc:
             self._note_fallback(str(exc))
             return None

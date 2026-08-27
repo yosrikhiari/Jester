@@ -509,6 +509,32 @@ def cmd_run(args):
     if "FAILED_BATCHES" in flags:
         sys.exit(1)
 
+    # What the caller needs to decide whether to continue. `jester treat`
+    # reads `rate_limited` to tell "one call failed and we substituted" from
+    # "the quota is gone and everything after this would be a substitution" —
+    # the second must stop the drain rather than process the whole backlog
+    # into mechanical output and mark it done.
+    rate_limited = sum(
+        int(getattr(agent, "rate_limited", 0) or 0)
+        for agent in (llm, synth_llm, critic_llm)
+    )
+    resets = [
+        float(getattr(agent, "retry_after", None) or 0)
+        for agent in (llm, synth_llm, critic_llm)
+        if getattr(agent, "retry_after", None)
+    ]
+    return {
+        "ok": True,
+        "run_id": args.run,
+        "nuggets": len(kept),
+        "ideas": len(ideas),
+        "flags": flags,
+        "rate_limited": rate_limited,
+        # The LONGEST reset any agent saw: they share one key, so waiting out
+        # the shortest would just be refused again.
+        "retry_after": max(resets) if resets else None,
+    }
+
 
 def _parse_eval_line(line):
     """Parse `title | demand | feasibility | [competition]`; competition optional (imputed)."""
@@ -933,6 +959,84 @@ def cmd_backup(args):
     return res
 
 
+def cmd_treat(args):
+    """Process everything the scrapers have queued, then stop.
+
+    THE SPLIT THIS COMPLETES. Scraping is cheap, polite and bounded by how
+    often we are willing to knock on someone's door. Treatment is one LLM call
+    per comment, bounded by a quota that resets on someone else's clock.
+    `cycle` ran both together, which meant the expensive half set the pace for
+    the cheap half — and a quota-exhausted tick still walked every source and
+    then had nothing to process it with.
+
+    So: `ingest` scrapes on its own cadence and the queue grows. `treat` drains
+    the queue whenever the quota allows, and the queue is the buffer between
+    them.
+
+    Refuses to run degraded. Every Groq agent falls back to a deterministic
+    stand-in on failure, which is right for one bad call and catastrophic under
+    an exhausted quota: the whole backlog would be processed into mechanical
+    output and MARKED DONE, with no second chance. So the run stops the moment
+    the limit is hit and leaves the rest queued.
+    """
+    from jester import llm_quota
+
+    db = open_db(args.db)
+    provider = "groq"
+
+    pending = len(pending_batches(db))
+    if not pending:
+        print("nothing to treat: the queue is empty")
+        return {"ok": True, "treated": 0, "pending": 0}
+
+    # Ask the recorded state BEFORE spending a request. This is what makes it
+    # safe to schedule `treat` frequently: when the quota is known to be gone,
+    # it costs one SQLite read and exits.
+    waiting = llm_quota.blocked_for(db, provider)
+    if waiting > 0 and not args.force:
+        st = llm_quota.status(db, provider)
+        print(
+            f"{provider} quota exhausted for another {llm_quota.human(waiting)} "
+            f"(until {st['blocked_until']})"
+        )
+        print(f"  {pending} batch(es) waiting; they keep until it resets")
+        if st["reason"]:
+            print(f"  reason: {st['reason'][:160]}")
+        return {"ok": True, "treated": 0, "pending": pending, "blocked": True}
+
+    print(f"treating {pending} pending batch(es)")
+    if not getattr(args, "run", None):
+        args.run = "treat-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    result = cmd_run(args)
+
+    # cmd_run stamps the agents it used onto the result so the caller can see
+    # whether the work was really done or quietly substituted.
+    limited = (result or {}).get("rate_limited") or 0
+    retry_after = (result or {}).get("retry_after")
+    left = len(pending_batches(db))
+
+    if limited:
+        stamp = llm_quota.record_block(
+            db, provider,
+            retry_after if retry_after is not None else 3600,
+            reason=f"{limited} call(s) lost to the rate limit during {args.run}",
+        )
+        print(
+            f"{provider} rate limit reached after {limited} call(s); "
+            f"not treating the remaining {left} batch(es)"
+        )
+        print(f"  will retry after {stamp}")
+        # Exit 0: stopping on an exhausted quota is the design working, not a
+        # failure. A non-zero exit here would make every scheduler on the box
+        # start emailing about a healthy system.
+        return {"ok": True, "treated": pending - left, "pending": left, "blocked": True}
+
+    llm_quota.clear_block(db, provider)
+    print(f"treated {pending - left} batch(es); {left} still pending")
+    return {"ok": True, "treated": pending - left, "pending": left, "blocked": False}
+
+
 def cmd_schedule(args):
     """D-2: register / inspect / remove the nightly job with the host scheduler."""
     if args.action == "status":
@@ -970,15 +1074,25 @@ def cmd_schedule(args):
             "max_comments": args.max_comments,
             "max_ideas": args.max_ideas,
         }
+        command = getattr(args, "command", None) or "cycle"
+        task = _schedule.TASK_FOR_COMMAND.get(command, _schedule.TASK_NAME)
+        # `treat` takes none of the scrape ceilings — it drains whatever the
+        # scrape half queued, and a --max-posts flag on it would be accepted
+        # and ignored.
+        flags = () if command == "treat" else _schedule.scrape_flags(scope)
         res = _schedule.install(
             at=args.at,
             db=args.db,
             config=args.config,
+            task_name=task,
             every=args.every,
-            extra=_schedule.scrape_flags(scope),
+            extra=flags,
+            command=command,
         )
     elif args.action == "remove":
-        res = _schedule.remove()
+        command = getattr(args, "command", None) or "cycle"
+        res = _schedule.remove(
+            _schedule.TASK_FOR_COMMAND.get(command, _schedule.TASK_NAME))
     else:  # run
         res = _schedule.run_now()
     print(res["detail"])
@@ -1456,6 +1570,15 @@ def main(argv=None):
     sc.add_argument(
         "--max-ideas", type=int, default=None, help="new ideas synthesized per tick"
     )
+    sc.add_argument(
+        "--command",
+        choices=("cycle", "ingest", "treat"),
+        default="cycle",
+        help="which half to schedule. `ingest` scrapes only (no LLM); `treat` "
+             "drains the queue while the quota lasts; `cycle` welds both "
+             "together as before. Each gets its own task, so scraping can run "
+             "often and cheaply while treatment waits for a quota reset.",
+    )
     sc.add_argument("--db", default="data/jester.db")
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     sc.set_defaults(func=cmd_schedule)
@@ -1538,6 +1661,23 @@ def main(argv=None):
         help="cluster only the N newest nuggets (default: the whole archive)",
     )
     cl.set_defaults(func=cmd_cluster)
+
+    tr = sub.add_parser(
+        "treat",
+        help="process everything the scrapers queued, stopping if the LLM "
+             "quota runs out",
+    )
+    tr.add_argument("--db", default="data/jester.db")
+    tr.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    tr.add_argument("--run", default=None, help="run id (default: treat-<UTC>)")
+    tr.add_argument("--exports", default=None)
+    tr.add_argument("--max-ideas", dest="max_ideas", type=int, default=None)
+    tr.add_argument(
+        "--force",
+        action="store_true",
+        help="attempt even when the quota is recorded as exhausted",
+    )
+    tr.set_defaults(func=cmd_treat)
 
     bk = sub.add_parser(
         "backup", help="snapshot the archive and verify the snapshot"

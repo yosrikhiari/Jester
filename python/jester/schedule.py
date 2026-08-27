@@ -107,8 +107,18 @@ def nightly_command(
 LAUNCHER_NAME = "scheduled-cycle.cmd"
 
 
-def launcher_path() -> Path:
-    return repo_root() / "data" / LAUNCHER_NAME
+def launcher_path(command: str = "cycle") -> Path:
+    """One launcher per scheduled COMMAND.
+
+    Scraping and treatment run on different clocks — fetching is cheap and
+    bounded by politeness, treatment is bounded by an LLM quota that resets on
+    someone else's schedule — so they are separate tasks with separate
+    launchers. A single shared file would have the second install silently
+    overwrite the first.
+    """
+    if command in ("cycle", ""):
+        return repo_root() / "data" / LAUNCHER_NAME
+    return repo_root() / "data" / f"scheduled-{command}.cmd"
 
 
 def launcher_script(db, config, python, command="cycle", extra=()) -> str:
@@ -146,7 +156,7 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
 
 
 def write_launcher(db, config, python, command="cycle", extra=()) -> Path:
-    path = launcher_path()
+    path = launcher_path(command)
     path.parent.mkdir(parents=True, exist_ok=True)
     # newline="" so the \r\n written above survive verbatim; cmd.exe needs CRLF.
     with open(path, "w", encoding="utf-8", newline="") as fh:
@@ -157,6 +167,20 @@ def write_launcher(db, config, python, command="cycle", extra=()) -> Path:
 def _windows_action(db, config, python, command="cycle", extra=()):
     """The argv schtasks registers: the generated launcher, nothing more."""
     return [str(write_launcher(db, config, python, command, extra))]
+
+
+#: The two halves of the loop, and what each is bounded by.
+#:
+#:   ingest   cheap, polite, bounded by how often we knock on someone's door
+#:   treat    one LLM call per comment, bounded by a quota on someone else's
+#:            clock; exits in milliseconds when that quota is known to be gone
+#:
+#: `cycle` remains for anyone who wants them welded together.
+TASK_FOR_COMMAND = {
+    "cycle": TASK_NAME,
+    "ingest": TASK_NAME + "Scrape",
+    "treat": TASK_NAME + "Treat",
+}
 
 
 def humanise_repeat(raw: str) -> str:
@@ -396,13 +420,13 @@ def _jester_cron_lines() -> tuple:
     return ("jester.cli cycle", "jester.cli run")
 
 
-def installed_options(task_name: str = TASK_NAME) -> dict:
+def installed_options(task_name: str = TASK_NAME, command: str = "cycle") -> dict:
     """What the registered task is actually configured to scrape.
 
     Read out of the generated launcher, which is the file the scheduler runs —
     the single honest answer. Returns {} when nothing is installed.
     """
-    path = launcher_path()
+    path = launcher_path(command)
     if not path.is_file():
         return {}
     try:
@@ -410,7 +434,7 @@ def installed_options(task_name: str = TASK_NAME) -> dict:
     except OSError:
         return {}
     for line in text.splitlines():
-        if "jester.cli cycle" not in line:
+        if f"jester.cli {command}" not in line:
             continue
         # The launcher quotes every argument it interpolates, and the trailing
         # redirect is not an argument — cut it before splitting.
@@ -426,6 +450,7 @@ def cron_line(
     python: str | None = None,
     every: int | None = None,
     extra=(),
+    command: str = "cycle",
 ) -> str:
     """The crontab line to install. `every` gives an every-N-minutes cadence;
     otherwise it is daily at `at`. `extra` carries the scrape scope, which the
@@ -455,7 +480,7 @@ def cron_line(
     return (
         f"{when}  "
         f"cd {root} && PYTHONPATH={root / 'python'} "
-        f"{py} -m jester.cli cycle --db {db} --config {config}{args} "
+        f"{py} -m jester.cli {command} --db {db} --config {config}{args} "
         f">> {root / 'data' / 'schedule.log'} 2>&1"
     )
 
@@ -468,6 +493,7 @@ def install(
     python: str | None = None,
     every: int | None = None,
     extra=(),
+    command: str = "cycle",
 ) -> dict:
     """Register the scrape+process job. Returns {ok, action, detail}.
 
@@ -483,7 +509,8 @@ def install(
             return {"ok": False, "action": "create", "detail": str(exc)}
     if not is_windows():
         try:
-            line = cron_line(at, db, config, python, every=every, extra=extra)
+            line = cron_line(at, db, config, python, every=every, extra=extra,
+                             command=command)
         except ValueError as exc:
             return {"ok": False, "action": "manual", "detail": str(exc)}
         try:
@@ -506,7 +533,7 @@ def install(
                 "detail": (p.stderr or p.stdout).strip(),
             }
         return {"ok": True, "action": "create", "detail": f"scheduled: {line}"}
-    action = _windows_action(db, config, python, extra=extra)
+    action = _windows_action(db, config, python, command=command, extra=extra)
     # schtasks takes the whole command as one string; quote the inner argv.
     tr = subprocess.list2cmdline(action)
     cmd = ["schtasks", "/create", "/tn", task_name, "/tr", tr]
@@ -527,10 +554,15 @@ def install(
             "action": "create",
             "detail": (p.stderr or p.stdout).strip(),
         }
+    what = {
+        "cycle": "jester cycle: ingest + pipeline",
+        "ingest": "jester ingest: scrape only, no LLM",
+        "treat": "jester treat: drain the queue while the quota lasts",
+    }.get(command, f"jester {command}")
     return {
         "ok": True,
         "action": "create",
-        "detail": f"{task_name} runs {cadence} (jester cycle: ingest + pipeline)",
+        "detail": f"{task_name} runs {cadence} ({what})",
     }
 
 
