@@ -912,6 +912,28 @@ def cmd_cluster(args):
     return res
 
 
+def cmd_identify(args):
+    """Recover the community a nugget came from, where the row already says.
+
+    Dry by default: this rewrites archived provenance, so the operator sees
+    what it would claim before it claims anything.
+    """
+    from jester.identify import identify
+
+    db = open_db(args.db)
+    report = identify(db, apply=args.apply)
+    for line in report.lines():
+        print(line)
+    if not args.apply and report.n_identified:
+        print("\nnothing was written — re-run with --apply")
+    return {
+        "ok": True,
+        "identified": report.n_identified,
+        "unidentified": report.n_unidentified,
+        "applied": report.applied,
+    }
+
+
 def cmd_backup(args):
     """Snapshot the archive, verify the snapshot, prune old ones.
 
@@ -1695,6 +1717,18 @@ def main(argv=None):
         help="verify an existing backup instead of taking a new one",
     )
     bk.set_defaults(func=cmd_backup)
+
+    idf = sub.add_parser(
+        "identify-sources",
+        help="recover the community a nugget came from, from its own source_url",
+    )
+    idf.add_argument("--db", default="data/jester.db")
+    idf.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    idf.add_argument(
+        "--apply", action="store_true",
+        help="write the recovered values (default: report only)",
+    )
+    idf.set_defaults(func=cmd_identify)
 
     rs_ = sub.add_parser("resynth")
     rs_.add_argument("--db", default="data/jester.db")

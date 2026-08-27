@@ -1195,6 +1195,19 @@ function renderNuggetFilter() {
 //: thousands of rows, so the older ones carry nothing and get a bucket that
 //: says exactly that rather than being lumped in with a real community.
 const NO_COMMUNITY = 'source not recorded';
+//: The fixture runs' marker. Text under it was written for a test and never
+//: scraped from anywhere, so it is named rather than left looking like a
+//: community whose name got lost.
+const FIXTURE_COMMUNITY = 'test fixture — not scraped';
+
+/** Which bucket a nugget belongs in. Three outcomes, and they are different
+ *  facts: a named community, an origin the archive never recorded, and text
+ *  that was never scraped at all. */
+function communityOf(g) {
+  if (g.community) return g.community;
+  if (String(g.source_url || '').trim().toLowerCase() === 'mock') return FIXTURE_COMMUNITY;
+  return NO_COMMUNITY;
+}
 
 function nuggetRow(g) {
   const flags = [
@@ -1220,7 +1233,7 @@ function groupedNuggets(rows) {
   return [...groupBy(rows, g => g.platform || 'unknown')].sort(bySize)
     .map(([platform, inPlatform]) => {
       const pKey = `nug:${platform}`;
-      const communities = [...groupBy(inPlatform, g => g.community || NO_COMMUNITY)].sort(bySize);
+      const communities = [...groupBy(inPlatform, communityOf)].sort(bySize);
       const head = groupRow({
         key: pKey, depth: 1, span: 5, count: inPlatform.length,
         label: esc(PLATFORM_LABEL[platform] || platform),
@@ -1229,10 +1242,10 @@ function groupedNuggets(rows) {
       if (FOLDED.has(pKey)) return head;
       return head + communities.map(([community, items]) => {
         const cKey = `${pKey}:${community}`;
+        const real = community !== NO_COMMUNITY && community !== FIXTURE_COMMUNITY;
         const sub = groupRow({
           key: cKey, depth: 2, span: 5, count: items.length,
-          label: community === NO_COMMUNITY
-            ? `<span class="mute">${esc(community)}</span>` : esc(community),
+          label: real ? esc(community) : `<span class="mute">${esc(community)}</span>`,
         });
         return sub + (FOLDED.has(cKey) ? '' : items.map(nuggetRow).join(''));
       }).join('');
@@ -1264,7 +1277,7 @@ function renderNuggets() {
     const parts = [`${shown.toLocaleString()} shown`];
     if (NUGGET_GROUPED && shown) {
       const platforms = new Set(rows.map(g => g.platform || 'unknown'));
-      const communities = new Set(rows.map(g => `${g.platform}/${g.community || NO_COMMUNITY}`));
+      const communities = new Set(rows.map(g => `${g.platform}/${communityOf(g)}`));
       parts.push(`${platforms.size} platform(s), ${communities.size} source(s)`);
     }
     if (shown !== NUGGETS.length) parts.push(`${NUGGETS.length.toLocaleString()} loaded`);
