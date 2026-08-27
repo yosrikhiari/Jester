@@ -24,6 +24,7 @@ import (
 	"jester/internal/prefilter"
 	"jester/internal/reddit"
 	"jester/internal/stackexchange"
+	"jester/internal/steam"
 	"jester/internal/store"
 	"jester/internal/youtube"
 )
@@ -353,11 +354,18 @@ func selectSources(all []config.Source, only string) ([]config.Source, error) {
 // read over plain HTTP — no stealth browser, no fingerprint to warm, no
 // challenge to absorb. Opening a Chrome process for them would be pure cost.
 func needsBrowser(platform string) bool {
+	// An ALLOWLIST, and the direction matters. This used to default to true
+	// and name the API-backed platforms as exceptions, so every platform added
+	// since inherited a stealth-browser session it had no use for: Steam is a
+	// plain keyless HTTP endpoint and still got a cloakserve Chrome spun up
+	// per source, one licence slot and several seconds each, before making an
+	// ordinary GET. Driving a browser is the expensive, legally-loaded,
+	// fingerprint-visible path — it should have to be asked for by name.
 	switch platform {
-	case "hackernews", "discourse", "stackexchange", "github", "lemmy":
-		return false
-	default:
+	case "reddit", "youtube", "tiktok":
 		return true
+	default:
+		return false
 	}
 }
 
@@ -527,6 +535,48 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			sleep(delay)
 		}
 		return total, nil
+
+	case src.Platform == "steam":
+		sm := steam.New()
+		sm.Delay = delay
+		appID := steam.AppIDFromURL(src.URL)
+		if appID == "" {
+			return 0, fmt.Errorf("steam source %q names no app id", src.URL)
+		}
+		// A Steam source IS one app, so perSource — "threads to walk per
+		// source" — has nothing to walk here. The depth that actually varies
+		// is how many of the app's reviews come back, which is its own knob:
+		// max_threads_per_platform is validated to [1,50] because its unit is
+		// threads, and a useful review count is not a thread count. Taking
+		// maxPerThread (500) instead would hand one app two to three times the
+		// share every other platform gets, and the rotation would stop
+		// rotating.
+		want := int(cfg.Thresholds.MaxReviewsPerApp)
+		if want > maxPerThread && maxPerThread > 0 {
+			want = maxPerThread
+		}
+		if want <= 0 {
+			want = 100
+		}
+		fmt.Printf("[live] steam app %s (up to %d review(s))\n", appID, want)
+		comments, post, err := sm.FetchReviews(ctx, appID, want)
+		if err != nil {
+			return 0, err
+		}
+		// The store's own title, so the archive groups by "Aseprite" rather
+		// than by a number. Failing to get it is not worth losing the reviews
+		// over, so postFrom seeded the id and this only improves on it.
+		if post != nil {
+			if name := sm.AppName(ctx, appID); name != "" {
+				post.Title = name
+				post.Community = name
+			}
+		}
+		n := enqueueComments(st, runID, "steam",
+			steam.StoreURL(appID), "steam-"+appID, comments, post, pp, maxPerThread)
+		bg.add(n)
+		fmt.Printf("[live]   enqueued %d kept review(s) (steam %s)\n", n, appID)
+		return n, nil
 
 	case src.Platform == "github":
 		gh := github.New()

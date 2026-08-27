@@ -202,3 +202,39 @@ func TestPerPlatformDepthIsRangeChecked(t *testing.T) {
 		t.Fatalf("a valid override must pass: %v", err)
 	}
 }
+
+// A thresholds.yaml written before Steam existed sets max_threads_per_source
+// and not max_reviews_per_app. Defaulting the two together left the second at
+// 0 against a minimum of 1, which would have failed every file already on
+// disk — including the one this repo ships.
+func TestMaxReviewsPerAppDefaultsIndependently(t *testing.T) {
+	th := &Thresholds{
+		MaxCommentsPerThread: 500, MinUpvotes: 1, DedupThreshold: 0.87,
+		PrefilterMinChars: 40, PrefilterMaxChars: 600, PrefilterMaxEmoji: 5,
+		PrefilterMaxMentions: 3, PrefilterMinWords: 6, RequestDelayMs: 2000,
+		// Set, so the older field's zero-guard does not fire.
+		MaxThreadsPerSource: 3,
+		EmbeddingModel:      "nomic-embed-text",
+	}
+	if err := th.Validate(); err != nil {
+		t.Fatalf("a config predating this knob must still validate: %v", err)
+	}
+	if th.MaxReviewsPerApp != int(bounds["max_reviews_per_app"].def) {
+		t.Fatalf("want the documented default, got %d", th.MaxReviewsPerApp)
+	}
+}
+
+// The bound that pushed this onto its own knob: max_threads_per_platform is
+// capped at 50 because its unit is threads, and a useful review count is not.
+func TestSteamDepthIsNotSmuggledThroughTheThreadKnob(t *testing.T) {
+	th := DefaultThresholds()
+	th.MaxThreadsPerPlatform = map[string]int{"steam": 150}
+	if err := th.Validate(); err == nil {
+		t.Fatal("a review count must not pass as a thread count")
+	}
+	th.MaxThreadsPerPlatform = nil
+	th.MaxReviewsPerApp = 150
+	if err := th.Validate(); err != nil {
+		t.Fatalf("150 reviews is in range on its own knob: %v", err)
+	}
+}

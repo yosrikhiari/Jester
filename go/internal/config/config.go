@@ -115,9 +115,19 @@ type Thresholds struct {
 	// MinCommentsPerThread skips threads too quiet to be worth a fetch. Only
 	// the API-backed adapters (Hacker News, Discourse) can filter on it before
 	// fetching, because only they get a comment count in the listing.
-	MinCommentsPerThread int    `yaml:"min_comments_per_thread"`
-	EmbeddingModel       string `yaml:"embedding_model"`
-	Models               Models `yaml:"models"`
+	MinCommentsPerThread int `yaml:"min_comments_per_thread"`
+	// MaxReviewsPerApp is Steam's depth, and it needs its own knob because a
+	// Steam source IS one app: "threads to walk per source" has nothing to
+	// walk there, and the number that actually varies is how many of the app's
+	// reviews come back.
+	//
+	// Overloading max_threads_per_platform for it was the obvious shortcut and
+	// the wrong one — that knob is validated to [1,50] precisely because its
+	// unit is threads, so a review count large enough to be useful is rejected
+	// by a bound that was never about reviews.
+	MaxReviewsPerApp int    `yaml:"max_reviews_per_app"`
+	EmbeddingModel   string `yaml:"embedding_model"`
+	Models           Models `yaml:"models"`
 }
 
 // Models names the LLM roles used by the Python agent pipeline.
@@ -200,6 +210,10 @@ var bounds = map[string]bound{
 	"request_delay_ms":        {def: 2000, min: 500, max: 60000, isInt: true},
 	"max_threads_per_source":  {def: 1, min: 1, max: 50, isInt: true},
 	"min_comments_per_thread": {def: 0, min: 0, max: 10000, isInt: true},
+	// Steam is keyless and unmetered, so the ceiling is about BALANCE, not
+	// quota: every other platform yields roughly 160-210 comments per turn,
+	// and an app that took 500 would stop the rotation rotating.
+	"max_reviews_per_app": {def: 150, min: 1, max: 5000, isInt: true},
 }
 
 // Load reads and validates the three YAML configs from dir.
@@ -279,6 +293,13 @@ func (t *Thresholds) Validate() error {
 	if t.MaxThreadsPerSource == 0 {
 		t.MaxThreadsPerSource = int(bounds["max_threads_per_source"].def)
 	}
+	// Its own guard, not a branch of the one above: a thresholds.yaml written
+	// before Steam existed sets max_threads_per_source and not this, so
+	// defaulting them together would leave this at 0 and fail every such file
+	// against a minimum of 1.
+	if t.MaxReviewsPerApp == 0 {
+		t.MaxReviewsPerApp = int(bounds["max_reviews_per_app"].def)
+	}
 	checks["max_threads_per_source"] = float64(t.MaxThreadsPerSource)
 	// Every override is bounded by the same rule as the scalar it overrides,
 	// so a typo cannot smuggle an unbounded crawl past validation. Checked
@@ -293,6 +314,7 @@ func (t *Thresholds) Validate() error {
 		}
 	}
 	checks["min_comments_per_thread"] = float64(t.MinCommentsPerThread)
+	checks["max_reviews_per_app"] = float64(t.MaxReviewsPerApp)
 	for k, v := range checks {
 		b, ok := bounds[k]
 		if !ok {
@@ -337,6 +359,7 @@ func DefaultThresholds() Thresholds {
 	t.PrefilterMinWords = int(bounds["prefilter_min_words"].def)
 	t.RequestDelayMs = int64(bounds["request_delay_ms"].def)
 	t.MaxThreadsPerSource = int(bounds["max_threads_per_source"].def)
+	t.MaxReviewsPerApp = int(bounds["max_reviews_per_app"].def)
 	t.EmbeddingModel = "nomic-embed-text"
 	return t
 }

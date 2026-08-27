@@ -42,6 +42,10 @@ PLATFORM_KINDS = {
     # Reddit-shaped discussion on an open API. `community` is one c/<name>;
     # `instance` walks whatever the server is currently active on.
     "lemmy": ("instance", "community"),
+    # Product complaints with the verdict already attached. `app` walks one
+    # product's negative reviews; there is no second kind, because a single
+    # review is not worth naming as a source.
+    "steam": ("app",),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -62,6 +66,7 @@ SUPPORTED_KINDS = frozenset({
     ("github", "issue"),
     ("lemmy", "instance"),
     ("lemmy", "community"),
+    ("steam", "app"),
 })
 
 PLATFORMS = tuple(PLATFORM_KINDS)
@@ -131,6 +136,8 @@ def _detect_platform(raw: str) -> str:
         return "hackernews"
     if "github.com" in low:
         return "github"
+    if "store.steampowered.com" in low or "steamcommunity.com" in low:
+        return "steam"
     if "lemmy." in low or "/c/" in low or low.startswith("programming.dev"):
         return "lemmy"
     if (
@@ -388,6 +395,36 @@ def _parse_lemmy(raw: str):
     return "instance", "https://%s" % host, slugify(host.split(".")[0])
 
 
+def _parse_steam(raw: str):
+    """One app's reviews, named by its store link or its bare numeric id.
+
+    The slug in a Steam URL (/app/431730/Aseprite/) is decorative — the id is
+    the identity — so the name comes from the slug when there is one and falls
+    back to the id when there is not. A source called "app-431730" is worse
+    than one called "aseprite" and better than a wrong guess at the title.
+    """
+    text = raw.strip().rstrip("/")
+    low = text.lower()
+    app_id = slug = ""
+    if "/app/" in low:
+        rest = text[low.index("/app/") + len("/app/"):]
+        parts = [p for p in rest.split("?")[0].split("#")[0].split("/") if p]
+        if parts and parts[0].isdigit():
+            app_id = parts[0]
+            if len(parts) > 1:
+                slug = parts[1]
+    elif text.isdigit():
+        app_id = text
+    if not app_id:
+        raise SourceError(
+            "%r is not a Steam app — try a store link like "
+            "https://store.steampowered.com/app/431730/Aseprite/ or the bare "
+            "id 431730" % raw
+        )
+    name = slugify(slug) if slug else "app-%s" % app_id
+    return "app", "https://store.steampowered.com/app/%s/" % app_id, name
+
+
 _PARSERS = {
     "reddit": _parse_reddit,
     "hackernews": _parse_hackernews,
@@ -397,6 +434,7 @@ _PARSERS = {
     "stackexchange": _parse_stackexchange,
     "github": _parse_github,
     "lemmy": _parse_lemmy,
+    "steam": _parse_steam,
 }
 
 

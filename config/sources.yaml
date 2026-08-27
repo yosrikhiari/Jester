@@ -535,3 +535,21 @@ sources:
   url: https://lemmy.ml/c/linux
   enabled: true
   notes: a second instance on the same subject - federation means different voices
+- platform: steam
+  name: aseprite
+  kind: app
+  url: https://store.steampowered.com/app/431730/
+  enabled: true
+  notes: pixel-art editor - export, palette and UI complaints from working artists
+- platform: steam
+  name: blender
+  kind: app
+  url: https://store.steampowered.com/app/365670/
+  enabled: true
+  notes: 3D suite with an enormous user base; crashes, GPU and workflow pain
+- platform: steam
+  name: wallpaper-engine
+  kind: app
+  url: https://store.steampowered.com/app/431960/
+  enabled: true
+  notes: desktop utility - performance, multi-monitor and startup friction

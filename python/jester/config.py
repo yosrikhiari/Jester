@@ -111,6 +111,13 @@ class Thresholds:
     # so the console must know it — otherwise the Config page silently omits a
     # knob the pipeline reads.
     min_comments_per_thread: int = 0
+    #: Steam's depth, in REVIEWS. A Steam source is one app, so "threads to
+    #: walk per source" has nothing to walk there and the number that varies
+    #: is how many of the app's reviews come back. It is not an entry in
+    #: max_threads_per_platform because that knob is bounded [1,50] on the
+    #: strength of its unit being threads, and a useful review count is not a
+    #: thread count.
+    max_reviews_per_app: int = 150
     # Write the archive out as CSV at the end of every run. The dataclass
     # default is False so no existing caller changes behaviour; the shipped
     # profiles turn it on, because a nightly run nobody watches should leave
@@ -136,6 +143,7 @@ class Thresholds:
         "critic_web_daily_budget": (0, 100000),
         "max_threads_per_source": (1, 50),
         "min_comments_per_thread": (0, 10000),
+        "max_reviews_per_app": (1, 5000),
         "export_rows_per_file": (100, 1000000),
     }
 
@@ -160,6 +168,7 @@ class Thresholds:
         "max_threads_per_source": int,
         "max_threads_per_platform": dict,
         "min_comments_per_thread": int,
+        "max_reviews_per_app": int,
         "export_after_run": _as_bool,
         "export_rows_per_file": int,
         "embedding_model": str,

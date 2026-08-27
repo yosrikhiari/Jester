@@ -76,6 +76,19 @@ max_threads_per_platform:
   # stays a minority voice by choice, which is the entire strategic point.
   reddit: 3
   youtube: 2
+# Steam's depth, and it is a REVIEW count — a Steam source IS one app, so
+# "threads to walk per source" has nothing to walk there and the number that
+# actually varies is how many of the app's reviews come back. It gets its own
+# knob rather than an entry in max_threads_per_platform, which is validated to
+# [1,50] precisely because its unit is threads.
+#
+# The ceiling is about BALANCE, not quota: Steam is keyless and unmetered, but
+# every other platform yields roughly 160-210 comments per turn, and an app
+# taking max_comments_per_thread (500) would stop the rotation rotating.
+# Reviews are negative-only by default, so this is 150 complaints rather than
+# 150 reviews of which a handful complain.
+max_reviews_per_app: 150
+
 # Skip threads too quiet to be worth a fetch. Only the API-backed adapters
 # (Hacker News, Discourse) can apply this before fetching.
 min_comments_per_thread: 8

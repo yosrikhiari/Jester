@@ -2,21 +2,6 @@ package main
 
 import "testing"
 
-// Hacker News and Discourse are read over plain HTTP. Routing them through a
-// stealth browser would spawn a Chrome process per source for no benefit.
-func TestNeedsBrowserOnlyForScrapedPlatforms(t *testing.T) {
-	for _, p := range []string{"hackernews", "discourse"} {
-		if needsBrowser(p) {
-			t.Errorf("%s is an API read, it must not need a browser", p)
-		}
-	}
-	for _, p := range []string{"reddit", "youtube", "tiktok", "something-new"} {
-		if !needsBrowser(p) {
-			t.Errorf("%s is scraped, it must go through cloakserve", p)
-		}
-	}
-}
-
 func TestHackerNewsTagFromURL(t *testing.T) {
 	cases := map[string]string{
 		"https://news.ycombinator.com/ask":  "ask_hn",
@@ -69,5 +54,38 @@ func TestDiscourseBaseFromTopicURL(t *testing.T) {
 	// A root URL is already the base.
 	if got := discourseBaseFromTopicURL("https://forum.test/"); got != "https://forum.test" {
 		t.Errorf("base=%q", got)
+	}
+}
+
+// needsBrowser used to default to TRUE and name the API-backed platforms as
+// exceptions, so every platform added after that line inherited a
+// stealth-browser session it had no use for. Steam is a plain keyless HTTP
+// endpoint and still got a cloakserve Chrome spun up per source — one licence
+// slot and several seconds each — before making an ordinary GET. Driving a
+// browser is the expensive, legally-loaded, fingerprint-visible path, so it
+// has to be asked for by name.
+func TestOnlyScrapedPlatformsGetABrowser(t *testing.T) {
+	for _, p := range []string{"reddit", "youtube", "tiktok"} {
+		if !needsBrowser(p) {
+			t.Errorf("%s is a DOM scrape and needs the browser", p)
+		}
+	}
+	for _, p := range []string{
+		"hackernews", "discourse", "stackexchange", "github", "lemmy", "steam",
+	} {
+		if needsBrowser(p) {
+			t.Errorf("%s is a plain HTTP API and must not open a browser session", p)
+		}
+	}
+	// The DEFAULT is what actually matters, and it was deliberately the other
+	// way round: an unclassified platform used to get a browser on the theory
+	// that assuming "scraped" is the safe assumption. It is not, because a
+	// platform with no entry here has no adapter either — fetchSource rejects
+	// it and the browser was opened for nothing. The only platforms the
+	// default ever reaches are ones that HAVE an adapter and were left off the
+	// list, which is exactly how Steam ended up driving Chrome to make a
+	// keyless GET.
+	if needsBrowser("some-future-api") {
+		t.Error("an unclassified platform must default to no browser")
 	}
 }

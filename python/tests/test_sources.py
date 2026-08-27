@@ -181,7 +181,7 @@ def test_sources_payload_carries_the_ui_vocabulary(api):
     assert payload["ok"] is True
     assert set(payload["platform_kinds"]) == {
         "reddit", "hackernews", "discourse", "youtube", "tiktok",
-        "stackexchange", "github", "lemmy"}
+        "stackexchange", "github", "lemmy", "steam"}
     assert ["reddit", "subreddit"] in payload["supported_kinds"]
     # Stack Exchange and GitHub are sanctioned APIs, so unlike tiktok they
     # ship with adapters behind them rather than as configurable placeholders.
@@ -755,3 +755,39 @@ def test_health_survives_a_database_without_the_column(api):
     # page shows those two side by side and they say different things.
     untouched = next(s for s in res["sources"] if s["name"] != "hn-ask")
     assert untouched["health"] == "unknown"
+
+
+# ── every platform must be registered everywhere ─────────────────────────────
+# Stack Exchange, GitHub and Lemmy each shipped without an entry in the
+# console's platform-label map, so three whole platforms printed as raw slugs
+# for days. It is the same omission every time and nothing catches it, so a
+# test does.
+
+def test_every_platform_has_a_console_label():
+    import re
+    from pathlib import Path
+
+    from jester.sources import PLATFORM_KINDS
+
+    js = (Path(__file__).resolve().parents[1] / "jester" / "console" / "static"
+          / "app.js").read_text(encoding="utf-8")
+    block = re.search(r"const PLATFORM_LABEL = \{(.*?)\};", js, re.S)
+    assert block, "PLATFORM_LABEL should be a flat object literal in app.js"
+    labelled = set(re.findall(r"(\w+)\s*:", block.group(1)))
+    assert set(PLATFORM_KINDS) - labelled == set()
+
+
+def test_every_platform_has_a_console_sort_position():
+    import re
+    from pathlib import Path
+
+    from jester.sources import PLATFORM_KINDS
+
+    js = (Path(__file__).resolve().parents[1] / "jester" / "console" / "static"
+          / "app.js").read_text(encoding="utf-8")
+    block = re.search(r"const order = \{(.*?)\};", js, re.S)
+    assert block, "the Sources tab should sort platforms by an explicit order map"
+    ordered = set(re.findall(r"(\w+)\s*:", block.group(1)))
+    # An unlisted platform falls into the `?? 9` bucket and interleaves
+    # arbitrarily with every other unlisted one.
+    assert set(PLATFORM_KINDS) - ordered == set()
