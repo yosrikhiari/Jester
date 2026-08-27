@@ -559,3 +559,30 @@ sources:
   url: https://changelog.com/podcast/feed
   enabled: true
   notes: 777/1013 episodes publish a transcript - practitioners on what broke
+- platform: podcast
+  name: python-bytes
+  kind: show
+  url: https://pythonbytes.fm/episodes/rss
+  enabled: true
+  notes: 493/493 episodes with a VTT transcript - Python news and what broke in it
+
+- platform: podcast
+  name: shipit-changelog
+  kind: show
+  url: https://changelog.com/shipit/feed
+  enabled: true
+  notes: 134/136 transcripts - everything after git push; ops and infra friction
+
+- platform: podcast
+  name: gotime-changelog
+  kind: show
+  url: https://changelog.com/gotime/feed
+  enabled: true
+  notes: 341/347 transcripts - Go practitioners on tooling and runtime pain
+
+- platform: podcast
+  name: jsparty-changelog
+  kind: show
+  url: https://changelog.com/jsparty/feed
+  enabled: true
+  notes: 352/361 transcripts - frontend and JS ecosystem friction

@@ -387,25 +387,66 @@ func splitAll(turns []Turn) []Turn {
 	return out
 }
 
-// speakerHTMLRE matches the "Name:" prefix Changelog-style HTML transcripts put
-// at the head of each paragraph.
+// speakerHTMLRE matches a "Name:" prefix at the head of a paragraph.
 var speakerHTMLRE = regexp.MustCompile(`^\s*\*?\*?([A-Z][\w.' -]{1,40})\*?\*?\s*:\s+`)
+
+// citePairRE matches the shape the whole Changelog network publishes:
+//
+//	<cite>Justin Garisson:</cite>
+//	<p>Hello, and welcome to Ship It...</p>
+//
+// Reading it structurally is the difference between turns and slices. Stripping
+// the tags first — which is what this used to do — leaves the speaker alone on
+// a line, where a "Name:" prefix cannot match because there is no body after
+// the colon: the cite became a one-word turn the prefilter dropped, and every
+// paragraph became a turn with NO speaker. Four shows publish this way
+// (Changelog, Go Time, JS Party, Ship It!), so it is worth reading properly
+// rather than approximately.
+var citePairRE = regexp.MustCompile(`(?is)<cite[^>]*>(.*?)</cite>\s*<p[^>]*>(.*?)</p>`)
 
 // ParseHTML turns an HTML transcript into speaker turns.
 //
-// Weaker than the VTT path by design: HTML transcripts carry no timings and no
-// declared speakers, so the speaker is recovered from a "Name:" prefix when
-// there is one and left EMPTY when there is not. Guessing it from position in
-// the document would attribute words to people who did not say them.
+// Weaker than the VTT path in one respect that cannot be fixed: HTML carries no
+// timings. Speakers ARE recoverable when the document declares them — either as
+// cite/paragraph pairs or as a "Name:" prefix — and are left EMPTY when it does
+// not. Guessing from position in the document would attribute words to people
+// who did not say them.
 func ParseHTML(body string) []Turn {
+	// The structured form first, when the document actually has it.
+	if pairs := citePairRE.FindAllStringSubmatch(body, -1); len(pairs) > 1 {
+		var turns []Turn
+		for _, m := range pairs {
+			speaker := strings.TrimSuffix(
+				strings.TrimSpace(htmltext.Plain(m[1])), ":")
+			text := strings.TrimSpace(htmltext.Plain(m[2]))
+			if text == "" {
+				continue
+			}
+			turns = append(turns, splitTurn(Turn{
+				Speaker: strings.TrimSpace(speaker), Text: text})...)
+		}
+		if len(turns) > 0 {
+			return turns
+		}
+	}
 	plain := htmltext.Plain(body)
 	var turns []Turn
+	// A line that is ONLY "Name:" is a heading for what follows, not a thing
+	// anybody said. Carrying it forward keeps the attribution and keeps a
+	// one-word turn out of the archive.
+	pending := ""
 	for _, para := range strings.Split(plain, "\n") {
 		para = strings.TrimSpace(para)
 		if para == "" {
 			continue
 		}
-		speaker := ""
+		if m := speakerHTMLRE.FindStringSubmatch(para + " "); m != nil &&
+			strings.TrimSpace(speakerHTMLRE.ReplaceAllString(para+" ", "")) == "" {
+			pending = strings.TrimSpace(m[1])
+			continue
+		}
+		speaker := pending
+		pending = ""
 		if m := speakerHTMLRE.FindStringSubmatch(para); m != nil {
 			speaker = strings.TrimSpace(m[1])
 			para = strings.TrimSpace(speakerHTMLRE.ReplaceAllString(para, ""))

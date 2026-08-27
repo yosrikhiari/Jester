@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"jester/internal/htmltext"
 )
 
 func read(t *testing.T, name string) []byte {
@@ -373,5 +376,121 @@ func TestSplittingNeverLosesText(t *testing.T) {
 	}
 	if strings.Join(strings.Fields(rejoined), " ") != strings.Join(strings.Fields(original), " ") {
 		t.Fatalf("text changed across the split: %d chars in, %d out", len(original), len(rejoined))
+	}
+}
+
+// ── the Changelog network's transcript shape ─────────────────────────────────
+
+// Four shows publish <cite>Name:</cite><p>text</p> pairs. Stripping the tags
+// first leaves the speaker alone on a line, where a "Name:" prefix cannot match
+// because there is no body after the colon — so the cite became a one-word turn
+// the prefilter dropped, and every paragraph became a turn with NO speaker.
+func TestCiteAndParagraphPairsBecomeAttributedTurns(t *testing.T) {
+	html := `<!DOCTYPE html><html><body>
+      <cite>Justin Garisson:</cite>
+      <p>Hello, and welcome to Ship It, the podcast all about everything after git push.</p>
+      <cite>Autumn Nash:</cite>
+      <p>I&#39;m caffeinated this time.</p>
+      <cite>Justin Garisson:</cite>
+      <p>Caffeinated is a good call.</p>
+    </body></html>`
+	turns := ParseHTML(html)
+	if len(turns) != 3 {
+		t.Fatalf("want one turn per cite/p pair, got %d: %+v", len(turns), turns)
+	}
+	want := []string{"Justin Garisson", "Autumn Nash", "Justin Garisson"}
+	for i, tn := range turns {
+		if tn.Speaker != want[i] {
+			t.Errorf("turn %d speaker = %q, want %q", i, tn.Speaker, want[i])
+		}
+		if strings.Contains(tn.Text, ":") && strings.HasPrefix(tn.Text, tn.Speaker) {
+			t.Errorf("turn %d still carries its own speaker prefix: %q", i, tn.Text)
+		}
+		if tn.Text == "" || strings.Contains(tn.Text, "<") {
+			t.Errorf("turn %d body is wrong: %q", i, tn.Text)
+		}
+	}
+	// The entity has to be decoded, not carried through as markup.
+	if !strings.Contains(turns[1].Text, "I'm caffeinated") {
+		t.Errorf("entity not decoded: %q", turns[1].Text)
+	}
+}
+
+func TestABareSpeakerHeadingIsNotATurn(t *testing.T) {
+	// Without cite tags, a transcript that puts the name on its own line still
+	// has to attribute the paragraph under it — and must not archive the name
+	// itself as something somebody said.
+	turns := ParseHTML("<p>Michael Kennedy:</p><p>The deploy failed on every Windows runner.</p>")
+	if len(turns) != 1 {
+		t.Fatalf("want 1 turn, got %d: %+v", len(turns), turns)
+	}
+	if turns[0].Speaker != "Michael Kennedy" {
+		t.Errorf("the heading should attribute the next paragraph, got %q", turns[0].Speaker)
+	}
+	if strings.HasSuffix(turns[0].Text, ":") {
+		t.Errorf("the heading became a turn: %q", turns[0].Text)
+	}
+}
+
+func TestADocumentWithNoSpeakersStillYieldsTurns(t *testing.T) {
+	// Some feeds publish VTT with no <v> tags and HTML with no cites. Leaving
+	// the speaker empty is right; dropping the text would not be.
+	turns := ParseHTML("<p>Everything about this release pipeline is broken.</p>")
+	if len(turns) != 1 || turns[0].Speaker != "" {
+		t.Fatalf("want one unattributed turn, got %+v", turns)
+	}
+	if turns[0].Text == "" {
+		t.Fatal("the text must survive an unknown speaker")
+	}
+}
+
+// A real Changelog-network transcript, captured live. The pairing regex must
+// account for EVERY paragraph in it: a cite that owns several paragraphs, or a
+// paragraph with no cite, would otherwise be silently dropped — and a
+// transcript parser that quietly loses two thirds of an episode is worse than
+// one that never ran.
+func TestNoParagraphIsLostFromARealTranscript(t *testing.T) {
+	html := string(read(t, "cite_transcript.html"))
+	// Paragraphs WITH TEXT. This transcript carries seven empty <p></p> between
+	// its cite blocks, and emitting a turn for those would archive silence —
+	// counting them here was my own first mistake, and it reported six
+	// perfectly good paragraphs as dropped.
+	body := regexp.MustCompile(`(?is)<p[^>]*>(.*?)</p>`)
+	withText := 0
+	for _, m := range body.FindAllStringSubmatch(html, -1) {
+		if strings.TrimSpace(htmltext.Plain(m[1])) != "" {
+			withText++
+		}
+	}
+	if withText < 5 {
+		t.Fatalf("fixture should be a real transcript, found %d paragraphs", withText)
+	}
+	turns := ParseHTML(html)
+	// >= because the length budget can split one long paragraph into several.
+	if len(turns) < withText {
+		t.Fatalf("parsed %d turn(s) from %d paragraph(s) with text — %d were dropped",
+			len(turns), withText, withText-len(turns))
+	}
+	named := 0
+	for _, tn := range turns {
+		if tn.Speaker != "" {
+			named++
+		}
+	}
+	if named != len(turns) {
+		t.Fatalf("this transcript declares a speaker for every paragraph; "+
+			"%d of %d turns lost theirs", len(turns)-named, len(turns))
+	}
+	// A body may legitimately CONTAIN an angle bracket: this transcript holds
+	// "Runs on $10 hardware with <5MB RAM", and a "<strike>" that was escaped
+	// at source and so is something the host wrote rather than markup. What
+	// must never survive is the transcript's OWN structure, or an entity left
+	// undecoded.
+	for _, tn := range turns {
+		for _, leak := range []string{"<p>", "</p>", "<cite", "</cite>", "&#", "&quot;", "&amp;"} {
+			if strings.Contains(tn.Text, leak) {
+				t.Fatalf("%q survived into the body: %.90q", leak, tn.Text)
+			}
+		}
 	}
 }
