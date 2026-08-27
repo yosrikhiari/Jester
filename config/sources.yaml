@@ -1,5 +1,5 @@
 # Curated source list. Edit here or in the operator console (Sources tab).
-# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag - stackexchange=site|question - github=repo|issue
+# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag - stackexchange=site|question - github=repo|issue - lemmy=instance|community
 # Set `enabled: false` to park a source without losing it; `notes` is
 # free text and survives console edits.
 sources:
@@ -487,3 +487,51 @@ sources:
   url: https://github.com/vercel/next.js
   enabled: true
   notes: frontend framework upgrade pain at very high volume
+- platform: lemmy
+  name: lemmy-selfhosted
+  kind: community
+  url: https://lemmy.world/c/selfhosted
+  enabled: true
+  notes: self-hosting pain - the closest analogue to r/selfhosted
+- platform: lemmy
+  name: lemmy-linux
+  kind: community
+  url: https://lemmy.world/c/linux
+  enabled: true
+  notes: desktop and server Linux friction
+- platform: lemmy
+  name: lemmy-opensource
+  kind: community
+  url: https://lemmy.world/c/opensource
+  enabled: true
+  notes: licensing, maintenance and funding complaints
+- platform: lemmy
+  name: lemmy-privacy
+  kind: community
+  url: https://lemmy.world/c/privacy
+  enabled: true
+  notes: tooling gaps and tracking frustration
+- platform: lemmy
+  name: programming-programming
+  kind: community
+  url: https://programming.dev/c/programming
+  enabled: true
+  notes: general practitioner complaints
+- platform: lemmy
+  name: programming-rust
+  kind: community
+  url: https://programming.dev/c/rust
+  enabled: true
+  notes: language and ecosystem friction
+- platform: lemmy
+  name: programming-devops
+  kind: community
+  url: https://programming.dev/c/devops
+  enabled: true
+  notes: deployment and CI pain
+- platform: lemmy
+  name: lemmy-linux
+  kind: community
+  url: https://lemmy.ml/c/linux
+  enabled: true
+  notes: a second instance on the same subject - federation means different voices

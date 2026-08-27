@@ -20,6 +20,7 @@ import (
 	"jester/internal/discourse"
 	"jester/internal/github"
 	"jester/internal/hackernews"
+	"jester/internal/lemmy"
 	"jester/internal/prefilter"
 	"jester/internal/reddit"
 	"jester/internal/stackexchange"
@@ -353,7 +354,7 @@ func selectSources(all []config.Source, only string) ([]config.Source, error) {
 // challenge to absorb. Opening a Chrome process for them would be pure cost.
 func needsBrowser(platform string) bool {
 	switch platform {
-	case "hackernews", "discourse", "stackexchange", "github":
+	case "hackernews", "discourse", "stackexchange", "github", "lemmy":
 		return false
 	default:
 		return true
@@ -481,6 +482,37 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 				hackernews.SourceURL(s.ID), "hn-"+s.ID, comments, post, pp, maxPerThread)
 			bg.add(n)
 			fmt.Printf("[live]   enqueued %d kept comments (hn %s)\n", n, s.ID)
+			total += n
+			sleep(delay)
+		}
+		return total, nil
+
+	case src.Platform == "lemmy":
+		lm := lemmy.New()
+		lm.Delay = delay
+		if cfg.Thresholds.MinCommentsPerThread > 0 {
+			lm.MinComments = int(cfg.Thresholds.MinCommentsPerThread)
+		}
+		fmt.Printf("[live] lemmy %s (up to %d post(s))\n", src.URL, perSource)
+		posts, err := lm.ListPosts(ctx, src.URL, perSource)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		for _, lp := range posts {
+			if bg.stop("post") {
+				break
+			}
+			comments, post, err := lm.FetchPost(ctx, src.URL, lp.ID)
+			if err != nil {
+				fmt.Printf("[live]   post %d skipped: %v\n", lp.ID, err)
+				continue
+			}
+			n := enqueueComments(st, runID, "lemmy",
+				lemmy.PostURL(src.URL, lp.ID),
+				fmt.Sprintf("lemmy-%d", lp.ID), comments, post, pp, maxPerThread)
+			bg.add(n)
+			fmt.Printf("[live]   enqueued %d kept comments (lemmy %d)\n", n, lp.ID)
 			total += n
 			sleep(delay)
 		}

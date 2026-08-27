@@ -39,6 +39,9 @@ PLATFORM_KINDS = {
     # An issue tracker is a database of things that are broken, with
     # reproduction steps. `repo` walks the busiest issues; `issue` pins one.
     "github": ("repo", "issue"),
+    # Reddit-shaped discussion on an open API. `community` is one c/<name>;
+    # `instance` walks whatever the server is currently active on.
+    "lemmy": ("instance", "community"),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -57,6 +60,8 @@ SUPPORTED_KINDS = frozenset({
     ("stackexchange", "question"),
     ("github", "repo"),
     ("github", "issue"),
+    ("lemmy", "instance"),
+    ("lemmy", "community"),
 })
 
 PLATFORMS = tuple(PLATFORM_KINDS)
@@ -126,6 +131,8 @@ def _detect_platform(raw: str) -> str:
         return "hackernews"
     if "github.com" in low:
         return "github"
+    if "lemmy." in low or "/c/" in low or low.startswith("programming.dev"):
+        return "lemmy"
     if (
         "stackexchange.com" in low
         or "stackoverflow.com" in low
@@ -358,6 +365,29 @@ def _parse_github(raw: str):
     )
 
 
+def _parse_lemmy(raw: str):
+    """A community to walk, or a whole instance."""
+    text = raw.strip().rstrip("/")
+    stripped = text.replace("https://", "").replace("http://", "")
+    if "/c/" in stripped:
+        host, _, rest = stripped.partition("/c/")
+        community = rest.split("/")[0].strip()
+        if not host or not community:
+            raise SourceError("%r is missing an instance or a community" % raw)
+        return (
+            "community",
+            "https://%s/c/%s" % (host, community),
+            "%s-%s" % (slugify(host.split(".")[0]), slugify(community)),
+        )
+    host = stripped.split("/")[0].strip()
+    if not host or "." not in host:
+        raise SourceError(
+            "%r is not a Lemmy source — try 'programming.dev/c/rust' or "
+            "an instance like 'lemmy.world'" % raw
+        )
+    return "instance", "https://%s" % host, slugify(host.split(".")[0])
+
+
 _PARSERS = {
     "reddit": _parse_reddit,
     "hackernews": _parse_hackernews,
@@ -366,6 +396,7 @@ _PARSERS = {
     "tiktok": _parse_tiktok,
     "stackexchange": _parse_stackexchange,
     "github": _parse_github,
+    "lemmy": _parse_lemmy,
 }
 
 
