@@ -23,7 +23,7 @@ func fixtureClient(t *testing.T, byURL map[string]string) *Client {
 }
 
 func TestSearchURLCarriesTagLimitAndCommentFloor(t *testing.T) {
-	u := New().SearchURL("ask_hn", 5)
+	u := New().SearchURL("ask_hn", 5, 0)
 	// search_by_date, not search: a scheduled read of a feed must be ordered
 	// by date, or every tick re-fetches the same all-time-popular threads and
 	// dedup drops the lot.
@@ -37,7 +37,7 @@ func TestSearchURLCarriesTagLimitAndCommentFloor(t *testing.T) {
 	}
 	// A zero floor must not send an empty numericFilters that matches nothing.
 	c := &Client{MinComments: 0}
-	if strings.Contains(c.SearchURL("story", 3), "numericFilters") {
+	if strings.Contains(c.SearchURL("story", 3, 0), "numericFilters") {
 		t.Error("no comment floor should mean no numericFilters")
 	}
 }
@@ -186,5 +186,157 @@ func TestFeedNameAndURL(t *testing.T) {
 	}
 	if got := FeedURL(""); got != "https://news.ycombinator.com/" {
 		t.Errorf("unknown feed should fall back to the site root, got %q", got)
+	}
+}
+
+// ── backfill: past the depth ceiling (A12) ───────────────────────────────────
+
+// hitPage renders a fake Algolia page of `n` stories ending at `oldest`,
+// one hour apart, so a cursor walk has something to advance on.
+func hitPage(startID int, n int, oldest int64) []byte {
+	var b strings.Builder
+	b.WriteString(`{"nbHits":180552,"nbPages":1,"hits":[`)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, `{"objectID":"%d","title":"s%d","num_comments":42,"created_at_i":%d}`,
+			startID+i, startID+i, oldest+int64(n-i)*3600)
+	}
+	b.WriteString(`]}`)
+	return []byte(b.String())
+}
+
+func TestSearchURLCombinesBothNumericFilters(t *testing.T) {
+	// numericFilters takes a COMMA-SEPARATED list and the two are ANDed.
+	// Setting them separately would have the second Set() drop the first,
+	// silently removing either the quiet-thread floor or the time cursor.
+	c := New()
+	c.MinComments = 10
+	u := c.SearchURL("ask_hn", 100, 1700000000)
+	if !strings.Contains(u, "num_comments%3E10") {
+		t.Errorf("the quiet-thread floor was lost: %s", u)
+	}
+	if !strings.Contains(u, "created_at_i%3C1700000000") {
+		t.Errorf("the time cursor was lost: %s", u)
+	}
+	// And with no cursor the URL is exactly what it always was.
+	if strings.Contains(c.SearchURL("ask_hn", 100, 0), "created_at_i") {
+		t.Error("an ordinary listing must not carry a cursor")
+	}
+}
+
+// The reason this exists at all: Algolia reports nbHits=180,552 for ask_hn but
+// caps every query at 1,000 RESULTS — nbPages is 1 at hitsPerPage=1000 and 10
+// at hitsPerPage=100, and page=49 returns nothing. Page-walking reaches 0.6%
+// of the archive. Only a time cursor opens a fresh window.
+func TestBackfillAdvancesTheCursorPastTheResultCeiling(t *testing.T) {
+	var asked []string
+	c := New()
+	c.Delay = 0
+	page := 0
+	c.Get = func(_ context.Context, u string) ([]byte, error) {
+		asked = append(asked, u)
+		// Three pages of 100, each older than the last.
+		base := int64(1_700_000_000) - int64(page)*100*3600
+		body := hitPage(1000+page*100, 100, base-100*3600)
+		page++
+		return body, nil
+	}
+	stories, err := c.BackfillStories(context.Background(), "ask_hn", 250, 0, nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if len(stories) != 250 {
+		t.Fatalf("want 250 stories, got %d", len(stories))
+	}
+	ids := map[string]bool{}
+	for _, s := range stories {
+		if ids[s.ID] {
+			t.Fatalf("story %s came back twice — the cursor did not advance", s.ID)
+		}
+		ids[s.ID] = true
+	}
+	if len(asked) < 3 {
+		t.Fatalf("250 stories at 100 a page needs 3 requests, made %d", len(asked))
+	}
+	// Every request after the first must carry a cursor, or it is just
+	// re-reading the top of the index.
+	if strings.Contains(asked[0], "created_at_i") {
+		t.Error("the first request should have no cursor")
+	}
+	for _, u := range asked[1:] {
+		if !strings.Contains(u, "created_at_i%3C") {
+			t.Errorf("a follow-up request had no cursor: %s", u)
+		}
+	}
+}
+
+func TestBackfillStopsAtTheRequestedBoundary(t *testing.T) {
+	// A story older than `until` was not asked for. Keeping it would quietly
+	// widen the window the operator specified.
+	until := int64(1_700_000_000)
+	c := New()
+	c.Delay = 0
+	page := 0
+	c.Get = func(_ context.Context, _ string) ([]byte, error) {
+		base := until + int64(200-page*100)*3600
+		body := hitPage(1+page*100, 100, base-100*3600)
+		page++
+		return body, nil
+	}
+	stories, err := c.BackfillStories(context.Background(), "ask_hn", 10000, until, nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if len(stories) == 0 {
+		t.Fatal("the window holds stories")
+	}
+	for _, s := range stories {
+		if s.CreatedAtI < until {
+			t.Fatalf("story %s at %d is older than the boundary %d", s.ID, s.CreatedAtI, until)
+		}
+	}
+}
+
+func TestBackfillStopsWhenAPageRepeatsItself(t *testing.T) {
+	// Algolia's filter is strictly-less-than, so a page whose hits all share
+	// the oldest timestamp sets the cursor to that same second and would be
+	// re-served forever.
+	c := New()
+	c.Delay = 0
+	calls := 0
+	fixed := hitPage(1, 5, 1_700_000_000)
+	c.Get = func(_ context.Context, _ string) ([]byte, error) {
+		calls++
+		if calls > 20 {
+			t.Fatal("the walk never terminated")
+		}
+		return fixed, nil
+	}
+	stories, err := c.BackfillStories(context.Background(), "ask_hn", 1000, 0, nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if len(stories) != 5 {
+		t.Fatalf("only 5 distinct stories exist, got %d", len(stories))
+	}
+	if calls > 3 {
+		t.Fatalf("the repeat should have been noticed at once, took %d calls", calls)
+	}
+}
+
+func TestBackfillStopsOnAnEmptyPage(t *testing.T) {
+	c := New()
+	c.Delay = 0
+	c.Get = func(_ context.Context, _ string) ([]byte, error) {
+		return []byte(`{"nbHits":0,"nbPages":0,"hits":[]}`), nil
+	}
+	stories, err := c.BackfillStories(context.Background(), "ask_hn", 500, 0, nil)
+	if err != nil {
+		t.Fatalf("an exhausted tag is not an error: %v", err)
+	}
+	if len(stories) != 0 {
+		t.Fatalf("nothing was published, got %d", len(stories))
 	}
 }

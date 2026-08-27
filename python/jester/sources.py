@@ -69,6 +69,32 @@ SUPPORTED_KINDS = frozenset({
     ("steam", "app"),
 })
 
+#: Why a platform the parser accepts still has no adapter. A platform in
+#: PLATFORM_KINDS but absent from SUPPORTED_KINDS is a gap, and a gap with no
+#: stated reason reads as an oversight nobody got round to.
+#:
+#: This used to be recorded by shipping a DISABLED placeholder source, so the
+#: gap would show up as a row in the Sources tab. That worked, at the cost of a
+#: permanent "1 of 91 has no adapter" warning on a source nobody ever intended
+#: to fetch — the gap was visible, and so was a fake source. The reason belongs
+#: on the platform, which is where it is true.
+PLATFORM_GAPS = {
+    "tiktok": (
+        "no sanctioned way in: no public comments API, the Research API is "
+        "application-gated, and the Display API only returns your own content "
+        "— so ingesting it means scraping against their Terms. Reddit and "
+        "YouTube are public pages a logged-out browser can read; this is not. "
+        "Hacker News, Discourse, Lemmy and Steam cover the same ground on "
+        "documented public APIs."
+    ),
+}
+
+
+def gap_reason(platform: str) -> str:
+    """Why this platform cannot be fetched, or "" if it can."""
+    return PLATFORM_GAPS.get(str(platform or "").strip().lower(), "")
+
+
 PLATFORMS = tuple(PLATFORM_KINDS)
 
 

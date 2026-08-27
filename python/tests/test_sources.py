@@ -791,3 +791,47 @@ def test_every_platform_has_a_console_sort_position():
     # An unlisted platform falls into the `?? 9` bucket and interleaves
     # arbitrarily with every other unlisted one.
     assert set(PLATFORM_KINDS) - ordered == set()
+
+
+# ── platforms with no adapter say why (A14) ──────────────────────────────────
+# The gap used to be recorded by shipping a DISABLED tiktok source so it would
+# show as a row in the Sources tab. That worked, at the price of a permanent
+# "1 of 91 has no adapter" warning about a source nobody intended to fetch.
+
+def test_the_shipped_lists_hold_no_unfetchable_source():
+    for name in ("config", "config-live"):
+        path = REPO_CONFIG.parent / name / "sources.yaml"
+        if not path.exists():
+            continue
+        unfetchable = [s.name for s in load_sources(path) if not s.supported]
+        assert unfetchable == [], f"{name}/sources.yaml ships sources nothing can fetch"
+
+
+def test_every_unfetchable_platform_states_why():
+    from jester.sources import PLATFORM_KINDS, SUPPORTED_KINDS, gap_reason
+
+    for platform in PLATFORM_KINDS:
+        fetchable = any(p == platform for p, _k in SUPPORTED_KINDS)
+        if fetchable:
+            # A platform that works must not carry a "why it doesn't" note.
+            assert gap_reason(platform) == "", platform
+        else:
+            assert gap_reason(platform), (
+                f"{platform} has no adapter and no stated reason, which reads "
+                "as an oversight rather than a decision"
+            )
+
+
+def test_tiktok_is_still_parseable_and_says_why(api):
+    # Removing the platform outright would answer a pasted TikTok link with
+    # "cannot tell which platform", which is false — we know exactly what it
+    # is and exactly why it cannot be fetched.
+    src = parse_source("https://www.tiktok.com/@someone", "auto")
+    assert src.platform == "tiktok"
+    assert src.supported is False
+
+    payload = api.sources()
+    assert "tiktok" in payload["platform_gaps"]
+    assert "Terms" in payload["platform_gaps"]["tiktok"]
+    # And no shipped source is in that state.
+    assert [s["name"] for s in payload["sources"] if not s["supported"]] == []

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"jester/internal/config"
+)
 
 func TestHackerNewsTagFromURL(t *testing.T) {
 	cases := map[string]string{
@@ -87,5 +92,57 @@ func TestOnlyScrapedPlatformsGetABrowser(t *testing.T) {
 	// keyless GET.
 	if needsBrowser("some-future-api") {
 		t.Error("an unclassified platform must default to no browser")
+	}
+}
+
+// ── backfill (A12) ───────────────────────────────────────────────────────────
+
+func TestParseUntilRefusesAJunkDate(t *testing.T) {
+	// Zero means "no boundary at all", so defaulting a typo to zero would
+	// silently walk the entire archive instead of stopping where asked.
+	if _, err := parseUntil("2024-13-99"); err == nil {
+		t.Error("an impossible date must be refused")
+	}
+	if _, err := parseUntil("last tuesday"); err == nil {
+		t.Error("prose must be refused")
+	}
+	got, err := parseUntil("2024-01-01")
+	if err != nil || got != 1704067200 {
+		t.Errorf("2024-01-01 = %d (%v), want 1704067200", got, err)
+	}
+	if got, err := parseUntil("  "); err != nil || got != 0 {
+		t.Errorf("an empty boundary means no boundary: %d %v", got, err)
+	}
+}
+
+func TestBackfillRefusesPlatformsItCannotWalk(t *testing.T) {
+	sources := []config.Source{
+		{Name: "hn-ask", Platform: "hackernews", Kind: "feed", URL: "https://news.ycombinator.com/ask"},
+		{Name: "aseprite", Platform: "steam", Kind: "app", URL: "https://store.steampowered.com/app/431730/"},
+		{Name: "hn-thread", Platform: "hackernews", Kind: "story", URL: "https://news.ycombinator.com/item?id=1"},
+	}
+	// Naming the wrong platform must say so, not walk it badly.
+	if _, err := findSource(sources, "nope"); err == nil {
+		t.Error("an unknown source must be refused")
+	} else if !strings.Contains(err.Error(), "hn-ask") {
+		// A bare "not found" against a 93-entry list is a guessing game.
+		t.Errorf("the error should list what IS backfillable: %v", err)
+	}
+	if s, err := findSource(sources, "aseprite"); err != nil || s.Platform != "steam" {
+		t.Errorf("findSource should still resolve it; the platform check is separate: %v", err)
+	}
+}
+
+func TestStampNeverClaims1970(t *testing.T) {
+	// 0 is the "no timestamp published" value, and printing 1970-01-01 for it
+	// would be a date the page never gave.
+	if got := stamp(0); got != "unknown" {
+		t.Errorf("stamp(0) = %q, want unknown", got)
+	}
+	if got := stamp(-5); got != "unknown" {
+		t.Errorf("stamp(-5) = %q, want unknown", got)
+	}
+	if got := stamp(1704067200); got != "2024-01-01" {
+		t.Errorf("stamp = %q", got)
 	}
 }

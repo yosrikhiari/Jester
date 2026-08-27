@@ -444,12 +444,18 @@ const PLATFORM_LABEL = {
 };
 // Platforms the parser accepts are served by the API, so adding an adapter
 // never needs a matching edit here.
-function renderPlatformOptions(platformKinds) {
+function renderPlatformOptions(platformKinds, gaps = {}) {
   const sel = $('#src-platform');
   const keep = sel.value;
   sel.innerHTML = '<option value="auto">detect from link</option>' +
-    Object.keys(platformKinds || {}).map(p =>
-      `<option value="${esc(p)}">${esc(PLATFORM_LABEL[p] || p)}</option>`).join('');
+    Object.keys(platformKinds || {}).map(p => {
+      // A platform the parser accepts but the worker cannot fetch stays in the
+      // list — removing it would answer a pasted link with "cannot tell which
+      // platform", which is false. It says why instead.
+      const why = gaps[p];
+      return `<option value="${esc(p)}"${why ? ` title="${esc(why)}"` : ''}>` +
+        `${esc(PLATFORM_LABEL[p] || p)}${why ? ' — no adapter' : ''}</option>`;
+    }).join('');
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
 
@@ -461,7 +467,7 @@ async function loadSources() {
   const res = await api('/api/sources');
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   SOURCES_RES = res;
-  renderPlatformOptions(res.platform_kinds);
+  renderPlatformOptions(res.platform_kinds, res.platform_gaps);
   renderSources();
 }
 
@@ -540,6 +546,11 @@ function renderSources() {
       (${esc(barren.map(s => s.name).join(', '))}) have been walked
       ${res.park_after_barren_visits || 3}+ times and never queued a comment. Each one still
       costs a rotation slot every run — “park” pauses it without removing it.`);
+  }
+  const gaps = res.platform_gaps || {};
+  for (const [p, why] of Object.entries(gaps)) {
+    notes.push(`<span class="chip">${esc(PLATFORM_LABEL[p] || p)}</span> has no adapter and is
+      not planned: ${esc(why)}`);
   }
   $('#src-hint').innerHTML = notes.join('<br>')
     || 'Changes are written to <span class="mono">sources.yaml</span> immediately; the worker picks them up on its next run.';

@@ -56,6 +56,9 @@ type Client struct {
 	// MinComments filters out threads with too little discussion to be worth
 	// a fetch. Zero means "no floor".
 	MinComments int
+	// Delay paces a BACKFILL walk, which can be hundreds of requests deep.
+	// Zero for ordinary runs, which make one listing request per source.
+	Delay time.Duration
 }
 
 func New() *Client { return &Client{Get: httpGet, MinComments: 10} }
@@ -93,7 +96,11 @@ func (c *Client) get(ctx context.Context, u string) ([]byte, error) {
 }
 
 // SearchURL builds the story-listing request for a tag.
-func (c *Client) SearchURL(tag string, limit int) string {
+//
+// `before` is a Unix second; when non-zero the listing is restricted to
+// stories created strictly before it. That is the ONLY way past this API's
+// depth ceiling — see BackfillStories.
+func (c *Client) SearchURL(tag string, limit int, before int64) string {
 	if tag == "" {
 		tag = "ask_hn"
 	}
@@ -103,8 +110,19 @@ func (c *Client) SearchURL(tag string, limit int) string {
 	v := url.Values{}
 	v.Set("tags", tag)
 	v.Set("hitsPerPage", strconv.Itoa(limit))
+	// numericFilters takes a COMMA-SEPARATED list, and the two filters here
+	// are ANDed. Building them separately would have the second Set() drop the
+	// first, silently removing either the quiet-thread floor or the time
+	// cursor depending on order.
+	var filters []string
 	if c.MinComments > 0 {
-		v.Set("numericFilters", "num_comments>"+strconv.Itoa(c.MinComments))
+		filters = append(filters, "num_comments>"+strconv.Itoa(c.MinComments))
+	}
+	if before > 0 {
+		filters = append(filters, "created_at_i<"+strconv.FormatInt(before, 10))
+	}
+	if len(filters) > 0 {
+		v.Set("numericFilters", strings.Join(filters, ","))
 	}
 	return SearchEndpoint + "?" + v.Encode()
 }
@@ -114,7 +132,10 @@ type searchResponse struct {
 		ObjectID    string `json:"objectID"`
 		Title       string `json:"title"`
 		NumComments int    `json:"num_comments"`
+		CreatedAtI  int64  `json:"created_at_i"`
 	} `json:"hits"`
+	NbHits  int `json:"nbHits"`
+	NbPages int `json:"nbPages"`
 }
 
 // Story is one discussion thread worth fetching.
@@ -122,12 +143,15 @@ type Story struct {
 	ID          string
 	Title       string
 	NumComments int
+	// CreatedAtI is the Unix second Algolia sorts by, and the cursor a
+	// backwards walk advances on.
+	CreatedAtI int64
 }
 
 // ListStories returns up to `limit` stories for a tag, newest first — the
 // order search_by_date returns them in.
 func (c *Client) ListStories(ctx context.Context, tag string, limit int) ([]Story, error) {
-	body, err := c.get(ctx, c.SearchURL(tag, limit))
+	body, err := c.get(ctx, c.SearchURL(tag, limit, 0))
 	if err != nil {
 		return nil, fmt.Errorf("hn search: %w", err)
 	}
@@ -140,7 +164,8 @@ func (c *Client) ListStories(ctx context.Context, tag string, limit int) ([]Stor
 		if h.ObjectID == "" {
 			continue
 		}
-		out = append(out, Story{ID: h.ObjectID, Title: h.Title, NumComments: h.NumComments})
+		out = append(out, Story{ID: h.ObjectID, Title: h.Title,
+			NumComments: h.NumComments, CreatedAtI: h.CreatedAtI})
 		if len(out) == limit {
 			break
 		}
@@ -215,6 +240,102 @@ func flatten(nodes []item, depth int, out *[]FetchedComment) {
 			flatten(n.Children, depth+1, out)
 		}
 	}
+}
+
+// BackfillStories walks a tag BACKWARDS through time, past the depth ceiling
+// that `page=` cannot cross.
+//
+// THE CEILING, measured rather than assumed. Algolia reports nbHits=180,552
+// for ask_hn and nbHits=563,366 for show_hn, which reads like an archive
+// waiting to be paged through. It is not: nbPages is 1 at hitsPerPage=1000 and
+// 10 at hitsPerPage=100, and page=49 returns zero hits. The index is capped at
+// 1,000 RESULTS per query however the pages are sliced — so the whole
+// "hitsPerPage=1000 gets you 1,000 stories in one request" plan reaches
+// exactly 1,000 stories and then stops, 0.6% of the way in.
+//
+// What does work is a time cursor: numericFilters=created_at_i<T re-runs the
+// query against everything older than T, which is a fresh 1,000-result window.
+// Taking T from the oldest hit of the previous page walks the archive with no
+// overlap and no page limit (verified live: 400 stories, 400 unique, marching
+// back four days at a time).
+//
+// `until` is a Unix second to stop at, 0 for "keep going until want is met".
+// `want` is a ceiling, not a promise: a tag can simply run out.
+func (c *Client) BackfillStories(ctx context.Context, tag string, want int, until int64,
+	onPage func(n int, oldest int64),
+) ([]Story, error) {
+	if want <= 0 {
+		want = 1000
+	}
+	const pageSize = 100
+	var (
+		out    []Story
+		cursor int64
+		// Algolia's filter is strictly-less-than, so a page whose hits share
+		// the oldest timestamp would set the cursor to that same second and
+		// re-serve them forever. Identity is checked rather than trusted.
+		seen = map[string]bool{}
+	)
+	for len(out) < want {
+		size := want - len(out)
+		if size > pageSize {
+			size = pageSize
+		}
+		body, err := c.get(ctx, c.SearchURL(tag, size, cursor))
+		if err != nil {
+			return out, fmt.Errorf("hn backfill: %w", err)
+		}
+		var resp searchResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return out, fmt.Errorf("hn backfill decode: %w", err)
+		}
+		if len(resp.Hits) == 0 {
+			break
+		}
+		fresh, oldest := 0, int64(0)
+		for _, h := range resp.Hits {
+			if h.ObjectID == "" || seen[h.ObjectID] {
+				continue
+			}
+			if oldest == 0 || (h.CreatedAtI > 0 && h.CreatedAtI < oldest) {
+				oldest = h.CreatedAtI
+			}
+			// Stop AT the boundary, not past it: a story older than `until`
+			// was not asked for, and keeping it would quietly widen the window
+			// the operator specified.
+			if until > 0 && h.CreatedAtI > 0 && h.CreatedAtI < until {
+				continue
+			}
+			seen[h.ObjectID] = true
+			out = append(out, Story{ID: h.ObjectID, Title: h.Title,
+				NumComments: h.NumComments, CreatedAtI: h.CreatedAtI})
+			fresh++
+			if len(out) == want {
+				break
+			}
+		}
+		if onPage != nil {
+			onPage(fresh, oldest)
+		}
+		// Either the page was entirely repeats (a timestamp collision at the
+		// boundary) or the walk has crossed `until`. Both mean stop, and
+		// without this the cursor stands still and the loop never ends.
+		if oldest == 0 || (until > 0 && oldest < until) {
+			break
+		}
+		if fresh == 0 && cursor == oldest {
+			break
+		}
+		cursor = oldest
+		if c.Delay > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(c.Delay):
+			}
+		}
+	}
+	return out, nil
 }
 
 // FeedName is the human name of an Algolia tag, used as the community a story

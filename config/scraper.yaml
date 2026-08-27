@@ -49,18 +49,24 @@ warmup_navigations: 1
 blocked_response_action: backoff
 
 # --- §35.3 DECISION (recorded 2026-08-25) ----------------------------------
-# Resolved as option (a), flag kept and left OFF: TikTok stays a configurable
-# source with NO adapter built. The other two scraped platforms (Reddit,
-# YouTube) are public pages a logged-out browser can read; TikTok has no
-# public API, so ingesting it means scraping against their Terms — a risk
-# accepted deliberately or not at all, never by default.
+# CLOSED, not deferred. TikTok has no sanctioned way in: no public comments
+# API, a Research API that is application-gated, and a Display API that returns
+# only your own content. Ingesting it therefore means scraping against their
+# Terms. Reddit and YouTube are public pages a logged-out browser can read;
+# this is not, and that difference is the whole line this project draws.
 #
-# Practically this cost nothing: Hacker News and Discourse were added instead
-# and cover the same ground through documented public APIs, with no ToS grey
-# area and no bot detector to fight. The TikTok entry in sources.yaml stays
-# disabled, and the worker reports it as "no adapter for platform=tiktok"
-# rather than silently skipping it, so the gap stays visible.
+# Practically it cost nothing. Hacker News, Discourse, Lemmy and Steam were
+# built instead and cover the same ground on documented public APIs, with no
+# ToS grey area and no bot detector to fight.
 #
-# To revisit: build go/internal/tiktok on the Reddit/YouTube pattern, add
-# ("tiktok", <kind>) to SUPPORTED_KINDS in python/jester/sources.py, and
+# The gap used to be recorded by shipping a DISABLED tiktok source, so it would
+# appear as a row in the Sources tab. That worked, at the price of a permanent
+# "1 of 91 has no adapter" warning about a source nobody ever intended to
+# fetch. The reason now lives on the platform itself — sources.PLATFORM_GAPS,
+# surfaced in the console's add-source picker and its Sources hint — which is
+# where it is actually true, and the placeholder is gone.
+#
+# To reopen: only if TikTok publishes a keyless public comments endpoint, or
+# the operator accepts the ToS risk explicitly. Then build go/internal/tiktok,
+# add ("tiktok", <kind>) to SUPPORTED_KINDS, drop the PLATFORM_GAPS entry, and
 # change this note.

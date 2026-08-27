@@ -1,5 +1,5 @@
 # Curated source list. Edit here or in the operator console (Sources tab).
-# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video - tiktok=profile|video|hashtag
+# kind: reddit=subreddit|thread - hackernews=feed|story - discourse=forum|topic - youtube=channel|video
 # Set `enabled: false` to park a source without losing it; `notes` is
 # free text and survives console edits.
 sources:
@@ -85,13 +85,6 @@ sources:
   url: https://www.reddit.com/r/NoStupidQuestions/
   enabled: true
   notes: parked - high volume, low pain density; enable only with a tight prefilter
-- platform: tiktok
-  name: indiehackers
-  kind: profile
-  url: https://www.tiktok.com/@indiehackers
-  enabled: false
-  notes: no TikTok adapter yet - parked so the worker does not report it as skipped
-    every run
 - platform: reddit
   name: techjobs
   kind: subreddit

@@ -38,6 +38,9 @@ func main() {
 	only := flag.String("only", "", "comma-separated source names; empty walks every enabled source")
 	maxComments := flag.Int("max-comments", 0, "stop once this many comments are queued this run (0 = no cap)")
 	maxPosts := flag.Int("max-posts", 0, "stop once this many threads/videos/topics are fetched this run (0 = no cap)")
+	backfill := flag.String("backfill", "", "one-off deep walk of a single source's archive, by source name (hackernews feeds only)")
+	backfillPosts := flag.Int("backfill-posts", 500, "threads to walk in a backfill")
+	backfillUntil := flag.String("backfill-until", "", "stop the backfill at this date (YYYY-MM-DD)")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(*configDir)
@@ -80,6 +83,31 @@ func main() {
 		MaxEmoji:    cfg.Thresholds.PrefilterMaxEmoji,
 		MaxMentions: cfg.Thresholds.PrefilterMaxMentions,
 		MinWords:    cfg.Thresholds.PrefilterMinWords,
+	}
+
+	// A backfill is checked BEFORE -live, and requires it: it is a live fetch
+	// by definition, and silently doing a mock run when the operator asked for
+	// a deep archive walk would be the worst possible answer.
+	if *backfill != "" {
+		if !*live {
+			fail("-backfill is a live fetch; pass -live too")
+		}
+		until, err := parseUntil(*backfillUntil)
+		if err != nil {
+			fail("%v", err)
+		}
+		n, err := runBackfill(context.Background(), cfg, st, *runID, pp, cfg.Sources.Sources,
+			backfillOptions{
+				Source: *backfill,
+				Want:   *backfillPosts,
+				Until:  until,
+				Delay:  time.Duration(cfg.Thresholds.RequestDelayMs) * time.Millisecond,
+			})
+		if err != nil {
+			fail("backfill: %v", err)
+		}
+		fmt.Printf("backfill queued %d comment(s)\n", n)
+		return
 	}
 
 	if *live {
@@ -136,6 +164,21 @@ func main() {
 		fail("enqueue: %v", err)
 	}
 	fmt.Printf("enqueued batch id=%d with %d kept comments\n", id, len(batch))
+}
+
+// parseUntil turns a YYYY-MM-DD boundary into a Unix second. An unparseable
+// date is refused rather than defaulted to zero, because zero means "no
+// boundary at all" — a typo would silently walk the entire archive.
+func parseUntil(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	t, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return 0, fmt.Errorf("-backfill-until %q is not a YYYY-MM-DD date", raw)
+	}
+	return t.UTC().Unix(), nil
 }
 
 func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Params,
@@ -575,7 +618,12 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		n := enqueueComments(st, runID, "steam",
 			steam.StoreURL(appID), "steam-"+appID, comments, post, pp, maxPerThread)
 		bg.add(n)
-		fmt.Printf("[live]   enqueued %d kept review(s) (steam %s)\n", n, appID)
+		// A Steam source saturates: `filter=recent` re-serves the same newest
+		// reviews, so a second visit legitimately fetches 150 and keeps none.
+		// enqueueComments says so for every platform now, so this line only
+		// has to report the yield.
+		fmt.Printf("[live]   enqueued %d kept review(s) of %d (steam %s)\n",
+			n, len(comments), appID)
 		return n, nil
 
 	case src.Platform == "github":
@@ -736,6 +784,13 @@ func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 	pp prefilter.Params, maxPerThread int) int {
 	var batch []store.Comment
 	dropped := 0
+	// Why the ones that did not make it did not. "enqueued 0" is the single
+	// most ambiguous line this worker prints: a source that fetched nothing, a
+	// source whose every comment was already archived, and a source whose
+	// every comment was too short all read identically — and the first is
+	// broken while the other two are healthy. Counting the reasons costs two
+	// ints and settles it.
+	seenBefore, filtered := 0, 0
 	for _, c := range comments {
 		if maxPerThread > 0 && len(batch) >= maxPerThread {
 			dropped = len(comments) - len(batch) - dropped
@@ -747,10 +802,12 @@ func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 			fail("dedup check: %v", err)
 		}
 		if dup {
+			seenBefore++
 			continue
 		}
 		ok, reason := prefilter.Keep(c.Body, pp)
 		if !ok {
+			filtered++
 			fmt.Printf("filtered (%s): %.40q\n", reason, c.Body)
 			continue
 		}
@@ -766,6 +823,12 @@ func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 			threadID, maxPerThread)
 	}
 	if len(batch) == 0 {
+		// Say WHY nothing was queued. Silence here is what sends an operator
+		// looking for a broken adapter when the source is simply saturated.
+		if len(comments) > 0 {
+			fmt.Printf("[live]   %s %s: %d fetched, 0 kept (%d already archived, %d filtered)\n",
+				platform, threadID, len(comments), seenBefore, filtered)
+		}
 		return 0
 	}
 	id, err := st.EnqueueBatch(store.Batch{

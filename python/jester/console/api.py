@@ -48,6 +48,7 @@ from jester.sources import (
     SUPPORTED_KINDS,
     SourceError,
     duplicate_names,
+    gap_reason,
     find as find_source,
     load_sources,
     parse_source,
@@ -684,6 +685,12 @@ class ConsoleAPI:
             "sources": [self._with_health(s, state.get(s.name)) for s in srcs],
             "platform_kinds": {k: list(v) for k, v in PLATFORM_KINDS.items()},
             "supported_kinds": [list(pair) for pair in sorted(SUPPORTED_KINDS)],
+            # Why a platform the add-form offers still cannot be fetched. A gap
+            # with no stated reason reads as an oversight; this one is a
+            # decision, and the page should say which it is.
+            "platform_gaps": {
+                p: gap_reason(p) for p in PLATFORM_KINDS if gap_reason(p)
+            },
             # source_state is keyed by name, so two sources sharing one share a
             # health row and a rotation slot — each hides the other's yield.
             # The console's own add/rename path calls unique_name(), so this
