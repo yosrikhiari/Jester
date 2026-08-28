@@ -178,7 +178,17 @@ def ingest(
         max_posts=max_posts,
     )
     env = os.environ.copy()
-    if not live:
+    # Set it BOTH ways rather than only on the mock path. `.env` on a developer
+    # machine may well carry JESTER_MOCK=1, and it was inherited straight
+    # through into live runs — so a live worker ran with an environment that
+    # said "mock". Nothing reads it before `-live` returns today, which is the
+    # only reason this has been harmless; cloakbrowser.New already builds a
+    # client with Mock=true from it. The flag and the environment must agree,
+    # or the next code path to consult the environment silently replays
+    # fixtures during a run that believes it is live.
+    if live:
+        env.pop("JESTER_MOCK", None)
+    else:
         env["JESTER_MOCK"] = "1"
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell

@@ -261,28 +261,66 @@ type postJSON struct {
 }
 
 type topicResponse struct {
-	ID               int64    `json:"id"`
-	Title            string   `json:"title"`
-	Slug             string   `json:"slug"`
-	CreatedAt        string   `json:"created_at"`
-	LastPostedAt     string   `json:"last_posted_at"`
-	PostsCount       int64    `json:"posts_count"`
-	ReplyCount       int64    `json:"reply_count"`
-	Views            int64    `json:"views"`
-	LikeCount        int64    `json:"like_count"`
-	ParticipantCount int64    `json:"participant_count"`
-	WordCount        int64    `json:"word_count"`
-	CategoryID       int64    `json:"category_id"`
-	Tags             []string `json:"tags"`
-	Closed           bool     `json:"closed"`
-	Archived         bool     `json:"archived"`
-	Pinned           bool     `json:"pinned"`
-	HasAccepted      bool     `json:"has_accepted_answer"`
-	Archetype        string   `json:"archetype"`
-	Locale           string   `json:"locale"`
+	ID               int64   `json:"id"`
+	Title            string  `json:"title"`
+	Slug             string  `json:"slug"`
+	CreatedAt        string  `json:"created_at"`
+	LastPostedAt     string  `json:"last_posted_at"`
+	PostsCount       int64   `json:"posts_count"`
+	ReplyCount       int64   `json:"reply_count"`
+	Views            int64   `json:"views"`
+	LikeCount        int64   `json:"like_count"`
+	ParticipantCount int64   `json:"participant_count"`
+	WordCount        int64   `json:"word_count"`
+	CategoryID       int64   `json:"category_id"`
+	Tags             tagList `json:"tags"`
+	Closed           bool    `json:"closed"`
+	Archived         bool    `json:"archived"`
+	Pinned           bool    `json:"pinned"`
+	HasAccepted      bool    `json:"has_accepted_answer"`
+	Archetype        string  `json:"archetype"`
+	Locale           string  `json:"locale"`
 	PostStream       struct {
 		Posts []postJSON `json:"posts"`
 	} `json:"post_stream"`
+}
+
+// tagList is []string that also accepts Discourse's other shape for the same
+// field. Core serialises tags as plain strings, but an instance running the
+// tag-metadata plugin returns objects — {"name": "...", "count": n} — and a
+// []string then fails to decode the WHOLE topic:
+//
+//	topic 28457 decode: json: cannot unmarshal object into Go struct field
+//	topicResponse.tags of type string
+//
+// The topic was dropped over a field nothing downstream reads for content.
+// Decoding permissively costs nothing and keeps the posts.
+type tagList []string
+
+func (t *tagList) UnmarshalJSON(b []byte) error {
+	var plain []string
+	if err := json.Unmarshal(b, &plain); err == nil {
+		*t = plain
+		return nil
+	}
+	var objects []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &objects); err != nil {
+		// Neither shape. Tags are decoration here — a third representation
+		// must not cost us the topic, which is the bug this type exists to
+		// fix. Drop them and carry on.
+		*t = nil
+		return nil
+	}
+	out := make([]string, 0, len(objects))
+	for _, o := range objects {
+		if o.Name != "" {
+			out = append(out, o.Name)
+		}
+	}
+	*t = out
+	return nil
 }
 
 // quoteBlock matches Discourse's rendered quote: an <aside class="quote ...">

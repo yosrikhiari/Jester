@@ -7,7 +7,12 @@ from typing import List
 
 
 def compute_floor_flags(
-    *, kept: int, ideas: int, all_trivial: bool, failed_batches: int
+    *,
+    kept: int,
+    ideas: int,
+    all_trivial: bool,
+    failed_batches: int,
+    dedup_deferred: int = 0,
 ) -> List[str]:
     """Derive the flag set for one run.
 
@@ -16,6 +21,10 @@ def compute_floor_flags(
     - THIN_HAUL   : only 1-2 ideas synthesized
     - ALL_TRIVIAL : every kept nugget was low-signal (trivial=1)
     - FAILED_BATCHES : at least one ingest batch ended in 'failed'
+    - DEDUP_UNAVAILABLE : the vector store could not be reached for at least
+      one nugget, so its batch was left queued rather than archived unchecked.
+      Without this a run where Qdrant was down finishes 'completed' having kept
+      nothing, which is indistinguishable from a run that found nothing.
     """
     flags: List[str] = []
     if kept == 0:
@@ -28,4 +37,6 @@ def compute_floor_flags(
         flags.append("ALL_TRIVIAL")
     if failed_batches > 0:
         flags.append("FAILED_BATCHES")
+    if dedup_deferred > 0:
+        flags.append("DEDUP_UNAVAILABLE")
     return flags

@@ -47,6 +47,53 @@ def test_reap_running_flips_orphaned_to_aborted():
     assert get_run(db, rid)["status"] == "aborted"
 
 
+def test_reap_running_records_why_the_row_was_aborted():
+    """An orphan row with error=NULL explains nothing.
+
+    Four scheduled treats aborted this way and read as unexplained; the cause
+    existed only in a log file. The reaper cannot know the real reason, but it
+    can say that no exit was recorded, which is what points at the log.
+    """
+    from jester.store import start_run, reap_running, get_run
+
+    db = open_db(":memory:")
+    rid = start_run(db, "orphan")
+    reap_running(db)
+
+    row = get_run(db, rid)
+    assert row["status"] == "aborted"
+    assert row["error"], "an aborted run must say something about why"
+    assert "no exit recorded" in row["error"]
+
+
+def test_reap_running_keeps_an_error_the_process_recorded():
+    """A real cause always beats the reaper's guess."""
+    from jester.store import start_run, reap_running, get_run, update_run_summary
+
+    db = open_db(":memory:")
+    rid = start_run(db, "crashed")
+    update_run_summary(db, "crashed", error="UnexpectedResponse: 408")
+    reap_running(db)
+
+    assert get_run(db, rid)["error"] == "UnexpectedResponse: 408"
+
+
+def test_dedup_unavailable_flag():
+    """A run that archived nothing because the vector store was down must not
+    look like a run that simply found nothing."""
+    from jester.ops import compute_floor_flags
+
+    flags = compute_floor_flags(
+        kept=0, ideas=0, all_trivial=False, failed_batches=0, dedup_deferred=12
+    )
+    assert "DEDUP_UNAVAILABLE" in flags
+
+    clean = compute_floor_flags(
+        kept=3, ideas=3, all_trivial=False, failed_batches=0, dedup_deferred=0
+    )
+    assert "DEDUP_UNAVAILABLE" not in clean
+
+
 # --- Task 2: concurrent-run guard ---
 def test_concurrent_run_guard_refuses_second_running():
     from jester.store import start_run

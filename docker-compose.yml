@@ -15,9 +15,22 @@
 # rebuild (Python/Go console + CLI; the Go binary is built once into the
 # image, the React dev server hot-reloads).
 #
-# Data lives in ./data (host) and is shared between go-worker and
-# jester-console through the SQLite handoff queue — that IS the cross-process
-# contract, so both must see the same ./data.
+# go-worker and jester-console share one SQLite database through the handoff
+# queue — that IS the cross-process contract, so both must see the same data
+# directory. They share the `jester_docker_data` VOLUME, not the host's ./data.
+#
+# That separation is deliberate and load-bearing. This stack runs every
+# provider as `fake` (JESTER_MOCK=1 plus the thresholds override below) and
+# starts cron inside the console container, so it generates stand-in
+# extractions on a schedule. Pointed at the host's ./data it would write those
+# into the real archive, where `extractor_model` exists specifically to keep
+# them out — and it would do so as a THIRD writer of a SQLite file whose other
+# writers are the host CLI and the scheduled tasks. SQLite's locking is not
+# reliable across a Docker bind mount, and on 2026-08-28 that combination
+# corrupted ingest_batch mid-ingest ("database disk image is malformed").
+#
+# To inspect the real archive, run the console on the host instead:
+#   python -m jester.console --db data/jester.db --config config
 
 name: jester
 
@@ -40,6 +53,9 @@ services:
     # Code bind-mounted from the repo; only pip deps are baked in.
     volumes:
       - .:/app
+      # Shadows the repo's ./data inside the container: this stack gets its own
+      # throwaway archive and never touches the host's. See the header.
+      - jester_docker_data:/app/data
       # Force every provider to `fake` so the stack runs fully offline.
       - ./docker/config/thresholds.yaml:/app/config/thresholds.yaml:ro
     environment:
@@ -65,6 +81,9 @@ services:
       dockerfile: docker/go.Dockerfile
     volumes:
       - .:/app
+      # Same throwaway archive the console uses — the handoff queue is the
+      # contract between these two, and only these two.
+      - jester_docker_data:/app/data
     environment:
       JESTER_MOCK: "1"
     env_file:
@@ -121,6 +140,7 @@ services:
     networks: [jester_net]
 
 volumes:
+  jester_docker_data:
   qdrant_storage:
   cloak_profiles:
   ollama_data:

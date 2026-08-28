@@ -64,7 +64,11 @@ from jester.store import (
     update_idea,
     update_run_summary,
 )
-from jester.vector import VectorStore
+from jester.vector import (
+    UnavailableVectorStore,
+    VectorDimensionMismatch,
+    VectorStore,
+)
 from jester.worker import ingest as worker_ingest
 
 
@@ -384,6 +388,10 @@ def cmd_run(args):
     # must not be archived the same way.
     extractor_provider = provider_for(cfg.thresholds, "extractor")
     nuggets, degraded_batches, degraded = [], set(), 0
+    # Which batch each nugget came from. The archivist works on a flat list and
+    # can hand nuggets back undecided (see below); without this there is no way
+    # to tell which batch to leave queued for them.
+    batch_of = {}
     for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
         produced = extract(
             [c],
@@ -404,15 +412,49 @@ def cmd_run(args):
                 degraded += 1
                 degraded_batches.add(batch_id)
                 continue
+            batch_of[n.unique_key] = batch_id
             nuggets.append(n)
 
     # R37: tag triviality pre-archive. Floor, not gate — nothing is filtered.
     for n in nuggets:
         n.trivial = judge_trivial(n.raw_text or "").trivial
 
-    vector = _vector_for(cfg, args.db)
+    try:
+        vector = _vector_for(cfg, args.db)
+    except VectorDimensionMismatch:
+        # NOT deferrable, and the distinction matters. A width mismatch is a
+        # configuration error that every later run will hit identically, so
+        # degrading to "defer everything" would turn a loud, fixable misconfig
+        # into a pipeline that reports `completed` forever and archives
+        # nothing. This exception is raised at open time for exactly that
+        # reason; let it end the run.
+        raise
+    except Exception as exc:  # noqa: BLE001 - transport/backend unavailability
+        # Opening the store touches the network (collection_exists), so a
+        # stopped Qdrant fails HERE, before a batch is read — a different line
+        # from the mid-run timeout but the same event. Hand the archivist a
+        # stand-in that refuses every lookup, and the run defers all of its
+        # nuggets, keeps every batch queued and finishes saying
+        # DEDUP_UNAVAILABLE, instead of dying with the queue untouched.
+        print(f"vector store unavailable: {exc}")
+        vector = UnavailableVectorStore(exc)
     archivist = Archivist(db, vector, cfg.thresholds)
     kept = archivist.run(nuggets)
+
+    # Nuggets the archivist could not check for duplicates — Qdrant unreachable
+    # or timing out. Their batches go back in the queue rather than being marked
+    # processed, so the material is re-extracted on a pass when the vector store
+    # is answering, instead of being archived unverified or silently dropped.
+    if archivist.deferred:
+        for n, _why in archivist.deferred:
+            bid = batch_of.get(n.unique_key)
+            if bid is not None:
+                degraded_batches.add(bid)
+        print(
+            f"deferred {len(archivist.deferred)} nugget(s): dedup lookup "
+            f"unavailable ({archivist.deferred[0][1]})"
+        )
+        update_run_summary(db, args.run, n_dedup_deferred=len(archivist.deferred))
 
     for r, payload in readable:
         if r["id"] in degraded_batches:
@@ -513,6 +555,7 @@ def cmd_run(args):
         ideas=len(ideas),
         all_trivial=_run_all_trivial(db, args.run),
         failed_batches=failed,
+        dedup_deferred=len(archivist.deferred),
     )
     durations = _duration_fields(db, args.run, origin)
     finish_run(
@@ -753,6 +796,34 @@ def cmd_retention(args):
         f"dropped {purged['batches']} completed batch(es); "
         f"pruned {pruned} export dir(s)"
     )
+
+
+def _record_run_crash(args, exc) -> None:
+    """Best-effort: write `exc` onto whichever run row is still 'running'.
+
+    Every failure here is swallowed. This runs while the process is already
+    dying, and an error-reporting path that raises would replace the real
+    traceback with its own — the exact failure it exists to prevent.
+    """
+    db_path = getattr(args, "db", None)
+    if not db_path:
+        return
+    try:
+        db = open_db(db_path)
+        try:
+            run_id = active_run(db)
+            if run_id is None:
+                return
+            finish_run(
+                db,
+                run_id,
+                status="error",
+                error=f"{type(exc).__name__}: {exc}"[:2000],
+            )
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - never mask the original failure
+        pass
 
 
 def cmd_ingest(args):
@@ -1781,7 +1852,17 @@ def main(argv=None):
     mg.set_defaults(func=cmd_migrate)
 
     args = p.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except Exception as exc:
+        # A command that owns a run row must not die silently. Until now the
+        # only thing that ever wrote a terminal status was `reap_running`, from
+        # a LATER process — so the run that actually crashed recorded nothing,
+        # and the console showed 'aborted' with a NULL error while the cause
+        # sat in a log file. Stamp the reason on the row on the way out, then
+        # re-raise: the traceback and the exit code are unchanged.
+        _record_run_crash(args, exc)
+        raise
 
 
 if __name__ == "__main__":

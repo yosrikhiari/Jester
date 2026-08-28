@@ -1,9 +1,39 @@
 """Qdrant vector store wrapper. Local mode (no server) for mock/Checkpoint 1."""
+import time
+
 from qdrant_client import QdrantClient, models
 
 from jester.embed import EmbeddingClient, FakeEmbedding
 
 COLLECTION = "nuggets"
+
+#: Seconds before a Qdrant HTTP call is abandoned. QdrantClient defaults its
+#: `timeout` to None, which passes nothing to httpx and leaves httpx's own
+#: 5-second default in force — short for a server that is busy indexing, and a
+#: timeout here used to end the whole run rather than one lookup.
+TIMEOUT_S = 30
+
+#: A 408 from Qdrant is usually the server being busy, not the query being
+#: wrong, and the next attempt a moment later normally lands. One retry, not
+#: three: this sits inside a per-nugget loop that runs tens of thousands of
+#: times, so every extra attempt is paid for on every failure.
+RETRIES = 1
+RETRY_BACKOFF_S = 0.5
+
+
+def _with_retry(call, *, attempts: int = RETRIES + 1):
+    """Run `call`, retrying transient transport failures a bounded number of
+    times. The LAST exception propagates — callers decide what a hard failure
+    means, and for the archivist it means deferring a nugget, not dying."""
+    last = None
+    for i in range(attempts):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - transport-agnostic on purpose
+            last = exc
+            if i + 1 < attempts:
+                time.sleep(RETRY_BACKOFF_S * (i + 1))
+    raise last
 
 
 class VectorDimensionMismatch(RuntimeError):
@@ -12,6 +42,41 @@ class VectorDimensionMismatch(RuntimeError):
     Raised at OPEN time rather than left to surface as a numpy broadcast error
     on the first upsert, because by then the traceback points at array shapes
     instead of at the configuration change that caused it."""
+
+
+class UnavailableVectorStore:
+    """Stands in for a VectorStore that could not be opened at all.
+
+    Every method raises the original connection error. That is the point: the
+    archivist already knows how to handle a dedup lookup it cannot complete —
+    it sets the nugget aside and its batch is left queued — and routing a
+    dead-at-startup Qdrant through that same path means one behaviour for
+    "the vector store is not answering" instead of two.
+
+    The alternative, letting the constructor's exception escape, ends the run
+    before a single batch is read. That is how it behaved when a scheduled
+    treat met a stopped Qdrant: nothing archived, nothing explained, and the
+    queue no shorter.
+
+    NOT a general fallback. `reembed` and the console's search want the hard
+    failure, because for them an unreachable store makes the operation
+    meaningless rather than merely deferred.
+    """
+
+    def __init__(self, exc: Exception):
+        self._exc = exc
+
+    def search_scored(self, text, limit: int = 5):
+        raise self._exc
+
+    def search(self, text, threshold):
+        raise self._exc
+
+    def upsert(self, unique_key: str, text: str, payload: dict) -> None:
+        raise self._exc
+
+    def count(self) -> int:
+        raise self._exc
 
 
 class VectorStore:
@@ -39,14 +104,14 @@ class VectorStore:
     def for_url(cls, url: str, embed: EmbeddingClient = None, force_fail: bool = False,
                 collection: str = COLLECTION) -> "VectorStore":
         """Shared-server mode (§37.17): many processes against one Qdrant."""
-        return cls(QdrantClient(url=url), embed or FakeEmbedding(), force_fail=force_fail,
-                   collection=collection)
+        return cls(QdrantClient(url=url, timeout=TIMEOUT_S), embed or FakeEmbedding(),
+                   force_fail=force_fail, collection=collection)
 
     @staticmethod
     def count_points_at(url: str, collection: str = COLLECTION) -> int:
         """§33 #4 parity helper. Missing collection counts as 0; connection
         failures raise so the caller can report them."""
-        client = QdrantClient(url=url)
+        client = QdrantClient(url=url, timeout=TIMEOUT_S)
         try:
             if not client.collection_exists(collection):
                 return 0
@@ -93,15 +158,17 @@ class VectorStore:
         if self.force_fail:
             raise RuntimeError("simulated Qdrant upsert failure")
         vec = self.embed.embed([text])[0]
-        self.client.upsert(
-            self.collection,
-            points=[
-                models.PointStruct(
-                    id=abs(hash(unique_key)) % (2**63),
-                    vector=vec,
-                    payload={**payload, "unique_key": unique_key},
-                )
-            ],
+        _with_retry(
+            lambda: self.client.upsert(
+                self.collection,
+                points=[
+                    models.PointStruct(
+                        id=abs(hash(unique_key)) % (2**63),
+                        vector=vec,
+                        payload={**payload, "unique_key": unique_key},
+                    )
+                ],
+            )
         )
 
     def search(self, text: str, threshold: float):
@@ -116,5 +183,7 @@ class VectorStore:
         via archivist.classify_similarity so sub-threshold near-misses stay
         visible instead of being silently swallowed by score_threshold."""
         vec = self.embed.embed([text])[0]
-        resp = self.client.query_points(self.collection, query=vec, limit=limit)
+        resp = _with_retry(
+            lambda: self.client.query_points(self.collection, query=vec, limit=limit)
+        )
         return [(p.score, p.payload.get("unique_key")) for p in resp.points]

@@ -248,6 +248,10 @@ _ADD_COLUMNS = [
     # a Discourse trust level or a YouTube creator heart is kept rather than
     # discarded for not generalising.
     "ALTER TABLE nuggets ADD COLUMN extra TEXT",
+    # How many nuggets a run set aside because the dedup lookup was unavailable.
+    # NULL on rows written before this existed, which is a different fact from
+    # 0 — the runs that died on exactly this recorded nothing at all.
+    "ALTER TABLE runs ADD COLUMN n_dedup_deferred INTEGER",
 ]
 
 
@@ -987,16 +991,27 @@ def reap_running(
     working looks exactly like a corpse to the tick that just started. Pass
     `older_than_minutes` to reap only rows too old to still be alive.
     """
+    # Whatever killed the run could not write its own epitaph — that is what
+    # makes it an orphan. Say so on the row instead of leaving `error` NULL:
+    # four consecutive treats aborted here reading as unexplained, and the
+    # traceback that explained them existed only in a log file nobody had a
+    # reason to open. Never overwrite a real error a process managed to record.
+    reason = (
+        "no exit recorded — the process died without closing this run "
+        "(see the schedule log for the same timestamp)"
+    )
     if older_than_minutes is None:
         cur = db.execute(
-            "UPDATE runs SET status='aborted', finished_at=datetime('now') "
-            "WHERE status='running'"
+            "UPDATE runs SET status='aborted', finished_at=datetime('now'), "
+            "error=COALESCE(error, ?) WHERE status='running'",
+            (reason,),
         )
     else:
         cur = db.execute(
-            "UPDATE runs SET status='aborted', finished_at=datetime('now') "
+            "UPDATE runs SET status='aborted', finished_at=datetime('now'), "
+            "error=COALESCE(error, ?) "
             "WHERE status='running' AND started_at <= datetime('now', ?)",
-            (f"-{int(older_than_minutes)} minutes",),
+            (reason, f"-{int(older_than_minutes)} minutes"),
         )
     db.commit()
     return cur.rowcount
@@ -1089,6 +1104,7 @@ _RUN_SUMMARY_FIELDS = frozenset(
         "n_discarded_trivial",
         "trivial_share",
         "n_ideas",
+        "n_dedup_deferred",
         "floor_flags",
         "phase_checkpoints",
         "error",

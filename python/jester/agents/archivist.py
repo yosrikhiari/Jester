@@ -25,6 +25,10 @@ class Archivist:
         self.vector = vector
         self.config = config
         self.near_misses = []  # §37.13: top dedup near-miss scores, reset per run
+        #: (nugget, reason) for nuggets whose dedup lookup could not be
+        #: completed. See `run` — these are NOT archived, and the caller is
+        #: expected to leave their batches queued for a later pass.
+        self.deferred = []
 
     def run(self, nuggets: List[Nugget]) -> List[Nugget]:
         corpus = meta_get(self.db, "corpus_embedding_model")
@@ -36,11 +40,29 @@ class Archivist:
             meta_set(self.db, "corpus_embedding_model", self.config.embedding_model)
 
         self.near_misses = []
+        self.deferred = []
         kept: List[Nugget] = []
         for n in nuggets:
             if exists_unique_key(self.db, n.unique_key):
                 continue
-            scored = self.vector.search_scored(n.raw_text, limit=5)
+            try:
+                scored = self.vector.search_scored(n.raw_text, limit=5)
+            except Exception as exc:  # noqa: BLE001 - any transport failure
+                # The dedup lookup is the ONE question that cannot be deferred
+                # by guessing: without neighbours there is no way to know
+                # whether this nugget is already in the corpus. Archiving it
+                # anyway risks a duplicate that no later pass will ever find;
+                # dropping it loses the material outright.
+                #
+                # So it is neither — the nugget is set aside and its batch is
+                # left queued, exactly as a rate-limited extraction is. The
+                # cost is re-extracting one batch later. The cost of the old
+                # behaviour was the entire run: this line was unguarded while
+                # the upsert twelve lines below was not, so a single 408 from
+                # a busy Qdrant unwound a run mid-flight and four consecutive
+                # scheduled treats died here having archived nothing.
+                self.deferred.append((n, f"{type(exc).__name__}: {exc}"))
+                continue
             if any(s >= self.config.dedup_threshold for s, _k in scored):
                 continue  # semantic duplicate -> refuse/merge
             for s, _k in scored:
