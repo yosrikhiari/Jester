@@ -442,21 +442,47 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			return 0, err
 		}
 		total := 0
-		for _, threadURL := range threads {
+		unchanged := 0
+		for _, t := range threads {
 			if bg.stop("thread") {
 				break
 			}
-			comments, post, err := reddit.FetchThreadURL(ctx, threadURL, delay,
-				cfg.Scraper.BlockedAction, cfg.Scraper.Warmups())
+			threadID := reddit.ThreadIDFromPath(t.URL)
+			// The cheapest fetch is the one not made. A thread advertising no
+			// more comments than it held last visit cannot contain anything
+			// new, and opening it costs a navigation, a comment-tree
+			// expansion and a post-budget slot to learn that.
+			skip, err := st.ThreadUnchanged("reddit", threadID, t.Comments)
 			if err != nil {
-				fmt.Printf("[live]   thread %s skipped: %v\n", threadURL, err)
+				// A state lookup that fails must not suppress the fetch:
+				// re-reading a thread wastes a navigation, skipping one on a
+				// broken read loses the material silently.
+				fmt.Printf("[live]   thread %s state unreadable, fetching anyway: %v\n", threadID, err)
+			} else if skip {
+				unchanged++
 				continue
 			}
-			threadID := reddit.ThreadIDFromPath(threadURL)
-			n := enqueueComments(st, runID, "reddit", threadURL, threadID, comments, post, pp, maxPerThread)
+			comments, post, err := reddit.FetchThreadURL(ctx, t.URL, delay,
+				cfg.Scraper.BlockedAction, cfg.Scraper.Warmups())
+			if err != nil {
+				fmt.Printf("[live]   thread %s skipped: %v\n", t.URL, err)
+				continue
+			}
+			n := enqueueComments(st, runID, "reddit", t.URL, threadID, comments, post, pp, maxPerThread)
 			bg.add(n)
+			if err := st.MarkThreadRead("reddit", threadID, t.Comments); err != nil {
+				// Recording is best-effort: the comments are already enqueued,
+				// and the only cost of a lost write is re-reading this thread
+				// next run — exactly today's behaviour.
+				fmt.Printf("[live]   thread %s state not recorded: %v\n", threadID, err)
+			}
 			fmt.Printf("[live]   enqueued %d kept comments (thread %s)\n", n, threadID)
 			total += n
+		}
+		if unchanged > 0 {
+			// R55: a declined fetch is reported, never silent. "0 queued" and
+			// "we declined to reopen 7 unchanged threads" are different runs.
+			fmt.Printf("[live]   skipped %d thread(s) unchanged since last visit\n", unchanged)
 		}
 		return total, nil
 

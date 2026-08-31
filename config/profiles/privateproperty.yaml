@@ -1,0 +1,66 @@
+# Private Property (South Africa). Probed 2026-08-30: plain HTTP, no bot wall.
+#
+# ANCHORED, even though this portal publishes schema.org Residence for every
+# result — and the reason is worth recording, because ldjson looked like the
+# obvious choice and was wrong.
+#
+# Residence carries url, photos, address, geo and room counts, in a public
+# standard rather than in class names a redesign can rename. What it does NOT
+# carry is the price, which is the field that matters most; the price lives in
+# the markup a few hundred bytes further down. Parsing the JSON blocks alone
+# gives listings with no prices, and parsing the prices separately gives a list
+# with no reliable way to say which price belongs to which listing.
+#
+# Anchoring on the block gets both, correctly paired: each result is one
+# self-contained <a class="listing-result"> containing its own Residence block
+# AND its own price. Fields with a `path` read the embedded JSON, fields with a
+# `pattern` read the markup, and both are scoped to the same listing.
+portal: privateproperty
+market: za
+base_url: https://www.privateproperty.co.za
+currency: ZAR
+
+list:
+  url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/82
+  # Not worked out yet. Empty means one page, which is the honest default.
+  page_param: ""
+  max_pages: 1
+
+extract:
+  mode: anchored
+  # The listing number appears first inside the Residence block's photo URL,
+  # at the very top of each result. data-listing-id would be a nicer hook but
+  # sits at the END of the block, so anchoring there would scope every field to
+  # the FOLLOWING listing.
+  anchor: 'images\.pp\.co\.za/listing/(?P<id>\d+)/'
+  # The anchor sits INSIDE the Residence <script>, so the block has to back up
+  # to the container or the script's opening tag falls outside it and the
+  # structured data cannot be read at all.
+  block_start: '<a title="[^"]*" class="listing-result"'
+  block_len: 6000
+
+  fields:
+    # From the embedded Residence block.
+    url:
+      path: url
+    street:
+      path: address.streetAddress
+    locality:
+      path: address.addressLocality
+    region:
+      path: address.addressRegion
+    latitude:
+      path: geo.latitude
+    longitude:
+      path: geo.longitude
+    # From the markup, because Residence does not publish it.
+    price:
+      pattern: 'class="listing-result__price[^"]*"[^>]*>\s*([^<]{3,40})'
+      transform: [unescape, digits]
+
+  # 600x450 already — the portal serves the thumbnail the fingerprint tier
+  # wants, so no full-size fetch is needed to hash a gallery.
+  gallery:
+    path: photo.contentUrl
+    all: true
+    dedup_by: 'listing/\d+/([A-Za-z0-9]+)/'

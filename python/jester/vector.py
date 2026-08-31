@@ -20,6 +20,26 @@ TIMEOUT_S = 30
 RETRIES = 1
 RETRY_BACKOFF_S = 0.5
 
+#: Vectors a SEGMENT must hold before Qdrant builds an HNSW index over it.
+#:
+#: MEASURED. Qdrant's default is 20,000 and it is a per-segment number, not a
+#: per-collection one. This archive sat at 16,958 points spread over eight
+#: segments of roughly 2,100 each, so no segment ever reached the threshold,
+#: `indexed_vectors_count` stayed at 0, and every dedup lookup was a
+#: brute-force scan of the whole corpus: 83 ms median, and rising linearly
+#: with the archive because that is what O(n) means. Under sustained load
+#: those scans are what tipped into the 408s that killed four consecutive
+#: treats.
+#:
+#: At 1,000 every segment indexes. Same collection, same 16,958 points,
+#: measured immediately after: 23 ms median. The gain grows with the corpus —
+#: brute force degrades linearly where HNSW degrades logarithmically.
+#:
+#: The cost of a low threshold is that small collections pay to build an index
+#: they could have scanned. That cost is bounded and paid once; the scan cost
+#: is paid on every one of tens of thousands of dedup lookups per run.
+INDEXING_THRESHOLD = 1000
+
 
 def _with_retry(call, *, attempts: int = RETRIES + 1):
     """Run `call`, retrying transient transport failures a bounded number of
@@ -128,6 +148,9 @@ class VectorStore:
                 self.collection,
                 vectors_config=models.VectorParams(
                     size=self.embed.dim, distance=models.Distance.COSINE
+                ),
+                optimizers_config=models.OptimizersConfigDiff(
+                    indexing_threshold=INDEXING_THRESHOLD
                 ),
             )
             return

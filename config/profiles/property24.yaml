@@ -1,0 +1,74 @@
+# Property24 (South Africa). Probed 2026-08-30: plain HTTP, no bot wall.
+#
+# Anchored rather than ldjson: the page carries schema.org microdata as
+# attributes (itemprop=) rather than as a JSON block, and only on some tiles.
+# data-listing-number is on every result and is the portal's own identifier,
+# which makes it a far steadier hook than the presentational classes near it.
+portal: property24
+market: za
+base_url: https://www.property24.com
+currency: ZAR
+
+list:
+  url: https://www.property24.com/for-sale/cape-town/western-cape/432
+  # Pagination is NOT worked out yet, and an unset page_param means one page.
+  # Guessing it would produce a profile that silently walks the wrong URLs.
+  page_param: ""
+  max_pages: 1
+
+extract:
+  mode: anchored
+  # The attribute appears twice per tile (container and inner div); the parser
+  # de-duplicates by id, so the second occurrence costs nothing.
+  anchor: 'data-listing-number="(?P<id>\d+)"'
+  # Measured: a tile runs about 4.5 KB including its lazy-loaded gallery.
+  block_len: 6000
+
+  fields:
+    url:
+      pattern: 'href="(/for-sale/[^"?]+)'
+      transform: [absolute]
+    # The price sits as bare text inside p24_price, before a nested div — so
+    # the pattern stops at the first tag rather than trying to match a close.
+    price:
+      pattern: 'class="p24_price"[^>]*>\s*([^<]{3,40})'
+      transform: [unescape, digits]
+    location:
+      pattern: 'class="p24_location"[^>]*>([^<]{2,80})<'
+      transform: [unescape, trim]
+    # {3,…} not {10,…}: the minimum was tuned against "2 Bedroom Apartment"
+    # and silently dropped the title of every "Farm for sale in …" tile. A
+    # length floor that encodes an assumption about property types is a bug
+    # waiting for the first smallholding.
+    title:
+      pattern: 'title="([^"]{3,140} for sale in [^"]{2,60})"'
+      transform: [unescape, trim]
+    # Reduced from 7000: tiles measured about 5 KB, and with a fixed length the
+    # FIRST listing picked up the SECOND listing's title. The engine now ends a
+    # block at the next listing's anchor, so this is only the last-block
+    # backstop — but keeping it near the real tile size limits the damage if a
+    # page ever renders one result.
+    # The description nests a <span class="p24_location">, so a pattern that
+    # stops at the first tag returns "2 Bedroom Apartment in" and nothing else.
+    # Capture through the close and strip the tags instead.
+    description:
+      pattern: 'class="p24_description"[^>]*>(.{3,160}?)</div>'
+      transform: [striptags, unescape, trim]
+
+  # THE ATTRIBUTE VARIES BETWEEN FETCHES. One fetch on 2026-08-30 served
+  # lazy-src="<real url>" with src="/blank.gif"; a second fetch minutes later
+  # served the real URL in src directly. A profile pinned to one attribute name
+  # would have worked, then silently returned no photographs. So match either.
+  #
+  # Crop only, never Ensure: Ensure528x153 is the agency's branding banner, not
+  # the property. And these URLs are already sized — Crop526x328 is the tile
+  # thumbnail, roughly a twentieth of the full image, which is exactly what the
+  # fingerprint tier wants to download.
+  #
+  # dedup_by on the image id because one photograph appears at several crops
+  # (526x328 and 162x108 of the same picture); without it each is fingerprinted
+  # separately and the gallery hash moves when the portal adds a size.
+  gallery:
+    pattern: '(?:lazy-src|data-src|src)="(https://images\.prop24\.com/\d+/Crop\d+x\d+)"'
+    all: true
+    dedup_by: 'images\.prop24\.com/(\d+)/'

@@ -199,6 +199,11 @@ _ADD_COLUMNS = [
     # The thread/video/topic a batch came from, as JSON. Go's store writes it;
     # this keeps a Python-created database wide enough to receive it (D-17).
     "ALTER TABLE ingest_batch ADD COLUMN thread_meta TEXT",
+    # The record-type fork (C2). Go's worker writes 'listing' batches this side
+    # deliberately never claims; the column has to exist on a Python-created
+    # database or the Go writer hits a missing column on its first listing.
+    "ALTER TABLE ingest_batch ADD COLUMN kind TEXT NOT NULL DEFAULT 'comment'",
+    "ALTER TABLE ingest_batch ADD COLUMN listings TEXT",
     # ---- what the platform actually published about a comment -------------
     # The adapters have always had all of this and dropped it at the point of
     # capture; a nugget could name its platform and its score and nothing else
@@ -468,8 +473,25 @@ def pending_batches(db: sqlite3.Connection) -> List[sqlite3.Row]:
         # thread_meta carries the post the comments came from; open_db's ALTER
         # list guarantees the column exists, and the reader tolerates its
         # absence anyway for a database opened by an older build.
+        # kind='comment' is the record-type fork, and it is load-bearing rather
+        # than tidy. A listing is already structured — price, size, location,
+        # dates — and has nothing whatsoever to gain from being read by a
+        # language model; routing one through the extractor would spend tokens
+        # to turn a number back into a sentence. This clause is what makes
+        # "listings bypass the LLM" a property of the code instead of a
+        # convention someone has to remember.
+        #
+        # IS NULL is belt-and-braces, not the migration path. SQLite's
+        # `ADD COLUMN kind TEXT NOT NULL DEFAULT 'comment'` backfills every
+        # pre-existing row with 'comment' and then forbids NULL, so the
+        # 20,589-comment backlog stays claimable through the first clause
+        # alone. The second only covers a database some other tool widened
+        # without a default — cheap, and the failure it prevents (the whole
+        # backlog silently disappearing) is far worse than the clause.
         "SELECT id, platform, source, thread_id, comments, thread_meta "
-        "FROM ingest_batch WHERE status='pending' ORDER BY id"
+        "FROM ingest_batch "
+        "WHERE status='pending' AND (kind = 'comment' OR kind IS NULL) "
+        "ORDER BY id"
     ).fetchall()
 
 

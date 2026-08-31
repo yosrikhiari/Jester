@@ -175,7 +175,7 @@ func FetchThread(ctx context.Context, listingURL string, delay time.Duration,
 	if err != nil {
 		return nil, "", "", err
 	}
-	threadURL := threads[0]
+	threadURL := threads[0].URL
 	comments, _, err := FetchThreadURL(ctx, threadURL, delay, blockedAction, warmup)
 	if err != nil {
 		return nil, "", "", err
@@ -224,14 +224,33 @@ func listingPageURL(base, after string, seen int) string {
 	return fmt.Sprintf("%s%safter=%s&count=%d", base, sep, url.QueryEscape(after), seen)
 }
 
-// ListThreads returns up to `limit` thread URLs from a subreddit listing,
-// skipping threads whose advertised comment count is below `minComments`.
+// Thread is one candidate from a listing: where it is, and how much
+// discussion the listing claims it holds.
+//
+// Comments is -1 when the listing published no number. That is deliberately
+// NOT zero: "the page did not say" and "it has none" call for opposite
+// responses, and collapsing them would let one Reddit layout change silently
+// skip an entire feed.
+type Thread struct {
+	URL      string
+	Comments int
+}
+
+// ListThreads returns up to `limit` threads from a subreddit listing,
+// skipping those whose advertised comment count is below `minComments`.
 //
 // Skipping BEFORE the fetch is the whole value: a thread with 0 comments costs
 // a full browser navigation, a slot in the run's post budget, and yields
 // nothing. The count is right there in the listing markup.
+//
+// The advertised count travels back to the caller for the same reason it is
+// used here. A thread whose count has not moved since the last visit holds
+// nothing new either, and that is the far more common case once a source has
+// been walked a few times — 249 posts fetched for 392 kept comments, most of
+// them returning "0 kept (29 already archived)". Only the caller knows what it
+// saw last run, so the number goes to it rather than being discarded here.
 func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
-	limit, warmup, minComments int) ([]string, error) {
+	limit, warmup, minComments int) ([]Thread, error) {
 	if limit < 1 {
 		limit = 1
 	}
@@ -260,7 +279,7 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 			}
 		}
 	}
-	out := make([]string, 0, limit)
+	out := make([]Thread, 0, limit)
 	seen := map[string]bool{}
 	quiet := 0
 	// collect drains one rendered page into `out`, and reports the cursor to
@@ -278,11 +297,19 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 			// exclude a thread. Reddit renders comment-count on every post,
 			// but a layout change that dropped it must degrade to fetching
 			// everything rather than silently skipping the whole feed.
-			if minComments > 0 && row.Comments != "" {
-				if n, err := strconv.Atoi(strings.TrimSpace(row.Comments)); err == nil && n < minComments {
-					quiet++
-					continue
+			//
+			// advertised carries that distinction onward: -1 means "the
+			// listing published no number", which every downstream caller
+			// must treat as "fetch it", never as "it has none".
+			advertised := -1
+			if row.Comments != "" {
+				if n, err := strconv.Atoi(strings.TrimSpace(row.Comments)); err == nil {
+					advertised = n
 				}
+			}
+			if minComments > 0 && advertised >= 0 && advertised < minComments {
+				quiet++
+				continue
 			}
 			if strings.HasPrefix(p, "/") {
 				p = "https://www.reddit.com" + p
@@ -291,7 +318,7 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 				continue
 			}
 			seen[p] = true
-			out = append(out, p)
+			out = append(out, Thread{URL: p, Comments: advertised})
 			if len(out) == limit {
 				return after, false
 			}
