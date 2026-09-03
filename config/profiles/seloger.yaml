@@ -1,0 +1,13 @@
+base_url: https://www.seloger.com
+currency: EUR
+extract:
+  data_path: props.pageProps.searchResults.properties
+  mode: nextdata
+list:
+  max_pages: 5
+  page_param: page
+  url: https://www.seloger.com/listing/parametric
+market: fr
+observation:
+  kind: listing
+portal: seloger
