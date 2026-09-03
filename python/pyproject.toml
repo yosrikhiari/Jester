@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jester"
+version = "0.1.0"
+description = "Jester intelligence agents: scraping, real-estate listings, property analytics."
+requires-python = ">=3.10"
+dependencies = [
+    "PyYAML>=6.0",
+    "qdrant-client>=1.10",
+    "pytest>=8.0",
+    "tzdata>=2024.1",
+    "ollama>=0.4",
+]
+
+[project.scripts]
+jester = "jester.cli:main"
+
+[tool.setuptools]
+packages = ["jester", "jester.agents"]
