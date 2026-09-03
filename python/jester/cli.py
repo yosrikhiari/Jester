@@ -1323,6 +1323,75 @@ def cmd_smoke(args):
     print("SMOKE PASS: run summary recorded with duration; >=1 non-trivial nugget")
 
 
+def cmd_property_alerts(args):
+    """Evaluate property alert criteria against recent listings."""
+    from jester.agents.property_alerts import AlertCriteria, evaluate_alerts, format_alert_digest
+
+    criteria = AlertCriteria(
+        governorate=args.governorate,
+        city=args.city,
+        price_min=args.price_min,
+        price_max=args.price_max,
+        rooms_min=args.rooms_min,
+        rooms_max=args.rooms_max,
+        surface_min=args.surface_min,
+        surface_max=args.surface_max,
+        property_type=args.property_type,
+        transaction_type=args.transaction_type,
+    )
+
+    db = open_db(args.db)
+    alerts = evaluate_alerts(db, criteria, lookback_hours=args.lookback_hours)
+
+    if args.format == "json":
+        import json
+        print(json.dumps([vars(a) for a in alerts], indent=2, default=str))
+    else:
+        print(format_alert_digest(alerts))
+
+
+def cmd_property_analytics(args):
+    """Run property market analytics."""
+    from jester.agents.property_analytics import run_full_analytics
+
+    results = run_full_analytics(args.db)
+
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        print(f"Analytics written to {args.output}")
+    else:
+        print(json.dumps(results, indent=2, default=str))
+
+
+def cmd_property_dedup(args):
+    """Check cross-portal duplicates for a specific listing."""
+    from jester.agents.property_dedup import check_duplicate
+    from jester.vector import VectorStore
+    from jester.embed import select_embedding
+    from jester.config import load_config
+    import os
+
+    cfg = load_config(args.config)
+    embed = select_embedding(cfg.thresholds)
+
+    qdrant_url = os.environ.get("JESTER_QDRANT_URL")
+    if qdrant_url:
+        vec_store = VectorStore.for_url(
+            qdrant_url, embed, collection="properties__jester"
+        )
+    else:
+        vec_store = VectorStore.open(
+            os.path.join(os.path.dirname(args.db), "jester.properties.qdrant"),
+            embed,
+        )
+
+    db = open_db(args.db)
+    result = check_duplicate(db, vec_store, args.portal, args.listing_id)
+
+    print(json.dumps(vars(result), indent=2, default=str))
+
+
 def _db_path_of(db) -> str:
     """The file a sqlite connection is attached to.
 
@@ -1846,6 +1915,46 @@ def main(argv=None):
     rs_.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     rs_.add_argument("--id", type=int, required=True)
     rs_.set_defaults(func=cmd_resynth)
+
+    # Property commands (real-estate intelligence)
+    pa = sub.add_parser(
+        "property-alerts",
+        help="evaluate property alert criteria against recent listings",
+    )
+    pa.add_argument("--db", default="data/jester.db")
+    pa.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    pa.add_argument("--governorate", help="filter by governorate (e.g., Tunis)")
+    pa.add_argument("--city", help="filter by city")
+    pa.add_argument("--price-min", type=int, help="minimum price")
+    pa.add_argument("--price-max", type=int, help="maximum price")
+    pa.add_argument("--rooms-min", type=int, help="minimum rooms")
+    pa.add_argument("--rooms-max", type=int, help="maximum rooms")
+    pa.add_argument("--surface-min", type=float, help="minimum surface (m²)")
+    pa.add_argument("--surface-max", type=float, help="maximum surface (m²)")
+    pa.add_argument("--property-type", help="filter by property type (e.g., Appartement)")
+    pa.add_argument("--transaction-type", help="sale or rent")
+    pa.add_argument("--lookback-hours", type=int, default=24, help="hours to look back")
+    pa.add_argument("--format", choices=["text", "json"], default="text", help="output format")
+    pa.set_defaults(func=cmd_property_alerts)
+
+    pan = sub.add_parser(
+        "property-analytics",
+        help="run property market analytics (price trends, duplicates, heatmap)",
+    )
+    pan.add_argument("--db", default="data/jester.db")
+    pan.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    pan.add_argument("--output", help="output JSON file (default: stdout)")
+    pan.set_defaults(func=cmd_property_analytics)
+
+    pd = sub.add_parser(
+        "property-dedup",
+        help="check cross-portal duplicates for a specific listing",
+    )
+    pd.add_argument("--db", default="data/jester.db")
+    pd.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    pd.add_argument("--portal", required=True, help="portal name (e.g., tayara)")
+    pd.add_argument("--listing-id", required=True, help="listing ID to check")
+    pd.set_defaults(func=cmd_property_dedup)
 
     mg = sub.add_parser("migrate")
     mg.add_argument("--db", default="data/jester.db")

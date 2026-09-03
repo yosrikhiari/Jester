@@ -70,7 +70,7 @@ func TestDiscourseBaseFromTopicURL(t *testing.T) {
 // browser is the expensive, legally-loaded, fingerprint-visible path, so it
 // has to be asked for by name.
 func TestOnlyScrapedPlatformsGetABrowser(t *testing.T) {
-	for _, p := range []string{"reddit", "youtube", "tiktok"} {
+	for _, p := range []string{"reddit", "youtube", "tiktok", "realestate"} {
 		if !needsBrowser(p) {
 			t.Errorf("%s is a DOM scrape and needs the browser", p)
 		}

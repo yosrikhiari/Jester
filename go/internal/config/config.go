@@ -209,6 +209,7 @@ var bounds = map[string]bound{
 	"prefilter_min_words":     {def: 6, min: 1, max: 200, isInt: true},
 	"request_delay_ms":        {def: 2000, min: 500, max: 60000, isInt: true},
 	"max_threads_per_source":  {def: 1, min: 1, max: 50, isInt: true},
+	"max_threads_per_platform": {def: 1, min: 1, max: 200, isInt: true},
 	"min_comments_per_thread": {def: 0, min: 0, max: 10000, isInt: true},
 	// Steam is keyless and unmetered, so the ceiling is about BALANCE, not
 	// quota: every other platform yields roughly 160-210 comments per turn,
@@ -305,7 +306,7 @@ func (t *Thresholds) Validate() error {
 	// so a typo cannot smuggle an unbounded crawl past validation. Checked
 	// here rather than added to `checks`, because the loop below skips keys it
 	// does not recognise — a dotted key would have validated vacuously.
-	b := bounds["max_threads_per_source"]
+	b := bounds["max_threads_per_platform"]
 	for platform, n := range t.MaxThreadsPerPlatform {
 		if float64(n) < b.min || float64(n) > b.max {
 			return fmt.Errorf(

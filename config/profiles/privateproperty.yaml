@@ -24,7 +24,7 @@ list:
   url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/82
   # Not worked out yet. Empty means one page, which is the honest default.
   page_param: ""
-  max_pages: 1
+  max_pages: 5
 
 extract:
   mode: anchored

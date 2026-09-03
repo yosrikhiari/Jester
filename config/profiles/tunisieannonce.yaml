@@ -1,0 +1,57 @@
+portal: tunisieannonce
+market: tn
+base_url: "http://www.tunisie-annonce.com/"
+currency: TND
+
+list:
+  url: "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp"
+  page_param: ""
+  max_pages: 5
+
+extract:
+  mode: anchored
+  anchor: 'Details_Annonces_Immobilier\.asp\?cod_ann=(?P<id>\d+)'
+  block_len: 5000
+  block_start: '<tr class='
+
+  fields:
+    listing_id:
+      pattern: 'cod_ann=(\d+)'
+      transform: [trim]
+
+    url:
+      pattern: "(Details_Annonces_Immobilier\\.asp\\?cod_ann=\\d+&titre=[^'\"]+)"
+      transform: [unescape, trim, absolute]
+
+    title:
+      pattern: 'class="Tableau2">([^<]+)</a>'
+      transform: [unescape, trim]
+
+    price:
+      pattern: ">\\s*([0-9][0-9 ]+)\\s*Dinar"
+      transform: [unescape, digits]
+
+    surface:
+      pattern: "(\\d+)\\s*m"
+      transform: [digits]
+
+    rooms:
+      pattern: "S\\+(\\d+)"
+      transform: [digits]
+
+    property_type:
+      pattern: ">\\s*(Villa|Appartement|Terrain|Maison|Studio|Bureau|Local)\\s*<"
+      transform: [unescape, trim]
+
+    location:
+      pattern: 'title="([^"]+)"\s*>\s*<a\s+href="Details_Annonces_Immobilier[^"]*cod_ann=\d+'
+
+    seller:
+      const: "Particulier"
+
+    seller_type:
+      const: "owner"
+
+    date:
+      pattern: "Ins(?:&eacute;|é)e le\\s*([^'\"]+)"
+      transform: [unescape, trim]

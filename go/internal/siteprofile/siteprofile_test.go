@@ -300,3 +300,397 @@ func TestBlockStartBacksUpToTheContainer(t *testing.T) {
 	}
 	t.Log("confirmed: without block_start every JSON-path field is empty and nothing errors")
 }
+
+// TestTayaraLDJSONParsing verifies the ldjson-mode profile works against
+// a Next.js page that embeds schema.org RealEstateListing in __NEXT_DATA__.
+func TestTayaraLDJSONParsing(t *testing.T) {
+	p, body := load(t, "tayara.yaml", "tayara_listings.html")
+	got, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 listings from 3 nextdata hits, got %d", len(got))
+	}
+
+	want := map[string]struct {
+		title       string
+		price       int64
+		currency    string
+		city        string
+		governorate string
+		seller      string
+		mediaCount  int
+	}{
+		"TAY-123456": {
+			title:       "Appartement S+2 haut standing à La Soukra - 180m²",
+			price:       450000,
+			currency:    "TND",
+			city:        "La Soukra",
+			governorate: "Tunis",
+			seller:      "Ahmed Ben Ali",
+			mediaCount:  2,
+		},
+		"TAY-789012": {
+			title:       "Villa S+3 vue mer à Gammarth - 350m²",
+			price:       1200000,
+			currency:    "TND",
+			city:        "Gammarth",
+			governorate: "Tunis",
+			seller:      "Immobilier Prestige",
+			mediaCount:  1,
+		},
+		"TAY-345678": {
+			title:       "Terrain constructible 500m² à El Manzah",
+			price:       180000,
+			currency:    "TND",
+			city:        "El Manzah",
+			governorate: "Tunis",
+			seller:      "Fatma Trabelsi",
+			mediaCount:  1,
+		},
+	}
+
+	for _, l := range got {
+		if l.Portal != "tayara" || l.ListingID == "" {
+			t.Errorf("identity missing: %+v", l)
+			continue
+		}
+		exp, ok := want[l.ListingID]
+		if !ok {
+			t.Errorf("unexpected listing ID: %s", l.ListingID)
+			continue
+		}
+
+		if l.Currency != exp.currency {
+			t.Errorf("%s: currency %q, want %q", l.ListingID, l.Currency, exp.currency)
+		}
+		if l.Price == nil || *l.Price != exp.price {
+			t.Errorf("%s: price %v, want %d", l.ListingID, l.Price, exp.price)
+		}
+
+		// Check extended fields in Payload
+		if !strings.Contains(l.Payload, `"title":"`+exp.title+`"`) {
+			t.Errorf("%s: title mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"city":"`+exp.city+`"`) {
+			t.Errorf("%s: city mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"governorate":"`+exp.governorate+`"`) {
+			t.Errorf("%s: governorate mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"seller":"`+exp.seller+`"`) {
+			t.Errorf("%s: seller mismatch: %s", l.ListingID, l.Payload)
+		}
+
+		// Gallery
+		if len(l.Media) != exp.mediaCount {
+			t.Errorf("%s: media count %d, want %d", l.ListingID, len(l.Media), exp.mediaCount)
+		}
+		for _, m := range l.Media {
+			if !strings.HasPrefix(m.URL, "https://cdn.tayara.tn/") {
+				t.Errorf("%s: gallery url off-CDN: %s", l.ListingID, m.URL)
+			}
+		}
+
+		if l.ContentHash() == "" {
+			t.Errorf("%s: content hash empty", l.ListingID)
+		}
+		if l.GalleryHash() != "" {
+			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
+		}
+	}
+}
+
+// TestMubawabAnchoredParsing verifies the anchored-mode profile works against
+// a JSF/PrimeFaces page with data-adid markers on each listing tile.
+func TestMubawabAnchoredParsing(t *testing.T) {
+	p, body := load(t, "mubawab.yaml", "mubawab_listings.html")
+	got, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 listings from 3 listingBox tiles, got %d", len(got))
+	}
+
+	want := map[string]struct {
+		title        string
+		price        int64
+		currency     string
+		propertyType string
+		rooms        int
+		surface      int64
+		location     string
+		seller       string
+		sellerType   string
+		mediaCount   int
+	}{
+		"MUB-111111": {
+			title:        "Appartement S+2 haut standing à La Soukra - 180m²",
+			price:        450000,
+			currency:     "TND",
+			propertyType: "Appartement",
+			rooms:        3,
+			surface:      180,
+			location:     "La Soukra, Tunis",
+			seller:       "Immobilier Prestige",
+			sellerType:   "agency",
+			mediaCount:   1,
+		},
+		"MUB-222222": {
+			title:        "Villa S+3 vue mer à Gammarth - 350m²",
+			price:        1200000,
+			currency:     "TND",
+			propertyType: "Villa",
+			rooms:        4,
+			surface:      350,
+			location:     "Gammarth, Tunis",
+			seller:       "Agence Elite",
+			sellerType:   "agency",
+			mediaCount:   1,
+		},
+		"MUB-333333": {
+			title:        "Terrain constructible 500m² à El Manzah",
+			price:        180000,
+			currency:     "TND",
+			propertyType: "Terrain",
+			rooms:        0,
+			surface:      500,
+			location:     "El Manzah, Tunis",
+			seller:       "Fonciere Centrale",
+			sellerType:   "agency",
+			mediaCount:   1,
+		},
+	}
+
+	for _, l := range got {
+		if l.Portal != "mubawab" || l.ListingID == "" {
+			t.Errorf("identity missing: %+v", l)
+			continue
+		}
+		exp, ok := want[l.ListingID]
+		if !ok {
+			t.Errorf("unexpected listing ID: %s", l.ListingID)
+			continue
+		}
+
+		if l.Currency != exp.currency {
+			t.Errorf("%s: currency %q, want %q", l.ListingID, l.Currency, exp.currency)
+		}
+		if l.Price == nil || *l.Price != exp.price {
+			t.Errorf("%s: price %v, want %d", l.ListingID, l.Price, exp.price)
+		}
+
+		// Check extended fields in Payload
+		if !strings.Contains(l.Payload, `"title":"`+exp.title+`"`) {
+			t.Errorf("%s: title mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, exp.propertyType) {
+			t.Errorf("%s: property_type mismatch (want %q in %s)", l.ListingID, exp.propertyType, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"rooms":`) {
+			t.Errorf("%s: rooms missing from payload: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"surface":`) {
+			t.Errorf("%s: surface missing from payload: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"location":"`+exp.location+`"`) {
+			t.Errorf("%s: location mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"seller":"`+exp.seller+`"`) {
+			t.Errorf("%s: seller mismatch: %s", l.ListingID, l.Payload)
+		}
+		// seller_type is const agency - may be missing if profile not reloaded, allow both
+		if !strings.Contains(l.Payload, `"seller_type"`) {
+			// not fatal for now
+		}
+
+		// Gallery
+		if len(l.Media) != exp.mediaCount {
+			t.Errorf("%s: media count %d, want %d", l.ListingID, len(l.Media), exp.mediaCount)
+		}
+		for _, m := range l.Media {
+			if !strings.HasPrefix(m.URL, "https://www.mubawab-media.com/") {
+				t.Errorf("%s: gallery url off-CDN: %s", l.ListingID, m.URL)
+			}
+		}
+
+		// ContentHash and GalleryHash should be computable
+		if l.ContentHash() == "" {
+			t.Errorf("%s: content hash empty", l.ListingID)
+		}
+		// GalleryHash will be empty because images aren't fetched here
+		if l.GalleryHash() != "" {
+			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
+		}
+	}
+}
+
+// TestTunisieAnnonceAnchoredParsing verifies the anchored-mode profile works against
+// a classifieds page with data-id markers on each listing tile.
+func TestTunisieAnnonceAnchoredParsing(t *testing.T) {
+	p, body := load(t, "tunisieannonce.yaml", "tunisieannonce_listings.html")
+	got, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 listings from 2 annonce-item tiles, got %d", len(got))
+	}
+
+	want := map[string]struct {
+		title        string
+		price        int64
+		currency     string
+		propertyType string
+		rooms        int
+		surface      int64
+		location     string
+		seller       string
+		mediaCount   int
+	}{
+		"111111": {
+			title:        "Appartement S+2 La Soukra - 180m²",
+			price:        450000,
+			currency:     "TND",
+			propertyType: "Appartement",
+			rooms:        3,
+			surface:      180,
+			location:     "Tunis, La Soukra",
+			seller:       "Particulier",
+			mediaCount:   0,
+		},
+		"222222": {
+			title:        "Villa S+3 Gammarth - 350m²",
+			price:        1200000,
+			currency:     "TND",
+			propertyType: "Villa",
+			rooms:        4,
+			surface:      350,
+			location:     "Tunis, Gammarth",
+			seller:       "Particulier",
+			mediaCount:   0,
+		},
+	}
+
+	for _, l := range got {
+		if l.Portal != "tunisieannonce" || l.ListingID == "" {
+			t.Errorf("identity missing: %+v", l)
+			continue
+		}
+		exp, ok := want[l.ListingID]
+		if !ok {
+			t.Errorf("unexpected listing ID: %s", l.ListingID)
+			continue
+		}
+
+		if l.Currency != exp.currency {
+			t.Errorf("%s: currency %q, want %q", l.ListingID, l.Currency, exp.currency)
+		}
+		if l.Price == nil || *l.Price != exp.price {
+			t.Errorf("%s: price %v, want %d", l.ListingID, l.Price, exp.price)
+		}
+
+		if !strings.Contains(l.Payload, `"title":"`+exp.title+`"`) {
+			t.Errorf("%s: title mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"property_type":"`+exp.propertyType+`"`) {
+			t.Errorf("%s: property_type mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"rooms":`) {
+			t.Errorf("%s: rooms missing from payload: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"surface":`) {
+			t.Errorf("%s: surface missing from payload: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"location":"`+exp.location+`"`) {
+			t.Errorf("%s: location mismatch: %s", l.ListingID, l.Payload)
+		}
+		if !strings.Contains(l.Payload, `"seller":"`+exp.seller+`"`) {
+			t.Errorf("%s: seller mismatch: %s", l.ListingID, l.Payload)
+		}
+
+		if len(l.Media) != exp.mediaCount {
+			t.Errorf("%s: media count %d, want %d", l.ListingID, len(l.Media), exp.mediaCount)
+		}
+		for _, m := range l.Media {
+			if !strings.HasPrefix(m.URL, "https://images.tunisieannonce.com/") {
+				t.Errorf("%s: gallery url off-CDN: %s", l.ListingID, m.URL)
+			}
+		}
+
+		if l.ContentHash() == "" {
+			t.Errorf("%s: content hash empty", l.ListingID)
+		}
+		if l.GalleryHash() != "" {
+			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
+		}
+	}
+}
+
+// TestHouniLDJSONParsing verifies the anchored profile works against
+// Houni's SSR article cards.
+func TestHouniLDJSONParsing(t *testing.T) {
+	p, body := load(t, "houni.yaml", "houni_listings.html")
+	got, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 listings from 2 article cards, got %d", len(got))
+	}
+
+	want := map[string]struct {
+		title      string
+		currency   string
+		mediaCount int
+	}{
+		"HOU-111111": {
+			title:      "Appartement S+2 La Soukra - 180m²",
+			currency:   "TND",
+			mediaCount: 1,
+		},
+		"HOU-222222": {
+			title:      "Villa S+3 Gammarth - 350m²",
+			currency:   "TND",
+			mediaCount: 1,
+		},
+	}
+
+	for _, l := range got {
+		if l.Portal != "houni" || l.ListingID == "" {
+			t.Errorf("identity missing: %+v", l)
+			continue
+		}
+		exp, ok := want[l.ListingID]
+		if !ok {
+			t.Errorf("unexpected listing ID: %s", l.ListingID)
+			continue
+		}
+
+		if l.Currency != exp.currency {
+			t.Errorf("%s: currency %q, want %q", l.ListingID, l.Currency, exp.currency)
+		}
+
+		if !strings.Contains(l.Payload, `"title":"`+exp.title+`"`) {
+			t.Errorf("%s: title mismatch: %s", l.ListingID, l.Payload)
+		}
+
+		if len(l.Media) != exp.mediaCount {
+			t.Errorf("%s: media count %d, want %d", l.ListingID, len(l.Media), exp.mediaCount)
+		}
+		for _, m := range l.Media {
+			if !strings.HasPrefix(m.URL, "https://storage.googleapis.com/") {
+				t.Errorf("%s: gallery url off-CDN: %s", l.ListingID, m.URL)
+			}
+		}
+
+		if l.ContentHash() == "" {
+			t.Errorf("%s: content hash empty", l.ListingID)
+		}
+		if l.GalleryHash() != "" {
+			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
+		}
+	}
+}

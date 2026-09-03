@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"jester/internal/lemmy"
 	"jester/internal/podcast"
 	"jester/internal/prefilter"
+	"jester/internal/realestate"
 	"jester/internal/reddit"
 	"jester/internal/stackexchange"
 	"jester/internal/steam"
@@ -112,7 +114,7 @@ func main() {
 	}
 
 	if *live {
-		runLive(cfg, st, *runID, pp, selected, *maxComments, *maxPosts)
+		runLive(cfg, st, *runID, pp, selected, *maxComments, *maxPosts, *configDir)
 		return
 	}
 
@@ -183,8 +185,7 @@ func parseUntil(raw string) (int64, error) {
 }
 
 func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Params,
-	sources []config.Source, maxComments, maxPosts int,
-) {
+	sources []config.Source, maxComments, maxPosts int, configDir string) {
 	delay := time.Duration(cfg.Thresholds.RequestDelayMs) * time.Millisecond
 	// Depth is resolved PER SOURCE now, inside the loop, because it depends on
 	// the platform. See Thresholds.DepthFor.
@@ -245,7 +246,7 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 		}
 
 		before := bg.usedComments
-		_, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg)
+		_, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg, configDir)
 		if cancel != nil {
 			cancel()
 		}
@@ -406,7 +407,7 @@ func needsBrowser(platform string) bool {
 	// ordinary GET. Driving a browser is the expensive, legally-loaded,
 	// fingerprint-visible path — it should have to be asked for by name.
 	switch platform {
-	case "reddit", "youtube", "tiktok":
+	case "reddit", "youtube", "tiktok", "realestate":
 		return true
 	default:
 		return false
@@ -416,8 +417,7 @@ func needsBrowser(platform string) bool {
 // fetchSource routes one source to the right adapter based on its kind.
 func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID string,
 	pp prefilter.Params, src config.Source, kind string, delay time.Duration, perSource int,
-	bg *budget,
-) (int, error) {
+	bg *budget, configDir string) (int, error) {
 	maxPerThread := int(cfg.Thresholds.MaxCommentsPerThread)
 	switch {
 	case src.Platform == "reddit" && kind == "thread":
@@ -828,6 +828,53 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live]   enqueued %d kept comments (topic %d)\n", n, t.ID)
 			total += n
 			sleep(delay)
+		}
+		return total, nil
+
+	case src.Platform == "realestate" && kind == "listing":
+		fmt.Printf("[live] realestate listing %s (portal: %s)\n", src.URL, src.Name)
+		listings, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		for _, l := range listings {
+			if bg.stop("listing") {
+				break
+			}
+			obsID, err := st.RecordObservation(runID, l)
+			if err != nil {
+				fmt.Printf("[live]   listing %s record failed: %v\n", l.ListingID, err)
+				continue
+			}
+			dup, err := st.AlreadyIngestedListing(l.Portal, l.ListingID)
+			if err != nil {
+				fmt.Printf("[live]   listing %s dedup check failed: %v\n", l.ListingID, err)
+				continue
+			}
+			if dup {
+				fmt.Printf("[live]   listing %s already ingested, skipping enqueue (obs=%d)\n", l.ListingID, obsID)
+				total++
+				bg.add(1)
+				continue
+			}
+			listingsJSON, _ := json.Marshal([]store.Listing{l})
+			_, err = st.EnqueueBatch(store.Batch{
+				RunID:    runID,
+				Platform: "realestate",
+				Source:   src.Name,
+				ThreadID: l.ListingID,
+				Kind:     "listing",
+				Listings: string(listingsJSON),
+				Comments: []store.Comment{},
+			})
+			if err != nil {
+				fmt.Printf("[live]   listing %s enqueue failed: %v\n", l.ListingID, err)
+				continue
+			}
+			total++
+			bg.add(1)
+			fmt.Printf("[live]   recorded listing %s (obs=%d)\n", l.ListingID, obsID)
 		}
 		return total, nil
 

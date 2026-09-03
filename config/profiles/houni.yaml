@@ -1,0 +1,36 @@
+# Houni.tn (Tunisia) - dedicated property marketplace
+# Probed 2026-09-02: Nuxt SPA SSR, listings in <article> cards
+# Uses anchored mode with href="/annonce/.../id" as anchor
+portal: houni
+market: tn
+base_url: https://www.houni.tn
+currency: TND
+
+list:
+  url: https://www.houni.tn/fr/vente/appartement
+  page_param: ""
+  max_pages: 5
+
+extract:
+  mode: anchored
+  anchor: '<article[^>]*>.*?href="/annonce/[^"]+/(?P<id>[A-Za-z0-9\-]+)"'
+  block_len: 6000
+
+  fields:
+    listing_id:
+      pattern: 'href="/annonce/[^"]+/([A-Za-z0-9\-]+)"'
+      transform: [trim]
+    url:
+      pattern: 'href="(/annonce/[^"]+)"'
+      transform: [absolute]
+    title:
+      pattern: '<a[^>]*href="/annonce/[^"]+"[^>]*>([^<]{5,300})</a>'
+      transform: [unescape, trim, striptags]
+    price:
+      pattern: 'class="[^"]*text-brand-700[^"]*">\s*([^<]{1,30}TND|[^<]{1,30}DT)'
+      transform: [unescape, trim]
+    # Gallery: multiple images in data-fallbacks or img src
+  gallery:
+    pattern: 'src="(https://storage\.googleapis\.com/[^"]+)"'
+    all: true
+    dedup_by: 'hounitn[^/]*_cdn/([^/]+)/'
