@@ -1,0 +1,53 @@
+# Tayara.tn (Tunisia) - largest classifieds platform
+# Probed 2026-09-02: Next.js with __NEXT_DATA__ containing searchedListingsAction.newHits
+# Each hit is a raw listing object with id, title, price, images, location, metadata
+portal: tayara
+market: tn
+base_url: https://www.tayara.tn
+currency: TND
+
+list:
+  url: https://www.tayara.tn/listing/c/real_estate/
+  page_param: ""
+  max_pages: 5
+
+extract:
+  mode: nextdata
+  data_path: "props.pageProps.searchedListingsAction.newHits"
+
+  fields:
+    listing_id:
+      path: "id"
+      transform: [trim]
+    title:
+      path: "title"
+      transform: [unescape, trim]
+    description:
+      path: "description"
+      transform: [striptags, unescape, trim]
+    price:
+      path: "price"
+      transform: [digits]
+    city:
+      path: "location.delegation"
+      transform: [trim]
+    governorate:
+      path: "location.governorate"
+      transform: [trim]
+    seller:
+      path: "metadata.publisher.name"
+      transform: [trim]
+    seller_type:
+      path: "metadata.publisher.isShop"
+      transform: [trim]
+    property_type:
+      path: "metadata.subCategory"
+      transform: [trim]
+    published_at:
+      path: "metadata.publishedOn"
+      transform: [trim]
+
+  gallery:
+    path: "images"
+    all: true
+    dedup_by: 'cdn\.tayara\.tn/([^/]+)/'
