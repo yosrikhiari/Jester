@@ -172,6 +172,17 @@ CREATE TABLE IF NOT EXISTS source_state (
   measured_visits INTEGER NOT NULL DEFAULT 0,
   visits INTEGER NOT NULL DEFAULT 0
 );
+-- Portal-to-profile mapping for real-estate listings. One row per portal
+-- (source) that maps the portal's field names into the canonical normalized
+-- property schema (24 fields). The payload_schema is a JSON object describing
+-- how each normalized field is derived from the portal's raw fields.
+CREATE TABLE IF NOT EXISTS realestate_config (
+  portal TEXT NOT NULL,
+  market TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  payload_schema TEXT NOT NULL,
+  PRIMARY KEY (portal)
+);
 `
 
 // addColumns are the columns added to Go-owned tables after the first release.
@@ -295,6 +306,11 @@ type Batch struct {
 	// the adapter could not read it — which is a real state, distinct from
 	// "read it and it was empty", and is stored as SQL NULL.
 	Post *reddit.FetchedPost
+	// Kind is the record type: 'comment' (default) or 'listing'. The fork exists
+	// so the Python extractor can claim comment batches and never see a listing.
+	Kind string
+	// Listings is a JSON array of listings, used when Kind='listing'.
+	Listings string
 }
 
 // Comment is one raw comment with its dedup fingerprint, serialised into
@@ -355,10 +371,18 @@ func (s *Store) EnqueueBatch(b Batch) (int64, error) {
 		}
 		meta = string(raw)
 	}
+	kind := b.Kind
+	if kind == "" {
+		kind = "comment"
+	}
+	listings := b.Listings
+	if listings == "" {
+		listings = "[]"
+	}
 	res, err := s.db.Exec(
-		`INSERT INTO ingest_batch(run_id,platform,source,thread_id,batch_index,comments,thread_meta,status)
-		 VALUES(?,?,?,?,?,?,?,'pending')`,
-		b.RunID, b.Platform, b.Source, b.ThreadID, b.Index, string(payload), meta)
+		`INSERT INTO ingest_batch(run_id,platform,source,thread_id,batch_index,kind,comments,listings,thread_meta,status)
+		 VALUES(?,?,?,?,?,?,?,?,?,'pending')`,
+		b.RunID, b.Platform, b.Source, b.ThreadID, b.Index, kind, string(payload), listings, meta)
 	if err != nil {
 		return 0, err
 	}
@@ -375,6 +399,20 @@ func (s *Store) MarkIngested(fp string) error {
 func (s *Store) AlreadyIngested(fp string) (bool, error) {
 	var n int
 	if err := s.db.QueryRow("SELECT count(1) FROM ingested_comments WHERE fingerprint=?", fp).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// AlreadyIngestedListing reports whether a listing with the given portal and
+// listing_id has already been enqueued (has a pending or claimed batch).
+func (s *Store) AlreadyIngestedListing(portal, listingID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT count(1) FROM ingest_batch WHERE source = ? AND thread_id = ? AND status IN ('pending', 'claimed')`,
+		portal, listingID,
+	).Scan(&n)
+	if err != nil {
 		return false, err
 	}
 	return n > 0, nil
@@ -823,6 +861,61 @@ func (s *Store) SourceStates() (map[string]SourceState, error) {
 			return nil, err
 		}
 		out[n] = st
+	}
+	return out, rows.Err()
+}
+
+// RealEstateConfig maps a portal to its siteprofile and payload schema.
+type RealEstateConfig struct {
+	Portal       string
+	Market       string
+	ProfileName  string
+	PayloadSchema string
+}
+
+// UpsertRealEstateConfig inserts or updates a realestate_config row.
+func (s *Store) UpsertRealEstateConfig(cfg RealEstateConfig) error {
+	_, err := s.db.Exec(
+		`INSERT INTO realestate_config (portal, market, profile_name, payload_schema)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(portal) DO UPDATE SET
+		   market = excluded.market,
+		   profile_name = excluded.profile_name,
+		   payload_schema = excluded.payload_schema`,
+		cfg.Portal, cfg.Market, cfg.ProfileName, cfg.PayloadSchema)
+	return err
+}
+
+// GetRealEstateConfig returns the config for a portal, or (zero, false, nil) if not found.
+func (s *Store) GetRealEstateConfig(portal string) (RealEstateConfig, bool, error) {
+	var cfg RealEstateConfig
+	err := s.db.QueryRow(
+		`SELECT portal, market, profile_name, payload_schema FROM realestate_config WHERE portal = ?`,
+		portal).Scan(&cfg.Portal, &cfg.Market, &cfg.ProfileName, &cfg.PayloadSchema)
+	if err == sql.ErrNoRows {
+		return RealEstateConfig{}, false, nil
+	}
+	if err != nil {
+		return RealEstateConfig{}, false, err
+	}
+	return cfg, true, nil
+}
+
+// ListRealEstateConfigs returns all portal configs.
+func (s *Store) ListRealEstateConfigs() ([]RealEstateConfig, error) {
+	rows, err := s.db.Query(
+		`SELECT portal, market, profile_name, payload_schema FROM realestate_config ORDER BY portal`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RealEstateConfig
+	for rows.Next() {
+		var cfg RealEstateConfig
+		if err := rows.Scan(&cfg.Portal, &cfg.Market, &cfg.ProfileName, &cfg.PayloadSchema); err != nil {
+			return nil, err
+		}
+		out = append(out, cfg)
 	}
 	return out, rows.Err()
 }

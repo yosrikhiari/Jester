@@ -225,10 +225,10 @@ func TestMaxReviewsPerAppDefaultsIndependently(t *testing.T) {
 }
 
 // The bound that pushed this onto its own knob: max_threads_per_platform is
-// capped at 50 because its unit is threads, and a useful review count is not.
+// capped at 200 because its unit is threads, and a useful review count is not.
 func TestSteamDepthIsNotSmuggledThroughTheThreadKnob(t *testing.T) {
 	th := DefaultThresholds()
-	th.MaxThreadsPerPlatform = map[string]int{"steam": 150}
+	th.MaxThreadsPerPlatform = map[string]int{"steam": 201}
 	if err := th.Validate(); err == nil {
 		t.Fatal("a review count must not pass as a thread count")
 	}

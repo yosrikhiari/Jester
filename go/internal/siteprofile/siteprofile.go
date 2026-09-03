@@ -72,10 +72,15 @@ type List struct {
 
 // Extract names the mode and carries its configuration.
 type Extract struct {
-	Mode string `yaml:"mode"` // "ldjson" | "anchored"
+	Mode string `yaml:"mode"` // "ldjson" | "anchored" | "nextdata"
 
 	// --- ldjson -------------------------------------------------------------
 	Type string `yaml:"type"` // the @type to keep, e.g. "Residence"
+
+	// --- nextdata -----------------------------------------------------------
+	// DataPath is a dotted JSON path inside __NEXT_DATA__ that points to the
+	// array of listing objects, e.g. "props.pageProps.searchedListingsAction.newHits"
+	DataPath string `yaml:"data_path"`
 
 	// --- anchored -----------------------------------------------------------
 	// Anchor must contain a named group `id`; each match starts a block.
@@ -142,6 +147,10 @@ func (p *Profile) Validate() error {
 	case "ldjson":
 		if p.Extract.Type == "" {
 			return fmt.Errorf("siteprofile %s: ldjson mode needs a type", p.Portal)
+		}
+	case "nextdata":
+		if p.Extract.DataPath == "" {
+			return fmt.Errorf("siteprofile %s: nextdata mode needs a data_path", p.Portal)
 		}
 	case "anchored":
 		if p.Extract.Anchor == "" {
@@ -224,6 +233,8 @@ func (p *Profile) Parse(body string) ([]store.Listing, error) {
 		return p.parseLDJSON(body)
 	case "anchored":
 		return p.parseAnchored(body)
+	case "nextdata":
+		return p.parseNextData(body)
 	}
 	return nil, fmt.Errorf("siteprofile %s: unknown mode %q", p.Portal, p.Extract.Mode)
 }
@@ -231,6 +242,112 @@ func (p *Profile) Parse(body string) ([]store.Listing, error) {
 var tagRe = regexp.MustCompile(`<[^>]*>`)
 
 var ldjsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>`)
+var nextDataRe = regexp.MustCompile(`(?is)<script[^>]+id=["']__(?:NEXT|NUXT)_DATA__["'][^>]*>(.*?)</script>`)
+var nuxtJsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/json["'][^>]*data-nuxt-data[^>]*>(.*?)</script>`)
+
+func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
+	m := nextDataRe.FindStringSubmatch(body)
+	if m == nil {
+		m = nuxtJsonRe.FindStringSubmatch(body)
+		if m == nil {
+			return nil, nil
+		}
+	}
+	var root any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
+		return nil, nil
+	}
+	// Navigate to the array via data_path (dotted, supports only map traversal)
+	nodes := jsonPathRaw(root, p.Extract.DataPath)
+	if len(nodes) == 0 {
+		return nil, nil
+	}
+	// The path should resolve to an array; jsonPathRaw collects across arrays,
+	// so we need to flatten one level if the result is a single slice.
+	var listings []any
+	for _, n := range nodes {
+		if arr, ok := n.([]any); ok {
+			listings = append(listings, arr...)
+		} else {
+			listings = append(listings, n)
+		}
+	}
+	var out []store.Listing
+	for _, node := range listings {
+		obj, ok := node.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Filter Tayara noise: skip Boost/Tayara promo and non-real-estate when possible.
+		// Real-estate subCategory on Tayara is 66c34325d16d7f3b0c2ec570 (immeuble) and 60be84c... variants.
+		// For now keep everything with a price >= 10000 or title containing real-estate keywords,
+		// plus anything with a governorate (all tunisian listings have it). This filters out cars/blazers.
+		// If the portal is tayara we apply an extra guard: keep only if title looks like property.
+		if p.Portal == "tayara" {
+			title := fmt.Sprintf("%v", obj["title"])
+			lower := strings.ToLower(title)
+			// Boost ads have producttype 0 and title Bi3 Fissa3 - drop them
+			if strings.Contains(lower, "bi3 fissa") || strings.Contains(lower, "boost") {
+				continue
+			}
+			// Keep only if looks like real estate (appartement, villa, maison, terrain, studio, s+1 etc) OR price==0 with location (lotissements)
+			// For lots/terrains price may be 0 but title contains terrain/lot. So check keywords.
+			isProperty := strings.Contains(lower, "appart") || strings.Contains(lower, "villa") || strings.Contains(lower, "maison") || strings.Contains(lower, "terrain") || strings.Contains(lower, "studio") || strings.Contains(lower, "s+") || strings.Contains(lower, "lot") || strings.Contains(lower, "résidence")
+			if !isProperty {
+				continue
+			}
+		}
+		l := store.Listing{Portal: p.Portal, Currency: p.Currency}
+		payload := map[string]any{}
+		for name, f := range p.Extract.Fields {
+			v := p.apply(f, jsonPath(obj, f.Path))
+			p.assign(&l, payload, name, v)
+		}
+		for i, u := range p.apply(p.Extract.Gallery, jsonPath(obj, p.Extract.Gallery.Path)) {
+			l.Media = append(l.Media, store.Media{Position: i, URL: u})
+		}
+		if l.ListingID == "" {
+			continue
+		}
+		// Build URL if not extracted: Tayara URL pattern /listing/i/<id> or /ads/details?
+		if l.URL == "" && l.ListingID != "" {
+			l.URL = strings.TrimRight(p.BaseURL, "/") + "/listing/i/" + l.ListingID
+			payload["url"] = l.URL
+		}
+		l.Payload = mustJSON(payload)
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+// jsonPathRaw is like jsonPath but returns raw values (not stringified) for traversal.
+func jsonPathRaw(node any, path string) []any {
+	if path == "" {
+		return nil
+	}
+	cur := []any{node}
+	for _, seg := range strings.Split(path, ".") {
+		var next []any
+		for _, n := range cur {
+			switch t := n.(type) {
+			case map[string]any:
+				if v, ok := t[seg]; ok {
+					next = append(next, v)
+				}
+			case []any:
+				for _, e := range t {
+					if m, ok := e.(map[string]any); ok {
+						if v, ok := m[seg]; ok {
+							next = append(next, v)
+						}
+					}
+				}
+			}
+		}
+		cur = next
+	}
+	return cur
+}
 
 func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 	var out []store.Listing
@@ -562,10 +679,18 @@ func jsonPath(node any, path string) []string {
 			out = append(out, t)
 		case float64:
 			out = append(out, strconv.FormatFloat(t, 'f', -1, 64))
+		case bool:
+			out = append(out, strconv.FormatBool(t))
+		case int:
+			out = append(out, strconv.Itoa(t))
 		case []any:
 			for _, e := range t {
 				if s, ok := e.(string); ok {
 					out = append(out, s)
+				} else if f, ok := e.(float64); ok {
+					out = append(out, strconv.FormatFloat(f, 'f', -1, 64))
+				} else if b, ok := e.(bool); ok {
+					out = append(out, strconv.FormatBool(b))
 				}
 			}
 		}
