@@ -14,7 +14,7 @@ list:
   # Pagination is NOT worked out yet, and an unset page_param means one page.
   # Guessing it would produce a profile that silently walks the wrong URLs.
   page_param: ""
-  max_pages: 1
+  max_pages: 5
 
 extract:
   mode: anchored

@@ -1,5 +1,6 @@
-# CloakBrowser (v3.11.0 §36) integration config. Live fetch (M1.1+) reads
+# CloakBrowser (v146) integration config. Live fetch (M1.1+) reads
 # these; mock mode ignores them.
+version: v146
 # 127.0.0.1, not localhost: the container publishes on IPv4 only, and
 # localhost resolves to ::1 first on Windows -> connection refused.
 cdp_url: http://127.0.0.1:9222

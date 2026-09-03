@@ -85,6 +85,9 @@ max_threads_per_platform:
   # not by ceiling.
   reddit: 3
   youtube: 2
+  # Real-estate portals: browser-scraped via cloakserve, no licence key.
+  # 100 listings per source per run, the sample target for M2.4.
+  realestate: 100
   # EPISODES, and deliberately few. One episode is an hour of speech that
   # becomes 150-400 speaker turns after merging — an order of magnitude more
   # per unit than any thread on this list, so depth 2 already puts podcasts

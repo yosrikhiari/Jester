@@ -177,3 +177,6 @@ NUL
 .idea/
 .vscode/
 !.vscode/extensions.json
+README.md
+.gitignore
+docs/superpowers/plans/2026-08-31-real-estate-intelligence.md

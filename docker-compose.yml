@@ -118,12 +118,14 @@ services:
       - "127.0.0.1:9222:9222"
     volumes:
       - cloak_profiles:/profile
+      - cloak_browser_binary:/chrome-dir
     environment:
+      - CLOAKBROWSER_BINARY_PATH=/chrome-dir/chrome
       - CLOAKBROWSER_LICENSE_KEY=${CLOAKBROWSER_LICENSE_KEY:-}
       - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
       - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      test: ["CMD", "/bin/sh", "-c", "wget -qO- http://localhost:9222/json/version > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -144,6 +146,7 @@ volumes:
   qdrant_storage:
   cloak_profiles:
   ollama_data:
+  cloak_browser_binary:
 
 networks:
   jester_net:
