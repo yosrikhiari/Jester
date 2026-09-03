@@ -586,3 +586,47 @@ sources:
   url: https://changelog.com/jsparty/feed
   enabled: true
   notes: 352/361 transcripts - frontend and JS ecosystem friction
+
+# Real-estate sources (Tunisia - Phase 1)
+- platform: realestate
+  name: tayara
+  kind: listing
+  url: https://www.tayara.tn/listing/c/real_estate/
+  enabled: true
+  notes: Tayara.tn - Tunisia largest classifieds, Next.js __NEXT_DATA__ parsing (real estate filtered).
+- platform: realestate
+  name: mubawab
+  kind: listing
+  url: https://www.mubawab.tn/fr/ct/tunis/immobilier-a-vendre
+  enabled: true
+  notes: Mubawab Tunisia - JSF/PrimeFaces, 33 listings per page, anchored adid parsing.
+- platform: realestate
+  name: tunisieannonce
+  kind: listing
+  url: http://www.tunisie-annonce.com/
+  enabled: true
+  notes: Tunisie Annonce - older classifieds, http required, generic anchored.
+- platform: realestate
+  name: houni
+  kind: listing
+  url: https://www.houni.tn/fr/vente/appartement
+  enabled: true
+  notes: Houni.tn - Nuxt SSR, anchored article parsing with /annonce/ href.
+- platform: realestate
+  name: privateproperty
+  kind: listing
+  url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/82
+  enabled: true
+  notes: Private Property South Africa - anchored parsing, schema.org Residence blocks with prices.
+- platform: realestate
+  name: property24
+  kind: listing
+  url: https://www.property24.com/for-sale/cape-town/western-cape/432
+  enabled: true
+  notes: Property24 South Africa - anchored parsing, data-listing-number hook.
+- platform: realestate
+  name: seloger
+  kind: listing
+  url: https://www.seloger.com
+  enabled: true
+  notes: France leading real estate portal no official API scraping-only integration robots.txt Disallow /recherche
