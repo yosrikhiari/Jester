@@ -11,6 +11,8 @@ open:
     exports/comments/hackernews/hackernews-001.csv
     exports/nuggets/reddit/reddit-001.csv
     exports/nuggets/by-category/pain_point/pain_point-001.csv
+    exports/listings/property24/property24-001.csv
+    exports/listings/tayara/tayara-001.csv
     exports/ideas/ideas-001.csv, citations-001.csv
     exports/duplicates.csv                 what the dedup pass collapsed
 
@@ -28,6 +30,7 @@ the sweep that wipes it from the database, so the exporter stamps a manifest and
 view of the archive, not a way around its retention policy.
 """
 import csv
+import html
 import json
 import re
 import os
@@ -78,6 +81,24 @@ CITATION_COLUMNS = [
 DUPLICATE_COLUMNS = [
     "kind", "kept_id", "kept_origin", "dropped_id", "dropped_origin",
     "reason", "content_preview",
+]
+
+# Real-estate listings. Flat, because a spreadsheet cannot follow a JSON
+# payload, and the portals disagree on vocabulary: Property24 publishes
+# "location", Private Property "locality"/"region"/"street", Tayara
+# "city"/"governorate". All of them get a column, each portal fills the ones it
+# uses, and payload_json carries whatever is left so nothing published is lost
+# on the way to CSV.
+LISTING_COLUMNS = [
+    "portal", "market", "listing_id", "url", "observed_at", "is_latest", "run_id",
+    "price", "currency", "deal_type", "status",
+    "title", "description", "property_type",
+    "location", "locality", "region", "street", "city", "governorate",
+    "bedrooms", "bathrooms", "rooms", "surface",
+    "seller", "seller_type", "published_at", "latitude", "longitude",
+    "media_count", "hashed_media_count", "media_urls",
+    "content_hash", "gallery_hash", "first_seen_at", "last_seen_at",
+    "payload_json",
 ]
 
 MANIFEST = "manifest.json"
@@ -276,6 +297,186 @@ def read_citations(db):
 # ---- the export ------------------------------------------------------------
 
 
+# Payload keys promoted to their own column. Everything else stays in
+# payload_json rather than being silently discarded.
+_LISTING_PAYLOAD_KEYS = (
+    "title", "description", "property_type", "location", "locality", "region",
+    "street", "city", "governorate", "bedrooms", "bathrooms", "rooms",
+    "surface", "seller", "seller_type", "published_at", "latitude",
+    "longitude", "deal_type",
+)
+
+
+# Portals do not share a vocabulary for the same fact. Property24, Mubawab and
+# Behya publish `location`; Private Property publishes `locality` and `region`;
+# Tayara publishes `city` and `governorate`; Redfin publishes `street`. Read
+# straight through, the combined sheet has a town name in four different
+# columns depending on which portal the row came from, and cannot be filtered
+# by city at all.
+#
+# Each canonical column takes the first alias the row actually carries. The
+# raw key stays in payload_json either way, so nothing published is lost and
+# the mapping is auditable.
+_LISTING_ALIASES = {
+    "city": ("city", "locality", "location"),
+    "region": ("region", "governorate", "province", "state"),
+    "street": ("street", "address", "neighborhood", "suburb"),
+    "title": ("title", "name", "description"),
+}
+
+_WS_RUN = re.compile(r"[ 	  ]+")
+_TAGS = re.compile(r"<[^>]*>")
+_NULLISH = frozenset({"null", "none", "nan", "undefined", "n/a", "-"})
+
+
+def _clean(value):
+    """Normalise one scraped value for a spreadsheet.
+
+    Scraped text arrives with the page's formatting still attached: entities
+    that never got unescaped, tags around a description, non-breaking and
+    narrow no-break spaces inside numbers, and the string "null" where a
+    portal meant nothing at all. A CSV is read by people and by pandas, and
+    both of them treat "null" as a value.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        # A repeated field arrives as a list; the Python repr of one
+        # ("['Belhar, Cape Flats', 'Belhar']") is not a cell value.
+        value = value[0] if value else ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if not isinstance(value, str):
+        return value
+    v = html.unescape(value)
+    v = _TAGS.sub(" ", v)
+    v = v.replace(" ", " ").replace(" ", " ")
+    v = _WS_RUN.sub(" ", v).strip()
+    # Collapse the newlines a description carries so one listing stays one row
+    # to read, without destroying the paragraph breaks entirely.
+    v = re.sub(r"\s*\n\s*", " / ", v).strip()
+    if v.lower() in _NULLISH:
+        return ""
+    return v
+
+
+def _canonical(payload, key):
+    """First alias the row actually carries, cleaned."""
+    for alias in _LISTING_ALIASES[key]:
+        v = _clean(payload.get(alias))
+        if v:
+            return v
+    return ""
+
+
+def read_listings(db):
+    """Every real-estate observation, flattened for a spreadsheet.
+
+    ONE ROW PER OBSERVATION, not per listing, and deliberately so. The archive
+    appends an observation every time a listing is seen again, and that append
+    IS the price history - collapsing them would throw away the series the
+    schema exists to keep. is_latest marks the current state, so a sheet can be
+    filtered to "what is on the market now" without losing what it used to cost.
+
+    It is also why listings do not go through dedup() like the other content
+    types. Two observations of one listing are not the same row written twice;
+    they are the same property at two moments.
+    """
+    import sqlite3
+
+    db.row_factory = sqlite3.Row
+    # A row written before the fetcher transcoded Windows-1252 holds bytes that
+    # are not UTF-8, and the driver's default text_factory raises on the whole
+    # QUERY rather than the offending value: one Tunisie Annonce URL reading
+    # "meublé" took the entire listings export to zero rows, silently, and took
+    # five other portals' data with it. Replacing the undecodable bytes keeps
+    # the rest of the archive readable; the fetcher stops new ones arriving.
+    db.text_factory = lambda b: b.decode("utf-8", "replace")
+    try:
+        rows = db.execute(
+            """SELECT o.id, o.portal, o.listing_id, o.observed_at, o.run_id,
+                      o.content_hash, o.gallery_hash, o.price, o.currency,
+                      o.status, o.payload, l.url, l.first_seen_at, l.last_seen_at
+                 FROM listing_observation o
+                 LEFT JOIN listing l
+                   ON l.portal = o.portal AND l.listing_id = o.listing_id
+                ORDER BY o.portal, o.listing_id, o.id"""
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        # ONLY a missing table means "nothing to export". Every other
+        # OperationalError - a lock, an undecodable column, a corrupt page - is
+        # a real failure, and swallowing it wrote a manifest reporting zero
+        # listings over an archive holding 920 of them.
+        if "no such table" not in str(exc).lower():
+            raise
+        return []
+
+    media = {}
+    try:
+        for m in db.execute(
+            "SELECT observation_id, url, phash FROM listing_media"
+            " ORDER BY observation_id, position"
+        ):
+            media.setdefault(m["observation_id"], []).append((m["url"], m["phash"]))
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        media = {}
+
+    # Newest observation id per listing, so is_latest is a fact rather than an
+    # assumption about row order downstream.
+    latest = {}
+    for r in rows:
+        key = (r["portal"], r["listing_id"])
+        if r["id"] >= latest.get(key, -1):
+            latest[key] = r["id"]
+
+    out = []
+    for r in rows:
+        try:
+            payload = json.loads(r["payload"]) if r["payload"] else {}
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        shots = media.get(r["id"], [])
+        row = {
+            "portal": r["portal"],
+            "market": payload.get("market", ""),
+            "listing_id": r["listing_id"],
+            "url": _clean(r["url"] or payload.get("url", "")),
+            "observed_at": r["observed_at"] or "",
+            "is_latest": "true" if latest.get((r["portal"], r["listing_id"])) == r["id"] else "false",
+            "run_id": r["run_id"] or "",
+            # Blank, not 0, where the portal published no figure. A sheet full
+            # of zeroes reads as "free"; a blank reads as "not stated".
+            "price": "" if r["price"] is None else r["price"],
+            "currency": r["currency"] or "",
+            "status": _clean(r["status"]),
+            "media_count": len(shots),
+            "hashed_media_count": sum(1 for _, ph in shots if ph),
+            "media_urls": " ".join(u for u, _ in shots if u),
+            "content_hash": r["content_hash"] or "",
+            "gallery_hash": r["gallery_hash"] or "",
+            "first_seen_at": r["first_seen_at"] or "",
+            "last_seen_at": r["last_seen_at"] or "",
+        }
+        for key in _LISTING_PAYLOAD_KEYS:
+            row[key] = _clean(payload.get(key))
+        # ...then fill the canonical columns from whichever alias this portal
+        # happens to use, so `city` means the same thing on every row.
+        for key in _LISTING_ALIASES:
+            if not row.get(key):
+                row[key] = _canonical(payload, key)
+        leftover = {k: v for k, v in payload.items()
+                    if k not in _LISTING_PAYLOAD_KEYS and k not in ("url", "market")}
+        row["payload_json"] = (
+            json.dumps(leftover, ensure_ascii=False, sort_keys=True) if leftover else ""
+        )
+        out.append(row)
+    return out
+
+
 def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_FILE) -> dict:
     """Write the whole archive as CSV. Returns a manifest of what was written."""
     out_dir = Path(out_dir)
@@ -285,6 +486,7 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
     nuggets = read_nuggets(db)
     ideas = read_ideas(db)
     citations = read_citations(db)
+    listings = read_listings(db)
 
     # ---- deduplicate before anything is written ---------------------------
     # The archive can legitimately hold the same words twice (a crosspost, a
@@ -294,6 +496,7 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
     raw_counts = {
         "comments": len(comments), "nuggets": len(nuggets),
         "ideas": len(ideas), "citations": len(citations),
+        "listings": len(listings),
     }
     duplicates = []
     comments, dropped = dedup(
@@ -336,6 +539,51 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
         record(_write_shards(out_dir / "nuggets" / platform, platform,
                              NUGGET_COLUMNS, rows, rows_per_file))
 
+    # ONE ROW PER LISTING in the sheets people open, and the full series in
+    # exactly one place.
+    #
+    # The archive appends an observation every time a listing is seen again,
+    # unchanged or not, and it is right to: `RecordObservation` documents that
+    # "we looked on the 3rd and it had not moved" is what makes days-on-market
+    # a fact rather than an inference from gaps. But that is an archival
+    # decision, and re-exporting it row for row made the spreadsheet unusable.
+    # A real archive held 7979 observations of 3828 listings, of which 2876
+    # rows - 36% - carried no change from an earlier one: the same listing at
+    # the same price with a byte-identical content_hash, six times over. Only
+    # 74 listings had ever changed price at all.
+    #
+    # So the split is by question. `current` answers "what is on the market",
+    # which is what `all-001.csv` and the per-portal folders are opened for.
+    # `history` answers "how did it get there" and keeps every observation, so
+    # nothing the archive knows is lost on the way to CSV.
+    current = sorted((r for r in listings if r.get("is_latest") == "true"),
+                     key=lambda r: (r.get("portal", ""), r.get("listing_id", "")))
+
+    # One folder per portal, which is the split that matters for listings:
+    # nobody asks "show me every property", they ask what Property24 had.
+    for portal, rows in sorted(_group(current, lambda r: _slug(r.get("portal"))).items()):
+        record(_write_shards(out_dir / "listings" / portal, portal,
+                             LISTING_COLUMNS, rows, rows_per_file))
+
+    # ...and one sheet with all of them, sitting beside those folders. The
+    # per-portal split answers "what did this portal have"; it cannot answer
+    # "what is on the market", which needs every source in one place - sorting
+    # by price across portals, or filtering to a market, means one file rather
+    # than ten opened side by side. `portal` and `market` are the first two
+    # columns, so the split is a filter away.
+    record(_write_shards(out_dir / "listings", "all",
+                         LISTING_COLUMNS, current, rows_per_file))
+
+    # Every observation, including the unchanged ones. Kept separate rather
+    # than dropped: the price cuts are in here, and so is the evidence for how
+    # long something has been on the market.
+    record(_write_shards(out_dir / "listings", "history",
+                         LISTING_COLUMNS,
+                         sorted(listings, key=lambda r: (r.get("portal", ""),
+                                                         r.get("listing_id", ""),
+                                                         r.get("observed_at", ""))),
+                         rows_per_file))
+
     # ---- by content type: "every data-loss complaint, whatever the source"
     for category, rows in sorted(
         _group(nuggets, lambda r: _slug(r.get("category"), "uncategorised")).items()
@@ -376,6 +624,13 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
             "nuggets": len(nuggets),
             "ideas": len(ideas),
             "citations": len(citations),
+            # "listings" counts LISTINGS, which is what all-NNN.csv and the
+            # portal folders hold. The observation total is its own number
+            # rather than folded in here, because a log line saying "exported
+            # 7979 listing(s)" over an archive of 3828 properties is a count
+            # nobody can act on.
+            "listings": sum(1 for r in listings if r.get("is_latest") == "true"),
+            "listing_observations": len(listings),
         },
         # Reported separately so "we exported fewer rows than the archive holds"
         # is an explained number rather than a discrepancy someone has to chase.

@@ -83,7 +83,9 @@ def test_export_splits_by_origin_and_content_type(db, tmp_path):
     assert (out / "nuggets" / "by-category" / "pain_point" / "pain_point-001.csv").exists()
     assert (out / "nuggets" / "by-category" / "workaround" / "workaround-001.csv").exists()
 
-    assert manifest["counts"] == {"comments": 3, "nuggets": 3, "ideas": 0, "citations": 0}
+    assert manifest["counts"] == {"comments": 3, "nuggets": 3, "ideas": 0,
+                                  "citations": 0, "listings": 0,
+                                  "listing_observations": 0}
 
 
 def test_rows_land_in_the_right_origin_file(db, tmp_path):
@@ -166,7 +168,9 @@ def test_empty_archive_exports_headers_only(tmp_path):
     d = open_db(str(tmp_path / "empty.db"))
     out = tmp_path / "exports"
     manifest = export_csv(d, out)
-    assert manifest["counts"] == {"comments": 0, "nuggets": 0, "ideas": 0, "citations": 0}
+    assert manifest["counts"] == {"comments": 0, "nuggets": 0, "ideas": 0,
+                                  "citations": 0, "listings": 0,
+                                  "listing_observations": 0}
     assert read_csv(out / "ideas" / "ideas-001.csv") == []
     with (out / "ideas" / "ideas-001.csv").open(encoding="utf-8-sig") as fh:
         assert next(csv.reader(fh)) == IDEA_COLUMNS
@@ -371,9 +375,16 @@ def test_run_exports_automatically_when_enabled(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "exported" in out
-    assert (exports / "nuggets").exists()
-    assert (exports / "ideas" / "ideas-001.csv").exists()
+    # The manifest is the assertion, because it is written whatever the run
+    # found. Asserting on exports/nuggets or exports/ideas instead ties this
+    # test to the LLM being reachable: with no Ollama the run keeps 0 nuggets
+    # and synthesizes 0 ideas, those directories are never created, and the
+    # test fails for a reason that has nothing to do with whether the export
+    # fired. What is under test here is "a run nobody watches exports by
+    # itself", not what that particular run happened to extract.
     assert (exports / MANIFEST).exists()
+    manifest = json.loads((exports / MANIFEST).read_text(encoding="utf-8"))
+    assert "exported_at" in manifest
 
 
 def test_run_does_not_export_when_disabled(tmp_path):
@@ -566,3 +577,284 @@ def test_no_duplicates_file_when_nothing_was_collapsed(tmp_path):
     manifest = export_csv(d, out)
     assert manifest["duplicates_dropped"] == 0
     assert not (out / "duplicates.csv").exists()
+
+
+def _listing_db(tmp_path):
+    """A miniature archive with the real-estate tables."""
+    # The project's own schema, so the other readers export_csv runs still
+    # work; the real-estate tables are created by the Go side.
+    db = open_db(str(tmp_path / "listings.db"))
+    db.executescript(
+        "CREATE TABLE IF NOT EXISTS listing (portal TEXT, listing_id TEXT, url TEXT,"
+        " first_seen_at TEXT, last_seen_at TEXT);"
+        "CREATE TABLE IF NOT EXISTS listing_observation (id INTEGER PRIMARY KEY,"
+        " portal TEXT, listing_id TEXT, observed_at TEXT, run_id TEXT,"
+        " content_hash TEXT, gallery_hash TEXT, price INTEGER, currency TEXT,"
+        " status TEXT, payload TEXT);"
+        "CREATE TABLE IF NOT EXISTS listing_media (observation_id INTEGER,"
+        " position INTEGER, url TEXT, phash TEXT);"
+    )
+    db.execute("INSERT INTO listing VALUES ('property24','111','https://p24/111','a','b')")
+    db.execute("INSERT INTO listing VALUES ('tayara','t1','https://tay/t1','a','b')")
+    # two observations of ONE listing: a price cut, which is history not repetition
+    db.execute(
+        "INSERT INTO listing_observation (id,portal,listing_id,observed_at,run_id,price,"
+        "currency,payload) VALUES (1,'property24','111','2026-09-01T00:00:00Z','r1',"
+        "1500000,'ZAR','{\"location\":\"Belhar\",\"bedrooms\":\"2\",\"deal_type\":\"sale\",\"agent\":\"X\"}')"
+    )
+    db.execute(
+        "INSERT INTO listing_observation (id,portal,listing_id,observed_at,run_id,price,"
+        "currency,payload) VALUES (2,'property24','111','2026-09-02T00:00:00Z','r2',"
+        "1400000,'ZAR','{\"location\":\"Belhar\",\"bedrooms\":\"2\",\"deal_type\":\"sale\"}')"
+    )
+    # a listing whose price the portal never published
+    db.execute(
+        "INSERT INTO listing_observation (id,portal,listing_id,observed_at,run_id,price,"
+        "currency,payload) VALUES (3,'tayara','t1','2026-09-02T00:00:00Z','r2',"
+        "NULL,'TND','{\"city\":\"La Soukra\",\"deal_type\":\"rental\"}')"
+    )
+    db.execute("INSERT INTO listing_media VALUES (1,0,'https://img/1.jpg','84636cac6ec8093b')")
+    db.execute("INSERT INTO listing_media VALUES (1,1,'https://img/2.jpg','')")
+    db.commit()
+    return db
+
+
+def _rows(path):
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_listings_export_one_folder_per_portal(tmp_path):
+    """The split that matters for listings is the source portal."""
+    out = tmp_path / "exports"
+    manifest = export_csv(_listing_db(tmp_path), out)
+    assert (out / "listings" / "property24" / "property24-001.csv").exists()
+    assert (out / "listings" / "tayara" / "tayara-001.csv").exists()
+    # Two listings, three observations: the portal folders hold the market,
+    # not the scrape log.
+    assert manifest["counts"]["listings"] == 2
+    assert manifest["counts"]["listing_observations"] == 3
+    # a portal's sheet holds only that portal
+    p24 = _rows(out / "listings" / "property24" / "property24-001.csv")
+    assert {r["portal"] for r in p24} == {"property24"}
+
+
+def test_every_observation_is_kept_because_that_is_the_price_history(tmp_path):
+    """Collapsing repeat observations would delete the series, not a duplicate.
+
+    The series lives in history-NNN.csv. The sheets people open hold the
+    current state, because re-exporting every observation made them unusable:
+    a real archive held 7979 observations of 3828 listings, 36% of them
+    carrying no change from an earlier row. Nothing is dropped - the two
+    files answer two different questions.
+    """
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+
+    history = [r for r in _rows(out / "listings" / "history-001.csv")
+               if r["portal"] == "property24"]
+    assert len(history) == 2, "the price cut must survive as its own row"
+    assert sorted(r["price"] for r in history) == ["1400000", "1500000"]
+
+    # ...while the portal sheet shows the property once, at what it costs now.
+    rows = _rows(out / "listings" / "property24" / "property24-001.csv")
+    assert len(rows) == 1
+    assert rows[0]["is_latest"] == "true" and rows[0]["price"] == "1400000"
+
+
+def test_an_unpublished_price_is_blank_not_zero(tmp_path):
+    """A sheet of zeroes reads as free; a blank reads as not stated."""
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+    row = _rows(out / "listings" / "tayara" / "tayara-001.csv")[0]
+    assert row["price"] == ""
+    assert row["currency"] == "TND"
+    assert row["deal_type"] == "rental"
+
+
+def test_portal_vocabularies_each_get_their_column(tmp_path):
+    """Both the portal's own word and the canonical one.
+
+    property24 says `location` and tayara says `city`. Each keeps the column
+    it published - losing that would hide which vocabulary a row came from -
+    while `city` is filled on both, so the combined sheet can be filtered by
+    one column instead of four.
+    """
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+    p24 = _rows(out / "listings" / "property24" / "property24-001.csv")[0]
+    tay = _rows(out / "listings" / "tayara" / "tayara-001.csv")[0]
+    assert p24["location"] == "Belhar"
+    assert tay["location"] == "", "tayara does not publish `location`"
+    # ...and the canonical column is filled for both.
+    assert p24["city"] == "Belhar"
+    assert tay["city"] == "La Soukra"
+
+
+def test_unpromoted_payload_keys_are_carried_not_dropped(tmp_path):
+    """Whatever the portal published survives, even without its own column."""
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+    # Read from the history sheet: r1 is the SUPERSEDED observation, and the
+    # portal folders now carry only the current one.
+    rows = _rows(out / "listings" / "history-001.csv")
+    first = [r for r in rows if r["run_id"] == "r1" and r["portal"] == "property24"][0]
+    assert "agent" in first["payload_json"]
+    assert first["media_count"] == "2"
+    assert first["hashed_media_count"] == "1"
+
+
+def test_an_archive_without_the_realestate_tables_still_exports(tmp_path):
+    """An older archive must produce an empty listing count, not a crash."""
+    d = open_db(str(tmp_path / "old.db"))
+    manifest = export_csv(d, tmp_path / "exports")
+    assert manifest["counts"]["listings"] == 0
+
+
+def test_listings_also_export_as_one_concatenated_sheet(tmp_path):
+    """The per-portal split cannot answer "what is on the market"."""
+    out = tmp_path / "exports"
+    manifest = export_csv(_listing_db(tmp_path), out)
+
+    combined = out / "listings" / "all-001.csv"
+    assert combined.exists(), "a combined sheet should sit beside the portal folders"
+    rows = _rows(combined)
+    # ONE row per listing: the two observations of the property whose price was
+    # cut are one property, and the sheet is opened to see the market rather
+    # than the scrape log. The series is in history-001.csv.
+    assert len(rows) == manifest["counts"]["listings"] == 2
+    assert {r["portal"] for r in rows} == {"property24", "tayara"}
+    assert all(r["is_latest"] == "true" for r in rows)
+    assert manifest["counts"]["listing_observations"] == 3
+    assert len(_rows(out / "listings" / "history-001.csv")) == 3
+
+    # It holds exactly what the per-portal sheets hold, so a reader can use
+    # either without wondering which is authoritative.
+    per_portal = _rows(out / "listings" / "property24" / "property24-001.csv") +         _rows(out / "listings" / "tayara" / "tayara-001.csv")
+    key = lambda r: (r["portal"], r["listing_id"], r["run_id"])
+    assert sorted(map(key, rows)) == sorted(map(key, per_portal))
+
+
+def test_run_summary_names_the_listings_it_exported(tmp_path, capsys):
+    """The nightly log has to say the real-estate export happened.
+
+    `run` reported "exported 3 comment(s), 0 nugget(s), 0 idea(s)" on a run
+    that had just written 4132 listings to the combined sheet, because the
+    summary line predated listings and was never extended. Nothing was wrong
+    with the export; it was invisible, which for a scheduled job nobody
+    watches amounts to the same thing.
+    """
+    import shutil
+
+    from jester.cli import cmd_run
+
+    cfg_dir = tmp_path / "config"
+    shutil.copytree(REPO_CONFIG, cfg_dir)
+
+    # _listing_db writes tmp_path/listings.db; cmd_run reopens that same file.
+    _listing_db(tmp_path).close()
+    db_path = tmp_path / "listings.db"
+
+    exports = tmp_path / "exports"
+    args = type("A", (), {})()
+    args.db, args.config, args.run, args.exports = (
+        str(db_path), str(cfg_dir), "summary", str(exports))
+    cmd_run(args)
+
+    out = capsys.readouterr().out
+    assert "listing(s)" in out, out
+
+
+def test_a_failed_ingest_still_exports_what_it_already_scraped(tmp_path, capsys, monkeypatch):
+    """The worker writes as it walks, so a killed run has already scraped.
+
+    A real cycle recorded 3214 listing observations, hit the 3600s ingest
+    timeout, and exited 1 before reaching the export. The rows were committed
+    to the archive and the combined sheet went on describing the previous
+    export: 7979 observations in the database against 4765 in the CSV, for
+    hours, with nothing in the log saying the sheet was stale.
+
+    A failed fetch is not an empty one. The exit code still reports failure.
+    """
+    import shutil
+
+    import jester.cli as cli
+
+    cfg_dir = tmp_path / "config"
+    shutil.copytree(REPO_CONFIG, cfg_dir)
+
+    # An archive that already holds listings, as it would after the worker had
+    # walked for an hour and then been killed.
+    _listing_db(tmp_path).close()
+
+    monkeypatch.setattr(
+        cli, "worker_ingest",
+        lambda *a, **k: {"ok": False, "error": "worker exceeded 3600s and was killed"},
+    )
+
+    exports = tmp_path / "exports"
+    args = type("A", (), {})()
+    args.db, args.config, args.run = str(tmp_path / "listings.db"), str(cfg_dir), "killed"
+    args.exports, args.mock, args.only = str(exports), False, ""
+    args.max_comments = args.max_posts = None
+
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_ingest(args)
+    assert exc.value.code == 1, "a killed worker is still a failed ingest"
+
+    out = capsys.readouterr().out
+    assert "ingest failed" in out
+    combined = exports / "listings" / "all-001.csv"
+    assert combined.exists(), "the rows the worker DID write must reach the sheet"
+    assert len(_rows(combined)) == 2
+
+
+def test_the_combined_sheet_leads_with_the_columns_that_split_it(tmp_path):
+    """portal and market first: the per-portal view is then a filter away."""
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+    with open(out / "listings" / "all-001.csv", encoding="utf-8-sig", newline="") as fh:
+        header = next(csv.reader(fh))
+    assert header[:2] == ["portal", "market"]
+
+
+def test_scraped_values_are_cleaned_for_a_spreadsheet(tmp_path):
+    """Scraped text arrives with the page's formatting still attached."""
+    from jester.export import _clean
+    assert _clean("  Belhar, Cape Flats  ") == "Belhar, Cape Flats"
+    # &nbsp; between digit groups is what a price actually carries.
+    assert _clean("438&nbsp;000 TND") == "438 000 TND"
+    assert _clean("<b>2 Bed</b> Flat") == "2 Bed Flat"
+    # "null" is a value to a spreadsheet and to pandas; it is not one here.
+    assert _clean("null") == "" and _clean("N/A") == ""
+    # A repeated field arrives as a list, and its Python repr is not a cell.
+    assert _clean(["Belhar, Cape Flats", "Belhar"]) == "Belhar, Cape Flats"
+    assert _clean(None) == ""
+
+
+def test_portal_vocabularies_land_in_one_canonical_column(tmp_path):
+    """The same fact must not sit in four columns depending on the portal.
+
+    Property24 and Behya publish `location`, Private Property `locality`,
+    Tayara `city`. Read straight through, the combined sheet cannot be
+    filtered by city at all.
+    """
+    from jester.export import _canonical
+    assert _canonical({"city": "La Soukra"}, "city") == "La Soukra"
+    assert _canonical({"location": "Camps Bay"}, "city") == "Camps Bay"
+    assert _canonical({"locality": "Kenilworth Upper"}, "city") == "Kenilworth Upper"
+    assert _canonical({"governorate": "Tunis"}, "region") == "Tunis"
+    # An alias the row does not carry contributes nothing.
+    assert _canonical({"unrelated": "x"}, "city") == ""
+
+
+def test_the_combined_sheet_fills_city_for_every_portal(tmp_path):
+    """The end-to-end version of the two tests above."""
+    out = tmp_path / "exports"
+    export_csv(_listing_db(tmp_path), out)
+    rows = _rows(out / "listings" / "all-001.csv")
+    # property24 publishes `location`, tayara publishes `city`; both land in
+    # `city` so one filter covers the sheet.
+    cities = {r["portal"]: r["city"] for r in rows}
+    assert cities["property24"] == "Belhar"
+    assert cities["tayara"] == "La Soukra"
