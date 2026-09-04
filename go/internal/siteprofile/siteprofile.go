@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -55,19 +56,43 @@ type Profile struct {
 	// BaseURL resolves the relative hrefs most portals emit.
 	BaseURL string `yaml:"base_url"`
 	// Currency is the portal's own, which no listing page ever states twice.
-	Currency string  `yaml:"currency"`
-	List     List    `yaml:"list"`
-	Extract  Extract `yaml:"extract"`
+	Currency string `yaml:"currency"`
+	// Fetch is "http" or "browser" (default). It belongs to the PORTAL, not
+	// the platform: Property24, Private Property and Tayara all serve their
+	// listings - Tayara's __NEXT_DATA__ included - to an ordinary GET, and
+	// requiring cloakserve for them made a licensed commercial container a
+	// prerequisite for reading a public page.
+	Fetch   string  `yaml:"fetch"`
+	List    List    `yaml:"list"`
+	Extract Extract `yaml:"extract"`
 }
 
 // List is where result pages live and how to walk them.
 type List struct {
 	URL string `yaml:"url"`
+	// URLs are additional starting points for the same portal, and for some
+	// portals they are the ONLY way to reach more inventory.
+	//
+	// Tunisie Annonce is the clearest case: it has no pagination a GET can
+	// drive - nine candidate parameters were tried and every one re-served the
+	// same 25 rows - but its own page links to 38 different region and locality
+	// searches. Houni is the same story by category rather than geography: one
+	// URL covers apartments for sale and nothing else. A profile limited to a
+	// single search URL is limited to whatever that one search returns, which
+	// on these two portals was 25 and 18 listings respectively.
+	URLs []string `yaml:"urls"`
 	// PageParam is the query parameter that advances the listing, empty when
 	// pagination has not been worked out for this portal yet. Absent means one
 	// page — which is the honest default, not a silent full crawl.
 	PageParam string `yaml:"page_param"`
-	MaxPages  int    `yaml:"max_pages"`
+	// PageTemplate handles portals that page by PATH rather than by query
+	// parameter. `{url}` is the list URL and `{page}` the number, so Mubawab's
+	// second page is "{url}:p:{page}". Without it a portal like that has no way
+	// to say how it paginates and is stuck on page one - page_param cannot
+	// express a suffix, and guessing one produces a profile that silently walks
+	// the wrong URLs.
+	PageTemplate string `yaml:"page_template"`
+	MaxPages     int    `yaml:"max_pages"`
 }
 
 // Extract names the mode and carries its configuration.
@@ -81,6 +106,18 @@ type Extract struct {
 	// DataPath is a dotted JSON path inside __NEXT_DATA__ that points to the
 	// array of listing objects, e.g. "props.pageProps.searchedListingsAction.newHits"
 	DataPath string `yaml:"data_path"`
+	// URLTemplate builds a listing URL for a portal that publishes an id but
+	// no href - or one whose href is not worth keeping. Tunisie Annonce links
+	// to "Details_Annonces_Immobilier.asp?cod_ann=3398050&titre=Terrain entre
+	// el haouria et kelibia": unencoded spaces and cp1252 accents in a query
+	// string, which reached the archive as undecodable bytes and took the whole
+	// CSV export to zero rows once. The id alone addresses the same page.
+	//
+	// Applies in every parse mode. `{id}` is substituted; a value beginning "/" resolves against
+	// base_url. Before it existed the URL was hardcoded to Tayara's
+	// "/listing/i/{id}" shape for EVERY nextdata portal, so any other one got
+	// a plausible-looking address pointing nowhere.
+	URLTemplate string `yaml:"url_template"`
 
 	// --- anchored -----------------------------------------------------------
 	// Anchor must contain a named group `id`; each match starts a block.
@@ -98,6 +135,87 @@ type Extract struct {
 
 	Fields  map[string]Field `yaml:"fields"`
 	Gallery Field            `yaml:"gallery"`
+	// Filter drops records that sit on the result page without being what the
+	// profile came for. Tayara's real-estate listing carries boosted ads and
+	// the occasional car. The alternative to saying so here was the arm this
+	// replaced: `if p.Portal == "tayara"` plus a keyword list, inside the
+	// shared parser — a portal adapter written in Go, in the package whose
+	// premise is that a portal adapter is a config file.
+	Filter Filter `yaml:"filter"`
+	// Classify derives a field the portal does not publish as one. It exists
+	// for deal_type: Tayara's real-estate feed carries lettings beside sales
+	// and says so only in the title ("location s+1 aux jardins de Carthage" is
+	// a month's rent at 1550 TND), so a pipeline that compares prices across
+	// listings is otherwise comparing a monthly rent with a purchase price.
+	Classify Classify `yaml:"classify"`
+	// Detail names fields that live on a listing's OWN page rather than on the
+	// result page. It is a SECOND fetch per listing and is why it is opt-in:
+	// a hundred listings is a hundred more requests at a portal, which is a
+	// different order of traffic from reading five result pages.
+	//
+	// It exists because two fields could not be reached any other way. Property24
+	// publishes a street address only on the listing page, and it is the field
+	// that separates a real cross-portal duplicate from two different flats at
+	// one price in one suburb - both confirmed false positives in the dedup
+	// validation would be settled by it. Houni publishes no price on its result
+	// tile at all: two patterns were tried against the tile and both produced
+	// fiction, because the number is simply not there.
+	Detail Detail `yaml:"detail"`
+}
+
+// Detail is the field set read from a listing's own page.
+type Detail struct {
+	Fields map[string]Field `yaml:"fields"`
+}
+
+// Wanted reports whether this profile has anything to fetch a detail page for.
+func (d Detail) Wanted() bool { return len(d.Fields) > 0 }
+
+// Classify turns a phrase in one extracted field into a value in another.
+//
+// It is deliberately not a general rules engine. It answers one question -
+// "which of these buckets is this listing in" - because the alternative for
+// deal_type was either a hardcoded language check in the shared parser (the
+// mistake the tayara filter already made once) or a column the portals do not
+// publish.
+type Classify struct {
+	// Field is the name of the derived field, e.g. "deal_type".
+	Field string `yaml:"field"`
+	// From is the extracted field whose text is read, e.g. "title".
+	From string `yaml:"from"`
+	// Default is the value when no rule matches. A portal reached through a
+	// for-sale search should say "sale" here rather than leave it blank:
+	// "unknown" and "not stated" are different facts from "sale".
+	Default string `yaml:"default"`
+	// Rules are tried in order; the first match wins.
+	Rules []ClassifyRule `yaml:"rules"`
+}
+
+// ClassifyRule is one bucket and the phrases that put a listing in it.
+// Matching is case-insensitive substring, as in Filter.
+type ClassifyRule struct {
+	Value string   `yaml:"value"`
+	Match []string `yaml:"match"`
+}
+
+// classify returns the derived value, or "" when nothing is configured.
+func (c Classify) classify(payload map[string]any) string {
+	if c.Field == "" {
+		return ""
+	}
+	raw, ok := payload[c.From]
+	if !ok {
+		return c.Default
+	}
+	v := strings.ToLower(fmt.Sprintf("%v", raw))
+	for _, r := range c.Rules {
+		for _, m := range r.Match {
+			if m != "" && strings.Contains(v, strings.ToLower(m)) {
+				return r.Value
+			}
+		}
+	}
+	return c.Default
 }
 
 // Field is one value, read either from a JSON path or a pattern.
@@ -121,6 +239,50 @@ type Field struct {
 	DedupBy string `yaml:"dedup_by"`
 }
 
+// Filter keeps or drops a parsed record by what one of its fields says.
+// Matching is case-insensitive substring rather than regexp: the values it
+// tests are portal prose ("Appartement S+2 haut standing"), and an author
+// listing the property types a market uses should not have to escape them.
+type Filter struct {
+	// Field names the extracted field to test, e.g. "title".
+	Field string `yaml:"field"`
+	// Exclude drops a record when any entry matches. Checked before Include.
+	Exclude []string `yaml:"exclude"`
+	// Include keeps ONLY records where some entry matches. Empty means keep
+	// whatever Exclude did not drop.
+	Include []string `yaml:"include"`
+}
+
+// keep reports whether a parsed record survives the filter.
+func (f Filter) keep(payload map[string]any) bool {
+	if len(f.Include) == 0 && len(f.Exclude) == 0 {
+		return true
+	}
+	raw, ok := payload[f.Field]
+	if !ok {
+		// A record that does not carry the field cannot be judged by it. An
+		// Include list drops it, because "keep only titles that say villa"
+		// cannot admit a record with no title; an Exclude-only filter keeps
+		// it, because nothing matched.
+		return len(f.Include) == 0
+	}
+	v := strings.ToLower(fmt.Sprintf("%v", raw))
+	for _, ex := range f.Exclude {
+		if ex != "" && strings.Contains(v, strings.ToLower(ex)) {
+			return false
+		}
+	}
+	if len(f.Include) == 0 {
+		return true
+	}
+	for _, in := range f.Include {
+		if in != "" && strings.Contains(v, strings.ToLower(in)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Load reads a profile and rejects one that cannot work before it is used
 // against a live site.
 func Load(b []byte) (*Profile, error) {
@@ -134,6 +296,23 @@ func Load(b []byte) (*Profile, error) {
 	return &p, nil
 }
 
+// Seeds returns every starting URL for this list, `url` first.
+//
+// Always at least one entry when a URL is set anywhere, so a profile written
+// either way behaves the same.
+func (l List) Seeds() []string {
+	out := make([]string, 0, len(l.URLs)+1)
+	seen := map[string]bool{}
+	for _, u := range append([]string{l.URL}, l.URLs...) {
+		if u == "" || seen[u] {
+			continue
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	return out
+}
+
 // Validate fails loudly at load rather than quietly at 3am.
 //
 // The checks are the ones whose absence produces a profile that runs and
@@ -142,6 +321,19 @@ func Load(b []byte) (*Profile, error) {
 func (p *Profile) Validate() error {
 	if p.Portal == "" {
 		return fmt.Errorf("siteprofile: portal is required")
+	}
+	if p.List.PageTemplate != "" {
+		if p.List.PageParam != "" {
+			return fmt.Errorf("siteprofile %s: set page_param OR page_template, not both", p.Portal)
+		}
+		if !strings.Contains(p.List.PageTemplate, "{page}") {
+			return fmt.Errorf("siteprofile %s: page_template must contain {page}", p.Portal)
+		}
+	}
+	switch strings.ToLower(p.Fetch) {
+	case "", "http", "browser":
+	default:
+		return fmt.Errorf("siteprofile %s: unknown fetch %q, want http or browser", p.Portal, p.Fetch)
 	}
 	switch p.Extract.Mode {
 	case "ldjson":
@@ -174,9 +366,50 @@ func (p *Profile) Validate() error {
 	default:
 		return fmt.Errorf("siteprofile %s: unknown mode %q", p.Portal, p.Extract.Mode)
 	}
+	// Every mode but anchored must be told where identity lives. Both parsers
+	// drop a record whose listing_id came out empty, so a profile that never
+	// names one walks a full page of results and emits nothing - which reads
+	// downstream as "that portal had no listings today", and is precisely the
+	// silent nothing this function exists to prevent. anchored is exempt: its
+	// id comes from the anchor's `id` group, already checked above.
+	if p.Extract.Mode != "anchored" {
+		id, ok := p.Extract.Fields["listing_id"]
+		if !ok || (id.Path == "" && id.Pattern == "" && id.Const == "") {
+			return fmt.Errorf("siteprofile %s: %s mode needs a listing_id field; without one every record is dropped and a full page yields nothing", p.Portal, p.Extract.Mode)
+		}
+	}
+	if p.Extract.Classify.Field != "" {
+		if p.Extract.Classify.From == "" {
+			return fmt.Errorf("siteprofile %s: classify needs a `from` field to read", p.Portal)
+		}
+		if _, ok := p.Extract.Fields[p.Extract.Classify.From]; !ok {
+			return fmt.Errorf("siteprofile %s: classify reads field %q, which this profile does not extract", p.Portal, p.Extract.Classify.From)
+		}
+		if p.Extract.Classify.Default == "" && len(p.Extract.Classify.Rules) == 0 {
+			return fmt.Errorf("siteprofile %s: classify has neither rules nor a default, so it can only ever produce nothing", p.Portal)
+		}
+	}
+	// A filter naming a field nobody extracts silently keeps or drops
+	// everything, depending which list it is on. Both are wrong quietly.
+	if len(p.Extract.Filter.Include) > 0 || len(p.Extract.Filter.Exclude) > 0 {
+		if p.Extract.Filter.Field == "" {
+			return fmt.Errorf("siteprofile %s: filter needs a field to test", p.Portal)
+		}
+		if _, ok := p.Extract.Fields[p.Extract.Filter.Field]; !ok {
+			return fmt.Errorf("siteprofile %s: filter tests field %q, which this profile does not extract", p.Portal, p.Extract.Filter.Field)
+		}
+	}
 	for name, f := range p.Extract.Fields {
 		if err := f.validate(p.Portal, name); err != nil {
 			return err
+		}
+	}
+	for name, f := range p.Extract.Detail.Fields {
+		if err := f.validate(p.Portal, "detail."+name); err != nil {
+			return err
+		}
+		if f.Path == "" && f.Pattern == "" && f.Const == "" {
+			return fmt.Errorf("siteprofile %s: detail field %s has no path, pattern or const, so a second fetch would be spent for nothing", p.Portal, name)
 		}
 	}
 	if err := p.Extract.Gallery.validate(p.Portal, "gallery"); err != nil {
@@ -250,17 +483,25 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 	if m == nil {
 		m = nuxtJsonRe.FindStringSubmatch(body)
 		if m == nil {
-			return nil, nil
+			// Returning nothing quietly was the problem: a bot-check page, a
+			// redirect to a consent wall and a genuine markup change all came
+			// back as "no listings, no error", which the caller could only
+			// report as a portal with nothing to sell.
+			return nil, fmt.Errorf("siteprofile %s: no __NEXT_DATA__ or __NUXT_DATA__ script in the page", p.Portal)
 		}
 	}
 	var root any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("siteprofile %s: __NEXT_DATA__ is not valid JSON: %w", p.Portal, err)
 	}
-	// Navigate to the array via data_path (dotted, supports only map traversal)
+	// Navigate to the array via data_path (dotted, supports only map traversal).
 	nodes := jsonPathRaw(root, p.Extract.DataPath)
 	if len(nodes) == 0 {
-		return nil, nil
+		// A path that resolves to NOTHING means the portal moved its schema.
+		// A path resolving to an EMPTY ARRAY is a different fact - a result
+		// page with no results - and falls through to return no listings and
+		// no error, which is the honest answer for it.
+		return nil, fmt.Errorf("siteprofile %s: data_path %q matched nothing in __NEXT_DATA__", p.Portal, p.Extract.DataPath)
 	}
 	// The path should resolve to an array; jsonPathRaw collects across arrays,
 	// so we need to flatten one level if the result is a single slice.
@@ -278,30 +519,17 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 		if !ok {
 			continue
 		}
-		// Filter Tayara noise: skip Boost/Tayara promo and non-real-estate when possible.
-		// Real-estate subCategory on Tayara is 66c34325d16d7f3b0c2ec570 (immeuble) and 60be84c... variants.
-		// For now keep everything with a price >= 10000 or title containing real-estate keywords,
-		// plus anything with a governorate (all tunisian listings have it). This filters out cars/blazers.
-		// If the portal is tayara we apply an extra guard: keep only if title looks like property.
-		if p.Portal == "tayara" {
-			title := fmt.Sprintf("%v", obj["title"])
-			lower := strings.ToLower(title)
-			// Boost ads have producttype 0 and title Bi3 Fissa3 - drop them
-			if strings.Contains(lower, "bi3 fissa") || strings.Contains(lower, "boost") {
-				continue
-			}
-			// Keep only if looks like real estate (appartement, villa, maison, terrain, studio, s+1 etc) OR price==0 with location (lotissements)
-			// For lots/terrains price may be 0 but title contains terrain/lot. So check keywords.
-			isProperty := strings.Contains(lower, "appart") || strings.Contains(lower, "villa") || strings.Contains(lower, "maison") || strings.Contains(lower, "terrain") || strings.Contains(lower, "studio") || strings.Contains(lower, "s+") || strings.Contains(lower, "lot") || strings.Contains(lower, "résidence")
-			if !isProperty {
-				continue
-			}
-		}
 		l := store.Listing{Portal: p.Portal, Currency: p.Currency}
-		payload := map[string]any{}
+		payload := p.newPayload()
 		for name, f := range p.Extract.Fields {
 			v := p.apply(f, jsonPath(obj, f.Path))
 			p.assign(&l, payload, name, v)
+		}
+		if !p.Extract.Filter.keep(payload) {
+			continue
+		}
+		if v := p.Extract.Classify.classify(payload); v != "" {
+			payload[p.Extract.Classify.Field] = v
 		}
 		for i, u := range p.apply(p.Extract.Gallery, jsonPath(obj, p.Extract.Gallery.Path)) {
 			l.Media = append(l.Media, store.Media{Position: i, URL: u})
@@ -309,15 +537,90 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 		if l.ListingID == "" {
 			continue
 		}
-		// Build URL if not extracted: Tayara URL pattern /listing/i/<id> or /ads/details?
-		if l.URL == "" && l.ListingID != "" {
-			l.URL = strings.TrimRight(p.BaseURL, "/") + "/listing/i/" + l.ListingID
+		if l.URL == "" && p.Extract.URLTemplate != "" {
+			l.URL = p.listingURL(l.ListingID)
 			payload["url"] = l.URL
+		}
+		// A row with no link is not a listing. Mubawab interleaves promoted
+		// DEVELOPMENT banners among its result tiles: they carry no href, no
+		// price and no property type, and the anchored parse scraped an id out
+		// of their media path (/promotion/4/083F/ -> "4083"), so a banner
+		// entered the archive as a listing and was re-recorded every time its
+		// carousel rotated a photograph. Requiring the link drops exactly those
+		// rows: over a 4141-listing run across ten portals, nine were at 100%
+		// URL coverage and the only ten blanks were these.
+		if l.URL == "" {
+			continue
 		}
 		l.Payload = mustJSON(payload)
 		out = append(out, l)
 	}
 	return out, nil
+}
+
+// ApplyDetail merges a listing's own page into a listing already parsed from
+// the result page. It only ever ADDS: a field the result page filled is left
+// alone, because that page is the one whose block boundaries were checked.
+//
+// Returns the names of the fields the detail page actually supplied, so a
+// caller can report what the second fetch bought.
+func (p *Profile) ApplyDetail(l *store.Listing, body string) []string {
+	if !p.Extract.Detail.Wanted() {
+		return nil
+	}
+	var payload map[string]any
+	if l.Payload != "" {
+		_ = json.Unmarshal([]byte(l.Payload), &payload)
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	embedded := ldjsonIn(body)
+	var filled []string
+	for name, f := range p.Extract.Detail.Fields {
+		if existing, ok := payload[name]; ok {
+			if s, isStr := existing.(string); !isStr || s != "" {
+				continue // the result page already answered this
+			}
+		}
+		vals := p.apply(f, valuesFor(f, body, embedded))
+		if len(vals) == 0 {
+			continue
+		}
+		p.assign(l, payload, name, vals)
+		filled = append(filled, name)
+	}
+	if len(filled) == 0 {
+		return nil
+	}
+	sort.Strings(filled)
+	l.Payload = mustJSON(payload)
+	return filled
+}
+
+// newPayload starts a listing's payload with the facts the PROFILE knows and
+// the page never states.
+//
+// market is the one that bit: every profile declares it (market: tn, market:
+// za, market: us) and it reached the JSONL export, because the harvester read
+// it off the profile in memory. Nothing wrote it to the archive, so the
+// database-driven CSV export had an empty market column on all 995 rows - the
+// column that tells a reader whether a price is dinars or dollars.
+func (p *Profile) newPayload() map[string]any {
+	m := map[string]any{}
+	if p.Market != "" {
+		m["market"] = p.Market
+	}
+	return m
+}
+
+// listingURL renders url_template for one listing id.
+func (p *Profile) listingURL(id string) string {
+	u := strings.ReplaceAll(p.Extract.URLTemplate, "{id}", id)
+	if strings.HasPrefix(u, "/") {
+		u = strings.TrimRight(p.BaseURL, "/") + u
+	}
+	return u
 }
 
 // jsonPathRaw is like jsonPath but returns raw values (not stringified) for traversal.
@@ -364,16 +667,37 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 				continue
 			}
 			l := store.Listing{Portal: p.Portal, Currency: p.Currency}
-			payload := map[string]any{}
+			payload := p.newPayload()
 			for name, f := range p.Extract.Fields {
 				v := p.apply(f, jsonPath(obj, f.Path))
 				p.assign(&l, payload, name, v)
+			}
+			if !p.Extract.Filter.keep(payload) {
+				continue
+			}
+			if v := p.Extract.Classify.classify(payload); v != "" {
+				payload[p.Extract.Classify.Field] = v
 			}
 			for i, u := range p.apply(p.Extract.Gallery, jsonPath(obj, p.Extract.Gallery.Path)) {
 				l.Media = append(l.Media, store.Media{Position: i, URL: u})
 			}
 			if l.ListingID == "" {
 				continue // a listing with no identity cannot be observed twice
+			}
+			if l.URL == "" && p.Extract.URLTemplate != "" {
+				l.URL = p.listingURL(l.ListingID)
+				payload["url"] = l.URL
+			}
+			// A row with no link is not a listing. Mubawab interleaves promoted
+			// DEVELOPMENT banners among its result tiles: they carry no href, no
+			// price and no property type, and the anchored parse scraped an id out
+			// of their media path (/promotion/4/083F/ -> "4083"), so a banner
+			// entered the archive as a listing and was re-recorded every time its
+			// carousel rotated a photograph. Requiring the link drops exactly those
+			// rows: over a 4141-listing run across ten portals, nine were at 100%
+			// URL coverage and the only ten blanks were these.
+			if l.URL == "" {
+				continue
 			}
 			l.Payload = mustJSON(payload)
 			out = append(out, l)
@@ -457,12 +781,34 @@ func (p *Profile) parseAnchored(body string) ([]store.Listing, error) {
 		embedded := ldjsonIn(block)
 
 		l := store.Listing{Portal: p.Portal, ListingID: id, Currency: p.Currency}
-		payload := map[string]any{"listing_id": id}
+		payload := p.newPayload()
+		payload["listing_id"] = id
 		for name, f := range p.Extract.Fields {
 			p.assign(&l, payload, name, p.apply(f, valuesFor(f, block, embedded)))
 		}
+		if !p.Extract.Filter.keep(payload) {
+			continue
+		}
+		if v := p.Extract.Classify.classify(payload); v != "" {
+			payload[p.Extract.Classify.Field] = v
+		}
 		for i, u := range p.apply(p.Extract.Gallery, valuesFor(p.Extract.Gallery, block, embedded)) {
 			l.Media = append(l.Media, store.Media{Position: i, URL: u})
+		}
+		if l.URL == "" && p.Extract.URLTemplate != "" {
+			l.URL = p.listingURL(l.ListingID)
+			payload["url"] = l.URL
+		}
+		// A row with no link is not a listing. Mubawab interleaves promoted
+		// DEVELOPMENT banners among its result tiles: they carry no href, no
+		// price and no property type, and the anchored parse scraped an id out
+		// of their media path (/promotion/4/083F/ -> "4083"), so a banner
+		// entered the archive as a listing and was re-recorded every time its
+		// carousel rotated a photograph. Requiring the link drops exactly those
+		// rows: over a 4141-listing run across ten portals, nine were at 100%
+		// URL coverage and the only ten blanks were these.
+		if l.URL == "" {
+			continue
 		}
 		l.Payload = mustJSON(payload)
 		out = append(out, l)
@@ -537,7 +883,13 @@ func (p *Profile) assign(l *store.Listing, payload map[string]any, name string, 
 	case "currency":
 		l.Currency = v
 	case "price":
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		// Zero is not a price. It is the same question the nil case answers
+		// from the other side: Tayara publishes price 0 for "contact for
+		// price" - a terrain à vendre with no figure, a villa whose asking
+		// price appears only in the title - and nothing on these portals is
+		// genuinely free. Recording it as 0 puts a number into every average,
+		// median and price-history series that no seller ever asked for.
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n != 0 {
 			l.Price = &n
 		}
 		// A price that will not parse is left nil rather than zeroed: "not
@@ -599,8 +951,23 @@ func (p *Profile) apply(f Field, vals []string) []string {
 			case "trim":
 				v = strings.TrimSpace(v)
 			case "absolute":
-				if strings.HasPrefix(v, "/") {
+				// A portal publishes one of three shapes and this has to
+				// handle all of them. Tunisie Annonce emits
+				// "Details_Annonces_Immobilier.asp?cod_ann=..." with no
+				// leading slash, and prefixing only paths that begin "/" left
+				// all 25 of its listings carrying a URL that resolves nowhere
+				// - the export flagged them as off-host, which is what a
+				// relative path looks like once it leaves the page it came
+				// from.
+				switch {
+				case strings.HasPrefix(v, "http://"), strings.HasPrefix(v, "https://"):
+					// already absolute; leave it alone
+				case strings.HasPrefix(v, "//"):
+					v = "https:" + v
+				case strings.HasPrefix(v, "/"):
 					v = strings.TrimRight(p.BaseURL, "/") + v
+				default:
+					v = strings.TrimRight(p.BaseURL, "/") + "/" + v
 				}
 			}
 		}

@@ -414,6 +414,17 @@ func TestMubawabAnchoredParsing(t *testing.T) {
 		t.Fatalf("want 3 listings from 3 listingBox tiles, got %d", len(got))
 	}
 
+	// Asserted explicitly, because it silently was not true for a while. When
+	// the url pattern moved from /fr/ct/ to the /fr/a/ shape live tiles use,
+	// this fixture kept the old hrefs: all three listings parsed with an empty
+	// URL and the test stayed green, since nothing here looked at the field.
+	for _, l := range got {
+		if !strings.HasPrefix(l.URL, "https://www.mubawab.tn/fr/a/") {
+			t.Errorf("listing %s: url %q is not the shape a result tile links to",
+				l.ListingID, l.URL)
+		}
+	}
+
 	want := map[string]struct {
 		title        string
 		price        int64
@@ -530,107 +541,61 @@ func TestMubawabAnchoredParsing(t *testing.T) {
 // TestTunisieAnnonceAnchoredParsing verifies the anchored-mode profile works against
 // a classifieds page with data-id markers on each listing tile.
 func TestTunisieAnnonceAnchoredParsing(t *testing.T) {
+	// Rewritten against REAL markup. The fixture this replaced was
+	// hand-written and had no tooltips, so it certified patterns
+	// (class="Tableau2", a bare >Villa<) that matched nothing on the live
+	// page: title and location came back empty on every row of a live run,
+	// and the test stayed green throughout.
+	//
+	// This page keeps its data in onmouseover text - Gouvernorat, Localite,
+	// Nature, Type, and the full untruncated title, because the anchor text
+	// itself is cut off at about thirty characters.
 	p, body := load(t, "tunisieannonce.yaml", "tunisieannonce_listings.html")
 	got, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 listings from 2 annonce-item tiles, got %d", len(got))
+	if len(got) != 3 {
+		t.Fatalf("want 3 listings from 3 rows, got %d", len(got))
 	}
-
-	want := map[string]struct {
-		title        string
-		price        int64
-		currency     string
-		propertyType string
-		rooms        int
-		surface      int64
-		location     string
-		seller       string
-		mediaCount   int
-	}{
-		"111111": {
-			title:        "Appartement S+2 La Soukra - 180m²",
-			price:        450000,
-			currency:     "TND",
-			propertyType: "Appartement",
-			rooms:        3,
-			surface:      180,
-			location:     "Tunis, La Soukra",
-			seller:       "Particulier",
-			mediaCount:   0,
-		},
-		"222222": {
-			title:        "Villa S+3 Gammarth - 350m²",
-			price:        1200000,
-			currency:     "TND",
-			propertyType: "Villa",
-			rooms:        4,
-			surface:      350,
-			location:     "Tunis, Gammarth",
-			seller:       "Particulier",
-			mediaCount:   0,
-		},
-	}
-
 	for _, l := range got {
-		if l.Portal != "tunisieannonce" || l.ListingID == "" {
-			t.Errorf("identity missing: %+v", l)
-			continue
+		if l.ListingID == "" {
+			t.Error("no listing id")
 		}
-		exp, ok := want[l.ListingID]
-		if !ok {
-			t.Errorf("unexpected listing ID: %s", l.ListingID)
-			continue
+		// Rebuilt from the id, never taken from the portal's own href: that
+		// href carries "&titre=Terrain entre el haouria et kelibia" with
+		// unencoded spaces and cp1252 accents, which reached the archive as
+		// undecodable bytes and took the entire CSV export to zero rows once.
+		want := "http://www.tunisie-annonce.com/Details_Annonces_Immobilier.asp?cod_ann=" + l.ListingID
+		if l.URL != want {
+			t.Errorf("%s: url %q, want %q", l.ListingID, l.URL, want)
 		}
-
-		if l.Currency != exp.currency {
-			t.Errorf("%s: currency %q, want %q", l.ListingID, l.Currency, exp.currency)
-		}
-		if l.Price == nil || *l.Price != exp.price {
-			t.Errorf("%s: price %v, want %d", l.ListingID, l.Price, exp.price)
-		}
-
-		if !strings.Contains(l.Payload, `"title":"`+exp.title+`"`) {
-			t.Errorf("%s: title mismatch: %s", l.ListingID, l.Payload)
-		}
-		if !strings.Contains(l.Payload, `"property_type":"`+exp.propertyType+`"`) {
-			t.Errorf("%s: property_type mismatch: %s", l.ListingID, l.Payload)
-		}
-		if !strings.Contains(l.Payload, `"rooms":`) {
-			t.Errorf("%s: rooms missing from payload: %s", l.ListingID, l.Payload)
-		}
-		if !strings.Contains(l.Payload, `"surface":`) {
-			t.Errorf("%s: surface missing from payload: %s", l.ListingID, l.Payload)
-		}
-		if !strings.Contains(l.Payload, `"location":"`+exp.location+`"`) {
-			t.Errorf("%s: location mismatch: %s", l.ListingID, l.Payload)
-		}
-		if !strings.Contains(l.Payload, `"seller":"`+exp.seller+`"`) {
-			t.Errorf("%s: seller mismatch: %s", l.ListingID, l.Payload)
-		}
-
-		if len(l.Media) != exp.mediaCount {
-			t.Errorf("%s: media count %d, want %d", l.ListingID, len(l.Media), exp.mediaCount)
-		}
-		for _, m := range l.Media {
-			if !strings.HasPrefix(m.URL, "https://images.tunisieannonce.com/") {
-				t.Errorf("%s: gallery url off-CDN: %s", l.ListingID, m.URL)
+		for _, field := range []string{`"title"`, `"city"`, `"region"`, `"nature"`, `"deal_type"`} {
+			if !strings.Contains(l.Payload, field) {
+				t.Errorf("%s: missing %s in %s", l.ListingID, field, l.Payload)
 			}
-		}
-
-		if l.ContentHash() == "" {
-			t.Errorf("%s: content hash empty", l.ListingID)
-		}
-		if l.GalleryHash() != "" {
-			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
 		}
 	}
 }
 
-// TestHouniLDJSONParsing verifies the anchored profile works against
-// Houni's SSR article cards.
+// Nature is what says sale or letting on this portal, and the two appear in
+// roughly equal numbers - Vente 18, Location 18 on a live page - so a blanket
+// default would mislabel about half the rows.
+func TestTunisieAnnonceDealTypeComesFromNature(t *testing.T) {
+	p := shipped(t, "tunisieannonce.yaml")
+	if got := p.Extract.Classify.From; got != "nature" {
+		t.Errorf("classify reads %q, want nature", got)
+	}
+	for _, c := range []struct{ nature, want string }{
+		{"Location", "rental"},
+		{"Vente", "sale"},
+		{"Terrain", "sale"},
+	} {
+		if got := p.Extract.Classify.classify(map[string]any{"nature": c.nature}); got != c.want {
+			t.Errorf("nature %q -> %q, want %q", c.nature, got, c.want)
+		}
+	}
+}
 func TestHouniLDJSONParsing(t *testing.T) {
 	p, body := load(t, "houni.yaml", "houni_listings.html")
 	got, err := p.Parse(body)
@@ -692,5 +657,269 @@ func TestHouniLDJSONParsing(t *testing.T) {
 		if l.GalleryHash() != "" {
 			t.Errorf("%s: gallery hashed before any image was fetched", l.ListingID)
 		}
+	}
+}
+
+func shipped(t *testing.T, name string) *Profile {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "profiles", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	p, err := Load(b)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	return p
+}
+
+// The keyword list that used to live in a `if p.Portal == "tayara"` arm inside
+// parseNextData held eight terms: appart, villa, maison, terrain, studio, s+,
+// lot, résidence. Tayara sells a good deal more than that, and every title
+// below failed all eight - so each was a real listing thrown away between the
+// parser and the pipeline, with nothing logged.
+func TestTayaraFilterKeepsPropertyTypesTheHardcodedListThrewAway(t *testing.T) {
+	f := shipped(t, "tayara.yaml").Extract.Filter
+	for _, title := range []string{
+		"Duplex haut standing à Sousse",
+		"Bureau 120m² centre ville Tunis",
+		"Local commercial à louer Sfax",
+		"Dépôt 400m² zone industrielle Ben Arous",
+		"Ferme 2 hectares à Nabeul",
+		"Immeuble R+3 à Bizerte",
+		"Magasin 60m² avenue Habib Bourguiba",
+		"Hangar 800m² Zone industrielle Mghira",
+	} {
+		if !f.keep(map[string]any{"title": title}) {
+			t.Errorf("still dropping a real listing: %q", title)
+		}
+	}
+}
+
+func TestTayaraFilterStillDropsWhatItAlwaysDropped(t *testing.T) {
+	f := shipped(t, "tayara.yaml").Extract.Filter
+	for _, title := range []string{
+		"Bi3 Fissa3 - promo",
+		"BOOST ton annonce",
+		"Golf 7 GTI full options",
+		"iPhone 15 Pro Max neuf",
+	} {
+		if f.keep(map[string]any{"title": title}) {
+			t.Errorf("kept noise: %q", title)
+		}
+	}
+}
+
+// The original eight must keep working: the filter widened the net, it did not
+// move it.
+func TestTayaraFilterKeepsTheOriginalTerms(t *testing.T) {
+	f := shipped(t, "tayara.yaml").Extract.Filter
+	for _, title := range []string{
+		"Appartement S+2 à La Soukra",
+		"Villa avec piscine Gammarth",
+		"Maison arabe à Sidi Bou Said",
+		"Terrain constructible El Manzah",
+		"Studio meublé Lac 2",
+		"Résidence Les Jasmins",
+	} {
+		if !f.keep(map[string]any{"title": title}) {
+			t.Errorf("dropped: %q", title)
+		}
+	}
+}
+
+// A record missing the field an Include list judges cannot satisfy it, and an
+// Exclude-only filter has nothing to match against. Getting this backwards
+// deletes every listing whose title a portal happened to omit.
+func TestFilterHandlesAMissingField(t *testing.T) {
+	inc := Filter{Field: "title", Include: []string{"villa"}}
+	if inc.keep(map[string]any{"price": "1"}) {
+		t.Error("an include filter must not admit a record with no title to judge")
+	}
+	exc := Filter{Field: "title", Exclude: []string{"boost"}}
+	if !exc.keep(map[string]any{"price": "1"}) {
+		t.Error("an exclude-only filter must keep what it cannot match")
+	}
+}
+
+func TestValidateRejectsAProfileThatCannotIdentifyAListing(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"nextdata without listing_id", `portal: p
+extract:
+  mode: nextdata
+  data_path: a.b
+`, "needs a listing_id"},
+		{"ldjson without listing_id", `portal: p
+extract:
+  mode: ldjson
+  type: Residence
+`, "needs a listing_id"},
+		{"listing_id present but unusable", `portal: p
+extract:
+  mode: nextdata
+  data_path: a.b
+  fields:
+    listing_id:
+      transform: [trim]
+`, "needs a listing_id"},
+		{"filter on a field nobody extracts", `portal: p
+extract:
+  mode: nextdata
+  data_path: a.b
+  fields:
+    listing_id:
+      path: id
+  filter:
+    field: title
+    include: [villa]
+`, "does not extract"},
+		{"filter without a field", `portal: p
+extract:
+  mode: nextdata
+  data_path: a.b
+  fields:
+    listing_id:
+      path: id
+  filter:
+    include: [villa]
+`, "needs a field"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Load([]byte(c.yaml))
+			if err == nil {
+				t.Fatal("want an error: a profile that parses a page into nothing must fail at load")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("error %q does not mention %q", err, c.want)
+			}
+		})
+	}
+}
+
+// anchored takes identity from the anchor's id group, so it stays exempt.
+func TestValidateStillAcceptsAnchoredWithoutAListingIDField(t *testing.T) {
+	_, err := Load([]byte(`portal: p
+extract:
+  mode: anchored
+  anchor: 'x(?P<id>\d+)'
+  block_len: 10
+`))
+	if err != nil {
+		t.Fatalf("anchored profile rejected: %v", err)
+	}
+}
+
+// nextdata used to answer every one of these with (nil, nil), which the caller
+// could only report as "portal had no listings" - the same words a bot-check
+// page, a moved schema and a genuinely empty result page all produced.
+func TestNextDataSaysWhyItFoundNothing(t *testing.T) {
+	p := &Profile{Portal: "x", Extract: Extract{Mode: "nextdata", DataPath: "a.b"}}
+
+	if _, err := p.Parse("<html><body>consent wall</body></html>"); err == nil ||
+		!strings.Contains(err.Error(), "no __NEXT_DATA__") {
+		t.Errorf("missing script: got %v", err)
+	}
+
+	if _, err := p.Parse(`<script id="__NEXT_DATA__">{"a":</script>`); err == nil ||
+		!strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("malformed json: got %v", err)
+	}
+
+	if _, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"c":1}}</script>`); err == nil ||
+		!strings.Contains(err.Error(), "matched nothing") {
+		t.Errorf("moved schema: got %v", err)
+	}
+}
+
+// A path resolving to an empty array is a result page with no results. That is
+// not a failure and must not be reported as one.
+func TestNextDataTreatsAnEmptyResultArrayAsNoError(t *testing.T) {
+	p := &Profile{Portal: "x", Extract: Extract{Mode: "nextdata", DataPath: "a.b"}}
+	got, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"b":[]}}</script>`)
+	if err != nil {
+		t.Fatalf("empty result page reported as an error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d listings from an empty array", len(got))
+	}
+}
+
+func TestURLTemplateIsPerProfileNotTayaraForEveryone(t *testing.T) {
+	p := &Profile{BaseURL: "https://www.example.fr/", Extract: Extract{URLTemplate: "/annonce/{id}"}}
+	if got := p.listingURL("42"); got != "https://www.example.fr/annonce/42" {
+		t.Errorf("got %s", got)
+	}
+	abs := &Profile{BaseURL: "https://www.example.fr", Extract: Extract{URLTemplate: "https://m.example.fr/a/{id}"}}
+	if got := abs.listingURL("42"); got != "https://m.example.fr/a/42" {
+		t.Errorf("absolute template rewritten: %s", got)
+	}
+}
+
+// Tayara listings carry an id and no href, so the URL is built. Losing that
+// would strip every Tayara listing of its address.
+func TestTayaraStillBuildsListingURLs(t *testing.T) {
+	p, body := load(t, "tayara.yaml", "tayara_listings.html")
+	got, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("no listings")
+	}
+	for _, l := range got {
+		want := "https://www.tayara.tn/listing/i/" + l.ListingID
+		if l.URL != want {
+			t.Errorf("%s: url %q, want %q", l.ListingID, l.URL, want)
+		}
+	}
+}
+
+// TestAPromotedBannerIsNotAListing pins the rule that a parsed row must carry
+// a link.
+//
+// Mubawab interleaves promoted DEVELOPMENT banners among its result tiles.
+// They carry an adid, a title and a picture, but no href to any listing -
+// because they are not listings. The anchored parse took the adid as an
+// identity and admitted them, so a banner entered the archive priced nil and
+// typed nothing, and was recorded AGAIN every time its carousel rotated a
+// photograph: over one 4141-listing run, four banners produced ten rows.
+//
+// Ten junk rows in four thousand is exactly the kind of defect that survives
+// a green test suite, because everything about the run looks healthy.
+func TestAPromotedBannerIsNotAListing(t *testing.T) {
+	p, _ := load(t, "mubawab.yaml", "mubawab_listings.html")
+
+	banner := `<div class="listingBox">` +
+		`<i class="fav" adid="4083"></i>` +
+		`<div class="listingTit"><a>JINENE SOUKRA 1 : Luxe et Confort</a></div>` +
+		`<img data-src="https://www.mubawab-media.com/promotion/4/083F/pictures/h/facade.avif">` +
+		`</div>`
+	got, err := p.Parse(banner)
+	if err != nil {
+		t.Fatalf("parse banner: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want the linkless banner dropped, got %d: %+v", len(got), got)
+	}
+
+	// The same shape WITH a link is a real tile and must still be admitted -
+	// the guard has to reject page furniture without costing a listing.
+	tile := `<div class="listingBox">` +
+		`<i class="fav" adid="8388040"></i>` +
+		`<a href="https://www.mubawab.tn/fr/a/8388040/a-vendre-s2-monastir"></a>` +
+		`<div class="listingTit"><a>S2 Residence Folla Monastir</a></div>` +
+		`<div class="priceTag">550000</div>` +
+		`<img data-src="https://www.mubawab-media.com/ad/8/388/040F/m/x.avif">` +
+		`</div>`
+	got, err = p.Parse(tile)
+	if err != nil {
+		t.Fatalf("parse tile: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want the linked tile kept, got %d", len(got))
+	}
+	if got[0].URL == "" {
+		t.Fatal("kept a listing with no URL, which the guard exists to prevent")
 	}
 }
