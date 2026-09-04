@@ -49,6 +49,11 @@ PLATFORM_KINDS = {
     # Long-form practitioner talk, from shows that publish a machine-readable
     # transcript in their own feed. `show` walks the newest episodes.
     "podcast": ("show",),
+    # Property portals. `listing` walks a result page and records each property
+    # as an observation, so a re-run appends rather than overwrites and the
+    # price history is the append log. Driven by a config file per portal
+    # (config/profiles/*.yaml) rather than a hand-written adapter.
+    "realestate": ("listing",),
 }
 
 # Kinds the Go ingestion worker can actually fetch today (go/cmd/worker).
@@ -71,6 +76,13 @@ SUPPORTED_KINDS = frozenset({
     ("lemmy", "community"),
     ("steam", "app"),
     ("podcast", "show"),
+    # The Go worker has fetched these since the real-estate subsystem landed -
+    # go/cmd/worker/main.go routes `realestate`/`listing` to
+    # realestate.FetchListingList - but the platform was never added here, so
+    # every shipped real-estate source was reported as having no adapter behind
+    # it. Six enabled sources, ingesting daily, that the Python side did not
+    # believe existed.
+    ("realestate", "listing"),
 })
 
 #: Why a platform the parser accepts still has no adapter. A platform in

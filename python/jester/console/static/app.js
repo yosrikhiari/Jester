@@ -442,6 +442,7 @@ const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
   youtube: 'YouTube', tiktok: 'TikTok', stackexchange: 'Stack Exchange',
   github: 'GitHub', lemmy: 'Lemmy', steam: 'Steam', podcast: 'Podcast',
+  realestate: 'Real estate',
 };
 // Platforms the parser accepts are served by the API, so adding an adapter
 // never needs a matching edit here.
@@ -482,7 +483,8 @@ function renderSources() {
   $('#src-count').textContent = `${COUNTS.sources} enabled / ${list.length} total`;
 
   const order = { hackernews: 0, reddit: 1, discourse: 2, stackexchange: 3,
-                  github: 4, lemmy: 5, steam: 6, podcast: 7, youtube: 8, tiktok: 9 };
+                  github: 4, lemmy: 5, steam: 6, podcast: 7, youtube: 8, tiktok: 9,
+                  realestate: 10 };
   const sorted = [...list].sort((a, b) =>
     (order[a.platform] ?? 9) - (order[b.platform] ?? 9) || a.name.localeCompare(b.name));
 

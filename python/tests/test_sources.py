@@ -181,8 +181,13 @@ def test_sources_payload_carries_the_ui_vocabulary(api):
     assert payload["ok"] is True
     assert set(payload["platform_kinds"]) == {
         "reddit", "hackernews", "discourse", "youtube", "tiktok",
-        "stackexchange", "github", "lemmy", "steam", "podcast"}
+        "stackexchange", "github", "lemmy", "steam", "podcast", "realestate"}
     assert ["reddit", "subreddit"] in payload["supported_kinds"]
+    # Property portals are driven by a config file per portal rather than a
+    # hand-written adapter, and the Go worker has fetched them since the
+    # subsystem landed - but the platform was missing from this vocabulary, so
+    # six enabled, daily-ingesting sources were reported as having no adapter.
+    assert ["realestate", "listing"] in payload["supported_kinds"]
     # Stack Exchange and GitHub are sanctioned APIs, so unlike tiktok they
     # ship with adapters behind them rather than as configurable placeholders.
     assert ["stackexchange", "site"] in payload["supported_kinds"]

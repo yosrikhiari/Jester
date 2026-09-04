@@ -118,9 +118,19 @@ services:
       - "127.0.0.1:9222:9222"
     volumes:
       - cloak_profiles:/profile
-      - cloak_browser_binary:/chrome-dir
+      # Mounted where cloakserve actually caches its Chromium, so the download
+      # survives a restart. It used to be /chrome-dir with
+      # CLOAKBROWSER_BINARY_PATH pointing into it, and that combination cannot
+      # work: ensure_binary() treats an explicit BINARY_PATH as "this file is
+      # already here" and raises FileNotFoundError rather than downloading, so
+      # the container sat in a restart loop against an empty volume.
+      - cloak_browser_binary:/root/.cloakbrowser
     environment:
-      - CLOAKBROWSER_BINARY_PATH=/chrome-dir/chrome
+      # No BINARY_PATH and no version pin: cloakserve fetches the free binary
+      # itself (v146 at time of writing, v150 also free with one concurrent
+      # session). The plan's CLOAKBROWSER_VERSION=v146 is rejected by the
+      # current image, which wants a full Chromium version like
+      # 148.0.7778.215.2 - so pinning nothing is what actually works.
       - CLOAKBROWSER_LICENSE_KEY=${CLOAKBROWSER_LICENSE_KEY:-}
       - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
       - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}
