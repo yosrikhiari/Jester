@@ -112,6 +112,23 @@ type Thresholds struct {
 	//
 	// Absent platform => MaxThreadsPerSource. Absent map => today's behaviour.
 	MaxThreadsPerPlatform map[string]int `yaml:"max_threads_per_platform"`
+	// RealestateDetailPerPage bounds the second fetch a real-estate profile
+	// may make per result page, for fields the result page does not carry.
+	//
+	// OFF BY DEFAULT (0), and deliberately. It is one request per listing on
+	// top of the result page, so a portal that answers 33 tiles becomes 34
+	// requests instead of 1 - the difference between reading a page and
+	// crawling a portal. Only two profiles declare a `detail` block at all,
+	// and each one earned it: Houni publishes no price on its tiles (two
+	// patterns were tried and both reported fiction), and Property24 puts the
+	// street address only on the listing page, which is the field that decides
+	// a cross-portal duplicate.
+	//
+	// Property24 answered 503 during development after a session that had
+	// pulled twenty result pages and some 2,400 photographs from it, which is
+	// the argument for this being a number someone chooses rather than a
+	// default they inherit.
+	RealestateDetailPerPage int `yaml:"realestate_detail_per_page"`
 	// MinCommentsPerThread skips threads too quiet to be worth a fetch. Only
 	// the API-backed adapters (Hacker News, Discourse) can filter on it before
 	// fetching, because only they get a comment count in the listing.

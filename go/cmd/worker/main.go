@@ -220,7 +220,15 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 
 		ctx := context.Background()
 		var cancel func()
-		if needsBrowser(src.Platform) {
+		// needsBrowser answers for the PLATFORM. A real-estate profile that
+		// declares fetch: http reads its portal with an ordinary GET, and by
+		// the rule stated in needsBrowser the browser has to be asked for by
+		// name - so a profile is allowed to decline it.
+		useBrowser := needsBrowser(src.Platform)
+		if useBrowser && src.Platform == "realestate" && realestate.UsesHTTPFetch(configDir, src.Name) {
+			useBrowser = false
+		}
+		if useBrowser {
 			// §4.3.2: one stable stealth identity per source. cloakserve keys a
 			// separate Chrome process (and cookie jar) off the seed, so a source
 			// keeps its warmed session between runs. Sessions are opened one at a
@@ -833,7 +841,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "realestate" && kind == "listing":
 		fmt.Printf("[live] realestate listing %s (portal: %s)\n", src.URL, src.Name)
-		listings, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir)
+		listings, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir, cfg.Thresholds.RealestateDetailPerPage)
 		if err != nil {
 			return 0, err
 		}
