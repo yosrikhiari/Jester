@@ -5,10 +5,27 @@ portal: mubawab
 market: tn
 base_url: https://www.mubawab.tn
 currency: TND
+# Verified 2026-09-04: the result page and its data-adid tiles are served in
+# full to an ordinary GET.
+fetch: http
 
 list:
   url: https://www.mubawab.tn/fr/ct/tunis/immobilier-a-vendre
-  page_param: ""
+  # Tunis is one governorate of many. Each city seed answers its own 33 tiles
+  # per page and pages just as deep, so the seed list multiplies the reachable
+  # inventory rather than merely lengthening it. Verified 2026-09-04: all six
+  # return a full page.
+  urls:
+    - https://www.mubawab.tn/fr/ct/sousse/immobilier-a-vendre
+    - https://www.mubawab.tn/fr/ct/sfax/immobilier-a-vendre
+    - https://www.mubawab.tn/fr/ct/nabeul/immobilier-a-vendre
+    - https://www.mubawab.tn/fr/ct/bizerte/immobilier-a-vendre
+    - https://www.mubawab.tn/fr/ct/monastir/immobilier-a-vendre
+    - https://www.mubawab.tn/fr/ct/ariana/immobilier-a-vendre
+  # Mubawab pages by PATH, not by query: ":p:2" returns a set of adids
+  # disjoint from page 1 (33 tiles each), while ?page=2 re-serves page one.
+  # page_param cannot express a suffix, which is why page_template exists.
+  page_template: "{url}:p:{page}"
   max_pages: 5
 
 extract:
@@ -22,7 +39,10 @@ extract:
       pattern: 'adid="([^"]+)"'
       transform: [trim]
     url:
-      pattern: 'href="(https://www\.mubawab\.tn/fr/pa/[^"]+|/fr/ct/tunis/[^"]+)"'
+      # /fr/a/ is the shape a result tile actually links to; the profile
+      # matched only /fr/pa/ and /fr/ct/, so 110 of 132 listings came back
+      # with no URL at all.
+      pattern: 'href="(https://www\.mubawab\.tn/fr/(?:a|pa)/[^"]+)"'
       transform: [absolute]
     title:
       pattern: 'class="[^"]*listingTit[^"]*"[^>]*>\s*(?:<a[^>]*>)?\s*([^<]{5,300})'
@@ -47,6 +67,17 @@ extract:
       transform: [unescape, trim]
     seller_type:
       const: "agency"
+
+  # Mubawab puts the deal in the slug: /fr/a/8376817/a-louer-s1-au-lac2 against
+  # /fr/a/8409575/a-vendre-s3. The search URL is "immobilier-a-vendre", so sale
+  # is the honest default, but rentals do appear in the results.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["louer", "location"]
 
   gallery:
     pattern: '(?:data-src|data-url)="(https://www\.mubawab-media\.com/[^"]+)"'

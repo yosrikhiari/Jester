@@ -19,11 +19,35 @@ portal: privateproperty
 market: za
 base_url: https://www.privateproperty.co.za
 currency: ZAR
+# Verified 2026-09-04: served in full to an ordinary GET, redirects followed.
+fetch: http
 
 list:
-  url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/82
-  # Not worked out yet. Empty means one page, which is the honest default.
-  page_param: ""
+  # The trailing number is a location ID and it OVERRIDES the words in the
+  # path, so getting it wrong scrapes a different city in silence. The shipped
+  # value was 82, which is Point Waterfront in Durban: the profile said Cape
+  # Town and 301'd to KwaZulu-Natal. Cape Town is 55, read off the portal's own
+  # sitemap (SiteMap/residential-shapes-0.xml) rather than guessed - it answers
+  # 200 with no redirect and still returns listings at page 20, where 82 ran
+  # out at page 7.
+  url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/55
+  # One city is one city. These are the broadest region per province, read off
+  # the portal's own residential-shapes sitemap rather than guessed - the same
+  # sitemap that supplied Cape Town's id 55 after the shipped 82 turned out to
+  # be Point Waterfront, Durban.
+  urls:
+    - https://www.privateproperty.co.za/for-sale/eastern-cape/amatola/6351
+    - https://www.privateproperty.co.za/for-sale/free-state/central-free-state/6350
+    - https://www.privateproperty.co.za/for-sale/gauteng/centurion/32
+    - https://www.privateproperty.co.za/for-sale/kwazulu-natal/dolphin-coast/14
+    - https://www.privateproperty.co.za/for-sale/limpopo/limpopo-bushveld/2706
+    - https://www.privateproperty.co.za/for-sale/mpumalanga/mpumalanga-escarpment/6309
+    - https://www.privateproperty.co.za/for-sale/north-west/north-west-central/6329
+    - https://www.privateproperty.co.za/for-sale/northern-cape/diamond-fields/2798
+    - https://www.privateproperty.co.za/for-sale/western-cape/boland/50
+  # Worked out 2026-09-04 by fetching: ?page=N returns a disjoint listing set.
+  # (?PageNumber=N is silently ignored and re-serves page 1.) 20 per page.
+  page_param: page
   max_pages: 5
 
 extract:
@@ -36,19 +60,52 @@ extract:
   # The anchor sits INSIDE the Residence <script>, so the block has to back up
   # to the container or the script's opening tag falls outside it and the
   # structured data cannot be read at all.
-  block_start: '<a title="[^"]*" class="listing-result"'
+  # Anchored to STRUCTURE, not to a class name. This was
+  # '<a title="[^"]*" class="listing-result"' and it now matches zero times on
+  # a live page: the portal moved to CSS-module class names
+  # (listing-results-s_s__list-item-link), which are build hashes and will
+  # change again. When block_start matches nothing the block begins at the
+  # anchor - which sits INSIDE the Residence script - so the script's opening
+  # tag falls outside, ldjsonIn finds nothing, and every listing arrives
+  # carrying its id and not one other field. Measured 2026-09-04: 20 of 20
+  # tiles on Cape Town page 1 came back that thin.
+  #
+  # The ld+json opening tag is the thing that actually has to be in the block,
+  # so it is what the block starts at. 20/20 complete after the change.
+  block_start: '<script[^>]+type="application/ld\+json"'
   block_len: 6000
 
   fields:
     # From the embedded Residence block.
     url:
       path: url
+    # The Residence block has no name, so the title came back empty on every
+    # row - the only portal here with no title at all. The tile's own anchor
+    # carries it as an attribute ("2 Bedroom Apartment"), which is also where
+    # the bedroom count is stated in words.
+    title:
+      pattern: 'title="([^"]{6,90})"'
+      transform: [unescape, trim]
     street:
       path: address.streetAddress
     locality:
       path: address.addressLocality
     region:
       path: address.addressRegion
+    # Room counts, and they are the field that decides a cross-portal match.
+    # Two Cape Town flats at the same asking price in the same suburb are a
+    # coincidence; the same price, suburb AND bedroom count is a property.
+    # Measured on a sample of matched pairs: every false positive was a
+    # bedroom mismatch (3 vs 4, 2 vs 3), invisible while this was unread.
+    #
+    # A pattern rather than a path: additionalProperty is a LIST of
+    # PropertyValue objects (Bedrooms, Bathrooms, Garages) and a dotted path
+    # collects every value in it, so bedrooms would arrive as whichever
+    # happened to be first.
+    bedrooms:
+      pattern: '"name":"Bedrooms","value":"?(\d+)'
+    bathrooms:
+      pattern: '"name":"Bathrooms","value":"?(\d+)'
     latitude:
       path: geo.latitude
     longitude:
@@ -60,6 +117,16 @@ extract:
 
   # 600x450 already — the portal serves the thumbnail the fingerprint tier
   # wants, so no full-size fetch is needed to hash a gallery.
+  # The search is a for-sale search, so sale is the honest default rather than
+  # a blank. The rules are here for the day a rental URL is added.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/to-rent/", "/for-rent/"]
+
   gallery:
     path: photo.contentUrl
     all: true

@@ -613,6 +613,30 @@ sources:
   enabled: true
   notes: Houni.tn - Nuxt SSR, anchored article parsing with /annonce/ href.
 - platform: realestate
+  name: onthemarket
+  kind: listing
+  url: https://www.onthemarket.com/for-sale/property/london/
+  enabled: true
+  notes: OnTheMarket UK - the first profile that needs the BROWSER. A plain GET returns a Next.js shell with empty pageProps and no listings; rendered through cloakserve the same URL yields 32 cards. Region Phase 4 priority 2, because Rightmove gives Disallow / to GPTBot and CCbot by name.
+- platform: realestate
+  name: habitaclia
+  kind: listing
+  url: https://www.habitaclia.com/viviendas-madrid.htm
+  enabled: true
+  notes: Habitaclia Spain - schema.org Product/Offer microdata on data- attribute tiles, 6 city seeds, filename pagination (viviendas-madrid-2.htm). Region Phase 3 priority 2, because Idealista (priority 1) answers 403.
+- platform: realestate
+  name: redfin
+  kind: listing
+  url: https://www.redfin.com/city/30749/CA/Los-Angeles
+  enabled: true
+  notes: Redfin USA - schema.org Product/Offer ld+json, 5 city seeds, one page each. Reached as the plan's USA priority 3 because Zillow disallows /homes/ and Realtor.com 403s its own robots.txt. Redfin answers 202-with-no-content on deeper pages, so coverage comes from city seeds.
+- platform: realestate
+  name: behya
+  kind: listing
+  url: https://www.behya.tn/annonces-tunisie/annonces-immobilier-tunisie/
+  enabled: true
+  notes: Behya.tn - Tunisia general classifieds, real-estate section. WordPress theme with data- attribute tiles, /page/N/ pagination, 15 per page. robots.txt has a sitemap and no Disallow. The only reachable site of the four "later" Tunisia targets in the plan.
+- platform: realestate
   name: privateproperty
   kind: listing
   url: https://www.privateproperty.co.za/for-sale/western-cape/cape-town/82
@@ -628,5 +652,5 @@ sources:
   name: seloger
   kind: listing
   url: https://www.seloger.com
-  enabled: true
-  notes: France leading real estate portal no official API scraping-only integration robots.txt Disallow /recherche
+  enabled: false
+  notes: France leading real estate portal, no official API, scraping-only, robots.txt Disallow /recherche. DISABLED - the profile is a draft in config/profiles/drafts/seloger.yaml with no field mapping and an unverified data_path, so every run failed. See that file, and tasks FR-2.1..FR-2.4 in docs/plans/2026-08-31-real-estate-intelligence.md.

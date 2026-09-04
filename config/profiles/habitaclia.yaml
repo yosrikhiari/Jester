@@ -1,0 +1,90 @@
+# Habitaclia (Spain) - Region Phase 3, reached through priority 2.
+#
+# WHY NOT IDEALISTA. Idealista is the plan's priority 1 for Spain and answers
+# 403 to an ordinary GET; its sitemap 404s. Habitaclia answers 200, and no rule
+# in its robots.txt touches /viviendas-*.htm - checked 2026-09-04.
+#
+# The theme puts the whole record on the tile as data- attributes and wraps it
+# in schema.org Product/Offer microdata, so almost nothing here depends on
+# presentational markup.
+portal: habitaclia
+market: es
+base_url: https://www.habitaclia.com
+currency: EUR
+# Verified 2026-09-04: served in full to a plain GET, 15 tiles per page.
+fetch: http
+
+list:
+  url: https://www.habitaclia.com/viviendas-madrid.htm
+  urls:
+    - https://www.habitaclia.com/viviendas-madrid.htm
+    - https://www.habitaclia.com/viviendas-barcelona.htm
+    - https://www.habitaclia.com/viviendas-valencia.htm
+    - https://www.habitaclia.com/viviendas-sevilla.htm
+    - https://www.habitaclia.com/viviendas-malaga.htm
+    - https://www.habitaclia.com/alquiler-madrid.htm
+  # Habitaclia pages by rewriting the FILENAME - viviendas-madrid.htm becomes
+  # viviendas-madrid-2.htm - and ?pagina=2 silently re-serves page one.
+  # {url_base} is the seed without its extension, which is the only way a
+  # template can express that.
+  page_template: "{url_base}-{page}.htm"
+  max_pages: 5
+
+extract:
+  mode: anchored
+  # [^"]* either side of the class name, for the reason Property24 taught: the
+  # tile carries a long ordered class list and pinning to its start breaks the
+  # day the theme reorders it.
+  anchor: 'class="[^"]*js-list-item[^"]*"[^>]*data-id="(?P<id>\d+)"'
+  # 7000, not 4000. Measured: a Habitaclia tile runs about 6.1 KB to the next
+  # anchor, and a 4000-character block cut off before the price, bedroom and
+  # surface attributes - every one of them came back empty while title and
+  # property type parsed fine.
+  block_len: 7000
+
+  fields:
+    url:
+      pattern: 'data-href="([^"]{20,300})"'
+      transform: [unescape, trim]
+    title:
+      pattern: 'itemprop="name"[^>]*>([^<]{5,140})'
+      transform: [unescape, trim]
+    # "1.295.000 &#x20AC;" - dots as thousands separators and an entity for the
+    # euro sign, so unescape then keep the digits.
+    price:
+      pattern: 'itemprop="price"[^>]*>([^<]{3,30})'
+      transform: [unescape, digits]
+    # The tile states these outright rather than burying them in prose.
+    property_type:
+      pattern: 'data-propertysubtype="([A-Z_]{2,30})"'
+    seller_type:
+      pattern: 'data-esparticular="([A-Z_]{2,30})"'
+    bedrooms:
+      pattern: 'data-hab="(\d{1,2})"'
+    surface:
+      pattern: 'data-sup="(\d{1,6})"'
+    transaction:
+      pattern: 'data-transaction="([A-Z_]{2,20})"'
+    # The detail slug ends "<area>-<city>-i<id>.htm"; the greedy prefix takes
+    # the last such pair, which is the city.
+    city:
+      pattern: 'data-href="[^"]*-([a-z]{3,30})-i\d+\.htm'
+      transform: [trim]
+
+  # Habitaclia says which outright, and the seed list carries both: the
+  # viviendas-* URLs are sales and alquiler-madrid is lettings.
+  classify:
+    field: deal_type
+    from: transaction
+    default: sale
+    rules:
+      - value: rental
+        match: ["RENT", "ALQUILER"]
+
+  gallery:
+    pattern: 'data-image="(//images\.habimg\.com/[^"]+)"'
+    all: true
+    transform: [absolute]
+    # One photograph is published at several sizes; the id before the size
+    # suffix is what two of them share.
+    dedup_by: 'imgh/([0-9-]+/[^_]+)'

@@ -2,56 +2,117 @@ portal: tunisieannonce
 market: tn
 base_url: "http://www.tunisie-annonce.com/"
 currency: TND
+# Verified 2026-09-04: served in full to an ordinary GET (http, not https).
+fetch: http
 
 list:
   url: "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp"
+  # COVERAGE COMES FROM SEEDS HERE, not from pages. This portal has no
+  # pagination a GET can drive - rech_page, page, pg, deb, offset, start, p and
+  # rech_deb were all tried and every one re-served the same 25 rows - so a
+  # single URL means 25 listings, full stop. Its own page links to one search
+  # per region, and each returns a different 25. Verified 2026-09-04: regions
+  # 101, 102 and 103 share no listing ids.
+  urls:
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=101"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=102"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=103"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=104"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=105"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=106"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=107"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=108"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=109"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=110"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=111"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=112"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=113"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=114"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=115"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=116"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=117"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=118"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=119"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=120"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=121"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=122"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=123"
+    - "http://www.tunisie-annonce.com/AnnoncesImmobilier.asp?rech_cod_pay=TN&rech_cod_reg=124"
+  # Empty for a reason this one states plainly: Tunisie Annonce paginates
+  # through a POST form (<form method="post" name="FormCriteres">), and this
+  # fetcher only issues GETs. 25 listings on the first page is what a GET can
+  # honestly reach; anything more needs form submission, which is a bigger
+  # change than a profile field.
   page_param: ""
   max_pages: 5
 
 extract:
   mode: anchored
   anchor: 'Details_Annonces_Immobilier\.asp\?cod_ann=(?P<id>\d+)'
-  block_len: 5000
-  block_start: '<tr class='
+  # Back up to the row. The anchor is the DETAIL LINK, which sits in the
+  # second-to-last column - after Gouvernorat, Localite, Nature and Type. A
+  # block starting at the anchor begins past all of them, so city, region and
+  # nature came back empty while title and price parsed fine.
+  block_start: '<tr[^>]*>'
+  block_len: 4000
 
   fields:
     listing_id:
       pattern: 'cod_ann=(\d+)'
       transform: [trim]
 
-    url:
-      pattern: "(Details_Annonces_Immobilier\\.asp\\?cod_ann=\\d+&titre=[^'\"]+)"
-      transform: [unescape, trim, absolute]
+    # NO url field. The portal's own href is
+    # "Details_Annonces_Immobilier.asp?cod_ann=3398050&titre=Terrain entre el
+    # haouria et kelibia" - unencoded spaces and cp1252 accents inside a query
+    # string, which reached the archive as undecodable bytes and showed up in
+    # the CSV as 14 mojibake URLs. url_template rebuilds it from the id, which
+    # addresses the same page and is always clean.
 
+    # Everything below comes out of the row's TOOLTIPS, which is where this
+    # page actually keeps its data. The shipped patterns keyed on
+    # class="Tableau2" and a bare ">Villa<" and matched nothing at all: title
+    # and location were empty on every one of its rows.
     title:
-      pattern: 'class="Tableau2">([^<]+)</a>'
+      pattern: 'titre=([^'']{3,140})'''
       transform: [unescape, trim]
-
-    price:
-      pattern: ">\\s*([0-9][0-9 ]+)\\s*Dinar"
-      transform: [unescape, digits]
-
-    surface:
-      pattern: "(\\d+)\\s*m"
-      transform: [digits]
-
-    rooms:
-      pattern: "S\\+(\\d+)"
-      transform: [digits]
-
+    description:
+      pattern: '<b>[^<]{3,140}</b><br/>([^'']{10,400})'
+      transform: [unescape, striptags, trim]
+    # The anchor text is TRUNCATED ("Terrain entre el haouria et k"); the
+    # tooltip and the titre= parameter carry the whole thing.
+    region:
+      pattern: '<b>Gouvernorat</b>\s*:\s*([^<'']{2,40})'
+      transform: [unescape, trim]
+    city:
+      pattern: '<b>Localit[^<]{0,6}</b>\s*:\s*([^<'']{2,40})'
+      transform: [unescape, trim]
     property_type:
-      pattern: ">\\s*(Villa|Appartement|Terrain|Maison|Studio|Bureau|Local)\\s*<"
+      pattern: '<b>Type</b>\s*:\s*([^<'']{2,40})'
       transform: [unescape, trim]
-
-    location:
-      pattern: 'title="([^"]+)"\s*>\s*<a\s+href="Details_Annonces_Immobilier[^"]*cod_ann=\d+'
-
-    seller:
-      const: "Particulier"
-
-    seller_type:
-      const: "owner"
-
-    date:
-      pattern: "Ins(?:&eacute;|é)e le\\s*([^'\"]+)"
+    # Nature is the sale/rent split: Vente and Location in roughly equal
+    # numbers, with Terrain and "Bureaux & Commerces" alongside them.
+    nature:
+      pattern: '<b>Nature</b>\s*:\s*([^<'']{2,40})'
       transform: [unescape, trim]
+    price:
+      pattern: '>\s*([0-9][0-9 ]+)\s*Dinar'
+      transform: [unescape, digits]
+    surface:
+      pattern: '(\d+)\s*m'
+      transform: [digits]
+    rooms:
+      pattern: 'S\+(\d+)'
+      transform: [digits]
+
+  url_template: "/Details_Annonces_Immobilier.asp?cod_ann={id}"
+
+  # Nature says which. Sales and lettings share this table in roughly equal
+  # numbers, so a blanket default would mislabel about half the rows - which is
+  # why deal_type was left unset here until the field was found.
+  classify:
+    field: deal_type
+    from: nature
+    default: sale
+    rules:
+      - value: rental
+        match: ["location"]

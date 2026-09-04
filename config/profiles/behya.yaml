@@ -1,0 +1,69 @@
+# Behya.tn (Tunisia) - general classifieds with a real-estate section.
+# Probed 2026-09-04: WordPress classifieds theme, 15 tiles per page, served in
+# full to an ordinary GET. Priority 5 on the Tunisia list in
+# plans/2026-08-31-real-estate-intelligence.md, and the only one of the four
+# "later" Tunisian sites that turned out to be reachable: Menzili disallows
+# ClaudeBot by name, ImmoTunisie's domain is parked for sale on GoDaddy, and
+# Lyanimmo does not resolve.
+#
+# robots.txt carries a Sitemap line and no Disallow at all.
+portal: behya
+market: tn
+base_url: https://www.behya.tn
+currency: TND
+# Verified 2026-09-04: served in full to a plain GET.
+fetch: http
+
+list:
+  url: https://www.behya.tn/annonces-tunisie/annonces-immobilier-tunisie/
+  # WordPress path pagination. Verified: /page/2/ returns a different first
+  # data-id (44995 against 45220). ?paged=2 works identically; the path form is
+  # the canonical one the site links to.
+  page_template: "{url}page/{page}/"
+  max_pages: 5
+
+extract:
+  mode: anchored
+  # The [^"]* either side is the lesson Property24 taught: never pin to an
+  # exact class attribute. The tile carries a long, ordered class list
+  # ("...display-list post-45504 ad_listing type-ad_listing status-publish...")
+  # and ad_listing sits in the middle of it.
+  anchor: 'class="[^"]*ad_listing[^"]*"[^>]*data-id="(?P<id>\d+)"'
+  # A tile measures about 1.6 KB; the engine ends a block at the next tile
+  # anyway, so this is the last-block backstop.
+  block_len: 3000
+
+  fields:
+    # This theme puts the whole record in data- attributes on the tile, which
+    # is a far steadier hook than the presentational markup around it.
+    url:
+      pattern: 'data-permalink="([^"]+)"'
+      transform: [unescape, trim]
+    title:
+      pattern: 'data-title="([^"]{3,200})"'
+      transform: [unescape, trim]
+    location:
+      pattern: 'data-address="([^"]{2,80})"'
+      transform: [unescape, trim]
+    price:
+      pattern: 'class="[^"]*post-price[^"]*"[^>]*>([^<]{2,30})'
+      transform: [unescape, digits]
+    property_type:
+      pattern: 'ad_cat-annonces-([a-z-]{4,40})-tunisie'
+      transform: [trim]
+
+  # Behya mixes sales and lettings in one section, and says which in the title.
+  classify:
+    field: deal_type
+    from: title
+    default: sale
+    rules:
+      - value: rental
+        match: ["location", "louer", "a louer", "à louer"]
+
+  gallery:
+    pattern: 'data-image="(https://www\.behya\.tn/[^"]+)"'
+    all: true
+    # One photograph is published at several crop sizes (-150x150, -1200x1531),
+    # so the same picture would otherwise be fingerprinted twice.
+    dedup_by: 'uploads/[0-9]{4}/[0-9]{2}/([0-9]+)'

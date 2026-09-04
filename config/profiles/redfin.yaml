@@ -1,0 +1,83 @@
+# Redfin (USA) - the plan's Region Phase 7 priority 3.
+#
+# WHY THIS ONE AND NOT ZILLOW. Zillow is the plan's priority 1 and cannot be
+# built: its robots.txt disallows /homes/, allowing only $-anchored landing
+# pages, so there is no permitted way to enumerate listings. Realtor.com (2)
+# returns 403 for robots.txt itself. Redfin answers an ordinary GET and no rule
+# in its robots.txt touches /city/ - checked 2026-09-04.
+#
+# It publishes a schema.org Product per listing with an Offer inside it, which
+# is a public standard rather than a class name and therefore the steadiest
+# hook on the page. About 40 per result page.
+portal: redfin
+market: us
+base_url: https://www.redfin.com
+currency: USD
+# Verified 2026-09-04: the result page and its ld+json are served in full to a
+# plain GET. No browser needed.
+fetch: http
+
+list:
+  url: https://www.redfin.com/city/30749/CA/Los-Angeles
+  urls:
+    - https://www.redfin.com/city/30749/CA/Los-Angeles
+    - https://www.redfin.com/city/35948/NY/New-York
+    - https://www.redfin.com/city/29470/IL/Chicago
+    - https://www.redfin.com/city/30794/TX/Houston
+    - https://www.redfin.com/city/16163/AZ/Phoenix
+  # ONE page per city, deliberately. Redfin answers "202 Accepted" with no
+  # content when a client walks deeper - seven of ten page-2 requests during
+  # this build - which is a soft block wearing a success code. Coverage comes
+  # from the city list above instead, and there are hundreds of those.
+  page_template: "{url}/page-{page}"
+  max_pages: 1
+
+extract:
+  mode: ldjson
+  type: Product
+
+  fields:
+    # The id is only in the URL, so it is pulled out of it - the same
+    # path-plus-pattern combination Private Property needs. An id that moves
+    # with the address is not an id, and /home/<n> is the stable part.
+    listing_id:
+      path: url
+      pattern: '/home/(\d+)'
+    url:
+      path: url
+    price:
+      path: offers.price
+      transform: [digits]
+    currency:
+      path: offers.priceCurrency
+    # Redfin's `name` IS the full street address, which is the field that
+    # settles a cross-portal duplicate everywhere else in this project.
+    title:
+      path: name
+    street:
+      path: name
+      pattern: '^([^,]{3,60}),'
+    # Redfin's `name` is the whole address - "235 E 237th St, Bronx, NY 10470"
+    # - so the town and state are in it and nothing else publishes them. Without
+    # these the combined CSV has an empty city on every US row while the value
+    # sits in plain sight one column over.
+    # Anchored to the STATE-AND-ZIP tail, not to a comma count. An address may
+    # carry a unit before the street ("101 W 12th St Unit 2D, New York, NY
+    # 10011") and the leading comma parts vary, so counting from the front
+    # found a city on only 46% of rows. The town is always the part
+    # immediately before ", ST 12345".
+    city:
+      path: name
+      pattern: ',\s*([^,]{2,40}),\s*[A-Z]{2}\s+\d{5}'
+    region:
+      path: name
+      pattern: ',\s*([A-Z]{2})\s+\d{5}'
+
+  # A /city/ search is a for-sale search. Rentals live under /apartments-for-rent.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/apartments-for-rent", "/for-rent"]

@@ -5,15 +5,74 @@ portal: tayara
 market: tn
 base_url: https://www.tayara.tn
 currency: TND
+# Verified 2026-09-04: the full __NEXT_DATA__ payload, newHits and all, is in
+# the plain GET response. Next.js embeds it server-side, so no browser is
+# needed to read it.
+fetch: http
 
 list:
   url: https://www.tayara.tn/listing/c/real_estate/
-  page_param: ""
+  # ?page=N. The earlier note here said this portal did not paginate; that was
+  # a measurement error, not a fact about Tayara. The check had compared the
+  # first few "id" values across the WHOLE document, which is dominated by the
+  # ~100 premiumHits that repeat identically on every page. Comparing newHits
+  # instead: page 1 offset 0, page 2 offset 30, page 4 offset 90, thirty hits
+  # each and ZERO overlap between any pair.
+  page_param: page
   max_pages: 5
 
 extract:
   mode: nextdata
   data_path: "props.pageProps.searchedListingsAction.newHits"
+
+  # Tayara publishes an id, not an href. {id} is substituted; a leading "/"
+  # resolves against base_url.
+  url_template: "/listing/i/{id}"
+
+  # The real-estate listing carries boosted ads and the occasional car, so the
+  # page needs narrowing. This used to be a `if p.Portal == "tayara"` arm
+  # inside the shared parser with this keyword list inline.
+  #
+  # The include list is deliberately generous. A missing keyword DROPS a real
+  # listing silently, while a loose one merely admits an extra record that the
+  # rest of the pipeline can judge — so when in doubt the term goes in. The
+  # eight terms the Go arm carried (appart, villa, maison, terrain, studio,
+  # s+, lot, résidence) missed every duplex, office, shop, warehouse and farm
+  # Tayara sells; those are below.
+  filter:
+    field: title
+    exclude:
+      - "bi3 fissa"   # boosted-ad placeholder title
+      - "boost"
+    include:
+      - appart
+      - villa
+      - maison
+      - terrain
+      - studio
+      - "s+"
+      - lot
+      - résidence
+      - duplex
+      - triplex
+      - étage
+      - niveau
+      - "rez-de-chauss"
+      - bureau
+      - local
+      - commercial
+      - dépôt
+      - depot
+      - magasin
+      - hangar
+      - immeuble
+      - ferme
+      - dar
+      - penthouse
+      - chalet
+      - garage
+      - atelier
+      - usine
 
   fields:
     listing_id:
@@ -46,6 +105,18 @@ extract:
     published_at:
       path: "metadata.publishedOn"
       transform: [trim]
+
+  # Tayara's real-estate feed carries lettings beside sales and says so only in
+  # the title: "location s+1 aux jardins de Carthage" is 1550 TND a MONTH, and
+  # next to a 450000 TND purchase price it is not a cheap flat, it is a
+  # different unit. Anything comparing prices across listings needs to know.
+  classify:
+    field: deal_type
+    from: title
+    default: sale
+    rules:
+      - value: rental
+        match: ["location", "à louer", "a louer", "louer", "loyer", "par mois", "/mois"]
 
   gallery:
     path: "images"

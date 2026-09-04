@@ -1,0 +1,80 @@
+# OnTheMarket (UK) - Region Phase 4, reached through priority 2.
+#
+# WHY NOT RIGHTMOVE. Rightmove is the plan's priority 1 for the UK and gives
+# `Disallow: /` to GPTBot and CCbot by name - the operator has enumerated AI
+# crawlers and excluded them, so it is not built here. OnTheMarket names no AI
+# agent and no rule in its robots.txt touches /for-sale/property/; the
+# disallows cover */flat/, */apartment/, *-bed- facets, property images and
+# agent pages. Checked 2026-09-04.
+#
+# THE FIRST PROFILE THAT NEEDS THE BROWSER. A plain GET returns 632 KB of
+# Next.js shell with an EMPTY props.pageProps and not one listing in it.
+# Rendered through cloakserve the same URL yields 32 property cards. This is a
+# rendering requirement, not a bot wall: the portal answers 200 and challenges
+# nothing.
+portal: onthemarket
+market: uk
+base_url: https://www.onthemarket.com
+fetch: browser
+currency: GBP
+
+list:
+  url: https://www.onthemarket.com/for-sale/property/london/
+  urls:
+    - https://www.onthemarket.com/for-sale/property/london/
+    - https://www.onthemarket.com/for-sale/property/manchester/
+    - https://www.onthemarket.com/for-sale/property/birmingham/
+    - https://www.onthemarket.com/for-sale/property/bristol/
+    - https://www.onthemarket.com/for-sale/property/leeds/
+  page_param: page
+  max_pages: 3
+
+extract:
+  mode: anchored
+  # The card links to its own detail page several times - image, price, title -
+  # so the id repeats inside one card. The engine drops the repeats and ends a
+  # block at the next DIFFERENT id, which is the next card.
+  anchor: 'href="/details/(?P<id>\d+)/"'
+  # 12000, measured rather than guessed. An OnTheMarket card is enormous - the
+  # Tailwind class attributes alone run to forty tokens each - and at 3000 the
+  # block ended before the price, address and property type: city and type came
+  # back on 0 of 32 cards while title and url parsed fine. Measured across the
+  # same page: 3000 gives 0/32 cities, 6000 gives 13/32, 9000 gives 28/32.
+  block_len: 12000
+
+  fields:
+    url:
+      pattern: 'href="(/details/\d+/)"'
+      transform: [absolute]
+    # The link's title attribute is the whole description in one string:
+    # "Station Approach, London, SE26 - 1 bedroom flat for sale".
+    title:
+      pattern: 'title="View the details for ([^"]{5,160})"'
+      transform: [unescape, trim]
+    # schema.org PostalAddress, which is a public standard rather than a class
+    # name and therefore the steadiest hook on a Tailwind page whose class
+    # attributes are forty tokens long and machine-generated.
+    city:
+      pattern: 'itemprop="address"[^>]*>\s*<span>([^<]{3,80})</span>'
+      transform: [unescape, trim]
+    price:
+      pattern: '>£([0-9,]{4,12})<'
+      transform: [unescape, digits]
+    property_type:
+      pattern: 'class="text-sm mr-2[^"]*">([A-Za-z ]{3,30})</div>'
+      transform: [unescape, trim]
+
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/to-rent/", "/for-rent/"]
+
+  gallery:
+    pattern: 'src="(https://media\.onthemarket\.com/properties/[^"]+)"'
+    all: true
+    # One photograph is served at several sizes (-480x320, -960x640); the id
+    # before the size suffix is what they share.
+    dedup_by: 'properties/(\d+/\d+/image-\d+)'

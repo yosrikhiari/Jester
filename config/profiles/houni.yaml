@@ -5,9 +5,28 @@ portal: houni
 market: tn
 base_url: https://www.houni.tn
 currency: TND
+# Verified 2026-09-04: 18 <article> tiles per page over a plain GET. The
+# response is gzip, which Go's http client decodes transparently.
+fetch: http
 
 list:
   url: https://www.houni.tn/fr/vente/appartement
+  # One category is 18 listings and nothing else. Houni pages client-side, so
+  # there is no page 2 to fetch - but there are other categories, and they hold
+  # different listings: four of them union to 56 unique ids against 18 for one
+  # (measured 2026-09-04; vente/maison and vente/terrain overlap by 10, the
+  # rest not at all).
+  urls:
+    - https://www.houni.tn/fr/vente/maison
+    - https://www.houni.tn/fr/vente/villa
+    - https://www.houni.tn/fr/vente/terrain
+    - https://www.houni.tn/fr/vente/duplex
+    - https://www.houni.tn/fr/location/appartement
+    - https://www.houni.tn/fr/location/maison
+  # Still empty, and checked rather than assumed: ?page=2 re-serves page one
+  # and /2 returns nothing. Houni is a Nuxt app that pages client-side, so
+  # there is no second-page URL to fetch. One page until someone finds the
+  # call its front end makes.
   page_param: ""
   max_pages: 5
 
@@ -23,13 +42,57 @@ extract:
     url:
       pattern: 'href="(/annonce/[^"]+)"'
       transform: [absolute]
+    # The place is in the URL path and nowhere else on the tile:
+    # /annonce/vente/appartement/nabeul/nabeul/bir-challouf/<slug>. Segment 4
+    # is the governorate, 5 the city. Houni writes a literal "null" where no
+    # location is set, which the exporter drops rather than shipping as text.
+    region:
+      pattern: '/annonce/[^/]+/[^/]+/([^/]+)/'
+      transform: [trim]
+    city:
+      pattern: '/annonce/[^/]+/[^/]+/[^/]+/([^/]+)/'
+      transform: [trim]
     title:
       pattern: '<a[^>]*href="/annonce/[^"]+"[^>]*>([^<]{5,300})</a>'
       transform: [unescape, trim, striptags]
-    price:
-      pattern: 'class="[^"]*text-brand-700[^"]*">\s*([^<]{1,30}TND|[^<]{1,30}DT)'
-      transform: [unescape, trim]
+    # NO PRICE FIELD, deliberately. Two patterns have now been tried and both
+    # produced fiction. The shipped one keyed on class="text-brand-700", which
+    # on a live page is the NAVIGATION bar (".tn", "Accueil", "Agences"), and
+    # every listing came back priced "1 DT". Matching the price text instead
+    # picked up numbers from elsewhere in the tile and reported flats at 140
+    # and 200 TND.
+    #
+    # The reason neither worked: a Houni result tile does not carry a price.
+    # Checked 2026-09-04 over a full <article> block - no TND or DT token, no
+    # "Prix", no embedded ld+json, no numeric text node anywhere in it. The
+    # figure lives on the detail page, so reaching it needs a second fetch,
+    # not a better regex. A listing with no price parses to nil, which is the
+    # honest record of a portal that did not publish one on this page.
     # Gallery: multiple images in data-fallbacks or img src
+  # The path segment carries it: /annonce/vente/... against /annonce/location/.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/location/", "/louer/"]
+
+  # The price is HERE, not on the result tile. Two patterns were tried against
+  # the tile and both invented numbers, because a Houni tile carries no price
+  # at all. The listing page publishes a schema.org Offer - measured 8 of 8 -
+  # and that is a public standard rather than a class name, so it is the
+  # steadiest thing on the page.
+  #
+  # It faithfully reports what Houni published, placeholders included: some
+  # listings carry price 1, which is the portal saying "ask us" rather than a
+  # parse going wrong. The eval flags anything under 1000 TND for exactly that.
+  detail:
+    fields:
+      price:
+        pattern: '"@type"\s*:\s*"Offer"[^}]{0,80}?"price"\s*:\s*"?([0-9]+)'
+        transform: [digits]
+
   gallery:
     pattern: 'src="(https://storage\.googleapis\.com/[^"]+)"'
     all: true

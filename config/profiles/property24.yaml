@@ -8,19 +8,37 @@ portal: property24
 market: za
 base_url: https://www.property24.com
 currency: ZAR
+# Verified 2026-09-04: the search page and its tiles are served in full to an
+# ordinary GET. It never needed a stealth browser.
+fetch: http
 
 list:
   url: https://www.property24.com/for-sale/cape-town/western-cape/432
-  # Pagination is NOT worked out yet, and an unset page_param means one page.
-  # Guessing it would produce a profile that silently walks the wrong URLs.
-  page_param: ""
+  # Worked out 2026-09-04, by fetching rather than guessing: ?Page=N advances
+  # the search and page 2 returns a set of data-listing-number values disjoint
+  # from page 1. 22 tiles per page. (The path form /p2 works identically;
+  # the query form is the one buildPageURL can express.)
+  page_param: Page
   max_pages: 5
 
 extract:
   mode: anchored
   # The attribute appears twice per tile (container and inner div); the parser
   # de-duplicates by id, so the second occurrence costs nothing.
-  anchor: 'data-listing-number="(?P<id>\d+)"'
+  # The bare attribute is not enough. Property24 hangs data-listing-number on
+  # new-build DEVELOPMENT promos too (class="p24_development", short ids like
+  # 5428 where a real listing number is nine digits), and those tiles have no
+  # price where a listing does - so they arrived as listings with a missing
+  # price rather than as the adverts they are. Requiring the result-tile
+  # container keeps the hook structural instead of guessing at id length.
+  # Both [^"]* are load-bearing. Property24 randomises the ORDER of the class
+  # list and injects a rotating junk class into it - the same tile is
+  # "p24_tileContainer js_resultTile MealsVowel" on one page and
+  # "DrawlsQuaintly js_resultTile p24_tileContainer" on the next. Measured
+  # 2026-09-04 across two live pages: anchoring the pattern at the start of the
+  # attribute matched 21 tiles on page 1 and ZERO on page 3, which the walk
+  # then read as the end of the results.
+  anchor: 'class="[^"]*p24_tileContainer[^"]*"[^>]*data-listing-number="(?P<id>\d+)"'
   # Measured: a tile runs about 4.5 KB including its lazy-loaded gallery.
   block_len: 6000
 
@@ -28,14 +46,30 @@ extract:
     url:
       pattern: 'href="(/for-sale/[^"?]+)'
       transform: [absolute]
-    # The price sits as bare text inside p24_price, before a nested div — so
-    # the pattern stops at the first tag rather than trying to match a close.
+    # TWO forms, because Property24 serves two. On page 1 the price is bare
+    # text inside p24_price; from page 3 on it moves into schema.org microdata
+    # - class="p24_price" itemprop="price" content="2450000" - and the text
+    # node is left EMPTY. The old text-only pattern still matched there, it
+    # just captured whitespace, so the price silently vanished at depth:
+    # measured 2026-09-04 over a 1000-listing harvest, price arrived on 25 of
+    # 877 tiles, all of them from pages 1 and 2.
+    #
+    # The [^"]* either side of the class name is the other half. On deep pages
+    # the attribute is emitted as class="p24_location " - with a TRAILING
+    # SPACE - and class="p24_title ", so any pattern demanding the quote
+    # immediately after the name matches nothing. Same failure as the tile
+    # anchor, same fix: never pin to an exact class attribute on this portal.
     price:
-      pattern: 'class="p24_price"[^>]*>\s*([^<]{3,40})'
+      pattern: 'class="[^"]*p24_price[^"]*"[^>]*?(?:content="|>\s*)([^"<]{3,40})'
       transform: [unescape, digits]
     location:
-      pattern: 'class="p24_location"[^>]*>([^<]{2,80})<'
+      pattern: 'class="[^"]*p24_location[^"]*"[^>]*>([^<]{2,80})<'
       transform: [unescape, trim]
+    # Read out of the tile title, which is the one place the count appears on
+    # a result page. It is what separates a real cross-portal duplicate from
+    # two different flats that share an asking price and a suburb.
+    bedrooms:
+      pattern: 'title="(\d+) Bedroom'
     # {3,…} not {10,…}: the minimum was tuned against "2 Bedroom Apartment"
     # and silently dropped the title of every "Farm for sale in …" tile. A
     # length floor that encodes an assumption about property types is a bug
@@ -51,8 +85,10 @@ extract:
     # The description nests a <span class="p24_location">, so a pattern that
     # stops at the first tag returns "2 Bedroom Apartment in" and nothing else.
     # Capture through the close and strip the tags instead.
+    # Absent entirely from page 3 onward - the tile stops rendering it, so
+    # partial coverage on this field is the portal, not the pattern.
     description:
-      pattern: 'class="p24_description"[^>]*>(.{3,160}?)</div>'
+      pattern: 'class="[^"]*p24_description[^"]*"[^>]*>(.{3,160}?)</div>'
       transform: [striptags, unescape, trim]
 
   # THE ATTRIBUTE VARIES BETWEEN FETCHES. One fetch on 2026-08-30 served
@@ -68,6 +104,29 @@ extract:
   # dedup_by on the image id because one photograph appears at several crops
   # (526x328 and 162x108 of the same picture); without it each is fingerprinted
   # separately and the gallery hash moves when the portal adds a size.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/to-rent/", "/for-rent/"]
+
+  # A SECOND fetch per listing, off unless asked for. The street address is
+  # the field that decides a cross-portal duplicate: both confirmed false
+  # positives in docs/realestate-dedup-validation.md were two different
+  # buildings sharing a price, a suburb and a bedroom count, and an address
+  # separates them at a glance. Property24 publishes it only on the listing
+  # page, inside a schema.org PostalAddress, and on roughly half of them -
+  # measured 4 of 8 - because it depends on the agent having supplied one.
+  detail:
+    fields:
+      street:
+        pattern: '"streetAddress"\s*:\s*"([^"]{3,70})"'
+        transform: [unescape, trim]
+      postal_code:
+        pattern: '"postalCode"\s*:\s*"?([0-9]{4,5})'
+
   gallery:
     pattern: '(?:lazy-src|data-src|src)="(https://images\.prop24\.com/\d+/Crop\d+x\d+)"'
     all: true
