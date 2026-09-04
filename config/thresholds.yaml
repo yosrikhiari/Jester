@@ -117,6 +117,18 @@ export_after_run: true
 # Rows per CSV shard: reddit/reddit-001.csv, -002.csv, … Excel stops near
 # 1,048,576 rows and gets unusable long before that.
 export_rows_per_file: 100000
+# Seconds one Go worker run may take before it is killed; 0 uses the built-in
+# default (3600). The worker walks every enabled source in ONE subprocess, so
+# this has to cover the whole list: measured here, the non-real-estate sources
+# take ~23 minutes and the ten real-estate portals ~13 minutes on their own,
+# but the real-estate walk inside a full cycle ran 37 minutes without
+# finishing. Two hours leaves headroom for a slow portal without letting a
+# genuinely hung fetch sit all day.
+#
+# A kill no longer loses the walk: `ingest` and `cycle` export what the worker
+# already wrote before they exit non-zero. Getting this number slightly wrong
+# costs coverage on one tick, not data.
+ingest_timeout_seconds: 7200
 # M2.3/D-1 competitor web check. none = keep M2.2 behaviour (competition
 # rides on the model prior); fake = deterministic offline; duckduckgo = live.
 competitor_search_provider: none
@@ -130,3 +142,20 @@ models:
   archivist: phi4-mini:3.8b
   synthesizer: openai/gpt-oss-120b
   critic: openai/gpt-oss-120b
+
+# Second fetch per real-estate result page, for fields the result page does not
+# carry. 0 = off, which is the default and the honest one: it is ONE REQUEST
+# PER LISTING on top of the result page, so a portal answering 33 tiles becomes
+# 34 requests instead of 1.
+#
+# Only two shipped profiles declare a `detail` block, and each earned it. Houni
+# publishes no price on its result tiles at all - two patterns were tried
+# against them and both reported fiction - so with this off its listings are
+# recorded priced nil, correctly but uselessly. Property24 puts the street
+# address only on the listing page, and that is the field that separates a real
+# cross-portal duplicate from two different flats sharing a price and a suburb.
+#
+# Set it to the number of listings per page you are willing to pay for. 20 is
+# roughly "one result page's worth". Property24 answered 503 during development
+# after a heavy session, which is why this is a number someone chooses.
+realestate_detail_per_page: 0

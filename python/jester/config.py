@@ -118,6 +118,16 @@ class Thresholds:
     #: strength of its unit being threads, and a useful review count is not a
     #: thread count.
     max_reviews_per_app: int = 150
+    #: Second fetch per real-estate result page, for fields the result page
+    #: does not carry. Go-only in effect, but it lives in the shared
+    #: thresholds.yaml so the console must know it.
+    #:
+    #: 0 = off, and that is the shipped value. It is ONE REQUEST PER LISTING on
+    #: top of the result page, so a portal answering 33 tiles becomes 34
+    #: requests instead of 1. Two profiles declare a detail block: Houni, whose
+    #: result tiles carry no price at all, and Property24, whose street address
+    #: appears only on the listing page.
+    realestate_detail_per_page: int = 0
     # Write the archive out as CSV at the end of every run. The dataclass
     # default is False so no existing caller changes behaviour; the shipped
     # profiles turn it on, because a nightly run nobody watches should leave
@@ -126,6 +136,16 @@ class Thresholds:
     # Rows per CSV shard. Excel stops near 1,048,576 rows and gets unusable
     # long before that; 100k opens quickly and keeps the file count small.
     export_rows_per_file: int = 100000
+    # Seconds one Go worker run may take before it is killed. 0 keeps
+    # worker.DEFAULT_INGEST_TIMEOUT.
+    #
+    # This was a constant in worker.py, tunable only by editing source, and
+    # the shipped hour stopped fitting: a measured cycle spent ~23 minutes on
+    # the other sources and was killed 37 minutes into the real-estate walk
+    # with that walk unfinished, while the same ten portals take ~13 minutes
+    # when run alone. The number that fits depends on which sources a
+    # deployment enables, which is a config question, not a code one.
+    ingest_timeout_seconds: int = 0
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -145,6 +165,7 @@ class Thresholds:
         "min_comments_per_thread": (0, 10000),
         "max_reviews_per_app": (1, 5000),
         "export_rows_per_file": (100, 1000000),
+        "ingest_timeout_seconds": (0, 86400),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -169,8 +190,10 @@ class Thresholds:
         "max_threads_per_platform": dict,
         "min_comments_per_thread": int,
         "max_reviews_per_app": int,
+        "realestate_detail_per_page": int,
         "export_after_run": _as_bool,
         "export_rows_per_file": int,
+        "ingest_timeout_seconds": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

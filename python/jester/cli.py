@@ -573,19 +573,7 @@ def cmd_run(args):
     # require a second command before the haul is inspectable, so this happens
     # after the summary is written — an export failure must never turn a good
     # run into a failed one.
-    if cfg.thresholds.export_after_run:
-        out_dir = getattr(args, "exports", None) or default_export_dir(args.db)
-        try:
-            manifest = export_csv(
-                db, out_dir, rows_per_file=cfg.thresholds.export_rows_per_file
-            )
-            c = manifest["counts"]
-            print(
-                f"exported {c['comments']} comment(s), {c['nuggets']} nugget(s), "
-                f"{c['ideas']} idea(s) to {out_dir}"
-            )
-        except Exception as exc:  # noqa: BLE001 - reporting, not a pipeline gate
-            print(f"export skipped: {exc}")
+    _export_csvs(args, cfg, db)
 
     # Only a broken pipeline fails the exit code (§13.1); quality flags are advisory.
     if "FAILED_BATCHES" in flags:
@@ -794,6 +782,7 @@ def cmd_retention(args):
     print(
         f"retention sweep: wiped raw_text on {purged['nuggets_raw']} nugget(s); "
         f"dropped {purged['batches']} completed batch(es); "
+        f"aged text/seller out of {purged['listings']} listing observation(s); "
         f"pruned {pruned} export dir(s)"
     )
 
@@ -841,16 +830,41 @@ def cmd_ingest(args):
         only=[n for n in (args.only or "").split(",") if n.strip()],
         max_comments=args.max_comments,
         max_posts=args.max_posts,
+        timeout=_ingest_timeout(args),
     )
     if res.get("output"):
         print(res["output"])
     if not res["ok"]:
         print("ingest failed: " + (res.get("error") or f"exit {res.get('code')}"))
+        # A FAILED fetch is not an empty one. The worker writes
+        # listing_observation as it walks, so a run killed by the ingest
+        # timeout has usually already recorded thousands of listings. Exiting
+        # here without exporting left them in the archive and out of the CSVs:
+        # one real cycle scraped 3214 observations, hit the 3600s cap, exited
+        # 1 before reaching the export, and the combined sheet went on
+        # describing the previous run while the archive held 7979 rows against
+        # the sheet's 4765. The exit code still reports the failure.
+        _export_csvs(args)
         sys.exit(1)
     queued = res.get("queued_new_comments")
     print(
         f"queued {queued if queued is not None else 'an unreported number of'} new comment(s)"
     )
+
+    # Export the batch that was just scraped.
+    #
+    # `jester run` has exported since export_after_run existed, but `run`
+    # processes the QUEUE - it never touches listing_observation. Real-estate
+    # rows are written by this command and by nothing else, so a scheduled
+    # cycle could ingest listings every thirty minutes and the CSVs beside the
+    # archive would keep describing whenever someone last ran the exporter by
+    # hand. Same flag, same output directory, so a batch and its CSVs move
+    # together.
+    #
+    # After the summary and inside a try, for the reason `run` has the same
+    # shape: a scrape that succeeded must not be reported as failed because
+    # writing a spreadsheet afterwards did not.
+    _export_csvs(args)
     return res
 
 
@@ -899,6 +913,64 @@ def _default_cycle_run_id() -> str:
     return "cycle-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _ingest_timeout(args):
+    """Seconds the worker may run, from config unless the caller overrides.
+
+    Returns None when neither says anything, which `worker.ingest` reads as
+    "no opinion" and answers with its own default.
+    """
+    override = getattr(args, "timeout", None)
+    if override:
+        return override
+    try:
+        seconds = load_config(args.config).thresholds.ingest_timeout_seconds
+    except Exception:  # noqa: BLE001 - a broken config must not stop the fetch
+        return None
+    return seconds or None
+
+
+def _export_csvs(args, cfg=None, db=None):
+    """Leave the CSVs beside the archive, if the config asks for it.
+
+    ONE implementation, called by `run`, `ingest` and `cycle`, because all
+    three end by leaving a spreadsheet behind and the copies had already
+    drifted: `ingest` reported listings and `run` did not, so the same export
+    was described two different ways depending on which command triggered it.
+
+    It never raises. An export is a report on work already committed to the
+    archive; a spreadsheet that could not be written must not turn a finished
+    scrape into a failed one.
+    """
+    try:
+        cfg = cfg or load_config(args.config)
+    except Exception as exc:  # noqa: BLE001 - config problems are reported, not fatal here
+        print(f"export skipped: config unreadable ({exc})")
+        return
+    if not cfg.thresholds.export_after_run:
+        return
+    out_dir = getattr(args, "exports", None) or default_export_dir(args.db)
+    try:
+        manifest = export_csv(
+            db or open_db(args.db),
+            out_dir,
+            rows_per_file=cfg.thresholds.export_rows_per_file,
+        )
+        c = manifest["counts"]
+        # Listings are named because this line is what a nightly log shows. It
+        # read "exported 3 comment(s), 0 nugget(s), 0 idea(s)" on a run that
+        # had just written 4132 listings, and an operator scanning that log
+        # would conclude the real-estate export had not happened. Printed only
+        # when there are any, so archives without listings read as before.
+        listings = c.get("listings", 0)
+        extra = f", {listings} listing(s)" if listings else ""
+        print(
+            f"exported {c['comments']} comment(s), {c['nuggets']} nugget(s), "
+            f"{c['ideas']} idea(s){extra} to {out_dir}"
+        )
+    except Exception as exc:  # noqa: BLE001 - reporting, not a pipeline gate
+        print(f"export skipped: {exc}")
+
+
 def cmd_cycle(args):
     """One full turn of the loop: fetch, then process what was fetched.
 
@@ -937,6 +1009,7 @@ def cmd_cycle(args):
         only=[n for n in (args.only or "").split(",") if n.strip()],
         max_comments=args.max_comments,
         max_posts=args.max_posts,
+        timeout=_ingest_timeout(args),
     )
     if res.get("output"):
         print(res["output"])
@@ -944,6 +1017,15 @@ def cmd_cycle(args):
         # Processing an empty queue after a failed fetch would report success
         # for a cycle that fetched nothing.
         print("ingest failed: " + (res.get("error") or f"exit {res.get('code')}"))
+        # A FAILED fetch is not an empty one. The worker writes
+        # listing_observation as it walks, so a run killed by the ingest
+        # timeout has usually already recorded thousands of listings. Exiting
+        # here without exporting left them in the archive and out of the CSVs:
+        # one real cycle scraped 3214 observations, hit the 3600s cap, exited
+        # 1 before reaching the export, and the combined sheet went on
+        # describing the previous run while the archive held 7979 rows against
+        # the sheet's 4765. The exit code still reports the failure.
+        _export_csvs(args)
         sys.exit(1)
     queued = res.get("queued_new_comments")
     print(
@@ -1674,6 +1756,13 @@ def main(argv=None):
 
     def _worker_flags(parser):
         parser.add_argument(
+            "--timeout",
+            type=int,
+            default=None,
+            help="seconds the worker may run before it is killed "
+                 "(default: thresholds.ingest_timeout_seconds)",
+        )
+        parser.add_argument(
             "--only",
             default="",
             help="comma-separated source names; empty walks every enabled source",
@@ -1700,6 +1789,16 @@ def main(argv=None):
     ing.add_argument("--db", default="data/jester.db")
     ing.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     ing.add_argument("--run", default="cli-ingest")
+    # cmd_ingest has always read args.exports - it is the command that writes
+    # listing_observation, so it is the one whose CSVs matter - but only `run`
+    # and `cycle` declared the flag. The getattr could therefore never be
+    # satisfied from the command line: `ingest --exports ...` was a usage
+    # error, and the export silently went beside the db instead.
+    ing.add_argument(
+        "--exports",
+        default=None,
+        help="where export_after_run writes (default: exports/ beside the db)",
+    )
     _worker_flags(ing)
     ing.set_defaults(func=cmd_ingest)
 

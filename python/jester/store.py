@@ -1220,9 +1220,74 @@ def mark_reembedded(db: sqlite3.Connection, unique_key: str, embedding_id: str) 
     db.commit()
 
 
+# Payload keys stripped from a listing observation once it is past TTL.
+#
+# NOT the whole row, and not the whole payload. An observation IS the price
+# history - the archive appends one every time a listing is seen again, and
+# that series is the reason the table exists - so deleting old observations
+# would delete the answer to "what did this cost in June" rather than
+# minimizing anything. What ages out is the same category §14 wipes from a
+# nugget: the bulk free text, plus the one field that names a person.
+#
+# `description` is an agent's prose, the listing equivalent of raw_text.
+# `seller` is a name, and on portals that carry private sellers it is personal
+# data with no analytic use once the price series is recorded.
+#
+# `title` deliberately stays. It is short, it is what makes a surviving row
+# legible to whoever reads the series, and dropping it would leave a price
+# history nobody can identify.
+_LISTING_TTL_KEYS = ("description", "seller")
+
+
+def _table_exists(db: sqlite3.Connection, name: str) -> bool:
+    """Whether `name` is a table in this archive.
+
+    Asked explicitly rather than by catching OperationalError around the real
+    query. A blanket except here would swallow a genuine schema fault and
+    report a clean sweep - the same shape as the bug that made `read_listings`
+    return zero rows over a 920-row archive and call it success.
+    """
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _sweep_listing_payloads(db: sqlite3.Connection, cutoff: str) -> int:
+    """Strip `_LISTING_TTL_KEYS` from listing observations older than cutoff.
+
+    Returns the number of rows actually rewritten - a row that carried none of
+    those keys is left alone rather than rewritten to an identical value.
+    """
+    if not _table_exists(db, "listing_observation"):
+        return 0
+    rows = db.execute(
+        "SELECT id, payload FROM listing_observation WHERE observed_at < ?",
+        (cutoff,),
+    ).fetchall()
+    swept = 0
+    for oid, payload in rows:
+        try:
+            doc = json.loads(payload) if payload else {}
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        if not any(k in doc for k in _LISTING_TTL_KEYS):
+            continue
+        for k in _LISTING_TTL_KEYS:
+            doc.pop(k, None)
+        db.execute(
+            "UPDATE listing_observation SET payload=? WHERE id=?",
+            (json.dumps(doc, ensure_ascii=False, sort_keys=True), oid),
+        )
+        swept += 1
+    return swept
+
+
 def retention_sweep(db: sqlite3.Connection, ttl_days: int = 30, now=None) -> dict:
-    """§14 data minimization: wipe raw_text on nuggets past TTL and drop
-    completed ingest batches past TTL. ``now`` injectable for tests."""
+    """§14 data minimization: wipe raw_text on nuggets past TTL, drop completed
+    ingest batches past TTL, and age the free text and seller name out of
+    listing observations past TTL. ``now`` injectable for tests."""
     if now is None:
         now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(days=ttl_days)).isoformat()
@@ -1230,5 +1295,10 @@ def retention_sweep(db: sqlite3.Connection, ttl_days: int = 30, now=None) -> dic
     c2 = db.execute(
         "DELETE FROM ingest_batch WHERE status='done' AND created_at < ?", (cutoff,)
     )
+    listings = _sweep_listing_payloads(db, cutoff)
     db.commit()
-    return {"nuggets_raw": c1.rowcount, "batches": c2.rowcount}
+    return {
+        "nuggets_raw": c1.rowcount,
+        "batches": c2.rowcount,
+        "listings": listings,
+    }

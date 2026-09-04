@@ -211,6 +211,61 @@ def test_cmd_run_exits_nonzero_on_failed_batches(tmp_path):
         cmd_run(_ns(config=str(REPO_CONFIG), db=str(db_path), run="fail-run"))
 
 
+# --- ingest timeout is configuration, not a constant ---
+def test_ingest_timeout_comes_from_config(tmp_path):
+    """The worker's hour was a constant in worker.py, editable only in source.
+
+    It stopped fitting once real estate joined the walk: a measured cycle
+    spent ~23 minutes on the other sources and was killed 37 minutes into the
+    real-estate portion with that portion unfinished. How long the walk needs
+    depends on which sources a deployment enables, which is a config question.
+    """
+    import types
+
+    from jester.cli import _ingest_timeout
+
+    args = types.SimpleNamespace(config=str(REPO_CONFIG), timeout=None)
+    assert _ingest_timeout(args) == 7200
+
+
+def test_an_explicit_timeout_beats_the_config(tmp_path):
+    import types
+
+    from jester.cli import _ingest_timeout
+
+    args = types.SimpleNamespace(config=str(REPO_CONFIG), timeout=45)
+    assert _ingest_timeout(args) == 45
+
+
+def test_an_unreadable_config_leaves_the_worker_its_own_default(tmp_path):
+    """A broken config must not stop the fetch, and must not mean "no limit".
+
+    None is what worker.ingest reads as "the caller has no opinion"; it
+    answers with DEFAULT_INGEST_TIMEOUT rather than running forever.
+    """
+    import types
+
+    from jester.cli import _ingest_timeout
+
+    args = types.SimpleNamespace(config=str(tmp_path / "nope"), timeout=None)
+    assert _ingest_timeout(args) is None
+
+
+def test_zero_in_config_means_the_built_in_default(tmp_path):
+    import types
+
+    import jester.cli as cli
+
+    cfg = types.SimpleNamespace(thresholds=types.SimpleNamespace(ingest_timeout_seconds=0))
+    args = types.SimpleNamespace(config="unused", timeout=None)
+    monkey = cli.load_config
+    cli.load_config = lambda _c: cfg
+    try:
+        assert cli._ingest_timeout(args) is None
+    finally:
+        cli.load_config = monkey
+
+
 # --- Task 6: retention sweep ---
 def test_retention_sweep_purges_old_raw_text(tmp_path):
     from jester.store import retention_sweep, insert_nugget
@@ -242,6 +297,108 @@ def test_retention_sweep_drops_old_completed_batches(tmp_path):
     now = datetime(2099, 1, 1)
     purged = retention_sweep(db, ttl_days=30, now=now)
     assert purged["batches"] >= 1
+
+
+# Mirrors go/internal/store/store.go. The listing tables are created by the GO
+# worker, not by Python's open_db, so a Python-opened archive has no such table
+# until a scrape has run against it - which is exactly the case _table_exists
+# guards, and why these tests build the table themselves.
+_LISTING_OBS_DDL = """
+CREATE TABLE IF NOT EXISTS listing_observation (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  portal TEXT NOT NULL,
+  listing_id TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  gallery_hash TEXT,
+  price INTEGER,
+  currency TEXT,
+  status TEXT,
+  payload TEXT NOT NULL
+)"""
+
+
+def _obs(db, oid, observed_at, payload):
+    """One listing observation, written straight to the table the Go worker
+    writes. There is no Python-side insert helper - the scrape path is Go - so
+    the test writes the same columns store.go declares."""
+    db.execute(_LISTING_OBS_DDL)
+    db.execute(
+        "INSERT INTO listing_observation"
+        " (id, portal, listing_id, observed_at, run_id, content_hash, price,"
+        "  currency, status, payload)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (oid, "property24", "L%d" % oid, observed_at, "r1", "h%d" % oid,
+         995000, "ZAR", "active", json.dumps(payload)),
+    )
+
+
+def test_retention_sweep_ages_text_and_seller_out_of_old_listings(tmp_path):
+    """§14 reaches the real-estate tables, which it did not before: the sweep
+    named nuggets and ingest_batch only, so a listing description sat in the
+    archive forever."""
+    from jester.store import retention_sweep
+
+    db = open_db(str(tmp_path / "j.db"))
+    _obs(db, 1, "2020-01-01T00:00:00Z", {
+        "title": "2 bed in Zonnebloem", "description": "Agent prose, at length.",
+        "seller": "Jane Smith", "location": "Zonnebloem", "bedrooms": 2,
+    })
+    db.commit()
+
+    purged = retention_sweep(db, ttl_days=30, now=datetime(2099, 1, 1))
+    assert purged["listings"] == 1
+
+    row = db.execute("SELECT payload, price FROM listing_observation WHERE id=1").fetchone()
+    doc = json.loads(row[0])
+    assert "description" not in doc
+    assert "seller" not in doc
+    # The point of the table survives the sweep.
+    assert row[1] == 995000
+    assert doc["title"] == "2 bed in Zonnebloem"
+    assert doc["bedrooms"] == 2
+    assert doc["location"] == "Zonnebloem"
+
+
+def test_retention_sweep_leaves_recent_listings_alone(tmp_path):
+    from jester.store import retention_sweep
+
+    db = open_db(str(tmp_path / "j.db"))
+    _obs(db, 1, "2098-12-25T00:00:00Z", {"description": "still fresh", "seller": "Jane"})
+    db.commit()
+
+    purged = retention_sweep(db, ttl_days=30, now=datetime(2099, 1, 1))
+    assert purged["listings"] == 0
+    doc = json.loads(
+        db.execute("SELECT payload FROM listing_observation WHERE id=1").fetchone()[0]
+    )
+    assert doc["description"] == "still fresh"
+
+
+def test_retention_sweep_counts_only_rows_it_changed(tmp_path):
+    """A row that never carried the keys is not rewritten, so the number the
+    sweep reports is a number of rows actually minimized rather than a count
+    of rows it looked at."""
+    from jester.store import retention_sweep
+
+    db = open_db(str(tmp_path / "j.db"))
+    _obs(db, 1, "2020-01-01T00:00:00Z", {"title": "no prose, no seller"})
+    _obs(db, 2, "2020-01-01T00:00:00Z", {"description": "prose"})
+    db.commit()
+
+    assert retention_sweep(db, ttl_days=30, now=datetime(2099, 1, 1))["listings"] == 1
+
+
+def test_retention_sweep_survives_an_archive_with_no_listing_tables(tmp_path):
+    """An archive written before real estate existed must sweep, not crash."""
+    from jester.store import retention_sweep
+
+    # Nothing creates the listing tables here, which is precisely the archive
+    # in question: Python's open_db does not know them.
+    db = open_db(str(tmp_path / "j.db"))
+
+    assert retention_sweep(db, ttl_days=30, now=datetime(2099, 1, 1))["listings"] == 0
 
 
 def test_cmd_retention_invokes_sweep(tmp_path, capsys):
