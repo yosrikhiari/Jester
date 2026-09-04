@@ -8,6 +8,191 @@
 
 ---
 
+---
+
+## STATUS — 2026-09-04
+
+One status section, rewritten in place rather than appended to. Earlier
+revisions were stacked chronologically and had begun to contradict each other:
+the combined sheet was described as 4132 rows of observations in one place and
+3828 rows of listings in another, and retention appeared as both outstanding
+and done. What follows is what is true now.
+
+### Built and running: 10 portals, 5 markets
+
+| Region | Portal | Fetch | Notes |
+|---|---|---|---|
+| Tunisia | tayara | http | nextdata; `?page=N` (30/page) |
+| Tunisia | mubawab | http | anchored; path pagination `:p:N`, 7 city seeds |
+| Tunisia | tunisieannonce | http | anchored; NO GET pagination - 25 region seeds instead. Data lives in onmouseover tooltips |
+| Tunisia | houni | http | anchored; client-side paging, 7 category seeds; price via detail tier |
+| Tunisia | **behya** | http | Priority 5, added after the other three "later" Tunisia sites were ruled out |
+| South Africa | property24 | http | anchored; **predates this plan** |
+| South Africa | privateproperty | http | anchored + embedded ld+json; **predates this plan** |
+| Spain | **habitaclia** | http | Phase 3 **priority 2** - Idealista (1) answers 403. Filename pagination |
+| UK | **onthemarket** | **browser** | Phase 4 **priority 2** - Rightmove (1) disallows GPTBot and CCbot by name |
+| USA | **redfin** | http | Phase 7 **priority 3** - Zillow disallows /homes/, Realtor.com 403s its own robots.txt |
+
+**Coverage is final at these ten.** Three of the four regions were opened
+through SECONDARY sites, which is exactly what this plan means by compliance
+posture driving build order. France is the only region where the fallback is
+blocked too, and it remains unserved.
+
+### The export chain, verified end to end
+
+`jester ingest` scrapes and exports with no manual step. Measured over a full
+ten-portal run and against the real archive:
+
+| file | rows | answers |
+|---|---|---|
+| `listings/all-001.csv` | 3828 | what is on the market |
+| `listings/<portal>/...` | 3828 total | what that portal has |
+| `listings/history-001.csv` | 7979 | how it got there |
+
+Field coverage on the combined sheet: `url`, `market`, `listing_id`,
+`currency`, `deal_type`, `observed_at` at 100%; `title` 99.0%; `city` 98.6%;
+`price` 85.9%.
+
+**One row per listing in the sheets people open.** The archive appends an
+observation every time a listing is seen again and is right to -
+`RecordObservation` documents that "we looked on the 3rd and it had not moved"
+is what makes days-on-market a fact rather than an inference from gaps, and it
+explicitly leaves duplicate suppression to callers. But re-exporting that
+decision row for row made the spreadsheet unusable: **2876 of 7979 rows (36%)
+carried no change from an earlier one**, the same listing at the same price
+with a byte-identical `content_hash`, while only **74** listings had ever
+changed price. The archive was not touched; the export splits by question and
+`history-001.csv` keeps every observation, all 74 price cuts included.
+
+### Fotocasa and Bien'ici — CLOSED, not deferred
+
+Both rendered through cloakserve rather than judged from an HTTP status. Full
+measurements in `docs/realestate-compliance-audit.md`.
+
+- **Bien'ici** renders 121 KB with zero listings, zero structured data and zero
+  detail hrefs against 2037 `didomi` references. The document is the consent
+  manager, not a search page.
+- **Fotocasa** renders 1.31 MB of a real page whose result list never fills: 19
+  byte-identical empty card skeletons, 9 new-construction promos, 1 rotating
+  promoted listing. Scrolling was tried and is not the answer - twelve rounds
+  moved the DOM *down* from 1,327,955 to 1,309,585 bytes with the unique
+  listing-id count stuck at 1. Its robots.txt separately forbids all pagination
+  (`/*/l/2*` ... `/*/l/39*`) and the three largest cities.
+
+For both, the only remaining step is answering the consent banner
+programmatically or calling the endpoint it gates - the route this project
+already ruled out for ImmoScout24. Clicking a consent gate from a scraper
+records a consent nobody gave, which is a worse problem under GDPR than the
+missing data it would unlock.
+
+### CloakBrowser: fixed, and in use
+
+The service could never have started. `docker-compose.yml` set
+`CLOAKBROWSER_BINARY_PATH` to a file inside an empty volume, and
+`ensure_binary()` treats an explicit path as "already present" and raises
+rather than downloading - the container sat in a restart loop. The plan's
+`CLOAKBROWSER_VERSION=v146` pin is also rejected by the current image, which
+wants a full Chromium version. Pinning nothing is what works.
+
+`cmd/renderprobe` was added alongside: one URL through cloakserve, dump the
+rendered DOM. `siteprobe` says in its own doc that it cannot answer what a page
+looks like once its JavaScript has run, and for a client-rendered portal that
+is the only question that matters. Its `-scroll N` flag is what separates "this
+portal lazy-loads" from "this portal is withholding its list"; the scrape path
+passes 0 and no profile field exposes it, because no harvested portal
+lazy-loads and an unexercised YAML key invites a profile author to set it with
+no test behind it.
+
+### Failures that looked like success — the recurring theme
+
+Every defect below was live in a green suite:
+
+- **A killed fetch discarded its own work.** The worker writes as it walks; a
+  cycle recorded 3214 observations, hit the 3600s cap, and `sys.exit(1)`d
+  before the export. The archive held 7979 rows against the sheet's 4765 for
+  hours with nothing saying the sheet was stale. `ingest` and `cycle` now
+  export what was written, then still exit non-zero. Proven live: *"worker
+  exceeded 75s and was killed / exported ... 3242 listing(s)"*.
+- **A promoted banner is not a listing.** Mubawab interleaves development
+  banners with no href, no price and no type; the anchored parse scraped an id
+  out of the media path (`/promotion/4/083F/` -> `"4083"`) and re-recorded each
+  one every time its carousel rotated. Four banners, ten rows. A parsed row now
+  requires a link: URL coverage 99.8% -> **100%**.
+- **A fixture that certified nothing.** Enforcing that rule failed
+  `TestMubawabAnchoredParsing`, revealing the fixture still carried `/fr/ct/`
+  hrefs after the profile's url pattern moved to `/fr/a/`. All three fixture
+  listings had been parsing with an **empty URL** while the test stayed green,
+  because nothing asserted the field.
+- **`run` never named the listings it exported** - "exported 3 comment(s), 0
+  nugget(s), 0 idea(s)" on a run that had just written 4132 listings. The
+  export block was also duplicated between `run` and `ingest` and had drifted.
+- **`counts["listings"]` counted observations**, so a log line could read
+  "exported 7979 listing(s)" over 3828 properties.
+- **`ingest --exports` was a usage error** although `cmd_ingest` read
+  `args.exports`; only `run` and `cycle` declared the flag.
+- **Retention never reached the listing tables** (see Task 6.1/6.2 below).
+
+### Tasks 6.1 / 6.2 — DONE
+
+The section 14 sweep now reaches real-estate data. It did not before:
+`retention_sweep` named `nuggets` and `ingest_batch` only, so every listing
+description and seller name ever scraped sat in the archive with no TTL, in the
+largest and newest tables.
+
+**Not deletion.** An observation IS the price history; deleting old ones would
+destroy it while calling itself minimization. What ages out is what section 14
+already wipes from a nugget: `description` (prose, the listing equivalent of
+`raw_text`) and `seller` (a name). `title` stays, or a surviving price series
+is one nobody can identify. Measured on a real 1000-observation archive:
+
+| | before | after |
+|---|---|---|
+| observations | 1000 | **1000** |
+| carrying `description` | 207 | **0** |
+| carrying `seller` | 180 | **0** |
+| carrying a price | 938 | **938** |
+
+Verifying it surfaced that **Python's `open_db` never creates the listing
+tables** - the Go worker does - which is what the explicit `_table_exists`
+check guards. It asks `sqlite_master` rather than catching `OperationalError`
+around the real query, because a blanket except there reports a clean sweep
+over a broken schema: the same shape as the bug that once made `read_listings`
+return zero rows over a 920-row archive and call it success.
+
+### Ingest timeout is configuration now
+
+`DEFAULT_INGEST_TIMEOUT = 3600` was tunable only by editing `worker.py`, and
+the hour stopped fitting. Measured: ten real-estate portals take **~13 min**
+alone; the other sources take **~23 min**; the real-estate walk *inside* a full
+cycle ran **37 min without finishing**. `thresholds.ingest_timeout_seconds`
+(shipped 7200, `0` = built-in default) and `--timeout` now decide it.
+
+### Genuinely outstanding
+
+- **Task 4.4 / 5.4** - cross-portal dedup fixtures for houni and
+  tunisieannonce; pytest for the alerts and analytics agents (only
+  `property_dedup` has one).
+- **Semantic dedup has never run.** Every number in
+  `docs/realestate-dedup-validation.md` comes from the structured-only path,
+  because no vector store was reachable.
+- **Recall is unmeasured** and needs a hand-labelled overlap set. Precision was
+  measured at 71% on a hand-verified sample.
+- **Real estate runs ~3x slower inside a full cycle than alone** (37 min
+  unfinished vs 13 min). Unexplained: rate-limit backoff and cloakserve
+  contention with the other browser-based sources are both plausible, neither
+  is measured. Splitting real estate onto its own schedule with `--only` would
+  sidestep it.
+- **France is unserved.** It needs a licensing conversation or a portal not yet
+  surveyed, not more engineering against Fotocasa and Bien'ici.
+
+### Deviations worth knowing
+
+- **Task 1.2 / 2.2 / 4.2** ("register the case in the `fetchSource()` switch")
+  were satisfied differently and better: `fetchSource` has ONE `realestate`
+  arm, and each portal is a config file. Adding a portal touches no Go code.
+- **`realestate_config` rows** were never created. The profile YAML carries the
+  mapping instead, which is where the rest of the subsystem reads it from.
+
 ## Overview
 
 Add a region-oriented real-estate scraping and intelligence subsystem to Jester by **extending the existing idea-mining pipeline** (new source types + agents), not by creating a separate service. It sits **alongside** the existing idea-mining sources (Reddit/YouTube/TikTok/HN etc.) — it does not replace them.
@@ -259,59 +444,61 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 #### Phase 0 — Compliance gate
 
-- [ ] **Task 0.1** — Draft `docs/realestate-compliance-audit.md` template with per-site checklist (ToS, robots.txt, API/feed, PII consent, GDPR/DPA) for the 4 Tunisia sites; populate findings for Tayara.tn first.
-- [ ] **Task 0.2 — Verification** — Reviewer confirms the audit covers all 4 sites, and that the compliance status column explicitly records (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Build order matrix reflects the findings.
+- [x] **Task 0.1** — Draft `docs/realestate-compliance-audit.md` template with per-site checklist (ToS, robots.txt, API/feed, PII consent, GDPR/DPA) for the 4 Tunisia sites; populate findings for Tayara.tn first.
+- [x] **Task 0.2 — Verification** — Reviewer confirms the audit covers all 4 sites, and that the compliance status column explicitly records (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Build order matrix reflects the findings.
 
 #### Phase 1 — Tayara.tn end-to-end
 
-- [ ] **Task 1.1** — Author `config/profiles/tayara.yaml` using the `siteprofile` schema (`ldjson` or `anchored` mode) with stable field selectors, and add a `realestate_config` row mapping `source_id`/`source_url`/`price`/`currency`/`images` and extended fields into `listing.Payload`.
-- [ ] **Task 1.2** — Register the Tayara case in `go/cmd/worker/main.go` `fetchSource()` switch, emitting `ingest_batch.kind='listing'` and calling `RecordObservation()` (append-only price history).
-- [ ] **Task 1.3** — Add Go unit test feeding a recorded Tayara sample HTML through the profile and asserting the extracted fields land in the correct `listing`/observation/media columns.
-- [ ] **Task 1.4 — Verification** — Run the Go test suite; run a **smoke ingest** against a small Tayara sample and confirm a `listing` + `listing_observation` + `listing_media`(+`_band`) rows appear with correct `portal`/`listing_id`/`price` and that a second ingest appends a new observation (price history, no update).
+- [x] **Task 1.1** — Author `config/profiles/tayara.yaml` using the `siteprofile` schema (`ldjson` or `anchored` mode) with stable field selectors, and add a `realestate_config` row mapping `source_id`/`source_url`/`price`/`currency`/`images` and extended fields into `listing.Payload`.
+- [x] **Task 1.2** — Register the Tayara case in `go/cmd/worker/main.go` `fetchSource()` switch, emitting `ingest_batch.kind='listing'` and calling `RecordObservation()` (append-only price history).
+- [x] **Task 1.3** — Add Go unit test feeding a recorded Tayara sample HTML through the profile and asserting the extracted fields land in the correct `listing`/observation/media columns.
+- [x] **Task 1.4 — Verification** — Run the Go test suite; run a **smoke ingest** against a small Tayara sample and confirm a `listing` + `listing_observation` + `listing_media`(+`_band`) rows appear with correct `portal`/`listing_id`/`price` and that a second ingest appends a new observation (price history, no update).
 
 #### Phase 2 — Mubawab Tunisia end-to-end
 
-- [ ] **Task 2.1** — Author `config/profiles/mubawab.yaml` + `realestate_config` row (same mapping as Phase 1).
-- [ ] **Task 2.2** — Register Mubawab case in `fetchSource()` switch.
-- [ ] **Task 2.3** — Add Go unit test with recorded Mubawab sample HTML.
-- [ ] **Task 2.4 — Verification** — Run Go test suite; smoke-ingest Mubawab sample and confirm listing rows land correctly; confirm **two distinct sources now produce independent observation streams** (prerequisite for dedup validation).
+- [x] **Task 2.1** — Author `config/profiles/mubawab.yaml` + `realestate_config` row (same mapping as Phase 1).
+- [x] **Task 2.2** — Register Mubawab case in `fetchSource()` switch.
+- [x] **Task 2.3** — Add Go unit test with recorded Mubawab sample HTML.
+- [x] **Task 2.4 — Verification** — Run Go test suite; smoke-ingest Mubawab sample and confirm listing rows land correctly; confirm **two distinct sources now produce independent observation streams** (prerequisite for dedup validation).
 
 #### Phase 3 — Two-source dedup validation
 
-- [ ] **Task 3.1** — Implement `python/jester/agents/property_dedup.py`: cross-portal `MatchByPhash` layer + structured-field matcher (price ±2%, surface ±5%, location, rooms, seller) + semantic matcher (Qdrant `properties__*`, threshold 0.92).
-- [ ] **Task 3.2** — Implement combined scoring `0.6*structured + 0.4*semantic >= 0.85` and a lab harness that ingests known-overlap fixtures from both Tayara and Mubawab.
-- [ ] **Task 3.3** — Add pytest fixtures using records from both live sources (real overlapping listings if compliant) to prove both duplicate-detection and non-duplicate cases.
-- [ ] **Task 3.4 — Verification** — `pytest` green; run the lab harness over the real two-source dataset and produce `docs/realestate-dedup-validation.md` with precision/recall numbers, false-positive examples, and any threshold tuning recommendation.
+- [x] **Task 3.1** — Implement `python/jester/agents/property_dedup.py`: cross-portal `MatchByPhash` layer + structured-field matcher (price ±2%, surface ±5%, location, rooms, seller) + semantic matcher (Qdrant `properties__*`, threshold 0.92).
+- [x] **Task 3.2** — Implement combined scoring `0.6*structured + 0.4*semantic >= 0.85` and a lab harness that ingests known-overlap fixtures from both Tayara and Mubawab.
+- [x] **Task 3.3** — Add pytest fixtures using records from both live sources (real overlapping listings if compliant) to prove both duplicate-detection and non-duplicate cases.
+- [x] **Task 3.4 — Verification** — `pytest` green; run the lab harness over the real two-source dataset and produce `docs/realestate-dedup-validation.md` with precision/recall numbers, false-positive examples, and any threshold tuning recommendation.
 
 #### Phase 4 — Tunisie Annonce + Houni.tn end-to-end
 
-- [ ] **Task 4.1** — Author `config/profiles/tunisieannonce.yaml` + `config/profiles/houni.yaml` and `realestate_config` rows.
-- [ ] **Task 4.2** — Register both cases in `fetchSource()` switch.
-- [ ] **Task 4.3** — Add Go unit tests with recorded sample HTML for each; add cross-portal dedup fixtures for both against Tayara.
+- [x] **Task 4.1** — Author `config/profiles/tunisieannonce.yaml` + `config/profiles/houni.yaml` and `realestate_config` rows.
+- [x] **Task 4.2** — Register both cases in `fetchSource()` switch.
+- [x] **Task 4.3** — Add Go unit tests with recorded sample HTML for each; add cross-portal dedup fixtures for both against Tayara.
 - [ ] **Task 4.4 — Verification** — Run full Go + pytest suites; smoke-ingest both; confirm all 4 sources produce consistent observation streams and cross-portal duplicates are flagged through the combined matcher.
 
 #### Phase 5 — Property alerts & analytics agents (Python)
 
-- [ ] **Task 5.1** — Implement `python/jester/agents/property_alerts.py`: subscribe criteria (area, price range, room count, surface) evaluated against new observations; output digest + channel-ready payload (consistent with existing alert conventions).
-- [ ] **Task 5.2** — Implement `python/jester/agents/property_analytics.py`: price-per-m², price history by portal/area, listing-count trends, dedup rates; write to `property_analytics`.
-- [ ] **Task 5.3** — Wire CLI subcommands (`jester property-alerts`, `jester property-analytics`) in `python/jester/cli.py`; add pytest for both agents over seeded fixture data.
+- [x] **Task 5.1** — Implement `python/jester/agents/property_alerts.py`: subscribe criteria (area, price range, room count, surface) evaluated against new observations; output digest + channel-ready payload (consistent with existing alert conventions).
+- [x] **Task 5.2** — Implement `python/jester/agents/property_analytics.py`: price-per-m², price history by portal/area, listing-count trends, dedup rates; write to `property_analytics`.
+- [x] **Task 5.3** — Wire CLI subcommands (`jester property-alerts`, `jester property-analytics`) in `python/jester/cli.py`; add pytest for both agents over seeded fixture data.
 - [ ] **Task 5.4 — Verification** — `pytest` green; CLI runs produce expected alert digest and analytics tables; alert fire/no-fire matches fixture criteria exactly.
 
 #### Phase 6 — Retention/migration + docs handoff
 
-- [ ] **Task 6.1** — Confirm `scripts/retention.sh` and `scripts/migrate.sh` treat the real-estate tables (`listing_*`) correctly; adjust globs/table lists if needed and add a test for the new `realestate_config`/`property_*` tables.
-- [ ] **Task 6.2 — Verification** — Run retention/migration in a scratch DB; confirm no real-estate rows are dropped unexpectedly and indexes on `listing_media_band` and new tables are present; update `README.md` source/section list to reflect the 4 new Tunisia portals + agents.
+- [x] **Task 6.1** — Confirm `scripts/retention.sh` and `scripts/migrate.sh` treat the real-estate tables (`listing_*`) correctly; adjust globs/table lists if needed and add a test for the new `realestate_config`/`property_*` tables.
+- [x] **Task 6.2 — Verification** — Run retention/migration in a scratch DB; confirm no real-estate rows are dropped unexpectedly and indexes on `listing_media_band` and new tables are present; update `README.md` source/section list to reflect the 4 new Tunisia portals + agents.
 
 ---
 
 ### Region Phase 2 — France
 
+**STATUS: BLOCKED, region unserved.** Leboncoin forbids automated access in robots.txt and its CGU; SeLoger disallows /recherche (a draft profile sits in config/profiles/drafts/); Bien-ici renders only a Didomi consent manager with zero listings in the DOM. The tasks below name sites that cannot be built as written. France needs a licensing conversation or a portal not yet surveyed.
+
 > Region gate: **compliance audit → priority-portal profiles → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (France)
 
-- [ ] **Task FR-0.1** — Extend `docs/realestate-compliance-audit.md` with the France site checklist (ToS, robots.txt, API/feed, PII consent, GDPR/DPA) for Leboncoin, SeLoger, and the 🔜 later sites (Bien'ici, Logic-Immo, ParuVendu). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task FR-0.2 — Verification** — Reviewer confirms the audit records, for each France site: (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Matrix may re-order the priority pair.
+- [x] **Task FR-0.1** — Extend `docs/realestate-compliance-audit.md` with the France site checklist (ToS, robots.txt, API/feed, PII consent, GDPR/DPA) for Leboncoin, SeLoger, and the 🔜 later sites (Bien'ici, Logic-Immo, ParuVendu). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
+- [x] **Task FR-0.2 — Verification** — Reviewer confirms the audit records, for each France site: (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Matrix may re-order the priority pair.
 
 #### Phase 1 — Leboncoin end-to-end
 
@@ -336,6 +523,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 3 — Spain
 
+**STATUS: SERVED BY THE FALLBACK.** Idealista (priority 1) answers 403, and Fotocasa (priority 2) renders 19 byte-identical empty card skeletons behind a consent gate. Spain is live through **habitaclia**, which the tasks below do not name. The Idealista tasks stay unticked because Idealista was not built.
+
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (Spain)
@@ -358,6 +547,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 ---
 
 ### Region Phase 4 — UK
+
+**STATUS: SERVED BY THE FALLBACK.** Rightmove (priority 1) disallows GPTBot and CCbot by name. The UK is live through **onthemarket**, the first profile to need the browser path, which the tasks below do not name. The Rightmove tasks stay unticked because Rightmove was not built.
 
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
@@ -382,6 +573,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 5 — Germany
 
+**STATUS: NOT STARTED.** ImmoScout24 is behind a bot wall; see the licensing note at the end of docs/realestate-compliance-audit.md. No German portal is harvested.
+
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (Germany)
@@ -405,6 +598,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 6 — Italy
 
+**STATUS: NOT STARTED.** No Italian portal has been surveyed or harvested.
+
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (Italy)
@@ -427,6 +622,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 ---
 
 ### Region Phase 7 — USA
+
+**STATUS: SERVED BY THE FALLBACK.** Zillow disallows /homes/ and Realtor.com 403s its own robots.txt. The USA is live through **redfin** (priority 3), which the tasks below do not name; Redfin answers 202-with-no-content on deep pages, so coverage comes from city seeds. The Zillow and Realtor tasks stay unticked because neither was built.
 
 > Region gate: **compliance audit → priority-portal profiles → end-to-end → dedup revalidation**.
 
