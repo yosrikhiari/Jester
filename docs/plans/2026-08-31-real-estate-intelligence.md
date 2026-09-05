@@ -39,7 +39,7 @@ and 5.4) landed 2026-09-05:
   applied the lookback WHERE before LAG, making price drops invisible when the
   previous observation fell outside the window.
 
-### Built and running: 16 portals, 8 markets
+### Built and running: 15 active portals, 8 markets (zoopla disabled — Cloudflare)
 
 | Region | Portal | Fetch | Notes |
 |---|---|---|---|
@@ -52,12 +52,12 @@ and 5.4) landed 2026-09-05:
 | South Africa | privateproperty | http | anchored + embedded ld+json; **predates this plan** |
 | Spain | **habitaclia** | http | Phase 3 **priority 2** - Idealista (1) answers 403. Filename pagination |
 | UK | **onthemarket** | **browser** | Phase 4 **priority 3** - Rightmove (1) disallows GPTBot and CCbot by name |
-| UK | **zoopla** | http | Phase 4 **priority 2** - schema.org Product LD+JSON, 28/page, `?pn=N`, 8 city seeds |
+| UK | **zoopla** | **browser** | Phase 4 **priority 2** - BLOCKED by Cloudflare challenge as of 2026-09-05. Disabled. schema.org Product LD+JSON, 28/page, `?pn=N`, 8 city seeds |
 | USA | **redfin** | http | Phase 7 **priority 3** - Zillow disallows /homes/, Realtor.com 403s its own robots.txt |
 | France | **paruvendu** | **browser** | Phase 2 **priority 5→1** - Leboncoin forbidden, SeLoger 403. 30/page, 9 dept seeds, DPE extracted |
 | Germany | **immowelt** | http | Phase 5 **priority 2→1** - ImmoScout24 bot wall. data-testid anchors, 10 city seeds |
 | Morocco | **mubawab-ma** | http | New market. Same platform as Tunisia mubawab. Explicitly allows ClaudeBot. 8 city seeds |
-| UAE | **bayut** | **browser** | New market. `/property/details-{id}.html` anchors, AED, 5 emirate seeds |
+| UAE | **bayut** | **browser** | New market. ldjson RealEstateListing (rich schema.org with beds/baths/price/area/address), AED, 5 emirate seeds |
 
 **Phase 2 expansion (2026-09-05) opened every previously-blocked region except
 Italy** and added two new markets (Morocco, UAE). The probe sweep tested 20+
@@ -67,14 +67,18 @@ search paths and 403s its sitemap URLs.
 
 ### The export chain, verified end to end
 
-`jester ingest` scrapes and exports with no manual step. Measured over a full
-ten-portal run and against the real archive:
+`jester ingest` scrapes and exports with no manual step. Each portal's
+listings land in `data/exports/listings/<portal>/<portal>-001.csv`, and all
+portals merge into `data/exports/listings/all-001.csv`. The full observation
+history (every price snapshot) goes to `listings/history-001.csv`.
+
+Measured after the Phase 2 expansion ingest (15 active portals, 8 markets):
 
 | file | rows | answers |
 |---|---|---|
-| `listings/all-001.csv` | 3828 | what is on the market |
-| `listings/<portal>/...` | 3828 total | what that portal has |
-| `listings/history-001.csv` | 7979 | how it got there |
+| `listings/all-001.csv` | 7000+ | what is on the market |
+| `listings/<portal>/...` | 7000+ total across 15 folders | what that portal has |
+| `listings/history-001.csv` | 19000+ | how it got there |
 
 Field coverage on the combined sheet: `url`, `market`, `listing_id`,
 `currency`, `deal_type`, `observed_at` at 100%; `title` 99.0%; `city` 98.6%;
@@ -209,6 +213,9 @@ cycle ran **37 min without finishing**. `thresholds.ingest_timeout_seconds`
 - **Italy is unserved.** It needs a licensing conversation or a portal not yet
   surveyed. France, Germany and the UK now have fallback portals (ParuVendu,
   Immowelt, Zoopla) and two new markets (Morocco, UAE) were opened.
+- **Bayut bedrooms/bathrooms patterns** need refinement against live rendered
+  HTML — the alt-text anchors in the profile may not match the JS-rendered DOM
+  structure exactly.
 
 ### Compliance audits — all regions closed (2026-09-05)
 
@@ -596,7 +603,7 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 4 — UK
 
-**STATUS: SERVED BY TWO FALLBACKS.** Rightmove (priority 1) disallows GPTBot and CCbot by name. The UK is live through **onthemarket** (browser mode, 32 cards/page) and **zoopla** (LD+JSON mode, 28/page, 8 city seeds, `?pn=N` pagination). Two-portal coverage enables UK cross-portal dedup. The Rightmove tasks stay unticked because Rightmove was not built.
+**STATUS: SERVED BY ONE FALLBACK.** Rightmove (priority 1) disallows GPTBot and CCbot by name. Zoopla (priority 2) is blocked by Cloudflare challenge as of 2026-09-05 — disabled. The UK is live through **onthemarket** (browser mode, 32 cards/page). The Rightmove tasks stay unticked because Rightmove was not built.
 
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 

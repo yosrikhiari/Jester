@@ -14,18 +14,18 @@ list:
   url: https://www.mubawab.ma/fr/ct/casablanca/immobilier-a-vendre
   # Major Moroccan cities. Each seed returns ~33 tiles per page and paginates
   # independently, so the seed list multiplies reachable inventory.
+  # Reduced from 7 to 4 seeds and max_pages 5->2 after mubawab.ma returned
+  # 429 on every page during the first ingest (2026-09-05).  The 2s global
+  # delay is not enough for 8 seeds x 5 pages = 40 requests.
   urls:
     - https://www.mubawab.ma/fr/ct/rabat/immobilier-a-vendre
     - https://www.mubawab.ma/fr/ct/marrakech/immobilier-a-vendre
     - https://www.mubawab.ma/fr/ct/tanger/immobilier-a-vendre
     - https://www.mubawab.ma/fr/ct/fes/immobilier-a-vendre
-    - https://www.mubawab.ma/fr/ct/agadir/immobilier-a-vendre
-    - https://www.mubawab.ma/fr/ct/meknes/immobilier-a-vendre
-    - https://www.mubawab.ma/fr/ct/oujda/immobilier-a-vendre
   # Mubawab pages by PATH, not by query: ":p:2" returns a set of adids
   # disjoint from page 1 (33 tiles each), while ?page=2 re-serves page one.
   page_template: "{url}:p:{page}"
-  max_pages: 5
+  max_pages: 2
 
 extract:
   mode: anchored

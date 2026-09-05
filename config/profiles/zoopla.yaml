@@ -14,7 +14,7 @@ portal: zoopla
 market: gb
 base_url: https://www.zoopla.co.uk
 currency: GBP
-fetch: http
+fetch: browser
 
 list:
   url: https://www.zoopla.co.uk/for-sale/houses/london/

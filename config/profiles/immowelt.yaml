@@ -46,9 +46,10 @@ extract:
   # Habitaclia use.  The listing UUID captured here is the same identifier the
   # expose URL uses.
   anchor: 'id="classified-card-(?P<id>[^"]+)"[^>]*data-testid="serp-core-classified-card-testid"'
-  # Measured from the card structure: a card runs about 3 KB.  4000 gives
-  # comfortable margin without reaching into the next card.
-  block_len: 4000
+  # Measured from live HTML 2026-09-05: the price and address data-testid
+  # elements sit at ~8-10 KB from the card anchor, past the image carousel.
+  # 4000 cut the block before reaching them.  12000 covers the full card.
+  block_len: 12000
   # Fallback when the href is not found in the block.
   url_template: "https://www.immowelt.de/expose/{id}"
 
@@ -67,16 +68,23 @@ extract:
     price:
       pattern: 'data-testid="cardmfe-price-testid"[^>]*>([^<]{3,30})'
       transform: [unescape, digits]
-    # Keyfacts line: "2 Zimmer · 45 m²"
+    # Keyfacts line: "2 Zimmer · 45 m²".  German listings use "3,5 Zimmer"
+    # for half-rooms; the leading integer is the room count.
     rooms:
-      pattern: '(\d+)\s*Zimmer'
+      pattern: '(\d+),?\d*\s*Zimmer'
       transform: [digits]
+    # Target the keyfacts section specifically to avoid matching stray numbers
+    # followed by "m" in CSS classes or image URLs earlier in the card.
     surface:
-      pattern: '([\d.,]+)\s*m'
+      pattern: '([\d.,]+)\s*m²'
       transform: [digits]
     # "Köpenick, Treptow-Köpenick (12557)"
     location:
       pattern: 'data-testid="cardmfe-description-box-address"[^>]*>([^<]{3,100})'
+      transform: [unescape, trim]
+    # Extract the district/neighbourhood before the comma from the address.
+    city:
+      pattern: 'data-testid="cardmfe-description-box-address"[^>]*>([^,<]{2,50})'
       transform: [unescape, trim]
 
   # The seed URLs are /kaufen (for-sale).  Rental seeds would use /mieten.

@@ -674,8 +674,8 @@ sources:
   name: zoopla
   kind: listing
   url: https://www.zoopla.co.uk/for-sale/houses/london/
-  enabled: true
-  notes: Zoopla UK - second UK portal alongside OnTheMarket. Plain GET, schema.org Product LD+JSON with ItemList (28 per page), ?pn=N pagination. 8 city seeds. robots.txt does not name ClaudeBot or any AI agent; only auction facets disallowed.
+  enabled: false
+  notes: Zoopla UK - second UK portal alongside OnTheMarket. Browser fetch (403 on plain GET as of 2026-09-05). BLOCKED by Cloudflare challenge as of 2026-09-05 - cloakbrowser Chrome 146 gets "Just a moment..." challenge page. schema.org Product LD+JSON with ItemList (28 per page), ?pn=N pagination. 8 city seeds. robots.txt does not name ClaudeBot or any AI agent; only auction facets disallowed.
 - platform: realestate
   name: mubawab-ma
   kind: listing
@@ -687,4 +687,4 @@ sources:
   kind: listing
   url: https://www.bayut.com/for-sale/property/dubai/
   enabled: true
-  notes: Bayut UAE/Gulf - browser fetch (JS challenge on plain GET), anchored on /property/details-ID.html links, ?page=N pagination, ~25 tiles/page. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). robots.txt allows /for-sale/ and /to-rent/. AED currency.
+  notes: Bayut UAE/Gulf - browser fetch (JS challenge on plain GET), ldjson RealEstateListing mode (rich schema.org with bedrooms, bathrooms, price, floorSize, address), ?page=N pagination. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). robots.txt allows /for-sale/ and /to-rent/. AED currency.

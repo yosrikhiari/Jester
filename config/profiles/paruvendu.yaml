@@ -15,18 +15,18 @@ fetch: browser
 
 list:
   url: https://www.paruvendu.fr/immobilier/vente/appartement/?lo=75
+  # Reduced from 9 seeds × 5 pages (45 requests) to 6 seeds × 3 pages (18
+  # requests) after the first ingest hit the 600s timeout.  Browser mode is
+  # slow: each page takes ~10-15s to render through cloakbrowser.
   urls:
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=75
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=69
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=13
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=31
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=33
-    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=44
     - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=06
-    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=59
-    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=67
   page_param: p
-  max_pages: 5
+  max_pages: 3
 
 extract:
   mode: anchored
