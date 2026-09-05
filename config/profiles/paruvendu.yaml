@@ -1,0 +1,78 @@
+# ParuVendu (France) - classifieds platform with a substantial real-estate
+# vertical, strongest in particulier-to-particulier (C2C) listings.
+#
+# Probed 2026-09-05: server-rendered PHP on Apache, 30 tiles per page. A
+# plain GET returns 403 - the server filters on User-Agent - so the browser
+# is required. No consent wall, no CAPTCHA. robots.txt names no AI user
+# agent and no rule in it touches /immobilier/vente/ or /immobilier/location/;
+# the pagination parameter ?p= and department filter ?lo= are not disallowed.
+# Checked 2026-09-05.
+portal: paruvendu
+market: fr
+base_url: https://www.paruvendu.fr
+currency: EUR
+fetch: browser
+
+list:
+  url: https://www.paruvendu.fr/immobilier/vente/appartement/?lo=75
+  urls:
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=75
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=69
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=13
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=31
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=33
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=44
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=06
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=59
+    - https://www.paruvendu.fr/immobilier/vente/appartement/?lo=67
+  page_param: p
+  max_pages: 5
+
+extract:
+  mode: anchored
+  anchor: 'class="[^"]*blocAnnonce[^"]*"[^>]*data-id="(?P<id>\d+)"'
+  block_len: 10000
+
+  fields:
+    url:
+      pattern: 'href="(/immobilier/(?:vente|location|recherche/location)/[^"]+)"'
+      transform: [absolute]
+    title:
+      pattern: 'title="\s*([^"]*\d+\s*pièce[^"]*)"'
+      transform: [unescape, trim]
+    price:
+      pattern: '<!-- Prix -->\s*<div>\s*([\d\s]+)\s*€'
+      transform: [digits]
+    property_type:
+      pattern: 'title="\s*([A-Za-zÀ-ÿ]+)\s+-\s+\d+'
+      transform: [trim]
+    surface:
+      pattern: '(\d+)\s*m<sup>2</sup>'
+      transform: [digits]
+    rooms:
+      pattern: '(\d+)\s*pièce'
+      transform: [digits]
+    bedrooms:
+      pattern: '(\d+)\s*chambres?'
+      transform: [digits]
+    location:
+      pattern: 'm<sup>2</sup>\s+([^<]+)\s*</span>'
+      transform: [unescape, trim]
+    dpe:
+      pattern: 'NoteEnerg_([A-G])'
+    seller_type:
+      pattern: 'class="pseudoinfo">([^<]+)<'
+      transform: [trim]
+
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/location/"]
+
+  gallery:
+    pattern: 'src="(https://img\.paruvendu\.fr/media_ext/[^"]+)"'
+    all: true
+    dedup_by: 'media\.paruvendu\.fr/([^?]+)'

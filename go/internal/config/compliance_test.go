@@ -12,15 +12,29 @@ import (
 //
 // WHY THIS IS A TEST. The audit is a markdown file, and a markdown file cannot
 // stop anyone flipping `enabled: true` eighteen months from now when the reason
-// has been forgotten. Two of these are refusals in the operator's own words -
+// has been forgotten. Three of these are refusals in the operator's own words -
 // Leboncoin requires written permission, Rightmove enumerates AI crawlers and
-// excludes them - and turning one on is a decision that should have to be
-// argued with, not typed.
+// excludes them, and Menzili names ClaudeBot - and turning one on is a decision
+// that should have to be argued with, not typed.
+//
+// The two consent-gated portals are here for a different reason. Nothing
+// technically stops a scraper answering a Didomi banner; what stops it is that
+// doing so records a consent no person gave, which is a worse problem under
+// GDPR than the missing data it would unlock. That is a judgement, and a
+// judgement is the kind of thing quietly reversed by someone who only sees a
+// portal that "nearly works".
 var noScrapePortals = map[string]string{
 	"leboncoin": "robots.txt: forbidden to use search robots or other automatic " +
 		"methods; access only with special permission from Leboncoin.fr",
 	"rightmove": "robots.txt gives GPTBot and CCbot Disallow: /; the operator " +
 		"enumerates AI crawlers and excludes them",
+	"menzili": "robots.txt disallows ClaudeBot by name - the most explicit " +
+		"exclusion of any portal surveyed",
+	"fotocasa": "consent-gated: renders 19 byte-identical empty card skeletons " +
+		"behind Didomi; robots.txt also forbids all pagination and the three " +
+		"largest cities",
+	"bienici": "consent-gated: the rendered document is the Didomi consent " +
+		"manager, with zero listings in the DOM",
 	"immobiliare": "robots.txt disallows /search-list, /search-map and " +
 		"/ricerca-mappa/ - the search endpoints themselves",
 	"zillow": "robots.txt disallows /homes/, allowing only $-anchored landing " +

@@ -1,0 +1,81 @@
+# Mubawab Morocco – real-estate platform, same codebase as mubawab.tn
+# Probed 2026-09-05: identical tile markup (listingBox, priceTag, adid)
+# Anchor is adid="1234567" (fav icon), block starts at listingBox container
+# Currency shown as DH on page; canonical ISO code is MAD
+portal: mubawab-ma
+market: ma
+base_url: https://www.mubawab.ma
+currency: MAD
+# Verified 2026-09-05: result page and data-adid tiles served to plain GET.
+# robots.txt explicitly allows ClaudeBot.
+fetch: http
+
+list:
+  url: https://www.mubawab.ma/fr/ct/casablanca/immobilier-a-vendre
+  # Major Moroccan cities. Each seed returns ~33 tiles per page and paginates
+  # independently, so the seed list multiplies reachable inventory.
+  urls:
+    - https://www.mubawab.ma/fr/ct/rabat/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/marrakech/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/tanger/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/fes/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/agadir/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/meknes/immobilier-a-vendre
+    - https://www.mubawab.ma/fr/ct/oujda/immobilier-a-vendre
+  # Mubawab pages by PATH, not by query: ":p:2" returns a set of adids
+  # disjoint from page 1 (33 tiles each), while ?page=2 re-serves page one.
+  page_template: "{url}:p:{page}"
+  max_pages: 5
+
+extract:
+  mode: anchored
+  anchor: 'adid="(?P<id>[^"]+)"'
+  block_len: 8000
+  block_start: '<div class="(?:listingBox|priceBar)'
+
+  fields:
+    listing_id:
+      pattern: 'adid="([^"]+)"'
+      transform: [trim]
+    url:
+      pattern: 'href="(https://www\.mubawab\.ma/fr/(?:a|pa)/[^"]+)"'
+      transform: [absolute]
+    title:
+      pattern: 'class="[^"]*listingTit[^"]*"[^>]*>\s*(?:<a[^>]*>)?\s*([^<]{5,300})'
+      transform: [unescape, trim, striptags]
+    price:
+      pattern: 'class="[^"]*priceTag[^"]*"[^>]*>\s*([^<]{3,40})'
+      transform: [unescape, digits, trim]
+    location:
+      pattern: 'class="[^"]*(?:listingLoc|listingH3)[^"]*"[^>]*>(?:\s*<i[^>]*>.*?</i>)?\s*([^<]{2,100})\s*<'
+      transform: [unescape, trim]
+    surface:
+      pattern: '([\d]{2,4})\s*m²'
+      transform: [digits]
+    rooms:
+      pattern: 'class="[^"]*(?:pieceTag|adDetailFeature)[^"]*"[^>]*>.*?(\d+)'
+      transform: [digits]
+    property_type:
+      pattern: 'class="[^"]*(?:typeTag|listingTit)[^"]*"[^>]*>(?:<a[^>]*>)?\s*([^<]{2,100})'
+      transform: [unescape, trim]
+    seller:
+      pattern: 'class="[^"]*(?:agencyName|ownerName)[^"]*"[^>]*>([^<]{2,100})<'
+      transform: [unescape, trim]
+    seller_type:
+      const: "agency"
+
+  # Mubawab puts the deal in the slug: /fr/a/8376817/a-louer-... against
+  # /fr/a/8409575/a-vendre-.... The search URL is "immobilier-a-vendre", so sale
+  # is the honest default, but rentals do appear in the results.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["louer", "location"]
+
+  gallery:
+    pattern: '(?:data-src|data-lazy|data-url)="(https://www\.mubawab-media\.com/[^"]+)"'
+    all: true
+    dedup_by: 'mubawab-media\.com/ad/(\d+)/'

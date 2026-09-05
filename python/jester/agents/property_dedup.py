@@ -502,16 +502,19 @@ def semantic_similarity(
     # Build text representation for embedding
     def listing_text(rec: ListingRecord) -> str:
         parts = []
-        if rec.title:
-            parts.append(rec.title)
-        if rec.description:
-            parts.append(rec.description[:500])
+        title = rec.payload.get("title")
+        if title:
+            parts.append(str(title))
+        desc = rec.payload.get("description")
+        if desc:
+            parts.append(str(desc)[:500])
         if rec.city:
             parts.append(rec.city)
         if rec.governorate:
             parts.append(rec.governorate)
-        if rec.property_type:
-            parts.append(rec.property_type)
+        prop_type = rec.payload.get("property_type")
+        if prop_type:
+            parts.append(str(prop_type))
         return " ".join(filter(None, parts))
 
     try:

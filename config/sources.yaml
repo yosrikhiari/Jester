@@ -654,3 +654,37 @@ sources:
   url: https://www.seloger.com
   enabled: false
   notes: France leading real estate portal, no official API, scraping-only, robots.txt Disallow /recherche. DISABLED - the profile is a draft in config/profiles/drafts/seloger.yaml with no field mapping and an unverified data_path, so every run failed. See that file, and tasks FR-2.1..FR-2.4 in docs/plans/2026-08-31-real-estate-intelligence.md.
+
+# Real-estate sources — Phase 2 expansion (2026-09-05)
+# These portals were identified after the probe sweep found accessible fallbacks
+# for every blocked region plus two new markets (Morocco, Gulf).
+- platform: realestate
+  name: paruvendu
+  kind: listing
+  url: https://www.paruvendu.fr/immobilier/vente/appartement/?lo=75
+  enabled: true
+  notes: ParuVendu France - the first accessible French portal. Browser fetch (403 on plain GET), anchored div.blocAnnonce with data-id, ?p=N pagination, 30 tiles/page. 9 department seeds covering Paris, Lyon, Marseille, Toulouse, Bordeaux, Nantes, Nice, Lille, Strasbourg. robots.txt names no AI agent and permits /immobilier/. DPE energy rating extracted.
+- platform: realestate
+  name: immowelt
+  kind: listing
+  url: https://www.immowelt.de/liste/berlin/wohnungen/kaufen
+  enabled: true
+  notes: Immowelt Germany - the first accessible German portal. Plain GET, anchored data-testid cards, 32 tiles/page. robots.txt explicitly names Claude agents as allowed. Pagination redirects, so coverage comes from 10 city seeds (Berlin, München, Hamburg, Köln, Frankfurt, Stuttgart, Düsseldorf, Leipzig, Dortmund, Essen). ImmoScout24 (priority 1) answers 401 bot wall.
+- platform: realestate
+  name: zoopla
+  kind: listing
+  url: https://www.zoopla.co.uk/for-sale/houses/london/
+  enabled: true
+  notes: Zoopla UK - second UK portal alongside OnTheMarket. Plain GET, schema.org Product LD+JSON with ItemList (28 per page), ?pn=N pagination. 8 city seeds. robots.txt does not name ClaudeBot or any AI agent; only auction facets disallowed.
+- platform: realestate
+  name: mubawab-ma
+  kind: listing
+  url: https://www.mubawab.ma/fr/ct/casablanca/immobilier-a-vendre
+  enabled: true
+  notes: Mubawab Morocco - same platform as mubawab.tn (Tunisia). Plain GET, anchored adid tiles, :p:N path pagination, 33 tiles/page. 8 city seeds (Casablanca, Rabat, Marrakech, Tanger, Fès, Agadir, Meknès, Oujda). robots.txt explicitly allows ClaudeBot. MAD currency.
+- platform: realestate
+  name: bayut
+  kind: listing
+  url: https://www.bayut.com/for-sale/property/dubai/
+  enabled: true
+  notes: Bayut UAE/Gulf - browser fetch (JS challenge on plain GET), anchored on /property/details-ID.html links, ?page=N pagination, ~25 tiles/page. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). robots.txt allows /for-sale/ and /to-rent/. AED currency.

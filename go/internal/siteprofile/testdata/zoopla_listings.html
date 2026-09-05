@@ -1,0 +1,70 @@
+<!-- Synthetic Zoopla fixture: three schema.org Product blocks in LD+JSON,
+     matching the structure zoopla.yaml expects. Each Product carries an Offer
+     (price/currency) and isRelatedTo a SingleFamilyResidence (bedrooms,
+     bathrooms, floor size, address). The listing_id is extracted from the URL
+     via pattern '/details/(\d+)'. -->
+<html><body>
+<script type="application/ld+json">[
+  {
+    "@context": "http://schema.org",
+    "@type": "Product",
+    "name": "3 beds detached house for sale",
+    "url": "https://www.zoopla.co.uk/for-sale/details/67890123/",
+    "offers": {
+      "@type": "Offer",
+      "price": "695000",
+      "priceCurrency": "GBP"
+    },
+    "isRelatedTo": {
+      "@type": "SingleFamilyResidence",
+      "address": "The Chapman Collection, London SE9",
+      "numberOfBedrooms": 3,
+      "numberOfBathroomsTotal": 2,
+      "floorSize": { "value": 1200 }
+    },
+    "image": "https://lid.zoocdn.com/u/2400/1800/abc123def456.jpg"
+  }
+]</script>
+<script type="application/ld+json">[
+  {
+    "@context": "http://schema.org",
+    "@type": "Product",
+    "name": "4 beds semi-detached house for sale",
+    "url": "https://www.zoopla.co.uk/for-sale/details/78901234/",
+    "offers": {
+      "@type": "Offer",
+      "price": "425000",
+      "priceCurrency": "GBP"
+    },
+    "isRelatedTo": {
+      "@type": "SingleFamilyResidence",
+      "address": "Didsbury Village, Manchester M20 6RR",
+      "numberOfBedrooms": 4,
+      "numberOfBathroomsTotal": 3,
+      "floorSize": { "value": 1850 }
+    },
+    "image": "https://lid.zoocdn.com/u/2400/1800/ghi789jkl012.jpg"
+  }
+]</script>
+<script type="application/ld+json">[
+  {
+    "@context": "http://schema.org",
+    "@type": "Product",
+    "name": "2 beds terraced house for sale",
+    "url": "https://www.zoopla.co.uk/for-sale/details/89012345/",
+    "offers": {
+      "@type": "Offer",
+      "price": "310000",
+      "priceCurrency": "GBP"
+    },
+    "isRelatedTo": {
+      "@type": "SingleFamilyResidence",
+      "address": "Stockbridge, Edinburgh EH3 6PH",
+      "numberOfBedrooms": 2,
+      "numberOfBathroomsTotal": 1,
+      "floorSize": { "value": 780 }
+    },
+    "image": "https://lid.zoocdn.com/u/2400/1800/mno345pqr678.jpg"
+  }
+]</script>
+</body></html>

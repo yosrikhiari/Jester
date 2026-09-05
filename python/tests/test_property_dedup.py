@@ -242,3 +242,121 @@ class TestPhashCandidatesAreConfirmed:
         db.execute("UPDATE listing_media SET phash='' WHERE observation_id=2")
         db.commit()
         assert find_candidates_by_phash(db, "a", "1", [near[0]]) == []
+
+
+class TestTunisianCrossPortalDedup:
+    """Cross-portal dedup across the four Tunisian portals.
+
+    Each case models a real listing pattern: the same apartment described
+    differently on tayara, mubawab, tunisieannonce and houni.
+    """
+
+    def test_tayara_vs_tunisieannonce_same_property(self):
+        """S+2 in Ariana listed on both — different title conventions."""
+        a = rec("tayara", "ta1", price=285000, currency="TND",
+                city="Ariana", governorate="Ariana", rooms=3, surface=120.0,
+                bedrooms=2, seller="Ahmed")
+        b = rec("tunisieannonce", "ann1", price=285000, currency="TND",
+                city="Ariana", governorate="Ariana", rooms=3, surface=120.0,
+                bedrooms=2)
+        score, reasons, evidence = structured_similarity_detailed(a, b)
+        assert score >= STRUCTURED_ONLY_THRESHOLD
+        assert evidence >= STRUCTURED_ONLY_MIN_EVIDENCE
+
+    def test_tayara_vs_houni_same_property(self):
+        """Same apartment on tayara and houni — houni often lacks surface."""
+        a = rec("tayara", "ta2", price=350000, currency="TND",
+                city="La Soukra", governorate="Ariana", rooms=4, bedrooms=3)
+        b = rec("houni", "ho1", price=350000, currency="TND",
+                city="La Soukra", governorate="Ariana", rooms=4, bedrooms=3)
+        score, reasons, evidence = structured_similarity_detailed(a, b)
+        assert score >= STRUCTURED_ONLY_THRESHOLD
+        assert evidence >= STRUCTURED_ONLY_MIN_EVIDENCE
+
+    def test_mubawab_vs_tunisieannonce_same_property(self):
+        a = rec("mubawab", "mu1", price=420000, currency="TND",
+                city="La Marsa", governorate="Tunis", rooms=4, surface=150.0,
+                bedrooms=3)
+        b = rec("tunisieannonce", "ann2", price=420000, currency="TND",
+                city="La Marsa", governorate="Tunis", rooms=4, surface=148.0,
+                bedrooms=3)
+        score, reasons, evidence = structured_similarity_detailed(a, b)
+        assert score >= STRUCTURED_ONLY_THRESHOLD
+        assert evidence >= STRUCTURED_ONLY_MIN_EVIDENCE
+
+    def test_houni_vs_mubawab_different_property_same_price(self):
+        """Same asking price in the same city — different bedroom count."""
+        a = rec("houni", "ho2", price=250000, currency="TND",
+                city="Ariana", governorate="Ariana", bedrooms=1)
+        b = rec("mubawab", "mu2", price=250000, currency="TND",
+                city="Ariana", governorate="Ariana", bedrooms=3)
+        score, _, _ = structured_similarity_detailed(a, b)
+        assert score < STRUCTURED_ONLY_THRESHOLD
+
+    def test_tunisieannonce_vs_houni_different_city(self):
+        """Same price and rooms but different cities are not duplicates."""
+        a = rec("tunisieannonce", "ann3", price=300000, currency="TND",
+                city="Sousse", governorate="Sousse", rooms=3)
+        b = rec("houni", "ho3", price=300000, currency="TND",
+                city="Sfax", governorate="Sfax", rooms=3)
+        score, _, _ = structured_similarity_detailed(a, b)
+        assert score < STRUCTURED_ONLY_THRESHOLD
+
+    def test_four_portal_same_listing_with_photo(self):
+        """The strongest signal: same photo across portals."""
+        shared_phash = "84636cac6ec8093b"
+        base = dict(price=500000, currency="TND", city="Carthage",
+                    governorate="Tunis", rooms=5, surface=200.0, bedrooms=4,
+                    phashes=[shared_phash])
+        a = rec("tayara", "ta3", **base)
+        b = rec("mubawab", "mu3", **base)
+        c = rec("tunisieannonce", "ann4", **base)
+        d = rec("houni", "ho4", **base)
+        for pair in [(a, b), (a, c), (a, d), (b, c), (b, d), (c, d)]:
+            score, reasons, evidence = structured_similarity_detailed(*pair)
+            assert score >= STRUCTURED_ONLY_THRESHOLD
+            assert any("photograph" in r for r in reasons)
+
+
+class TestTunisianBlockingIntegration:
+    """Blocking finds cross-portal candidates across Tunisian portals."""
+
+    @pytest.fixture
+    def tn_archive(self, tmp_path):
+        db = sqlite3.connect(tmp_path / "tn.db")
+        db.executescript("""
+            CREATE TABLE listing (portal TEXT, listing_id TEXT, url TEXT,
+                                  first_seen_at TEXT, last_seen_at TEXT);
+            CREATE TABLE listing_observation (id INTEGER PRIMARY KEY, portal TEXT,
+                                  listing_id TEXT, observed_at TEXT, run_id TEXT,
+                                  content_hash TEXT, gallery_hash TEXT, price INTEGER,
+                                  currency TEXT, status TEXT, payload TEXT);
+            CREATE TABLE listing_media (observation_id INTEGER, position INTEGER,
+                                  url TEXT, phash TEXT);
+        """)
+        def add(portal, lid, price, payload):
+            db.execute("INSERT INTO listing VALUES (?,?,?,?,?)",
+                       (portal, lid, f"https://{portal}.test/{lid}", "", ""))
+            db.execute(
+                "INSERT INTO listing_observation (portal, listing_id, price, currency, payload)"
+                " VALUES (?,?,?,?,?)", (portal, lid, price, "TND", json.dumps(payload)))
+
+        add("tayara", "ta1", 285000, {"city": "Ariana", "governorate": "Ariana"})
+        add("tunisieannonce", "ann1", 285000, {"city": "Ariana", "governorate": "Ariana"})
+        add("houni", "ho1", 285000, {"city": "Ariana", "governorate": "Ariana"})
+        add("mubawab", "mu1", 285000, {"city": "La Marsa", "governorate": "Tunis"})
+        db.commit()
+        return db
+
+    def test_tunisieannonce_found_as_candidate_for_tayara(self, tn_archive):
+        target = rec("tayara", "ta1", price=285000, currency="TND",
+                     city="Ariana", payload={"city": "Ariana"})
+        got = find_candidates_by_blocking(tn_archive, "tayara", "ta1", target)
+        assert ("tunisieannonce", "ann1") in got
+        assert ("houni", "ho1") in got
+
+    def test_different_city_not_blocked(self, tn_archive):
+        target = rec("tayara", "ta1", price=285000, currency="TND",
+                     city="Ariana", payload={"city": "Ariana"})
+        got = find_candidates_by_blocking(tn_archive, "tayara", "ta1", target)
+        assert ("mubawab", "mu1") not in got

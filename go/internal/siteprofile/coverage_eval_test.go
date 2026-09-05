@@ -26,6 +26,11 @@ var fixtureFor = map[string]string{
 	"redfin.yaml":         "redfin_listings.html",
 	"habitaclia.yaml":     "habitaclia_listings.html",
 	"onthemarket.yaml":    "onthemarket_listings.html",
+	"immowelt.yaml":       "immowelt_listings.html",
+	"zoopla.yaml":         "zoopla_listings.html",
+	"paruvendu.yaml":      "paruvendu_listings.html",
+	"mubawab-ma.yaml":     "mubawab-ma_listings.html",
+	"bayut.yaml":          "bayut_listings.html",
 }
 
 // coverage is the share of parsed listings on which a field arrived non-empty.

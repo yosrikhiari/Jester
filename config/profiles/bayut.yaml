@@ -1,0 +1,97 @@
+# Bayut (UAE) - Gulf real-estate portal, dominant in the Emirates.
+# Probed 2026-09-05: bot challenge on plain GET returns "Security check | Bayut"
+# with a JS challenge; tiles render only after the challenge completes.
+# No __NEXT_DATA__ or LD+JSON. Anchored on /property/details-ID.html links.
+# robots.txt allows /for-sale/ and /to-rent/; disallows /search/, /api/ (except
+# /api/transactions and /api/propertyPrices/), /account, and city landing pages.
+portal: bayut
+market: ae
+base_url: https://www.bayut.com
+currency: AED
+# A plain GET returns the JS challenge page, not listings. The rendered page
+# carries property tiles with images, prices, bed/bath/area strip, title and
+# location — all as markup, no structured data.
+fetch: browser
+
+list:
+  url: https://www.bayut.com/for-sale/property/dubai/
+  # Five emirates, each its own seed. Coverage comes from the city list rather
+  # than deep pagination: Bayut serves 24-25 tiles per page. Verified 2026-09-05:
+  # Dubai, Abu Dhabi and Sharjah return full pages; Ajman and Ras Al Khaimah are
+  # smaller markets but answer 200 with listings.
+  urls:
+    - https://www.bayut.com/for-sale/property/dubai/
+    - https://www.bayut.com/for-sale/property/abu-dhabi/
+    - https://www.bayut.com/for-sale/property/sharjah/
+    - https://www.bayut.com/for-sale/property/ajman/
+    - https://www.bayut.com/for-sale/property/ras-al-khaimah/
+  # Verified 2026-09-05: ?page=2 returns a disjoint set of listing ids from
+  # page 1. Page 3 likewise.
+  page_param: page
+  max_pages: 3
+
+extract:
+  mode: anchored
+  # The tile links to its detail page three times (heading, image wrapper, agent
+  # card). The engine sees the same id repeated and deduplicates; the block ends
+  # at the next DIFFERENT id, which is the next tile.
+  anchor: 'href="/property/details-(?P<id>\d+)\.html"'
+  # Estimated from tile content: image, status badges, agent card, price,
+  # property type, bed/bath/area strip, title heading and location line. Needs
+  # measurement against live rendered HTML — increase if fields at the bottom
+  # of the tile (location, agent) come back empty.
+  block_len: 8000
+
+  fields:
+    url:
+      pattern: 'href="(/property/details-\d+\.html)"'
+      transform: [absolute]
+    # The detail-page link carries the marketing headline as its title
+    # attribute: "New Launch | Binghatti | Near Downtown | Prime Location".
+    title:
+      pattern: 'title="([^"]{10,200})"'
+      transform: [unescape, trim]
+    # AED prefix is unique within a tile and sits inside an h3.
+    price:
+      pattern: 'AED\s*([\d,]+)'
+      transform: [digits]
+    property_type:
+      pattern: '>(Apartment|Villa|Townhouse|Penthouse|Duplex|Studio|Office|Shop|Warehouse|Land)<'
+      transform: [trim]
+    # Bedrooms and bathrooms render as plain numbers separated by bed/bath
+    # icons (SVG or image). These patterns look for the icon's alt, aria-label
+    # or filename containing "bed"/"bath" near the count. If the rendered HTML
+    # uses a different marker (data-testid, CSS class prefix, visually-hidden
+    # span), refine the pattern after inspecting a live tile.
+    bedrooms:
+      pattern: '(?:bed|Bed|BED)[^<>]{0,40}?(\d{1,2})'
+      transform: [digits]
+    bathrooms:
+      pattern: '(?:bath|Bath|BATH)[^<>]{0,40}?(\d{1,2})'
+      transform: [digits]
+    # Two area formats: "Area: 1,000 sqft" for apartments and flats,
+    # "Built-up: 3,273 sqft" for villas and townhouses. Some tiles also carry
+    # "Plot: 3,000 sqft" which this pattern does not capture.
+    surface:
+      pattern: '(?:Area|Built-up|area|built-up)[:\s]+([\d,]+)\s*(?:sqft|sq\.?\s*ft)'
+      transform: [digits]
+    # Location appears as "Community, District, City" at the bottom of each
+    # tile. Match the first comma-separated string ending with a known emirate.
+    location:
+      pattern: '>([^<]{5,80},\s*(?:Dubai|Abu Dhabi|Sharjah|Ajman|Ras Al Khaimah|Umm Al Quwain|Fujairah))\s*<'
+      transform: [unescape, trim]
+
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/to-rent/"]
+
+  gallery:
+    pattern: 'src="(https://images\.bayut\.com/thumbnails/[^"]+)"'
+    all: true
+    # One photograph is served at several crops (400x300, 240x180, etc.);
+    # the numeric id before the size suffix is what they share.
+    dedup_by: 'thumbnails/(\d+)-'

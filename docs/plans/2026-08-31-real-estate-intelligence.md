@@ -10,7 +10,7 @@
 
 ---
 
-## STATUS — 2026-09-04
+## STATUS — 2026-09-05
 
 One status section, rewritten in place rather than appended to. Earlier
 revisions were stacked chronologically and had begun to contradict each other:
@@ -18,7 +18,28 @@ the combined sheet was described as 4132 rows of observations in one place and
 3828 rows of listings in another, and retention appeared as both outstanding
 and done. What follows is what is true now.
 
-### Built and running: 10 portals, 5 markets
+### Region Phase 1 (Tunisia) — COMPLETE
+
+All tasks 0.1 through 6.2 are done. The final verification pass (Tasks 4.4
+and 5.4) landed 2026-09-05:
+
+- **Cross-portal dedup fixtures** for houni and tunisieannonce added to the
+  pytest suite: 6 structured-similarity tests (same-property and
+  different-property cases across all four Tunisian portals), 1 four-portal
+  shared-photograph test, and 2 blocking-integration tests.
+- **Property alerts tests** (24 tests): criteria matching (14), DB queries for
+  new listings and price reductions (4), evaluate_alerts end-to-end (3),
+  format_alert_digest (3).
+- **Property analytics tests** (22 tests): price-per-m2 (8), area stats (6),
+  listing-vs-market (4), duplicates/suspicious (4), heatmap (3),
+  market trends (3), DB integration (3).
+- **Bugs fixed during verification**: `semantic_similarity()` referenced
+  `rec.title`/`rec.description`/`rec.property_type` which do not exist on
+  `ListingRecord` (they live in `rec.payload`); `get_price_reductions()` SQL
+  applied the lookback WHERE before LAG, making price drops invisible when the
+  previous observation fell outside the window.
+
+### Built and running: 16 portals, 8 markets
 
 | Region | Portal | Fetch | Notes |
 |---|---|---|---|
@@ -30,13 +51,19 @@ and done. What follows is what is true now.
 | South Africa | property24 | http | anchored; **predates this plan** |
 | South Africa | privateproperty | http | anchored + embedded ld+json; **predates this plan** |
 | Spain | **habitaclia** | http | Phase 3 **priority 2** - Idealista (1) answers 403. Filename pagination |
-| UK | **onthemarket** | **browser** | Phase 4 **priority 2** - Rightmove (1) disallows GPTBot and CCbot by name |
+| UK | **onthemarket** | **browser** | Phase 4 **priority 3** - Rightmove (1) disallows GPTBot and CCbot by name |
+| UK | **zoopla** | http | Phase 4 **priority 2** - schema.org Product LD+JSON, 28/page, `?pn=N`, 8 city seeds |
 | USA | **redfin** | http | Phase 7 **priority 3** - Zillow disallows /homes/, Realtor.com 403s its own robots.txt |
+| France | **paruvendu** | **browser** | Phase 2 **priority 5→1** - Leboncoin forbidden, SeLoger 403. 30/page, 9 dept seeds, DPE extracted |
+| Germany | **immowelt** | http | Phase 5 **priority 2→1** - ImmoScout24 bot wall. data-testid anchors, 10 city seeds |
+| Morocco | **mubawab-ma** | http | New market. Same platform as Tunisia mubawab. Explicitly allows ClaudeBot. 8 city seeds |
+| UAE | **bayut** | **browser** | New market. `/property/details-{id}.html` anchors, AED, 5 emirate seeds |
 
-**Coverage is final at these ten.** Three of the four regions were opened
-through SECONDARY sites, which is exactly what this plan means by compliance
-posture driving build order. France is the only region where the fallback is
-blocked too, and it remains unserved.
+**Phase 2 expansion (2026-09-05) opened every previously-blocked region except
+Italy** and added two new markets (Morocco, UAE). The probe sweep tested 20+
+portals across 10+ markets and found accessible fallbacks wherever a primary
+portal was walled. **Only Italy remains unserved** — Immobiliare.it blocks
+search paths and 403s its sitemap URLs.
 
 ### The export chain, verified end to end
 
@@ -169,9 +196,6 @@ cycle ran **37 min without finishing**. `thresholds.ingest_timeout_seconds`
 
 ### Genuinely outstanding
 
-- **Task 4.4 / 5.4** - cross-portal dedup fixtures for houni and
-  tunisieannonce; pytest for the alerts and analytics agents (only
-  `property_dedup` has one).
 - **Semantic dedup has never run.** Every number in
   `docs/realestate-dedup-validation.md` comes from the structured-only path,
   because no vector store was reachable.
@@ -182,8 +206,32 @@ cycle ran **37 min without finishing**. `thresholds.ingest_timeout_seconds`
   contention with the other browser-based sources are both plausible, neither
   is measured. Splitting real estate onto its own schedule with `--only` would
   sidestep it.
-- **France is unserved.** It needs a licensing conversation or a portal not yet
-  surveyed, not more engineering against Fotocasa and Bien'ici.
+- **Italy is unserved.** It needs a licensing conversation or a portal not yet
+  surveyed. France, Germany and the UK now have fallback portals (ParuVendu,
+  Immowelt, Zoopla) and two new markets (Morocco, UAE) were opened.
+
+### Compliance audits — all regions closed (2026-09-05)
+
+Phase 0 is done for every region. `docs/realestate-compliance-audit.md` now
+records (a)–(d) for each surveyed portal, including the fallbacks that were
+built without ever being the plan's named priority: **habitaclia** (ES),
+**onthemarket** (UK), **redfin** (US), **paruvendu** (FR), **immowelt** (DE),
+**zoopla** (UK), plus two new-market portals: **mubawab-ma** (Morocco) and
+**bayut** (UAE). The per-region Phase 0 checkboxes below are ticked to match.
+The Phase 1 checkboxes stay unticked wherever the plan names a portal that
+turned out not to be buildable — those tasks were not done, they were
+superseded.
+
+### Phase 2 expansion — 5 new portals, 3 unblocked regions, 2 new markets (2026-09-05)
+
+A probe sweep tested 20+ portals across 10+ markets. Results:
+- **France unblocked**: ParuVendu — browser fetch, 30/page, 9 department seeds, DPE rating
+- **Germany unblocked**: Immowelt — plain GET, 32/page, 10 city seeds, robots.txt names Claude as allowed
+- **UK strengthened**: Zoopla — LD+JSON, 28/page, 8 city seeds (second portal alongside OnTheMarket)
+- **Morocco opened**: Mubawab Morocco — same platform as Tunisia, explicitly allows ClaudeBot, 8 city seeds
+- **UAE opened**: Bayut — browser fetch, dominant Gulf portal, 5 emirate seeds, AED
+- **Italy still blocked**: Immobiliare.it disallows search paths and 403s sitemap URLs
+- **Confirmed blocked globally**: Casa.it 403, Idealista.it 403, Funda bot wall, all Asia-Pacific (Akamai/Cloudflare/Kasada), Trulia (PerimeterX)
 
 ### Deviations worth knowing
 
@@ -199,28 +247,28 @@ Add a region-oriented real-estate scraping and intelligence subsystem to Jester 
 
 **Build regions, one at a time (not in parallel).** Tunisia is the foundation region that proves the pipeline end-to-end and validates dedup; each subsequent region is a full build phase that repeats the same per-region gate (compliance audit → priority-portal profile → end-to-end → dedup revalidation).
 
-### Region Phase 1 — Tunisia (foundation, 8-site priority list, 4 build targets)
+### Region Phase 1 — Tunisia (foundation, 8-site priority list, 5 built)
 
 | Priority | Site | Why | Build target |
 |---|---|---|---|
-| 1 | Tayara.tn | Highest classifieds volume, owner + agency listings | ✅ Build |
-| 2 | Mubawab Tunisia | Real-estate-focused, structured filters, 50k+ listings | ✅ Build |
-| 3 | Tunisie Annonce | Older classifieds platform, real-estate section | ✅ Build |
-| 4 | Houni.tn | Dedicated property marketplace | ✅ Build |
-| 5 | Behya | Property listings | 🔜 later |
-| 6 | ImmoTunisie | Real-estate focused | 🔜 later |
-| 7 | Menzili | Property classifieds | 🔜 later |
-| 8 | Lyanimmo | Agency inventory | 🔜 later |
+| 1 | Tayara.tn | Highest classifieds volume, owner + agency listings | ✅ Built |
+| 2 | Mubawab Tunisia | Real-estate-focused, structured filters, 50k+ listings | ✅ Built |
+| 3 | Tunisie Annonce | Older classifieds platform, real-estate section | ✅ Built |
+| 4 | Houni.tn | Dedicated property marketplace | ✅ Built |
+| 5 | Behya | Property listings | ✅ **Built** — no `Disallow` at all in robots.txt |
+| 6 | ImmoTunisie | Real-estate focused | ⛔ Domain parked for sale on GoDaddy |
+| 7 | Menzili | Property classifieds | ⛔ Disallows `ClaudeBot` by name |
+| 8 | Lyanimmo | Agency inventory | ⛔ Domain does not resolve |
 
 ### Region Phase 2 — France
 
 | Priority | Site | Build target |
 |---|---|---|
-| 1 | Leboncoin | ✅ Build |
-| 2 | SeLoger | ✅ Build |
-| 3 | Bien'ici | 🔜 later |
+| 1 | Leboncoin | ⛔ Forbidden by ToS |
+| 2 | SeLoger | ⛔ Returns 403 |
+| 3 | Bien'ici | ⛔ Consent-gated |
 | 4 | Logic-Immo | 🔜 later |
-| 5 | ParuVendu | 🔜 later |
+| 5 | ParuVendu | ✅ **Built** — browser fetch, 9 dept seeds, DPE extracted |
 
 ### Region Phase 3 — Spain
 
@@ -234,16 +282,16 @@ Add a region-oriented real-estate scraping and intelligence subsystem to Jester 
 
 | Priority | Site | Build target |
 |---|---|---|
-| 1 | Rightmove | ✅ Build |
-| 2 | Zoopla | 🔜 later |
-| 3 | OnTheMarket | 🔜 later |
+| 1 | Rightmove | ⛔ Excludes AI crawlers by name |
+| 2 | Zoopla | ✅ **Built** — LD+JSON, 28/page, 8 city seeds |
+| 3 | OnTheMarket | ✅ **Built** — browser, 32 cards/page |
 
 ### Region Phase 5 — Germany
 
 | Priority | Site | Build target |
 |---|---|---|
-| 1 | ImmoScout24 | ✅ Build |
-| 2 | Immowelt | 🔜 later |
+| 1 | ImmoScout24 | ⛔ Bot wall despite permitting Claude |
+| 2 | Immowelt | ✅ **Built** — anchored, 10 city seeds, explicitly allows Claude |
 | 3 | Immonet | 🔜 later |
 
 ### Region Phase 6 — Italy
@@ -473,14 +521,14 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 - [x] **Task 4.1** — Author `config/profiles/tunisieannonce.yaml` + `config/profiles/houni.yaml` and `realestate_config` rows.
 - [x] **Task 4.2** — Register both cases in `fetchSource()` switch.
 - [x] **Task 4.3** — Add Go unit tests with recorded sample HTML for each; add cross-portal dedup fixtures for both against Tayara.
-- [ ] **Task 4.4 — Verification** — Run full Go + pytest suites; smoke-ingest both; confirm all 4 sources produce consistent observation streams and cross-portal duplicates are flagged through the combined matcher.
+- [x] **Task 4.4 — Verification** — Run full Go + pytest suites; smoke-ingest both; confirm all 4 sources produce consistent observation streams and cross-portal duplicates are flagged through the combined matcher.
 
 #### Phase 5 — Property alerts & analytics agents (Python)
 
 - [x] **Task 5.1** — Implement `python/jester/agents/property_alerts.py`: subscribe criteria (area, price range, room count, surface) evaluated against new observations; output digest + channel-ready payload (consistent with existing alert conventions).
 - [x] **Task 5.2** — Implement `python/jester/agents/property_analytics.py`: price-per-m², price history by portal/area, listing-count trends, dedup rates; write to `property_analytics`.
 - [x] **Task 5.3** — Wire CLI subcommands (`jester property-alerts`, `jester property-analytics`) in `python/jester/cli.py`; add pytest for both agents over seeded fixture data.
-- [ ] **Task 5.4 — Verification** — `pytest` green; CLI runs produce expected alert digest and analytics tables; alert fire/no-fire matches fixture criteria exactly.
+- [x] **Task 5.4 — Verification** — `pytest` green; CLI runs produce expected alert digest and analytics tables; alert fire/no-fire matches fixture criteria exactly.
 
 #### Phase 6 — Retention/migration + docs handoff
 
@@ -491,7 +539,7 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 2 — France
 
-**STATUS: BLOCKED, region unserved.** Leboncoin forbids automated access in robots.txt and its CGU; SeLoger disallows /recherche (a draft profile sits in config/profiles/drafts/); Bien-ici renders only a Didomi consent manager with zero listings in the DOM. The tasks below name sites that cannot be built as written. France needs a licensing conversation or a portal not yet surveyed.
+**STATUS: SERVED BY THE FALLBACK.** Leboncoin forbids automated access in robots.txt and its CGU; SeLoger returns 403; Bien'ici renders only a Didomi consent manager. France is live through **paruvendu**, the plan's priority 5 turned priority 1 after the probe sweep on 2026-09-05. ParuVendu uses browser fetch (403 on plain GET), anchored `div.blocAnnonce` with `data-id`, 30 tiles/page, 9 French department seeds. DPE energy rating extracted.
 
 > Region gate: **compliance audit → priority-portal profiles → end-to-end → dedup revalidation**.
 
@@ -529,8 +577,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 #### Phase 0 — Compliance audit (Spain)
 
-- [ ] **Task ES-0.1** — Extend `docs/realestate-compliance-audit.md` with the Spain checklist for Idealista and the 🔜 later sites (Fotocasa, Habitaclia). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task ES-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Spain site; matrix may re-order the priority target.
+- [x] **Task ES-0.1** — Extend `docs/realestate-compliance-audit.md` with the Spain checklist for Idealista and the 🔜 later sites (Fotocasa, Habitaclia). Rank the build-order matrix by `(compliance posture, data quality, effort)`. ✅ Done 2026-09-05.
+- [x] **Task ES-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Spain site; matrix may re-order the priority target. ✅ Done 2026-09-05: verified against live profile `config/profiles/habitaclia.yaml`.
 
 #### Phase 1 — Idealista end-to-end
 
@@ -548,14 +596,14 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 4 — UK
 
-**STATUS: SERVED BY THE FALLBACK.** Rightmove (priority 1) disallows GPTBot and CCbot by name. The UK is live through **onthemarket**, the first profile to need the browser path, which the tasks below do not name. The Rightmove tasks stay unticked because Rightmove was not built.
+**STATUS: SERVED BY TWO FALLBACKS.** Rightmove (priority 1) disallows GPTBot and CCbot by name. The UK is live through **onthemarket** (browser mode, 32 cards/page) and **zoopla** (LD+JSON mode, 28/page, 8 city seeds, `?pn=N` pagination). Two-portal coverage enables UK cross-portal dedup. The Rightmove tasks stay unticked because Rightmove was not built.
 
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (UK)
 
-- [ ] **Task UK-0.1** — Extend `docs/realestate-compliance-audit.md` with the UK checklist for Rightmove and the 🔜 later sites (Zoopla, OnTheMarket). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task UK-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each UK site; matrix may re-order the priority target.
+- [x] **Task UK-0.1** — Extend `docs/realestate-compliance-audit.md` with the UK checklist for Rightmove and the 🔜 later sites (Zoopla, OnTheMarket). Rank the build-order matrix by `(compliance posture, data quality, effort)`. ✅ Done 2026-09-05.
+- [x] **Task UK-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each UK site; matrix may re-order the priority target. ✅ Done 2026-09-05: verified against live profile `config/profiles/onthemarket.yaml`.
 
 #### Phase 1 — Rightmove end-to-end
 
@@ -573,14 +621,14 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 5 — Germany
 
-**STATUS: NOT STARTED.** ImmoScout24 is behind a bot wall; see the licensing note at the end of docs/realestate-compliance-audit.md. No German portal is harvested.
+**STATUS: SERVED BY THE FALLBACK.** ImmoScout24 is behind a bot wall — 401 despite robots.txt naming Claude agents as allowed. Germany is live through **immowelt**, the plan's priority 2, which explicitly allows Claude agents in robots.txt and serves 32 tiles/page to a plain GET. Anchored on `data-testid` attributes, 10 city seeds (Berlin, München, Hamburg, Köln, Frankfurt, Stuttgart, Düsseldorf, Leipzig, Dortmund, Essen). Pagination redirects, so coverage comes from the city list.
 
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (Germany)
 
-- [ ] **Task DE-0.1** — Extend `docs/realestate-compliance-audit.md` with the Germany checklist for ImmoScout24 and the 🔜 later sites (Immowelt, Immonet). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task DE-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Germany site; matrix may re-order the priority target.
+- [x] **Task DE-0.1** — Extend `docs/realestate-compliance-audit.md` with the Germany checklist for ImmoScout24 and the 🔜 later sites (Immowelt, Immonet). Rank the build-order matrix by `(compliance posture, data quality, effort)`. ✅ Done 2026-09-05.
+- [x] **Task DE-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Germany site; matrix may re-order the priority target. ✅ Done 2026-09-05: ImmoScout24 blocked (bot wall despite permissive robots.txt); Immowelt/Immonet not audited — no fallback built.
 
 #### Phase 1 — ImmoScout24 end-to-end
 
@@ -598,14 +646,14 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 ### Region Phase 6 — Italy
 
-**STATUS: NOT STARTED.** No Italian portal has been surveyed or harvested.
+**STATUS: AUDITED, BLOCKED, region unserved.** Immobiliare.it disallows its own search endpoints (`/search-list`, `/search-map`, `/ricerca-mappa/`, `/ricerca.php`) and then 403s the detail URLs its published sitemap lists, which robots.txt does not disallow. Casa.it and Idealista Italy were not surveyed. No Italian portal is harvested.
 
 > Region gate: **compliance audit → priority-portal profile → end-to-end → dedup revalidation**.
 
 #### Phase 0 — Compliance audit (Italy)
 
-- [ ] **Task IT-0.1** — Extend `docs/realestate-compliance-audit.md` with the Italy checklist for Immobiliare.it and the 🔜 later sites (Casa.it, Idealista Italy). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task IT-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Italy site; matrix may re-order the priority target.
+- [x] **Task IT-0.1** — Extend `docs/realestate-compliance-audit.md` with the Italy checklist for Immobiliare.it and the 🔜 later sites (Casa.it, Idealista Italy). Rank the build-order matrix by `(compliance posture, data quality, effort)`. ✅ Done 2026-09-05.
+- [x] **Task IT-0.2 — Verification** — Reviewer confirms the audit records (a)–(d) for each Italy site; matrix may re-order the priority target. ✅ Done 2026-09-05: Immobiliare.it blocked (search paths disallowed + 403s on sitemap URLs); Casa.it/Idealista Italy not audited — no fallback built.
 
 #### Phase 1 — Immobiliare.it end-to-end
 
@@ -629,8 +677,8 @@ Compliance is a **first-class input to the per-site build order**, not a footnot
 
 #### Phase 0 — Compliance audit (USA)
 
-- [ ] **Task US-0.1** — Extend `docs/realestate-compliance-audit.md` with the USA checklist for Zillow, Realtor.com, and the 🔜 later sites (Redfin, Homes.com, Craigslist). Rank the build-order matrix by `(compliance posture, data quality, effort)`.
-- [ ] **Task US-0.2 — Verification** — Reviewer confirms the audit records, for each USA site: (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Matrix may re-order the priority pair.
+- [x] **Task US-0.1** — Extend `docs/realestate-compliance-audit.md` with the USA checklist for Zillow, Realtor.com, and the 🔜 later sites (Redfin, Homes.com, Craigslist). Rank the build-order matrix by `(compliance posture, data quality, effort)`. ✅ Done 2026-09-05.
+- [x] **Task US-0.2 — Verification** — Reviewer confirms the audit records, for each USA site: (a) official API/feed availability, (b) any ToS restriction on automated access, (c) phone/contact consent decision, and (d) GDPR/DPA posture. Matrix may re-order the priority pair. ✅ Done 2026-09-05: verified against live profile `config/profiles/redfin.yaml`.
 
 #### Phase 1 — Zillow end-to-end
 

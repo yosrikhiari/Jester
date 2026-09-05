@@ -1,0 +1,84 @@
+# Zoopla (UK) - the plan's priority 2 for the UK market.
+#
+# WHY THIS ONE AND NOT RIGHTMOVE. Rightmove is the plan's priority 1 and gives
+# Disallow: / to GPTBot and CCbot by name; the operator has enumerated AI
+# crawlers and excluded them. Zoopla does not name ClaudeBot, CCBot or any AI
+# agent in its robots.txt, and no rule disallows /for-sale/houses/ - only
+# auction facets and niche bedroom filters are blocked. Checked 2026-09-05.
+#
+# It publishes a schema.org Product per listing inside an ItemList LD+JSON
+# block, with Offer (price/currency), SingleFamilyResidence (bedrooms,
+# bathrooms, floor size, address, geo) and a single image URL. 28 listings per
+# page. Verified: a plain GET returns the full page with LD+JSON intact.
+portal: zoopla
+market: gb
+base_url: https://www.zoopla.co.uk
+currency: GBP
+fetch: http
+
+list:
+  url: https://www.zoopla.co.uk/for-sale/houses/london/
+  urls:
+    - https://www.zoopla.co.uk/for-sale/houses/london/
+    - https://www.zoopla.co.uk/for-sale/houses/manchester/
+    - https://www.zoopla.co.uk/for-sale/houses/birmingham/
+    - https://www.zoopla.co.uk/for-sale/houses/edinburgh/
+    - https://www.zoopla.co.uk/for-sale/houses/bristol/
+    - https://www.zoopla.co.uk/for-sale/houses/leeds/
+    - https://www.zoopla.co.uk/for-sale/houses/glasgow/
+    - https://www.zoopla.co.uk/for-sale/houses/liverpool/
+  page_param: pn
+  max_pages: 3
+
+extract:
+  mode: ldjson
+  type: Product
+
+  fields:
+    listing_id:
+      path: url
+      pattern: '/details/(\d+)'
+    url:
+      path: url
+    price:
+      path: offers.price
+      transform: [digits]
+    currency:
+      path: offers.priceCurrency
+    # "3 bed detached house for sale" - the full schema.org name.
+    title:
+      path: name
+    # "The Chapman Collection, London SE9" - a location string, not a
+    # structured PostalAddress.
+    address:
+      path: isRelatedTo.address
+    # The city sits between the last comma and the UK postcode prefix.
+    # Covers "..., London SE9", "..., Manchester M1 5GD", "..., Edinburgh
+    # EH1 3AA". Addresses without a comma (bare "London SE9") fall through
+    # to an empty city, which the seed URL's city already implies.
+    city:
+      path: isRelatedTo.address
+      pattern: ',\s*([A-Za-z][a-zA-Z ]+?)\s+[A-Z]{1,2}\d'
+      transform: [trim]
+    bedrooms:
+      path: isRelatedTo.numberOfBedrooms
+    bathrooms:
+      path: isRelatedTo.numberOfBathroomsTotal
+    # "3 bed detached house for sale" -> "detached house".
+    property_type:
+      path: name
+      pattern: '\d+ beds? (.+?) for sale'
+      transform: [trim]
+    floor_size:
+      path: isRelatedTo.floorSize.value
+
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/to-rent/", "/for-rent/"]
+
+  gallery:
+    path: image

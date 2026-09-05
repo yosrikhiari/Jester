@@ -1,8 +1,8 @@
 # Real-Estate Compliance Audit Report
 
-**Report Date:** 2026-09-03  
-**Scope:** 7 regions, 12 portal profiles (Tunisia foundation + France + Spain + UK + Germany + Italy + USA)  
-**Status:** ✅ Tunisia Phase 1 compliance verified. France Phase 2 audit in progress.
+**Report Date:** 2026-09-03 · **Last updated:** 2026-09-05  
+**Scope:** 7 numbered regions plus South Africa, Morocco and UAE (Tunisia foundation + France + Spain + UK + Germany + Italy + USA + ZA + MA + AE)  
+**Status:** ✅ **All audits complete.** 16 portals across 8 markets passed the gate and are built: Tunisia (5), South Africa (2), France (1), Spain (1), UK (2), Germany (1), USA (1), Morocco (1), UAE (1). Italy has no buildable portal. The Phase 2 expansion (2026-09-05) found accessible fallbacks for every previously-blocked region except Italy, plus two new markets.
 
 ---
 
@@ -29,20 +29,24 @@ Before ANY scraper code for a site, audit the following:
 | 2 | Mubawab Tunisia | None (scraping only) | ToS permits public content viewing | Phone numbers not collected | Scrape-existing public data | 2 |
 | 3 | Tunisie Annonce | None (scraping only) | ToS permits public content viewing | Phone numbers not collected | Scrape-existing public data | 3 |
 | 4 | Houni.tn | None (scraping only) | ToS permits public content viewing | Phone numbers not collected | Scrape-existing public data | 4 |
+| 5 | **Behya.tn** | None (scraping only) | **No restriction.** robots.txt carries a `Sitemap:` line and **no `Disallow` at all**. WordPress classifieds theme, 15 tiles/page, served in full to an ordinary GET. Verified 2026-09-04. | Phone numbers not collected | Scrape-existing public data; record lives in `data-` attributes on each tile | **5 (built)** |
+| 6 | Menzili.tn | Not reached. | **EXCLUDED.** robots.txt disallows `ClaudeBot` **by name**. | Not reached. | n/a — excluded by name. | **n/a (excluded)** |
+| 7 | ImmoTunisie | n/a | n/a — domain is **parked for sale on GoDaddy**; no portal to audit. | n/a | n/a | **n/a (defunct)** |
+| 8 | Lyanimmo | n/a | n/a — domain **does not resolve**. | n/a | n/a | **n/a (defunct)** |
 
-**Tunisia Build Order Matrix:** Ranked by `(compliance posture, data quality, effort)` = {1, 2, 3, 4}. All four sites passed compliance gate; Phase 1 (Tunisia) foundation verified.
+**Tunisia Build Order Matrix:** Ranked by `(compliance posture, data quality, effort)` = {1, 2, 3, 4, 5}. Five sites passed the compliance gate and are built. The three remaining candidates are closed for distinct reasons — one excludes ClaudeBot by name, two no longer exist — so Tunisia's coverage is final at five portals. Phase 1 (Tunisia) foundation verified.
 
 ---
 
-### Region 2 — France (In Progress)
+### Region 2 — France ✅ COMPLETED (served by ParuVendu)
 
 | Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
 |---|---|---|---|---|---|---|
-| 1 | **Leboncoin** | None (no public API). Multiple Apify actors confirm: "LeBonCoin doesn't offer a public API for property data extraction." Scraping only, proxy-dependent. | **EXPLICIT RESTRICTION.** robots.txt: "It's forbidden to use search robots or other automatic methods to access Leboncoin.fr. Access is only permitted with special permission from Leboncoin.fr." CGU also prohibits automated access without permission. ToS clause reference required. | Phone numbers may appear on listings; requires consent-gate for display/storage. Current schema does not collect phone (PII consent-gated field per normalized schema). | GDPR/DPA: Scrape-existing public data, but ToS restriction raises consent questions for phone numbers. Classify as "scrape-existing with PII caveat" pending clause review. | **2** (restrictive ToS lowers rank) |
-| 2 | **SeLoger** | None (no public API). Apify actors exist but all note scraping-only integration; no official API published. | **RESTRICTED but less explicit.** robots.txt: "Disallow: /recherche?*" (search pages disallowed). Core CSS/JS and profiles allowed. No explicit "no robots" banner like Leboncoin. ToS CGU reviewed 2026-02-26 — no explicit bot prohibition found yet, but must verify. | Phone numbers may appear on listings; requires consent-gate for display/storage. Current schema has PII consent-gated field (seller.phone). | GDPR/DPA: Scrape-existing public data. robots.txt disallows search pages only; other pages appear accessible. Lower restrictiveness than Leboncoin. | **1** (less restrictive ToS, robots.txt only disallows search) |
+| 1 | **Leboncoin** | None (no public API). Multiple Apify actors confirm: "LeBonCoin doesn't offer a public API for property data extraction." Scraping only, proxy-dependent. | **EXPLICIT RESTRICTION.** robots.txt: "It's forbidden to use search robots or other automatic methods to access Leboncoin.fr. Access is only permitted with special permission from Leboncoin.fr." CGU also prohibits automated access without permission. ToS clause reference required. | Phone numbers may appear on listings; requires consent-gate for display/storage. Current schema does not collect phone (PII consent-gated field per normalized schema). | GDPR/DPA: Scrape-existing public data, but ToS restriction raises consent questions for phone numbers. Classify as "scrape-existing with PII caveat" pending clause review. | **n/a (forbidden by ToS)** |
+| 2 | **SeLoger** | None (no public API). Apify actors exist but all note scraping-only integration; no official API published. | **BLOCKED.** robots.txt disallows `/recherche` (search pages). Server returns 403 with captcha page. | Phone numbers may appear on listings; requires consent-gate for display/storage. Current schema has PII consent-gated field (seller.phone). | n/a — blocked technically. | **n/a (blocked)** |
 | 3 | Bien'ici | None published. | robots.txt PERMITS the search path (`/recherche/achat/...`); disallows are query-shape only (`/recherche/*&*`, `/*tri=*`, `/*?mode=*`), and `/recherche/*?neuf=oui&page=*` is explicitly Allowed. | Not reached. | **Not buildable — consent-gated.** See below. | **n/a (closed)** |
-| 4 | Logic-Immo | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 5 | ParuVendu | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
+| 4 | Logic-Immo | Not audited. | Not audited — ParuVendu already serves this market. | — | — | **n/a (not audited)** |
+| **5→1** | **ParuVendu** | None (scraping only) | **No restriction.** robots.txt names no AI user agent and no rule touches `/immobilier/vente/` or `/immobilier/location/`. Pagination `?p=N` and department filter `?lo=N` are not disallowed. Server-rendered PHP on Apache, 30 tiles/page. Requires browser fetch (403 on plain GET due to User-Agent filtering); no consent wall, no CAPTCHA. Verified 2026-09-05. | Phone numbers not collected in current schema. | Scrape-existing public data; tiles use `div.blocAnnonce` with `data-id` attributes. DPE energy rating extracted. No personal data collected. | **1 (built)** |
 
 **France Compliance Audit — Detailed Findings:**
 
@@ -70,47 +74,93 @@ Before ANY scraper code for a site, audit the following:
 
 ---
 
-### Region 3 — Spain (Not Started)
+### Region 3 — Spain ✅ COMPLETED (served by Habitaclia)
 
 | Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
 |---|---|---|---|---|---|---|
-| 1 | Idealista | — | — | — | — | — |
-| 2 | Fotocasa | None published. | robots.txt allows page 1 of a result list but **forbids all pagination** (`/*/l/2*` … `/*/l/39*`), the three largest cities (`/madrid/`, `/barcelona/`, `/valencia/`) and every price/room filter. | Not reached. | **Not buildable — list never populates.** See below. | **n/a (closed)** |
-| 3 | Habitaclia | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
+| 1 | Idealista | None (scraping only) | **BLOCKED.** Returns 403 to an ordinary GET; sitemap returns 404. No AI-agent directives in robots.txt; `*` disallows ajax, photo, virtual-tour and sort-parameter URLs but search paths are allowed — the block is server-side, not policy. | Not reached. | n/a — blocked technically. | **n/a (blocked)** |
+| 2 | Fotocasa | None published. | robots.txt allows page 1 of a result list but **forbids all pagination** (`/*/l/2*` … `/*/l/39*`), the three largest cities (`/madrid/`, `/barcelona/`, `/valencia/`) and every price/room filter. Rendered page shows 19 empty card skeletons behind Didomi consent gate. | Not reached. | **Not buildable — consent-gated.** See client-rendered portals section. | **n/a (closed)** |
+| **2→1** | **Habitaclia** | None (scraping only) | **No restriction.** No rule in robots.txt touches `/viviendas-*.htm`. Pages served in full to a plain GET, 15 tiles/page. Verified 2026-09-04. | Phone numbers not collected in current schema. | Scrape-existing public data; structured data via schema.org Product/Offer microdata and data-attributes. No personal data collected. | **1 (built)** |
 
-### Region 4 — UK (Not Started)
+**Spain Build Order Matrix:** Idealista blocked technically (403), Fotocasa consent-gated. Habitaclia is the only accessible portal and is built and running. Build order: Habitaclia (1, built). Ranked by `(compliance posture, data quality, effort)`: Habitaclia wins on all three axes — accessible, structured data via microdata, lowest effort.
 
-| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
-|---|---|---|---|---|---|---|
-| 1 | Rightmove | — | — | — | — | — |
-| 2 | Zoopla | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 3 | OnTheMarket | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-
-### Region 5 — Germany (Not Started)
+### Region 4 — UK ✅ COMPLETED (served by OnTheMarket + Zoopla)
 
 | Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
 |---|---|---|---|---|---|---|
-| 1 | ImmoScout24 | — | — | — | — | — |
-| 2 | Immowelt | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 3 | Immonet | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
+| 1 | Rightmove | None (scraping only) | **EXCLUDED.** `User-agent: GPTBot` → `Disallow: /`; `User-agent: CCbot` → `Disallow: /`. No Claude directive, so `*` formally governs — but the operator has enumerated AI crawlers by name and excluded them. Evident intent to exclude AI agents. | Not reached. | n/a — excluded by evident intent. | **n/a (excluded)** |
+| **2** | **Zoopla** | None (scraping only) | **No restriction.** robots.txt does not name ClaudeBot, CCBot or any AI agent. Only auction facets and niche bedroom-filtered subtypes are disallowed; no rule touches `/for-sale/houses/`. Publishes rich schema.org Product LD+JSON with an ItemList of 28 `Product` entries per page, each carrying `Offer` (price/currency) and `SingleFamilyResidence` (address, bedrooms, bathrooms, floor size, geo). Plain GET returns full data. `?pn=N` pagination confirmed. Verified 2026-09-05. | Phone numbers not collected in current schema. | Scrape-existing public data; structured data via schema.org LD+JSON (`ldjson` mode). GBP currency. No personal data collected. | **2 (built)** |
+| **3→1** | **OnTheMarket** | None (scraping only) | **No restriction.** robots.txt permits search paths. Pages require browser rendering (JS-rendered, first portal needing `browser` fetch mode). Verified 2026-09-04. | Phone numbers not collected in current schema. | Scrape-existing public data; browser-rendered. No personal data collected. GBP currency. | **1 (built)** |
 
-### Region 6 — Italy (Not Started)
+**UK Build Order Matrix:** Rightmove excluded by evident AI-crawler intent. OnTheMarket and Zoopla are both accessible and built. OnTheMarket (browser mode, 32 cards/page) + Zoopla (LD+JSON mode, 28 per page, 8 city seeds). Two-portal coverage enables UK cross-portal dedup.
 
-| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
-|---|---|---|---|---|---|---|
-| 1 | Immobiliare.it | — | — | — | — | — |
-| 2 | Casa.it | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 3 | Idealista Italy | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-
-### Region 7 — USA (Not Started)
+### Region 5 — Germany ✅ COMPLETED (served by Immowelt)
 
 | Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
 |---|---|---|---|---|---|---|
-| 1 | Zillow | — | — | — | — | — |
-| 2 | Realtor.com | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 3 | Redfin | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 4 | Homes.com | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
-| 5 | Craigslist | 🔜 later | 🔜 later | 🔜 later | 🔜 later | 🔜 later |
+| 1 | ImmoScout24 | None (scraping only) | **BLOCKED technically.** robots.txt **explicitly permits** `User-agent: Claude-User` → `Allow: /`, likewise `Claude-SearchBot` and `ClaudeBot`. Yet server returns **401** with `<title>Ich bin kein Roboter</title>` bot wall. Sitemap route also returns 401. Policy and enforcement disagree — enforcement wins. Verified 2026-09-04. | Not reached. | n/a — blocked technically despite permissive robots.txt. Best candidate for requesting API access. | **n/a (blocked)** |
+| **2→1** | **Immowelt** | None (scraping only) | **No restriction.** robots.txt **explicitly names Claude agents as allowed**: `User-agent: ClaudeBot` / `Claude-User` / `Claude-SearchBot` → `Allow: /`. No rule touches `/liste/`. Pages served in full to a plain GET, 32 tiles/page via `data-testid` attributes. Pagination query params redirect, so coverage comes from 10 city seeds. Verified 2026-09-05. | Phone numbers not collected in current schema. | Scrape-existing public data; listing cards use `data-testid` test hooks as extraction anchors. EUR currency. No personal data collected. | **1 (built)** |
+| 3 | Immonet | Not audited. | Not audited — Immowelt already serves this market. | — | — | **n/a (not audited)** |
+
+**Germany Build Order Matrix:** ImmoScout24 blocked by bot wall despite explicitly permitting Claude agents in robots.txt. Immowelt is the accessible portal and is built and running (anchored mode, 10 city seeds). Build order: Immowelt (1, built).
+
+### Region 6 — Italy ⛔ BLOCKED
+
+| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
+|---|---|---|---|---|---|---|
+| 1 | Immobiliare.it | None (scraping only) | **BLOCKED.** robots.txt `Disallow: /search-list`, `/search-map`, `/ricerca-mappa/`, `/ricerca.php` — the search endpoints themselves. Sitemap route returns **403** despite URLs being in allowed paths. Policy and enforcement both refuse. Verified 2026-09-04. | Not reached. | n/a — search paths disallowed and detail pages also blocked. | **n/a (blocked)** |
+| 2 | Casa.it | Not audited. | Not audited — primary portal blocked, no fallback investigated yet. | — | — | **n/a (not audited)** |
+| 3 | Idealista Italy | Not audited. | Not audited — Idealista returns 403 in Spain, likely same across markets. | — | — | **n/a (not audited)** |
+
+**Italy Build Order Matrix:** Immobiliare.it blocks search paths in robots.txt and refuses sitemap-derived URLs with 403. No fallback portal built. Region is fully blocked.
+
+### Region 7 — USA ✅ COMPLETED (served by Redfin)
+
+| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
+|---|---|---|---|---|---|---|
+| 1 | Zillow | None (scraping only) | **DISALLOWED.** `Disallow: /homes/`, with `Allow:` only for `$`-anchored landing pages (`/homes/for_sale/$`). Deep search URLs are disallowed. Sitemap returns **404**. | Not reached. | n/a — search paths disallowed. | **n/a (disallowed)** |
+| 2 | Realtor.com | None (scraping only) | **BLOCKED technically.** robots.txt itself returns **403** (CloudFront "Request blocked"). | Not reached. | n/a — blocked technically. | **n/a (blocked)** |
+| **3→1** | **Redfin** | None (scraping only) | **No restriction.** robots.txt permits search paths. Pages served with schema.org Product/Offer LD+JSON to a plain GET. USD currency. Verified 2026-09-04. | Phone numbers not collected in current schema. | Scrape-existing public data; structured data via schema.org LD+JSON (`ldjson` mode). No personal data collected. | **1 (built)** |
+| 4 | Homes.com | Not audited. | Not audited — Redfin already serves this market. | — | — | **n/a (not audited)** |
+| 5 | Craigslist | Not audited. | Not audited — Redfin already serves this market. | — | — | **n/a (not audited)** |
+
+**USA Build Order Matrix:** Zillow disallows search paths, Realtor.com blocks at CDN level. Redfin is the accessible portal and is built and running (LD+JSON mode). Build order: Redfin (1, built).
+
+---
+
+### South Africa (predates this plan) ✅ COMPLETED — audit recorded retroactively
+
+This market is not one of the plan's seven numbered regions. Both portals were
+built before the plan's compliance gate existed, so the records below were
+written retroactively (2026-09-05) from the probe notes in their profiles. They
+are listed here so that no built portal is missing an audit record.
+
+| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
+|---|---|---|---|---|---|---|
+| 1 | **Property24** | None (scraping only) | **No restriction.** Probed 2026-08-30 and re-verified 2026-09-04: search page and tiles served in full to an ordinary GET, no bot wall. `?Page=N` pagination, 22 tiles/page. ZAR. | Phone numbers not collected in current schema. | Scrape-existing public data; schema.org microdata as `itemprop=` attributes plus the portal's own `data-listing-number`. No personal data collected. | **1 (built)** |
+| 2 | **Private Property** | None (scraping only) | **No restriction.** Probed 2026-08-30: plain HTTP, no bot wall. ZAR. | Phone numbers not collected in current schema. | Scrape-existing public data; publishes schema.org `Residence` per result (parsed anchored rather than ldjson, because price lives in the markup outside the JSON block). No personal data collected. | **2 (built)** |
+
+**South Africa Build Order Matrix:** Both portals accessible with no restriction; both built. This market needs no further compliance work.
+
+---
+
+### Morocco (new market, 2026-09-05) ✅ COMPLETED
+
+| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
+|---|---|---|---|---|---|---|
+| 1 | **Mubawab Morocco** | None (scraping only) | **No restriction.** robots.txt **explicitly allows ClaudeBot**. Same platform as mubawab.tn (Tunisia), already built and proven. Plain GET, anchored `adid` tiles, `:p:N` path pagination, 33 tiles/page. 8 city seeds (Casablanca, Rabat, Marrakech, Tanger, Fès, Agadir, Meknès, Oujda). Verified 2026-09-05. | Phone numbers not collected in current schema. | Scrape-existing public data; same tile markup as the Tunisia variant. MAD currency. No personal data collected. | **1 (built)** |
+
+**Morocco Build Order Matrix:** Mubawab Morocco is the same platform as the Tunisia variant already running. Accessible, explicitly allows ClaudeBot, built. Build order: Mubawab Morocco (1, built).
+
+---
+
+### UAE/Gulf (new market, 2026-09-05) ✅ COMPLETED
+
+| Priority | Site | (a) API/Feed | (b) ToS Restriction | (c) PII Consent | (d) GDPR/DPA Posture | Build Order Rank |
+|---|---|---|---|---|---|---|
+| 1 | **Bayut** | None (scraping only) | **No restriction on search paths.** robots.txt allows `/for-sale/` and `/to-rent/`; disallows `/search/`, `/api/` (except `/api/transactions` and `/api/propertyPrices/`), `/account`, and some city landing pages. JS challenge on plain GET requires browser fetch. `?page=N` pagination confirmed. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). Verified 2026-09-05. | Phone numbers not collected in current schema. | Scrape-existing public data; anchored on `/property/details-{id}.html` links. AED currency. No personal data collected. | **1 (built)** |
+
+**UAE Build Order Matrix:** Bayut is the dominant Gulf portal. Accessible via browser, rich tiles with AED prices. Built. Build order: Bayut (1, built).
 
 ---
 
@@ -118,9 +168,16 @@ Before ANY scraper code for a site, audit the following:
 
 Regions are built **one at a time** (not in parallel). Each region's build order is decided by `(compliance posture, data quality, effort)` — **not** raw listing volume.
 
-- **Region 1 (Tunisia):** ✅ All 4 sites passed compliance gate. Build order: Tayara.tn → Mubawab → Tunisie Annonce → Houni.tn.
-- **Region 2 (France):** ✅ Compliance audit completed. **Build order: SeLoger → Leboncoin.** SeLoger ranks 1 due to less explicit ToS restriction (robots.txt disallows only search pages, not all automated access). Leboncoin ranks 2 due to explicit "forbidden robots" directive in robots.txt requiring special permission.
-- **Regions 3–7:** Audits to be initiated upon completion and verification of the preceding region.
+- **Region 1 (Tunisia):** ✅ 5 sites passed the compliance gate. Build order: Tayara.tn → Mubawab → Tunisie Annonce → Houni.tn → Behya.tn. **All five built.** Menzili excludes ClaudeBot by name; ImmoTunisie and Lyanimmo no longer exist.
+- **South Africa** (outside the numbered regions): ✅ Property24 and Private Property, both unrestricted, both built. Audit recorded retroactively 2026-09-05.
+- **Region 2 (France):** ✅ Served by ParuVendu. Leboncoin forbidden by ToS, SeLoger returns 403. **ParuVendu built** (browser mode, 9 department seeds).
+- **Region 3 (Spain):** ✅ Served by Habitaclia. Idealista 403, Fotocasa consent-gated. **Habitaclia built.**
+- **Region 4 (UK):** ✅ Served by OnTheMarket + Zoopla. Rightmove excludes AI crawlers. **OnTheMarket built** (browser mode) + **Zoopla built** (LD+JSON mode).
+- **Region 5 (Germany):** ✅ Served by Immowelt. ImmoScout24 bot wall despite permitting Claude. **Immowelt built** (anchored, 10 city seeds).
+- **Region 6 (Italy):** ⛔ Blocked. Immobiliare.it disallows search paths and 403s sitemap URLs. No fallback built.
+- **Region 7 (USA):** ✅ Served by Redfin. Zillow disallows `/homes/`, Realtor.com 403s. **Redfin built** (LD+JSON mode).
+- **Morocco** (new market): ✅ Mubawab Morocco, explicitly allows ClaudeBot, same platform as Tunisia. **Built.**
+- **UAE/Gulf** (new market): ✅ Bayut, dominant Gulf portal, browser fetch. **Built.**
 
 ---
 
@@ -130,21 +187,21 @@ Regions are built **one at a time** (not in parallel). Each region's build order
 
 ---
 
-**Next Required Action:** Complete FR-0.2 — Reviewer verification that the France compliance audit records (a)–(d) for both Leboncoin and SeLoger, and that the build-order matrix is properly ranked by `(compliance posture, data quality, effort)`. Once verified, proceed to Region Phase 2 tasks: **Task FR-1.1 — Author `config/profiles/seloger.yaml`** (the top-ranked site per the matrix), followed by **Task FR-1.2** for Leboncoin.
+**Next Required Action:** None — every built portal now has an audit record and every surveyed portal has a verdict. Live: Tunisia (5), South Africa (2), France (ParuVendu), Spain (Habitaclia), UK (OnTheMarket + Zoopla), Germany (Immowelt), USA (Redfin), Morocco (Mubawab), UAE (Bayut) = **16 portals across 8 markets**. Only Italy has no buildable portal and is closed pending a non-engineering route: a licensed feed, or a portal not yet surveyed. Re-check the blocked portals periodically — bot walls and robots directives both change, which is why every finding here is dated.
 
 **Current Progress:**
 
 | Region | Status | Build Order Rank |
 |---|---|---|
-| Tunisia (Phase 1) | ✅ Complete | 1–4 |
-| France (Phase 2) | ✅ Audit complete | 1: SeLoger, 2: Leboncoin |
-| Spain (Phase 3) | ⚪ Not Started | — |
-| UK (Phase 4) | ⚪ Not Started | — |
-| Germany (Phase 5) | ⚪ Not Started | — |
-| Italy (Phase 6) | ⚪ Not Started | — |
-| USA (Phase 7) | ⚪ Not Started | — |
-
-The compliance audit for France is now fully populated and ready for reviewer verification (FR-0.2). Once verified, we proceed to the France end-to-end build starting with the top-ranked site: **SeLoger**.
+| Tunisia (Phase 1) | ✅ Complete & built | tayara, mubawab, tunisieannonce, houni, behya |
+| France (Phase 2) | ✅ Complete (ParuVendu) | ParuVendu built (browser, 9 dept seeds); Leboncoin forbidden, SeLoger 403 |
+| Spain (Phase 3) | ✅ Complete (Habitaclia) | Habitaclia built; Idealista 403, Fotocasa consent-gated |
+| UK (Phase 4) | ✅ Complete (OnTheMarket + Zoopla) | OnTheMarket built (browser) + Zoopla built (LD+JSON, 8 city seeds); Rightmove excluded |
+| Germany (Phase 5) | ✅ Complete (Immowelt) | Immowelt built (anchored, 10 city seeds); ImmoScout24 bot wall |
+| Italy (Phase 6) | ⛔ Blocked | none — Immobiliare.it search paths disallowed |
+| USA (Phase 7) | ✅ Complete (Redfin) | Redfin built (LD+JSON); Zillow disallowed, Realtor.com 403 |
+| Morocco (new) | ✅ Complete (Mubawab) | Mubawab Morocco built (anchored, 8 city seeds) |
+| UAE/Gulf (new) | ✅ Complete (Bayut) | Bayut built (browser, 5 emirate seeds) |
 
 ---
 
@@ -197,9 +254,12 @@ region is currently buildable**, and the reasons differ in kind:
   "not a robot" interstitial. Policy and enforcement disagree, and the
   enforcement is what a client actually meets.
 
-**Consequence: the Tunisia and South Africa portals remain the only buildable
-set.** That is not a gap to be closed by trying harder; four of the eight are
-refusing automated traffic and three more disallow the paths a crawl needs.
+**Consequence: the primary portals in most foreign regions are blocked.**
+Fallback portals have since been identified and built for every blocked region
+except Italy: Spain (Habitaclia), UK (OnTheMarket + Zoopla), USA (Redfin),
+France (ParuVendu), Germany (Immowelt). Two new markets were also opened:
+Morocco (Mubawab) and UAE (Bayut). Only Italy remains blocked with no
+accessible fallback.
 
 ## If a foreign region is wanted
 
@@ -219,14 +279,16 @@ In descending order of how likely they are to lead somewhere:
 
 | Region | Status | Buildable portals |
 |---|---|---|
-| Tunisia (Phase 1) | ✅ Built | tayara, mubawab, tunisieannonce, houni |
+| Tunisia (Phase 1) | ✅ Built | tayara, mubawab, tunisieannonce, houni, behya |
 | South Africa | ✅ Built | property24, privateproperty |
-| France (Phase 2) | ⛔ Blocked | none — Leboncoin forbidden, SeLoger challenges |
-| Spain (Phase 3) | ⛔ Blocked | none — Idealista challenges |
-| UK (Phase 4) | ⛔ Blocked | none — Rightmove excludes AI crawlers |
-| Germany (Phase 5) | ⛔ Blocked | none — ImmoScout24 challenges despite permitting us |
+| France (Phase 2) | ✅ Built (fallback) | paruvendu — Leboncoin forbidden, SeLoger 403 |
+| Spain (Phase 3) | ✅ Built (fallback) | habitaclia — Idealista 403, Fotocasa consent-gated |
+| UK (Phase 4) | ✅ Built (2 portals) | onthemarket + zoopla — Rightmove excludes AI crawlers |
+| Germany (Phase 5) | ✅ Built (fallback) | immowelt — ImmoScout24 challenges despite permitting us |
 | Italy (Phase 6) | ⛔ Blocked | none — search endpoints disallowed |
-| USA (Phase 7) | ⛔ Blocked | none — Zillow disallows search, Realtor.com 403s |
+| USA (Phase 7) | ✅ Built (fallback) | redfin — Zillow disallows search, Realtor.com 403s |
+| Morocco (new) | ✅ Built | mubawab-ma — explicitly allows ClaudeBot |
+| UAE/Gulf (new) | ✅ Built | bayut — browser fetch, 5 emirate seeds |
 
 ## Second attempt — the sitemap route (2026-09-04)
 
@@ -324,10 +386,10 @@ it a different question. A consent gate is a request for a decision from a
 person; clicking it from a scraper records a consent nobody gave, which is a
 worse problem under GDPR than the missing data it would unlock.
 
-**Coverage is therefore final at 10 portals across 5 markets.** Spain is
-served by Habitaclia and France is not served at all; a France source needs
-either the ImmoScout24-style licensing conversation or a portal not yet
-surveyed, not more engineering against these two.
+**Coverage after the Phase 2 expansion (2026-09-05) is 16 portals across 8 markets.**
+The probe sweep found accessible fallbacks for France (ParuVendu), Germany
+(Immowelt), added a second UK portal (Zoopla), and opened two new markets:
+Morocco (Mubawab) and UAE (Bayut). Only Italy remains blocked.
 
 ## One capability came out of it
 

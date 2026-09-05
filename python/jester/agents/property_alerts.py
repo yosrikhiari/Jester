@@ -126,13 +126,18 @@ def get_price_reductions(db: sqlite3.Connection, since: datetime) -> list[dict]:
     """Get listings that had a price reduction since the given time."""
     since_str = since.isoformat()
     rows = db.execute(
-        """SELECT o.portal, o.listing_id, l.url, o.price, o.currency, o.payload,
-                  o.observed_at,
-                  LAG(o.price) OVER (PARTITION BY o.portal, o.listing_id ORDER BY o.observed_at) as prev_price
-           FROM listing_observation o
-           JOIN listing l ON l.portal = o.portal AND l.listing_id = o.listing_id
-           WHERE o.observed_at >= ? AND o.price IS NOT NULL
-           ORDER BY o.portal, o.listing_id, o.observed_at""",
+        """SELECT portal, listing_id, url, price, currency, payload,
+                  observed_at, prev_price
+           FROM (
+               SELECT o.portal, o.listing_id, l.url, o.price, o.currency, o.payload,
+                      o.observed_at,
+                      LAG(o.price) OVER (PARTITION BY o.portal, o.listing_id ORDER BY o.observed_at) as prev_price
+               FROM listing_observation o
+               JOIN listing l ON l.portal = o.portal AND l.listing_id = o.listing_id
+               WHERE o.price IS NOT NULL
+               ORDER BY o.portal, o.listing_id, o.observed_at
+           )
+           WHERE observed_at >= ?""",
         (since_str,),
     ).fetchall()
 

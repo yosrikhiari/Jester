@@ -1,0 +1,96 @@
+# Immowelt (Germany) - the largest reachable German property portal.
+#
+# Immoscout24, the plan's priority 1 for Germany, returns 403 to ordinary
+# fetches and its sitemap sits behind Cloudflare.  Immowelt answers a plain
+# GET, serves 32 listing cards per page, and its robots.txt explicitly names
+# Claude agents as allowed - checked 2026-09-05.
+#
+# Anchored rather than ldjson: the page carries only a page-level
+# AggregateOffer in LD+JSON, not per-listing schema.org, so individual
+# listings must be read out of the card HTML.  The data-testid attributes are
+# test hooks and therefore the steadiest anchors on the page.
+#
+# PAGINATION DOES NOT WORK.  Both ?page=N and ?cp=N redirect back to page one,
+# so coverage comes from ten city seeds instead, one page each - the same
+# approach Redfin uses.
+portal: immowelt
+market: de
+base_url: https://www.immowelt.de
+currency: EUR
+# Verified 2026-09-05: the result page and its card tiles are served in full
+# to an ordinary GET.
+fetch: http
+
+list:
+  url: https://www.immowelt.de/liste/berlin/wohnungen/kaufen
+  urls:
+    - https://www.immowelt.de/liste/berlin/wohnungen/kaufen
+    - https://www.immowelt.de/liste/muenchen/wohnungen/kaufen
+    - https://www.immowelt.de/liste/hamburg/wohnungen/kaufen
+    - https://www.immowelt.de/liste/koeln/wohnungen/kaufen
+    - https://www.immowelt.de/liste/frankfurt-am-main/wohnungen/kaufen
+    - https://www.immowelt.de/liste/stuttgart/wohnungen/kaufen
+    - https://www.immowelt.de/liste/duesseldorf/wohnungen/kaufen
+    - https://www.immowelt.de/liste/leipzig/wohnungen/kaufen
+    - https://www.immowelt.de/liste/dortmund/wohnungen/kaufen
+    - https://www.immowelt.de/liste/essen/wohnungen/kaufen
+  # ONE page per city, deliberately.  Pagination query params (?page=N, ?cp=N)
+  # redirect back to the first page, so depth comes from the city list above.
+  max_pages: 1
+
+extract:
+  mode: anchored
+  # React renders standard HTML attributes before data- attributes, so id
+  # appears first.  The [^>]* between them absorbs any class or style
+  # attributes that sit in between - the same technique Property24 and
+  # Habitaclia use.  The listing UUID captured here is the same identifier the
+  # expose URL uses.
+  anchor: 'id="classified-card-(?P<id>[^"]+)"[^>]*data-testid="serp-core-classified-card-testid"'
+  # Measured from the card structure: a card runs about 3 KB.  4000 gives
+  # comfortable margin without reaching into the next card.
+  block_len: 4000
+  # Fallback when the href is not found in the block.
+  url_template: "https://www.immowelt.de/expose/{id}"
+
+  fields:
+    url:
+      pattern: 'href="(https://www\.immowelt\.de/expose/[^"]+)"'
+      transform: [unescape, trim]
+    # The link's title attribute is a compact summary: property type, location,
+    # price, rooms and area in one string -
+    # "Wohnung zum Kauf - Köpenick - 170.000 € - 2 Zimmer, 45 m²".
+    title:
+      pattern: 'href="[^"]*expose/[^"]*"[^>]*title="([^"]{5,200})"'
+      transform: [unescape, trim]
+    # German price format uses dots as thousand separators: "170.000 €".
+    # The digits transform strips the dots and the currency symbol.
+    price:
+      pattern: 'data-testid="cardmfe-price-testid"[^>]*>([^<]{3,30})'
+      transform: [unescape, digits]
+    # Keyfacts line: "2 Zimmer · 45 m²"
+    rooms:
+      pattern: '(\d+)\s*Zimmer'
+      transform: [digits]
+    surface:
+      pattern: '([\d.,]+)\s*m'
+      transform: [digits]
+    # "Köpenick, Treptow-Köpenick (12557)"
+    location:
+      pattern: 'data-testid="cardmfe-description-box-address"[^>]*>([^<]{3,100})'
+      transform: [unescape, trim]
+
+  # The seed URLs are /kaufen (for-sale).  Rental seeds would use /mieten.
+  classify:
+    field: deal_type
+    from: url
+    default: sale
+    rules:
+      - value: rental
+        match: ["/mieten", "mieten"]
+
+  gallery:
+    pattern: 'src="(https://mms\.immowelt\.de/[^"]+\.jpg[^"]*)"'
+    all: true
+    # One photograph is served at several sizes via query params; the filename
+    # before .jpg is the unique identifier shared across them.
+    dedup_by: '/([^/]+)\.jpg'
