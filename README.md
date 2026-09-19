@@ -17,6 +17,12 @@
   <img src="https://img.shields.io/badge/Ollama-Local_LLM-000000" alt="Ollama">
 </p>
 
+<p align="center">
+  <img src="docs/img/jester-ideas.png" alt="Jester operator console — Ideas: 1,321 scored ideas from 28,880 nuggets" width="900">
+</p>
+<p align="center"><sub>The operator console on the real archive (2026-09-19): 28,880 nuggets → 1,321 scored ideas. Each row is demand / feasibility / competition scored by the critic agent; open one to verify its citations. <a href="docs/img/jester-overview.png">Overview page</a>.</sub></p>
+
+
 ---
 
 ## What It Does
