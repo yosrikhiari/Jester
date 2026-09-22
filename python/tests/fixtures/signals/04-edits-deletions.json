@@ -1,0 +1,64 @@
+{
+  "category": "edits",
+  "why": [
+    "These four cannot be checked by classifying a string: they are about what",
+    "happens to a row across runs. Each case is a REPLAY - the same record seen",
+    "two or three times, with what the table must say afterwards. This is where",
+    "'repeat import creates no duplicates' and 'handle edits and removals' are",
+    "actually proved."
+  ],
+  "cases": [
+    {
+      "id": "edit-01-unchanged-is-not-a-duplicate",
+      "why": "The plainest version of the M2 check: seeing a record again updates when we last saw it and nothing else.",
+      "replay": [
+        {"seen_at": "2026-09-20T08:00:00+00:00", "text": "We run a small shop and do invoicing by hand every week."},
+        {"seen_at": "2026-09-21T08:00:00+00:00", "text": "We run a small shop and do invoicing by hand every week."}
+      ],
+      "expect": {
+        "rows": 1, "revisions": 0, "edited": false, "removed": false,
+        "first_seen_utc": "2026-09-20T08:00:00+00:00",
+        "last_seen_utc": "2026-09-21T08:00:00+00:00",
+        "upsert": [{"new": 1, "seen_again": 0, "edited": 0}, {"new": 0, "seen_again": 1, "edited": 0}]
+      }
+    },
+    {
+      "id": "edit-02-an-edit-is-dated-and-counted-once",
+      "why": "The author edits, then the text sits still. One revision, dated when we first noticed - not one per sighting.",
+      "replay": [
+        {"seen_at": "2026-09-20T08:00:00+00:00", "text": "We do invoicing by hand."},
+        {"seen_at": "2026-09-21T08:00:00+00:00", "text": "We do invoicing by hand. EDIT: we tried a tool and it broke."},
+        {"seen_at": "2026-09-22T08:00:00+00:00", "text": "We do invoicing by hand. EDIT: we tried a tool and it broke."}
+      ],
+      "expect": {
+        "rows": 1, "revisions": 1, "edited": true, "removed": false,
+        "edited_utc": "2026-09-21T08:00:00+00:00",
+        "last_seen_utc": "2026-09-22T08:00:00+00:00",
+        "excerpt_contains": "it broke"
+      }
+    },
+    {
+      "id": "edit-03-a-removal-is-recorded-not-deleted",
+      "why": "The source stops returning it. The row survives - the signal was real when it was collected, and an archive that silently loses rows cannot reconcile its own counts.",
+      "replay": [
+        {"seen_at": "2026-09-20T08:00:00+00:00", "text": "We run a small shop and quoting takes a day a week."},
+        {"remove_at": "2026-09-21T08:00:00+00:00"}
+      ],
+      "expect": {"rows": 1, "removed": true, "removed_utc": "2026-09-21T08:00:00+00:00"}
+    },
+    {
+      "id": "edit-04-a-removal-that-comes-back",
+      "why": "Deleted posts reappear - a moderator queue, a cache, a restore. Seeing it again clears the removal instead of creating a second row.",
+      "replay": [
+        {"seen_at": "2026-09-20T08:00:00+00:00", "text": "We run a small shop and quoting takes a day a week."},
+        {"remove_at": "2026-09-21T08:00:00+00:00"},
+        {"seen_at": "2026-09-22T08:00:00+00:00", "text": "We run a small shop and quoting takes a day a week."}
+      ],
+      "expect": {
+        "rows": 1, "removed": false, "revisions": 0,
+        "first_seen_utc": "2026-09-20T08:00:00+00:00",
+        "last_seen_utc": "2026-09-22T08:00:00+00:00"
+      }
+    }
+  ]
+}

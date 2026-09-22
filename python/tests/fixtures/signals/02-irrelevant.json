@@ -1,0 +1,51 @@
+{
+  "category": "irrelevant",
+  "why": [
+    "Collected and rejected, with the reason recorded - a rejection nobody can",
+    "audit is a guess with a number on it. Every one of these four is a real",
+    "false positive the classifier produced against archived posts before the",
+    "rule that now catches it."
+  ],
+  "cases": [
+    {
+      "id": "irr-01-hobbyist",
+      "expect": {"audience": "none", "ambiguous": false},
+      "why": "Anti-buyer by definition: this person does the work themselves for fun.",
+      "record": {
+        "source_id": "t3_fx0201", "kind": "post", "community": "r/synthetic-selfhosted",
+        "title": "Photos of my new rack",
+        "text": "Finally finished cable management on my homelab. No question, just showing off."
+      }
+    },
+    {
+      "id": "irr-02-supply-side",
+      "expect": {"audience": "none", "ambiguous": false},
+      "why": "Measured false positive: three of the first seven buyer signals against real posts were a contractor, a freelancer and a founder asking how to find customers. They sell their own time; they are peers, not buyers.",
+      "record": {
+        "source_id": "t3_fx0202", "kind": "post", "community": "r/synthetic-entrepreneur",
+        "title": "I run a solo dev agency and want more work",
+        "text": "I am an experienced developer and I freelance for US clients. My contract ended and I am trying to find clients for automation projects. How do I get clients in this space?"
+      }
+    },
+    {
+      "id": "irr-03-industry-essay",
+      "expect": {"audience": "none", "ambiguous": false},
+      "why": "Measured false positive, and the worst one: a well-written essay on organisational speed, cross-posted to two communities and scored as a buyer twice.",
+      "record": {
+        "source_id": "t3_fx0203", "kind": "post", "community": "r/synthetic-devops",
+        "title": "Implementation is instant now and the org around it moves at the same speed as always",
+        "text": "We all know large organisations are slow. In my experience the manual work gets automated and the meetings stay exactly where they were. Generally speaking nothing changes."
+      }
+    },
+    {
+      "id": "irr-04-recruiting",
+      "expect": {"audience": "none", "ambiguous": false},
+      "why": "Hard reject: however much pain a hiring post describes, it is a job advert. Pain plus a budget still is not a buyer when they are buying an employee.",
+      "record": {
+        "source_id": "t3_fx0204", "kind": "post", "community": "r/synthetic-smallbiz",
+        "title": "We run a small agency and everything is still done by hand",
+        "text": "Invoicing, scheduling and reporting are all manual and it costs us days every month. We are hiring an operations engineer to fix it."
+      }
+    }
+  ]
+}

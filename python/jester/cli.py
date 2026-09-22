@@ -545,6 +545,14 @@ def cmd_run(args):
             "synthesis fell back to the deterministic stand-in — those nuggets "
             "stay queued rather than becoming ideas nobody can trust"
         )
+    if getattr(synthesizer, "split_groups", 0):
+        # Several ideas from one thread is deliberate, not a dedup miss: the
+        # thread outgrew max_nuggets_per_idea and was cut into chunks.
+        print(
+            f"split {synthesizer.split_groups} oversized thread group(s) into "
+            f"chunks of {cfg.thresholds.max_nuggets_per_idea} nuggets "
+            "(max_nuggets_per_idea)"
+        )
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
     checkpoint("synthesize")
@@ -1678,6 +1686,113 @@ def cmd_migrate(args):
     print(f"migrate OK: schema_version={version}")
 
 
+def cmd_signals(args):
+    """YU-01: the problem-signal collector.
+
+    Sub-actions, each one command with an exit code, because every milestone
+    is graded as "this check passes" rather than "this work happened":
+
+        export    seed the labeled fixtures, upsert, write CSV + manifest
+        check     run every fixture case through the classifier (non-zero on a miss)
+        scope     write the scope/access document Seif signs
+        rules     print the loaded rule set
+        field-map print the field map
+
+    There is no live action. Live collection needs approved commercial Reddit
+    API access (Seif owns it; 2 Oct status, 9 Oct access-or-replacement), and a
+    path that cannot run cannot misfire.
+    """
+    from jester import signals as sig
+    from jester.signals import filters as sigf
+    from jester.signals import scope as sigscope
+
+    rules_path = getattr(args, "rules", None)
+    try:
+        rules = sigf.load_rules(rules_path)
+    except sigf.RulesError as exc:
+        print(f"signal rules: {exc}")
+        sys.exit(1)
+
+    out_dir = Path(args.out or (Path(args.db).resolve().parent / "exports" / "signals"))
+    action = args.action or "export"
+
+    if action == "field-map":
+        print(sig.field_map_markdown())
+        return
+
+    if action == "rules":
+        print(f"config_version {rules.config_version} · "
+              f"{len(rules.problem)} problem phrase(s), {len(rules.negative)} negative, "
+              f"{len(rules.hard_reject)} hard reject")
+        print(f"thresholds: rejected < {rules.ambiguous_at} <= ambiguous < {rules.relevant_at} <= signal")
+        print(f"scope: {'APPROVED' if rules.approved else 'PROVISIONAL'} · "
+              f"{len(rules.communities)} communities · {len(rules.queries)} queries")
+        for c in rules.communities:
+            print(f"  - {c}")
+        return
+
+    if action == "scope":
+        path = sigscope.write_scope(out_dir, rules)
+        status = "APPROVED" if rules.approved else "PROVISIONAL — Seif signs by 2 Oct"
+        print(f"scope: {status}")
+        print(f"communities: {len(rules.communities)} (task asks 3-5) · queries: {len(rules.queries)}")
+        print(f"written: {path}")
+        return
+
+    if action == "check":
+        from jester.signals import fixtures as sigfx
+        try:
+            res = sigfx.check(rules)
+        except sigfx.FixtureError as exc:
+            print(f"fixture set: {exc}")
+            sys.exit(1)
+        for c in res["cases"]:
+            mark = "PASS" if c["pass"] else "FAIL"
+            conf = f"{c['confidence']:.2f}" if c["confidence"] is not None else "  - "
+            print(f"{mark}  {c['id']:<40}{c['category']:<11}{conf}  {c['got']}")
+            if c["misses"]:
+                print(f"        want {c['want']}")
+                print(f"        {'; '.join(c['misses'])}")
+            elif c.get("detail"):
+                print(f"        {c['detail'][:110]}")
+        print(f"\n{res['passed']}/{res['total']} case(s) passed · "
+              f"categories: {', '.join(res['categories'])}")
+        # Coverage is part of the gate: a set that quietly lost its failure
+        # cases still reads 100%, which is the failure this guards against.
+        if res["missing_categories"]:
+            print(f"MISSING CATEGORIES: {', '.join(res['missing_categories'])}")
+        if res["short_by"]:
+            print(f"SHORT BY {res['short_by']} case(s) of the "
+                  f"{sigfx.REQUIRED_TOTAL} the gate asks for")
+        if res["failed"] or res["missing_categories"] or res["short_by"]:
+            if res["failed"]:
+                print(f"FAILED: {', '.join(res['failed'])}")
+            sys.exit(1)
+        return
+
+    if args.mode != "fixture":
+        print("only --mode fixture exists today: live collection needs approved "
+              "Reddit API access (YU-01; Seif owns the decision, 2 Oct scope, "
+              "9 Oct access-or-replacement). Nothing here fakes a live run.")
+        sys.exit(1)
+
+    manifest = sig.run_fixture_export(args.db, out_dir, run_id=args.run, rules=rules)
+    up = manifest["upsert"]
+    print(f"upserted: {up['new']} new, {up['seen_again']} seen again, {up['edited']} edited")
+    for mode, c in sorted(manifest["counts_by_mode"].items()):
+        print(f"{mode}: {c['unique_collected']} unique, {c['relevant']} relevant, "
+              f"{c['removed']} removed, {c['errors']} error(s)")
+    xposts = manifest.get("crossposts") or []
+    if xposts:
+        # Reported, never merged: the same question in two communities is two
+        # real records, and collapsing them would make the counts lie.
+        print(f"crossposts: {len(xposts)} text(s) seen in more than one record "
+              f"({', '.join(x['communities'][0] + '…' for x in xposts[:3])})")
+    print(f"csv: {out_dir / manifest['csv']} ({manifest['rows_in_csv']} row(s), "
+          f"reconciles={manifest['reconciles']})")
+    print(f"also written: field-map.md, schema.clickhouse.sql, manifest.json in {out_dir}")
+
+
 def main(argv=None):
     # Secrets live in .env, not in thresholds.yaml — the config files are
     # committed and the console writes to them. Loading here rather than at
@@ -1744,6 +1859,24 @@ def main(argv=None):
     rs = sub.add_parser("runs")
     rs.add_argument("--db", default="data/jester.db")
     rs.set_defaults(func=cmd_runs)
+
+    sg = sub.add_parser(
+        "signals",
+        help="YU-01 problem-signal collector: fixtures -> classifier -> SQLite -> CSV",
+    )
+    sg.add_argument("action", nargs="?", default="export",
+                    choices=["export", "check", "scope", "rules", "field-map"],
+                    help="export (default) | check fixtures | write the scope doc | "
+                         "print rules | print the field map")
+    sg.add_argument("--db", default="data/jester.db")
+    sg.add_argument("--out", default=None,
+                    help="output directory (default: exports/signals beside the db)")
+    sg.add_argument("--rules", default=None,
+                    help="rule set (default: config/signal_rules.yaml)")
+    sg.add_argument("--mode", default="fixture", choices=["fixture"],
+                    help="fixture only: live collection needs approved Reddit API access")
+    sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")
+    sg.set_defaults(func=cmd_signals)
 
     rt = sub.add_parser("retention")
     rt.add_argument("--db", default="data/jester.db")
