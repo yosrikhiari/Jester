@@ -38,6 +38,11 @@ class BlockedResponse(RuntimeError):
 
 @dataclass(frozen=True)
 class ScraperConfig:
+    # Which CloakBrowser build the file was written for. Nothing in Python
+    # acts on it, but the Config page renders the fields this class declares,
+    # and a key the page omits is a key an operator edits somewhere else and
+    # then wonders why nothing changed.
+    version: str = ""
     cdp_url: str = _DEFAULTS["cdp_url"]
     license_key: str = ""
     proxy: str = ""
@@ -64,6 +69,7 @@ def load_scraper_config(path=None) -> ScraperConfig:
             f"blocked_response_action={action!r} invalid; valid: {', '.join(ALLOWED_ACTIONS)}"
         )
     return ScraperConfig(
+        version=str(raw.get("version", "") or ""),
         cdp_url=raw.get("cdp_url", _DEFAULTS["cdp_url"]),
         license_key=str(raw.get("license_key", "")),
         proxy=str(raw.get("proxy", "")),

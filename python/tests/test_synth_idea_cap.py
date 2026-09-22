@@ -96,3 +96,66 @@ def test_stopped_early_resets_between_runs(tmp_path):
     assert syn.stopped_early is True
     syn.run(FakeSynthesizerLLM(), FakeCriticLLM(), run_id="r")
     assert syn.stopped_early is False
+
+
+# --- max_nuggets_per_idea: oversized thread groups are chunked ---------------
+#
+# One Hacker News thread can yield 700 nuggets — 26k prompt tokens, over the
+# 8k-per-request Groq free tier allows — so the whole group fell back every
+# cycle and archived nothing. The cap slices such a group into consecutive
+# chunks, each synthesized on its own; nothing is dropped and nothing stays
+# unclaimed.
+
+def _db_with_one_big_thread(tmp_path, n):
+    db = open_db(str(tmp_path / "j.db"))
+    for i in range(n):
+        insert_nugget(db, Nugget(
+            unique_key=f"big-n{i:03d}", platform="hackernews", thread_id="hn-1",
+            category="pain_point", extracted_insight=f"insight {i}", run_id="r",
+        ))
+    return db
+
+
+def _run_capped(db, cap, **kw):
+    cfg = load_config(REPO_CONFIG)
+    cfg.thresholds.max_nuggets_per_idea = cap
+    syn = Synthesizer(db, cfg.thresholds)
+    ideas = syn.run(FakeSynthesizerLLM(), FakeCriticLLM(), run_id="r", **kw)
+    return syn, ideas
+
+
+def test_oversized_group_is_split_into_chunks(tmp_path):
+    db = _db_with_one_big_thread(tmp_path, 10)
+    syn, ideas = _run_capped(db, cap=4)
+    # 10 rows / cap 4 -> 4, 4, 2
+    assert len(ideas) == 3
+    assert syn.split_groups == 1
+    assert sorted(len(i.supporting_nuggets) for i in ideas) == [2, 4, 4]
+    assert unprocessed_nuggets(db) == []
+
+
+def test_trailing_singleton_folds_into_previous_chunk(tmp_path):
+    """9 rows / cap 4 would leave a 1-row tail that R50 skips forever; it is
+    folded into the previous chunk instead (4, 5)."""
+    db = _db_with_one_big_thread(tmp_path, 9)
+    syn, ideas = _run_capped(db, cap=4)
+    assert sorted(len(i.supporting_nuggets) for i in ideas) == [4, 5]
+    assert unprocessed_nuggets(db) == []
+
+
+def test_group_within_cap_is_untouched(tmp_path):
+    db = _db_with_one_big_thread(tmp_path, 4)
+    syn, ideas = _run_capped(db, cap=40)
+    assert len(ideas) == 1
+    assert syn.split_groups == 0
+
+
+def test_chunks_are_contiguous_in_thread_order(tmp_path):
+    """A chunk is a stretch of the discussion, not a random sample of it."""
+    db = _db_with_one_big_thread(tmp_path, 6)
+    _, ideas = _run_capped(db, cap=3)
+    keys = [sorted(i.supporting_nuggets) for i in ideas]
+    assert sorted(keys) == [
+        ["big-n000", "big-n001", "big-n002"],
+        ["big-n003", "big-n004", "big-n005"],
+    ]
