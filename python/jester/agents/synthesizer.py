@@ -73,6 +73,25 @@ def row_to_nugget(row) -> Nugget:
     )
 
 
+def _chunk_groups(groups, cap: int, stats=None):
+    """Yield (key, rows) with any group larger than `cap` cut into consecutive
+    slices of at most `cap` rows. Order within the thread is preserved, so a
+    slice is a contiguous stretch of the discussion rather than a random
+    sample of it. A trailing slice of one row is folded into the previous
+    slice: R50 would otherwise leave that lone nugget unclaimed forever."""
+    for key, rows in groups.items():
+        if cap <= 0 or len(rows) <= cap:
+            yield key, rows
+            continue
+        if stats is not None:
+            stats.split_groups += 1
+        slices = [rows[i:i + cap] for i in range(0, len(rows), cap)]
+        if len(slices) > 1 and len(slices[-1]) == 1:
+            slices[-2].extend(slices.pop())
+        for part in slices:
+            yield key, part
+
+
 class Synthesizer:
     def __init__(self, db, config: Thresholds):
         self.db = db
@@ -90,6 +109,9 @@ class Synthesizer:
         # unclustered, so the caller can say so instead of implying the pool
         # was exhausted.
         self.stopped_early: bool = False
+        #: Thread groups that exceeded max_nuggets_per_idea and were cut into
+        #: chunks this run. Reported so "12 ideas from 3 threads" is legible.
+        self.split_groups: int = 0
 
     def run(
         self,
@@ -127,7 +149,10 @@ class Synthesizer:
 
         ideas: List[Idea] = []
         self.stopped_early = False
-        for (platform, thread_id), group_rows in groups.items():
+        self.split_groups = 0
+        for (platform, thread_id), group_rows in _chunk_groups(
+            groups, int(self.config.max_nuggets_per_idea or 0), self
+        ):
             if max_ideas is not None and max_ideas > 0 and len(ideas) >= max_ideas:
                 # No silent caps: the caller reports what was left behind, or
                 # "3 ideas" reads as "the archive had only 3 to give".

@@ -111,6 +111,14 @@ class Thresholds:
     # so the console must know it — otherwise the Config page silently omits a
     # knob the pipeline reads.
     min_comments_per_thread: int = 0
+    #: Ceiling on how many nuggets one synthesis call sees. The synthesizer
+    #: groups by (platform, thread_id), and a single Hacker News front-page
+    #: thread yields 400-700 nuggets - 10k-26k tokens of prompt, over the 8k
+    #: tokens-per-minute Groq's free tier allows one request. Every hourly
+    #: cycle retried the same 15 giant groups, every one fell back, and the
+    #: night produced 0 ideas while reporting "degraded 15 time(s)". Groups
+    #: above this size are split into consecutive chunks, each its own idea.
+    max_nuggets_per_idea: int = 40
     #: Steam's depth, in REVIEWS. A Steam source is one app, so "threads to
     #: walk per source" has nothing to walk there and the number that varies
     #: is how many of the app's reviews come back. It is not an entry in
@@ -163,6 +171,7 @@ class Thresholds:
         "critic_web_daily_budget": (0, 100000),
         "max_threads_per_source": (1, 50),
         "min_comments_per_thread": (0, 10000),
+        "max_nuggets_per_idea": (2, 500),
         "max_reviews_per_app": (1, 5000),
         "export_rows_per_file": (100, 1000000),
         "ingest_timeout_seconds": (0, 86400),
@@ -189,6 +198,7 @@ class Thresholds:
         "max_threads_per_source": int,
         "max_threads_per_platform": dict,
         "min_comments_per_thread": int,
+        "max_nuggets_per_idea": int,
         "max_reviews_per_app": int,
         "realestate_detail_per_page": int,
         "export_after_run": _as_bool,
