@@ -63,7 +63,9 @@ FIELDS = [
     ("relevant", "INTEGER", "UInt8", "1 kept as a problem signal, 0 collected and rejected"),
     ("company", "TEXT", "LowCardinality(String)", "always 'unknown' unless the source states it"),
     ("buyer_intent", "TEXT", "LowCardinality(String)", "always 'unknown' — a post is not a purchase"),
-    ("created_utc", "TEXT", "DateTime64(3)", "when the author posted it"),
+    # Nullable: a record can exist without one. A fetch that failed has no post
+    # date, and that row still has to be stored and counted.
+    ("created_utc", "TEXT", "Nullable(DateTime64(3))", "when the author posted it"),
     ("edited_utc", "TEXT", "Nullable(DateTime64(3))", "when we first saw the text change"),
     ("removed_utc", "TEXT", "Nullable(DateTime64(3))", "when the source stopped returning it"),
     ("first_seen_utc", "TEXT", "DateTime64(3)", "our first sighting — never overwritten"),
@@ -101,8 +103,17 @@ def clickhouse_ddl() -> str:
     return (
         f"CREATE TABLE IF NOT EXISTS {TABLE} (\n  {cols}\n)\n"
         "ENGINE = ReplacingMergeTree(last_seen_utc)\n"
-        "PARTITION BY toYYYYMM(created_utc)\n"
-        "ORDER BY (platform, community, record_id);\n"
+        # Partition on when WE saw it, not on when it was written. created_utc
+        # is nullable — a fetch that failed has no post date — and a null
+        # partition key rejects the row, which would silently drop exactly the
+        # failure records the run is supposed to count. first_seen_utc is
+        # always set, and "what did we collect that month" is the question the
+        # archive gets asked anyway.
+        "PARTITION BY toYYYYMM(first_seen_utc)\n"
+        # Keyed on the record id alone. Anything else in the sort key and the
+        # same record lands twice the day a post is crossposted or a community
+        # is renamed, which is the duplicate the M2 check exists to forbid.
+        "ORDER BY record_id;\n"
     )
 
 

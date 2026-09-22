@@ -142,6 +142,36 @@ services:
     profiles: ["live"]
     networks: [jester_net]
 
+  # YU-01's queryable store. Profile-gated like the other externals: the
+  # nugget pipeline does not need it, and a service nobody asked for should
+  # not start with `docker compose up`.
+  #
+  # Only the HTTP interface is published. The native protocol would want 9000,
+  # which is already taken on this machine, and the loader speaks HTTP over
+  # stdlib urllib rather than pulling in a driver - the same call the repo
+  # already makes for Groq and Ollama.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8123:8123"
+    environment:
+      - CLICKHOUSE_DB=jester
+      - CLICKHOUSE_USER=jester
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-jester}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    profiles: ["signals"]
+    networks: [jester_net]
+
   ollama:
     image: ollama/ollama:latest
     ports:
@@ -154,6 +184,7 @@ services:
 volumes:
   jester_docker_data:
   qdrant_storage:
+  clickhouse_data:
   cloak_profiles:
   ollama_data:
   cloak_browser_binary:

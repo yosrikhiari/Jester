@@ -1697,6 +1697,9 @@ def cmd_signals(args):
         scope     write the scope/access document Seif signs
         rules     print the loaded rule set
         field-map print the field map
+        load      copy SQLite -> ClickHouse and reconcile the counts (M2)
+        queries   run the saved SQL and print each answer
+        evidence  load, reconcile, run every query, write the review pack
 
     There is no live action. Live collection needs approved commercial Reddit
     API access (Seif owns it; 2 Oct status, 9 Oct access-or-replacement), and a
@@ -1769,6 +1772,80 @@ def cmd_signals(args):
                 print(f"FAILED: {', '.join(res['failed'])}")
             sys.exit(1)
         return
+
+    if action in ("load", "queries", "evidence"):
+        from jester.signals import clickhouse as ch
+        from jester.signals import evidence as ev
+
+        client = ch.Client()
+        db = sig.open_signals(args.db)
+        try:
+            if action == "queries":
+                # Read-only: answers the questions without touching the
+                # archive, so it is safe to run while a load is in flight.
+                failed = False
+                for q in ch.run_saved_queries(client):
+                    print(f"\n== {q['name']} — {q['title']}")
+                    if not q["ok"]:
+                        print(f"   FAILED: {q['error']}")
+                        failed = True
+                        continue
+                    if not q["rows"]:
+                        print("   (no rows)")
+                        continue
+                    cols = list(q["rows"][0].keys())
+                    print("   " + " | ".join(cols))
+                    for r in q["rows"][:15]:
+                        print("   " + " | ".join(
+                            str(r.get(c, ""))[:40] for c in cols))
+                    if len(q["rows"]) > 15:
+                        print(f"   … {len(q['rows']) - 15} more row(s)")
+                if failed:
+                    sys.exit(1)
+                return
+
+            if action == "load":
+                res = ch.load(db, client, mode=args.only_mode)
+                rec = ch.reconcile(db, client, mode=args.only_mode)
+                print(f"loaded {res['rows_sent']} row(s) in {res['requests']} request(s) "
+                      f"into {res['database']} at {res['url']}")
+                print(f"sqlite {rec['sqlite_rows']} · clickhouse {rec['clickhouse_rows_final']} "
+                      f"(final) · distinct ids {rec['clickhouse_unique_ids']}")
+                # The M2 check in one line. Duplicates are the failure the
+                # milestone names; un-merged parts are not a failure at all.
+                print(f"duplicates: {rec['duplicates']} · "
+                      f"un-merged parts: {rec['unmerged_parts']} (harmless)")
+                if not rec["reconciles"]:
+                    print("MISMATCH: the two stores do not agree")
+                    sys.exit(1)
+                if rec["sqlite_rows"] == 0:
+                    # 0 == 0 reconciles, and saying so would read as a check
+                    # that passed. Nothing was loaded and nothing was verified,
+                    # and that is what the line has to say.
+                    print(f"nothing matched mode={args.only_mode or 'all'}: "
+                          "no rows loaded, nothing checked")
+                    return
+                print("reconciles: yes")
+                return
+
+            pack = out_dir / "evidence"
+            summary = ev.write_evidence(db, pack, client=client, mode=args.only_mode)
+            r = summary["reconcile"]
+            print(f"sqlite {r['sqlite_rows']} · clickhouse {r['clickhouse_rows_final']} · "
+                  f"duplicates {r['duplicates']} · csv {summary['csv']['rows_in_csv']}")
+            bad = [q["name"] for q in summary["queries"] if not q["ok"]]
+            if bad:
+                print(f"QUERIES FAILED: {', '.join(bad)}")
+            print(f"pack: {pack / 'README.md'}")
+            if not summary["passes"]:
+                sys.exit(1)
+            print("evidence: PASS")
+            return
+        except ch.ClickHouseError as exc:
+            print(f"clickhouse: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
 
     if args.mode != "fixture":
         print("only --mode fixture exists today: live collection needs approved "
@@ -1865,9 +1942,11 @@ def main(argv=None):
         help="YU-01 problem-signal collector: fixtures -> classifier -> SQLite -> CSV",
     )
     sg.add_argument("action", nargs="?", default="export",
-                    choices=["export", "check", "scope", "rules", "field-map"],
+                    choices=["export", "check", "scope", "rules", "field-map",
+                             "load", "queries", "evidence"],
                     help="export (default) | check fixtures | write the scope doc | "
-                         "print rules | print the field map")
+                         "print rules | print the field map | load into ClickHouse | "
+                         "run the saved SQL | write the evidence pack")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
@@ -1876,6 +1955,11 @@ def main(argv=None):
     sg.add_argument("--mode", default="fixture", choices=["fixture"],
                     help="fixture only: live collection needs approved Reddit API access")
     sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")
+    # Separate from --mode, which says what this command may collect. This one
+    # narrows what is loaded or exported, and defaults to everything: leaving
+    # rows out of an archive is how a count stops reconciling.
+    sg.add_argument("--only-mode", default="", choices=["", "live", "fixture"],
+                    help="load/export only rows of this mode (default: all)")
     sg.set_defaults(func=cmd_signals)
 
     rt = sub.add_parser("retention")
