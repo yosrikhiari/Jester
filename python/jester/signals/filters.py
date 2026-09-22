@@ -308,14 +308,39 @@ def classify(text: str, rules: Optional[Rules] = None, *, title: str = "",
     return Verdict(NONE, 0, round(score, 3), reason, False, ordered, phrases, negatives)
 
 
-def apply_to(signal, rules: Optional[Rules] = None):
+def apply_to(signal, rules: Optional[Rules] = None, *,
+             context: str = "", context_title: str = ""):
     """Classify a Signal in place and hand it back, so a collector can pipe
-    records straight into `upsert`."""
-    v = classify(signal.text or signal.excerpt, rules, title=signal.title)
+    records straight into `upsert`.
+
+    **A comment's stored `title` belongs to its thread, not to it.** A comment
+    has no title of its own; what the collector put there is the parent post's,
+    kept so the record reads as something when a person opens it. Scoring it as
+    the record's own words would let a thread called "What would you automate
+    in your business?" lend its ownership voice to every reply under it,
+    including the advice and the jokes. So for a comment it is passed as
+    context instead, where the inheritance rules can weigh it, cap it by
+    length and flag the verdict `inherited`.
+    """
+    is_comment = getattr(signal, "kind", "post") == "comment"
+    own_title = "" if is_comment else signal.title
+    parent_title = context_title or (signal.title if is_comment else "")
+    v = classify(signal.text or signal.excerpt, rules, title=own_title,
+                 context=context, context_title=parent_title)
     signal.relevant = v.relevant
     signal.audience = v.audience
     signal.match_confidence = v.confidence
-    signal.match_reason = v.reason
+    # The stored reason carries the WORDS, not just the family names.
+    #
+    # Found the hard way: the verdict is computed from the whole post, and the
+    # archive keeps a 600-character excerpt (retention §14). So a record can
+    # say "buyer signal: owner_voice + work_pain" while the text beside it
+    # contains neither phrase, because both were at character 900 — and a
+    # reviewer checking the claim finds nothing and concludes the classifier
+    # is wrong. Naming the phrases makes the verdict checkable against the
+    # source link, which is the evidence the card actually asks for.
+    signal.match_reason = (
+        v.reason + (f" [matched: {', '.join(v.matched)}]" if v.matched else ""))
     return signal
 
 

@@ -264,6 +264,103 @@ class ConsoleAPI:
             out.append(d)
         return {"ok": True, "runs": out}
 
+    # ---- YU-01 problem signals -------------------------------------------
+    #
+    # A separate database on purpose. The nugget pipeline and the problem-signal
+    # collector answer to different people and different rules — one is Jester's
+    # own archive, the other is a task deliverable whose every row has to say
+    # whether it is live or fixture. Mixing them into one file would make "how
+    # many live records do we have" a question about a join.
+
+    @property
+    def _signals_path(self) -> str:
+        return os.environ.get("JESTER_SIGNALS_DB") or str(
+            Path(self.db_path).parent / "signals-live.db")
+
+    def _signals_db(self):
+        from jester.signals import open_signals
+        return open_signals(self._signals_path)
+
+    def signals(self, *, audience="", community="", kind="", q="", mode="",
+                offset=0, limit=50):
+        """The archive, filtered, with the facet counts for what is left.
+
+        Facets are counted UNDER the other filters, not over the whole table:
+        a count that ignores the filters beside it tells you how many records
+        exist, when the question on screen is how many you would get if you
+        clicked.
+        """
+        from jester.signals import FIELD_NAMES, TABLE
+        offset, limit = int(offset or 0), max(1, min(int(limit or 50), 200))
+        if not Path(self._signals_path).exists():
+            return {"ok": True, "exists": False, "path": self._signals_path,
+                    "total": 0, "rows": [], "counts": {}, "facets": {}}
+
+        db = self._signals_db()
+        try:
+            filters = {"audience": audience, "community": community,
+                       "kind": kind, "mode": mode}
+            where, args = [], []
+            for col, val in filters.items():
+                if val:
+                    where.append(f"{col} = ?")
+                    args.append(val)
+            if q:
+                where.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
+                args += [f"%{q}%"] * 3
+            clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+            total = db.execute(
+                f"SELECT COUNT(*) FROM {TABLE} {clause}", args).fetchone()[0]
+            cols = ("record_id, mode, community, kind, author, title, excerpt, "
+                    "query, match_reason, match_confidence, audience, relevant, "
+                    "run_status, error, created_utc, first_seen_utc, last_seen_utc, "
+                    "edited_utc, removed_utc, revisions, source_url")
+            rows = [dict(r) for r in db.execute(
+                f"SELECT {cols} FROM {TABLE} {clause} "
+                "ORDER BY match_confidence DESC, first_seen_utc DESC "
+                "LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()]
+
+            facets = {}
+            for col in ("audience", "community", "kind", "mode"):
+                # Each facet is counted with its OWN filter dropped, so the
+                # options a reader can switch to still show a number.
+                sub = [f"{c} = ?" for c, v in filters.items() if v and c != col]
+                subargs = [v for c, v in filters.items() if v and c != col]
+                if q:
+                    sub.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
+                    subargs += [f"%{q}%"] * 3
+                sub_clause = ("WHERE " + " AND ".join(sub)) if sub else ""
+                facets[col] = [
+                    {"value": r[0], "n": r[1]} for r in db.execute(
+                        f"SELECT {col}, COUNT(*) FROM {TABLE} {sub_clause} "
+                        f"GROUP BY {col} ORDER BY COUNT(*) DESC", subargs).fetchall()
+                    if r[0]]
+
+            from jester.signals import counts as signal_counts
+            return {"ok": True, "exists": True, "path": self._signals_path,
+                    "total": total, "rows": rows, "facets": facets,
+                    "counts": signal_counts(db), "fields": FIELD_NAMES,
+                    "offset": offset, "limit": limit}
+        finally:
+            db.close()
+
+    def signal_runs(self, limit=25):
+        """The run ledger. The 23 Oct gate ("3 scheduled live daily runs +
+        1 recovery pass") is read off this, so it is a first-class view rather
+        than something to grep out of a log."""
+        if not Path(self._signals_path).exists():
+            return {"ok": True, "exists": False, "runs": [], "sources": []}
+        from jester.signals.run import runs as signal_run_rows
+        from jester.signals.sources import available
+        db = self._signals_db()
+        try:
+            return {"ok": True, "exists": True,
+                    "runs": signal_run_rows(db, limit=int(limit or 25)),
+                    "sources": available()}
+        finally:
+            db.close()
+
     IDEA_SORTS = {"overall", "created_at", "demand_signal", "feasibility", "competition", "id", "title", "status"}
 
     def ideas(self, status="", q="", sort="overall", dir="desc", offset=0, limit=0):

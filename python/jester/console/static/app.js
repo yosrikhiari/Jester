@@ -231,6 +231,10 @@ const PAGES = [
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
+  // Its own group: this is a task deliverable with its own database, its
+  // own rules and its own reviewer, not another view of Jester's archive.
+  { group: 'YU-01', id: 'signals', label: 'Problem signals', icon: '◎',
+    load: loadSignals, count: () => COUNTS.signals },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
   { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
@@ -2551,4 +2555,223 @@ window.addEventListener('hashchange', () => {
 let saved = null;
 try { saved = localStorage.getItem('jester-theme'); } catch { /* private mode */ }
 applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+
+/* ── YU-01 problem signals ─────────────────────────────────────────────────
+ * A page of its own, reading a database of its own. The nugget archive and
+ * the problem-signal archive answer to different people: one is Jester's, the
+ * other is a task deliverable whose every row has to declare whether it is
+ * live or fixture. Showing them in one table would make that distinction a
+ * column nobody reads.
+ *
+ * What this page is for is narrow, and the layout says so: the counts, then
+ * the runs that produced them, then the records. A reader's first question is
+ * "did the collector run and what did it find", not "show me row 1".
+ */
+const SIG = { audience: '', community: '', kind: '', mode: '', q: '', offset: 0, limit: 50 };
+let SIG_FACETS = {};
+let SIG_TOTAL = 0;
+let SIG_EXISTS = true;
+let SFACETS_OPEN = FACETS_OPEN;
+
+const AUDIENCE_TONE = { buyer: 'tone-ok', practitioner: 'tone-info', none: 'tone-neutral' };
+
+function applySignalFacetsOpen() {
+  const layout = $('#signals-layout'); const btn = $('#sfacets-toggle');
+  if (!layout || !btn) return;
+  layout.classList.toggle('is-collapsed', !SFACETS_OPEN);
+  btn.setAttribute('aria-expanded', String(SFACETS_OPEN));
+  $('#sfacets-toggle-label').textContent = SFACETS_OPEN ? 'hide filters' : 'filters';
+}
+
+function signalFacetBlock(title, key, items, limit) {
+  if (!items || !items.length) return '';
+  return '<div class="facet"><h4>' + esc(title) + '</h4>'
+    + items.slice(0, limit).map(it =>
+      '<button data-sfacet="' + key + '" data-value="' + esc(it.value) + '"'
+      + ' aria-pressed="' + (SIG[key] === it.value) + '">'
+      + '<span class="truncate">' + esc(it.value || 'not recorded') + '</span>'
+      + '<span class="n">' + Number(it.n).toLocaleString() + '</span></button>').join('')
+    + '</div>';
+}
+
+function renderSignalActive() {
+  const label = { audience: 'audience', community: 'source', kind: 'kind', mode: 'mode', q: 'text' };
+  const chips = Object.keys(label).filter(k => SIG[k]).map(k =>
+    '<span class="fchip"><b>' + label[k] + '</b> ' + esc(SIG[k])
+    + '<button data-sfacet-drop="' + k + '" aria-label="Remove ' + label[k] + ' filter">✕</button></span>'
+  ).join('');
+  $('#signals-active').innerHTML = chips
+    ? chips + '<button class="btn btn--ghost btn--sm" data-sfacet-clear>clear all</button>'
+    : '<span class="xs">showing every record, kept and rejected</span>';
+}
+
+function renderSignalTiles(counts) {
+  /* Split by mode, never summed. A fixture row counted as a live one is the
+   * first item on this task's fail list, so the tiles never add them up. */
+  const modes = Object.keys(counts || {});
+  if (!modes.length) { $('#signals-tiles').innerHTML = ''; return; }
+  const live = counts.live || { unique_collected: 0, buyer: 0, practitioner: 0, errors: 0 };
+  const fixture = counts.fixture;
+  const tiles = [
+    ['collected (live)', live.unique_collected, 'unique records, deduplicated'],
+    ['buyer signals', live.buyer, 'what outreach can act on'],
+    ['practitioner', live.practitioner, 'content material, not leads'],
+    ['failed fetches', live.errors, live.errors ? 'stored as rows, not lost' : 'none in this archive'],
+  ];
+  $('#signals-tiles').innerHTML = tiles.map(t =>
+    '<div class="kpi' + (t[0] === 'failed fetches' && t[1] ? ' kpi--alert' : '') + '">'
+    + '<span>' + esc(t[0]) + '</span><b class="num">' + Number(t[1] || 0).toLocaleString() + '</b>'
+    + '<div class="kpi-sub">' + esc(t[2]) + '</div></div>').join('')
+    + (fixture
+      ? '<div class="kpi"><span>fixture rows</span><b class="num">'
+        + Number(fixture.unique_collected).toLocaleString()
+        + '</b><div class="kpi-sub">never counted as live</div></div>'
+      : '');
+}
+
+function renderSignalRuns(runs, sources) {
+  const body = $('#signal-runs-body');
+  if (!runs || !runs.length) {
+    const hint = sources && sources.length
+      ? ' Collect with <span class="mono">jester signals run --source ' + esc(sources[0].name) + '</span>.'
+      : '';
+    body.innerHTML = '<tr><td colspan="8" class="empty">No run recorded yet.' + hint + '</td></tr>';
+    return;
+  }
+  const tone = { ok: 'tone-ok', partial: 'tone-warn', failed: 'tone-bad' };
+  body.innerHTML = runs.map(r =>
+    '<tr><td class="mono xs">' + esc((r.started_utc || '').slice(0, 19).replace('T', ' ')) + '</td>'
+    + '<td>' + esc(r.kind) + '</td><td class="mono xs">' + esc(r.source) + '</td>'
+    + '<td class="num">' + Number(r.collected).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.new).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.buyer).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.errors).toLocaleString() + '</td>'
+    + '<td><span class="pill pill--sm ' + (tone[r.status] || 'tone-neutral') + '">' + esc(r.status) + '</span>'
+    + (r.note ? '<span class="xs"> ' + esc(r.note) + '</span>' : '') + '</td></tr>').join('');
+}
+
+function renderSignals(rows) {
+  const body = $('#signals-body');
+  if (!rows.length) {
+    /* The empty state has to know why it is empty. "Nothing here" on a
+     * filtered view of a full archive sends people to re-run a collector that
+     * is working fine. */
+    const filtered = ['audience', 'community', 'kind', 'mode', 'q'].some(k => SIG[k]);
+    const msg = !SIG_EXISTS
+      ? 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.'
+      : filtered
+        ? 'Nothing matches these filters. <button class="btn btn--ghost btn--sm" data-sfacet-clear>clear the filters</button>'
+        : 'The archive is empty. <span class="mono">jester signals run</span> collects into it.';
+    body.innerHTML = '<tr><td colspan="4" class="empty">' + msg + '</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => {
+    const what = (r.title || r.excerpt || '').trim();
+    const flags = [];
+    if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
+    if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
+    if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
+    if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
+    if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
+    return '<tr><td><a href="' + esc(r.source_url) + '" target="_blank" rel="noopener">'
+      + (esc(what.slice(0, 110)) || '(no title)') + '</a>'
+      + '<div class="xs">' + esc(r.community) + ' &middot; ' + esc(r.kind)
+      + ' &middot; found by <span class="mono">' + esc(r.query) + '</span></div>'
+      + (flags.length
+        ? '<div class="row" style="gap:var(--s-2);margin-block-start:var(--s-2)">' + flags.join('') + '</div>'
+        : '')
+      + '</td><td><span class="pill pill--sm ' + (AUDIENCE_TONE[r.audience] || 'tone-neutral') + '">'
+      + esc(r.audience) + '</span></td>'
+      + '<td class="num">' + Number(r.match_confidence).toFixed(2) + '</td>'
+      + '<td class="xs">' + esc(r.match_reason || '') + '</td></tr>';
+  }).join('');
+}
+
+function renderSignalPager() {
+  const from = SIG_TOTAL ? SIG.offset + 1 : 0;
+  const to = Math.min(SIG.offset + SIG.limit, SIG_TOTAL);
+  $('#signals-shown').textContent = SIG_TOTAL
+    ? from.toLocaleString() + '–' + to.toLocaleString() + ' of ' + SIG_TOTAL.toLocaleString() : '';
+  $('#signals-pager').innerHTML =
+    '<button class="btn btn--ghost btn--sm" data-spage="prev" ' + (SIG.offset ? '' : 'disabled') + '>&lsaquo; prev</button>'
+    + '<button class="btn btn--ghost btn--sm" data-spage="next" ' + (to < SIG_TOTAL ? '' : 'disabled') + '>next &rsaquo;</button>';
+}
+
+async function loadSignals() {
+  const qs = new URLSearchParams(
+    Object.entries(SIG).filter(e => e[1] !== '' && e[1] !== null)).toString();
+  const pair = await Promise.all([
+    api('/api/signals?' + qs).catch(() => null),
+    api('/api/signals/runs').catch(() => null),
+  ]);
+  const d = pair[0]; const runs = pair[1];
+  if (!d) return;
+  SIG_EXISTS = d.exists !== false;
+  SIG_TOTAL = d.total || 0;
+  SIG_FACETS = d.facets || {};
+  const live = (d.counts || {}).live || {};
+  $('#signals-count').textContent = SIG_EXISTS
+    ? (live.unique_collected || 0).toLocaleString() + ' live record(s) in ' + d.path
+    : 'no archive at ' + d.path + ' yet';
+  renderSignalTiles(d.counts || {});
+  renderSignalRuns((runs || {}).runs || [], (runs || {}).sources || []);
+  $('#signals-facets').innerHTML =
+    signalFacetBlock('Audience', 'audience', SIG_FACETS.audience || [], 6)
+    + signalFacetBlock('Source', 'community', SIG_FACETS.community || [], 10)
+    + signalFacetBlock('Kind', 'kind', SIG_FACETS.kind || [], 4)
+    + signalFacetBlock('Mode', 'mode', SIG_FACETS.mode || [], 4);
+  renderSignalActive();
+  applySignalFacetsOpen();
+  renderSignals(d.rows || []);
+  renderSignalPager();
+  // The nav badge counts what this page is FOR. Total records would make the
+  // badge read 455 on an archive holding three things anyone can act on.
+  COUNTS.signals = (live.buyer || 0) || null;
+  renderNav();
+}
+
+$('#sfacets-toggle').onclick = () => { SFACETS_OPEN = !SFACETS_OPEN; applySignalFacetsOpen(); };
+$('#signals-facets').addEventListener('click', e => {
+  const b = e.target.closest('[data-sfacet]');
+  if (!b) return;
+  const k = b.dataset.sfacet;
+  SIG[k] = SIG[k] === b.dataset.value ? '' : b.dataset.value;
+  SIG.offset = 0;
+  loadSignals();
+});
+function clearSignalFilters() {
+  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', q: '', offset: 0 });
+  $('#signals-q').value = '';
+  loadSignals();
+}
+$('#signals-active').addEventListener('click', e => {
+  const drop = e.target.closest('[data-sfacet-drop]');
+  if (drop) {
+    SIG[drop.dataset.sfacetDrop] = '';
+    if (drop.dataset.sfacetDrop === 'q') $('#signals-q').value = '';
+    SIG.offset = 0;
+    loadSignals();
+    return;
+  }
+  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+});
+$('#signals-body').addEventListener('click', e => {
+  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+});
+$('#signals-pager').addEventListener('click', e => {
+  const b = e.target.closest('[data-spage]');
+  if (!b) return;
+  SIG.offset = Math.max(0, SIG.offset + (b.dataset.spage === 'next' ? SIG.limit : -SIG.limit));
+  loadSignals();
+});
+let sigTimer;
+$('#signals-q').addEventListener('input', () => {
+  clearTimeout(sigTimer);
+  sigTimer = setTimeout(() => {
+    SIG.q = $('#signals-q').value.trim();
+    SIG.offset = 0;
+    loadSignals();
+  }, 250);
+});
+
 go(location.hash.slice(1) || 'overview', { push: false });

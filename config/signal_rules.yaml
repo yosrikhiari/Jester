@@ -98,10 +98,36 @@ scope:
     - name: r/personalfinance
       evidence: "measured — 16 archived posts; personal money, wrong audience entirely."
 
+  # ---- the phrases. These are literal search strings, not descriptions. ----
+  #
+  # W3 measured the alternative and it does not work: walking a community's
+  # /new/ collects whatever was posted that day, and what a community posts on
+  # a given day is mostly not a buyer — 123 posts and 1 113 comments produced
+  # a 0.65% buyer rate, most of those still false positives. Searching for the
+  # sentences a buyer actually writes is the same number of requests at a far
+  # higher hit rate.
+  #
+  # So Seif's decision changed shape. It is no longer only "which 3–5
+  # communities" but "which 5–10 phrases" — and phrases are cheaper to test,
+  # faster to iterate, and reusable as Omar's opening lines.
+  #
+  # Each phrase below is a sentence someone describing work they would pay to
+  # remove actually types. They are grouped by which half of the buyer
+  # definition they catch: the work, the ceiling, or the decision to buy.
   queries:
-    - manual process we cannot keep up with
-    - build versus hire an engineer
-    - automation hit its limit
+    # the work itself, named and quantified
+    - "we do it manually"
+    - "by hand every week"
+    - "copy paste between"
+    - "hours a week on spreadsheets"
+    # the ceiling: the DIY fix that stopped scaling
+    - "zapier broke"
+    - "outgrown our spreadsheet"
+    - "does not scale anymore"
+    # the decision: someone weighing paying for it
+    - "worth paying someone"
+    - "hire a developer or"
+    - "build it in house or buy"
 
   retention:
     excerpt_chars: 600
@@ -294,9 +320,50 @@ families:
   showcase:
     weight: -0.25
     role: negative
-    note: "announcing a thing, not asking for help with one"
+    note: >
+      Announcing a thing, not asking for help with one. A buyer describes work
+      they want REMOVED; a showcase describes work they DID. Measured on the
+      first live Hacker News run: "I run a fully automated local-LLM news
+      station on a single RTX 3090, and I got tired of benchmarks..." scored
+      0.60 buyer on `i run a` + `automate`. Every word of that is ownership
+      language about automation, and the person is showing off a side project.
     phrases: ["i built", "i made", "feedback welcome", "showing off", "just showing",
-              "v0.", "v1.", "release notes", "introducing", "check out my"]
+              "v0.", "v1.", "release notes", "introducing", "check out my",
+              "i've been working on", "ive been working on", "so i built",
+              "so i made", "i wrote a", "here's how i", "heres how i",
+              "my own repo", "my own stack", "my own project", "i benchmark"]
+
+  vendor_pitch:
+    weight: -0.60
+    role: negative
+    note: >
+      THE FINDING FROM THE FIRST LIVE RUN, and the most useful one so far.
+      461 records, 6 scored buyer, and four of those six were vendors:
+      "Launch HN: Rudus (YC P26) - AI for concrete contractors", "Show HN:
+      Praxos", a founder's essay, a developer's i18n system.
+
+      Why phrase matching cannot see this without help: **a vendor's pitch
+      contains the buyer's words, on purpose.** Rudus's launch post says
+      contractors spend hours a week on spreadsheets doing manual takeoffs -
+      which is a perfect buyer sentence, quoted by the person selling the cure.
+      The vocabulary really is there. What separates them is the FRAME: a
+      launch post addresses an audience about a product; a buyer addresses a
+      room about a problem.
+
+      So the marker has to be structural, not vocabulary. On Hacker News the
+      structure is explicit and conventional - Show HN and Launch HN are
+      defined by the site as product announcements - which makes this the one
+      place the frame can be read off the text with certainty.
+
+      Weighted heavier than supply_side because it is more certain: a
+      freelancer might also be a buyer of something else, a launch post is
+      never a buyer.
+    phrases: ["show hn", "launch hn", "(yc ", "we're launching", "were launching",
+              "we've developed", "weve developed", "we've built", "weve built",
+              "our platform", "our product", "our saas", "founder of",
+              "book a demo", "sign up at", "try it free", "waitlist",
+              "pricing starts", "we'd love your feedback", "wed love your feedback",
+              "hi hn, we", "hey hn, we"]
 
 # Second-person address to business owners. Used ONLY to decide whether a post
 # frames the thread beneath it - never as a record's own buyer voice.

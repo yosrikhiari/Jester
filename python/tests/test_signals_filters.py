@@ -243,11 +243,28 @@ def test_exported_records_carry_the_classifier_output_not_typed_values(rules):
     """A CSV showing numbers no code produced would make the gate check a
     label against itself."""
     for s in sig.synthetic_signals(rules=rules):
-        v = f.classify(s.text, rules, title=s.title)
+        title = "" if s.kind == "comment" else s.title
+        v = f.classify(s.text, rules, title=title)
         assert s.match_confidence == v.confidence
-        assert s.match_reason == v.reason
+        assert s.match_reason.startswith(v.reason)
         assert s.relevant == v.relevant
         assert s.audience == v.audience
+
+
+def test_a_stored_reason_names_the_words_that_fired_it(rules):
+    """The verdict is computed from the whole post; the archive keeps a
+    600-character excerpt. So a record can say "owner_voice + work_pain" while
+    the text stored beside it contains neither phrase — and a reviewer checking
+    the claim finds nothing and concludes the classifier is broken. Naming the
+    phrases makes the verdict checkable against the source link."""
+    kept = [s for s in sig.synthetic_signals(rules=rules) if s.audience != "none"]
+    assert kept, "the fixture set must keep something, or this proves nothing"
+    for s in kept:
+        assert "[matched:" in s.match_reason, s.match_reason
+        quoted = s.match_reason.split("[matched:", 1)[1].rstrip("]")
+        for phrase in [p.strip() for p in quoted.split(",") if p.strip()]:
+            assert phrase in f"{s.title}\n{s.text}".lower(), \
+                f"reason names {phrase!r} but the record does not contain it"
 
 
 def test_counts_separate_buyer_from_practitioner(tmp_path, rules):

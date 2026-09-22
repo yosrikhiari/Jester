@@ -147,6 +147,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(api.ideas(status=g("status"), q=g("q"), sort=g("sort", "overall"),
                                  dir=g("dir", "desc"), offset=g("offset", 0), limit=g("limit", 0)))
             return
+        if path == "/api/signals":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.signals(audience=g("audience"), community=g("community"),
+                                   kind=g("kind"), q=g("q"), mode=g("mode"),
+                                   offset=g("offset", 0), limit=g("limit", 50)))
+            return
+        if path == "/api/signals/runs":
+            self._json(api.signal_runs(limit=parse_qs(query).get("limit", [25])[0]))
+            return
         if path == "/api/nuggets/page":
             qs = parse_qs(query)
             g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731

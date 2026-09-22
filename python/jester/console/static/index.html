@@ -330,6 +330,61 @@
     </div>
   </section>
 
+  <!-- ── signals (YU-01) ──────────────────────────────────────────── -->
+  <section data-page="signals" hidden>
+    <div class="hero">
+      <div>
+        <h1 data-eyebrow="YU-01">Problem signals</h1>
+        <p>One row per post, from an approved source. <b>buyer</b> is what outreach can act on;
+          <b>practitioner</b> is content material, not a lead. Every row keeps the words that
+          classified it, so a verdict can be checked against the post itself.</p>
+        <p id="signals-count" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <input id="signals-q" placeholder="filter signals…" style="inline-size:220px" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="kpis kpis--4" id="signals-tiles"></div>
+
+    <div class="card card--flush" style="margin-block-start:var(--s-5)">
+      <div class="card-head"><h3>Runs</h3><span class="xs">the ledger the 23 Oct gate is read off</span></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
+            <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
+          </tr></thead>
+          <tbody id="signal-runs-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="facetbar" style="margin-block-start:var(--s-5)">
+      <button class="btn btn--sm" id="sfacets-toggle" aria-expanded="true" aria-controls="signals-facets">
+        <span class="fic" aria-hidden="true"></span><span id="sfacets-toggle-label">hide filters</span>
+      </button>
+      <div class="activefacets" id="signals-active"></div>
+    </div>
+    <div class="facetlayout" id="signals-layout">
+      <aside class="facets" id="signals-facets" aria-label="Narrow the archive"></aside>
+      <div class="card card--flush">
+        <div class="card-head">
+          <h3>Records</h3><span class="xs" id="signals-shown"></span>
+          <div class="pager row-end" id="signals-pager"></div>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>record</th><th>audience</th><th class="num">conf</th><th>why it was kept</th>
+            </tr></thead>
+            <tbody id="signals-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── config ───────────────────────────────────────────────────── -->
   <section data-page="config" hidden>
     <div class="hero">

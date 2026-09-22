@@ -1773,6 +1773,121 @@ def cmd_signals(args):
             sys.exit(1)
         return
 
+    if action == "sources":
+        from jester.signals import sources as sigsrc
+        print("Collectors that exist, and the authority they run on:\n")
+        for s in sigsrc.available():
+            print(f"  {s['name']} ({s['platform']})")
+            print(f"    access: {s['access']}")
+            print(f"    terms:  {s['terms_url']}")
+            print(f"    pace:   {s['rate']}\n")
+        # Named rather than left as an absence. A missing collector that is
+        # missing on purpose is a decision; a missing collector nobody
+        # mentions is an oversight someone will 'fix'.
+        print("  reddit — NOT BUILT ON PURPOSE. The free Data API is "
+              "non-commercial and this work is commercial, so the Reddit path "
+              "needs approved commercial access (Seif owns it; 2 Oct status, "
+              "9 Oct access-or-replacement). A path that cannot legally run "
+              "must not exist as code that can be called by accident.")
+        return
+
+    if action in ("digest", "reclassify"):
+        from jester.signals import digest as sigdigest
+        from jester.signals import run as sigrun
+
+        db = sig.open_signals(args.db)
+        try:
+            if action == "reclassify":
+                baseline = sigf.load_rules(args.baseline) if args.baseline else None
+                res = sigrun.reclassify(db, rules, baseline=baseline,
+                                        mode=args.only_mode, dry_run=not args.apply)
+                print(f"{res['records']} record(s) re-scored against rule set "
+                      f"v{res['config_version']}")
+                if not res["comparable"]:
+                    # Saying so, because the number below looks like an A/B and
+                    # is not: the stored verdict was computed from the whole
+                    # post and only a 600-char excerpt survives.
+                    print("NOTE: compared against STORED verdicts, which were "
+                          "computed from the full post. Only the excerpt is "
+                          "kept, so part of any difference is truncation, not "
+                          "the rules. Pass --baseline <rules.yaml> for a clean "
+                          "comparison.")
+                print(f"before {res['before']}")
+                print(f"after  {res['after']}")
+                print(f"changed {res['changed']}")
+                for c in res["changes"][:25]:
+                    print(f"  {c['from']:>12} -> {c['to']:<12} [{c['confidence']}] {c['title']}")
+                if len(res["changes"]) > 25:
+                    print(f"  … {len(res['changes']) - 25} more")
+                print("applied" if res["applied"] else "dry run — pass --apply to write")
+                return
+
+            data = sigdigest.write_digest(db, out_dir, since=args.digest_since,
+                                          until=args.digest_until,
+                                          mode=args.only_mode or "live", rules=rules)
+            print(f"digest {data['window']['from'][:10]} to {data['window']['to'][:10]} "
+                  f"(mode {data['window']['mode']})")
+            print(f"collected {data['collected']} · buyer {data['buyer']} · "
+                  f"practitioner {data['practitioner']} · rejected {data['rejected']}")
+            print(f"repeated needs: {len(data['repeated_needs'])} · "
+                  f"mentioned once: {len(data['single_mentions'])} · "
+                  f"runs in window: {len(data['runs'])}")
+            print(f"written: {data['path']}")
+            return
+        finally:
+            db.close()
+
+    if action in ("run", "recover", "runs"):
+        from jester.signals import run as sigrun
+        from jester.signals import sources as sigsrc
+
+        db = sig.open_signals(args.db)
+        try:
+            if action == "runs":
+                rows = sigrun.runs(db, limit=args.limit, mode=args.only_mode)
+                if not rows:
+                    print("no runs recorded yet")
+                    return
+                print(f"{'started':<21}{'kind':<11}{'source':<13}{'coll':>5}"
+                      f"{'new':>5}{'buyer':>7}{'pract':>7}{'err':>5}  status")
+                for r in rows:
+                    print(f"{r['started_utc'][:19]:<21}{r['kind']:<11}{r['source']:<13}"
+                          f"{r['collected']:>5}{r['new']:>5}{r['buyer']:>7}"
+                          f"{r['practitioner']:>7}{r['errors']:>5}  {r['status']}"
+                          + (f"  ({r['note']})" if r['note'] else ""))
+                return
+
+            source = sigsrc.get_source(args.source)
+            fn = sigrun.collect if action == "run" else sigrun.recover
+            kwargs = dict(source_name=args.source, rules=rules, since=args.since,
+                          limit_per_query=args.limit, mode="live", source=source)
+            if action == "run":
+                kwargs["queries"] = args.query or None
+            row = fn(db, **kwargs)
+
+            print(f"run {row['run_id']} ({row['kind']}) · {row['source']} · since {row['since']}")
+            print(f"queries: {len(json.loads(row['queries']))} · "
+                  f"collected {row['collected']} · new {row['new']} · "
+                  f"seen again {row['seen_again']} · edited {row['edited']}")
+            print(f"buyer {row['buyer']} · practitioner {row['practitioner']} · "
+                  f"relevant {row['relevant']} · errors {row['errors']}")
+            if row["note"]:
+                print(row["note"])
+            # A run that collected nothing is a valid run. Saying so out loud
+            # stops the next person reading an empty day as a broken collector.
+            if row["collected"] == 0:
+                print("zero results — a valid run; every query was read and "
+                      "returned nothing")
+            print(f"status: {row['status']}")
+            if row["status"] == "failed":
+                sys.exit(1)
+            return
+        except sigsrc.SourceError as exc:
+            print(f"source: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
+
     if action in ("load", "queries", "evidence"):
         from jester.signals import clickhouse as ch
         from jester.signals import evidence as ev
@@ -1943,17 +2058,43 @@ def main(argv=None):
     )
     sg.add_argument("action", nargs="?", default="export",
                     choices=["export", "check", "scope", "rules", "field-map",
-                             "load", "queries", "evidence"],
+                             "load", "queries", "evidence",
+                             "run", "recover", "runs", "sources",
+                             "digest", "reclassify"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
-                         "run the saved SQL | write the evidence pack")
+                         "run the saved SQL | write the evidence pack | "
+                         "run a live collection | recover failed queries | "
+                         "list runs | list sources | write the weekly digest | "
+                         "re-score the archive against the rules")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
     sg.add_argument("--rules", default=None,
                     help="rule set (default: config/signal_rules.yaml)")
+    # `export` still only knows how to write fixtures. Live collection is the
+    # `run` action against a named approved source, and it labels its rows
+    # live — a fixture row must never be countable as a live one, so the two
+    # do not share a code path.
     sg.add_argument("--mode", default="fixture", choices=["fixture"],
-                    help="fixture only: live collection needs approved Reddit API access")
+                    help="fixture only, for `export`; live collection is `signals run`")
+    sg.add_argument("--source", default="hackernews",
+                    help="which approved collector `run`/`recover` uses")
+    sg.add_argument("--since", default="7d",
+                    help="how far back to search: 7d, 24h, or an ISO date")
+    sg.add_argument("--query", action="append", default=[],
+                    help="override the configured phrases; repeatable")
+    sg.add_argument("--limit", type=int, default=100,
+                    help="max records per query (also the row limit for `runs`)")
+    sg.add_argument("--digest-since", default="",
+                    help="digest window start (ISO); default: seven days back")
+    sg.add_argument("--digest-until", default="",
+                    help="digest window end (ISO); default: now")
+    sg.add_argument("--baseline", default=None,
+                    help="reclassify: another rules file to compare against, "
+                         "so the delta is the rules and not the truncation")
+    sg.add_argument("--apply", action="store_true",
+                    help="reclassify: write the new verdicts (default: dry run)")
     sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")
     # Separate from --mode, which says what this command may collect. This one
     # narrows what is loaded or exported, and defaults to everything: leaving
