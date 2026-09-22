@@ -1,0 +1,50 @@
+{
+  "category": "failures",
+  "why": [
+    "A silent failure is the worst kind. A fetch that goes wrong",
+    "must leave a counted row saying so, never a gap in the numbers that reads",
+    "as 'nothing was there'. Each of these four ends as run_status=error with",
+    "the reason kept, and none of them is ever classified as a signal."
+  ],
+  "cases": [
+    {
+      "id": "fail-01-source-unavailable",
+      "expect": {"audience": "none", "ambiguous": false, "run_status": "error"},
+      "record": {
+        "source_id": "t3_fx0501", "kind": "post", "community": "r/synthetic-dataeng",
+        "title": "(fetch failed)", "text": "",
+        "run_status": "error", "error": "synthetic: source returned 503 on two attempts"
+      }
+    },
+    {
+      "id": "fail-02-rate-limited",
+      "expect": {"audience": "none", "ambiguous": false, "run_status": "error"},
+      "why": "A 429 is the failure most likely to happen at scale, and the one most likely to be mistaken for an empty listing.",
+      "record": {
+        "source_id": "t3_fx0502", "kind": "post", "community": "r/synthetic-smallbiz",
+        "title": "(rate limited)", "text": "",
+        "run_status": "error", "error": "synthetic: 429, retry after 600s"
+      }
+    },
+    {
+      "id": "fail-03-malformed-payload",
+      "expect": {"audience": "none", "ambiguous": false, "run_status": "error"},
+      "why": "The record exists even though its body could not be parsed, so the run's error count is the number of things that went wrong and not the number we happened to notice.",
+      "record": {
+        "source_id": "t3_fx0503", "kind": "post", "community": "r/synthetic-nocode",
+        "title": "(unparseable)", "text": "",
+        "run_status": "error", "error": "synthetic: body was not valid JSON"
+      }
+    },
+    {
+      "id": "fail-04-blocked-page",
+      "expect": {"audience": "none", "ambiguous": false, "run_status": "error"},
+      "why": "A challenge page returns 200 with prose. Without this case it reads as a post with no problem in it, which is how a blocked collector looks healthy for a week.",
+      "record": {
+        "source_id": "t3_fx0504", "kind": "post", "community": "r/synthetic-devops",
+        "title": "(blocked)", "text": "",
+        "run_status": "error", "error": "synthetic: interstitial - prove your humanity"
+      }
+    }
+  ]
+}

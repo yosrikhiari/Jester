@@ -545,6 +545,14 @@ def cmd_run(args):
             "synthesis fell back to the deterministic stand-in — those nuggets "
             "stay queued rather than becoming ideas nobody can trust"
         )
+    if getattr(synthesizer, "split_groups", 0):
+        # Several ideas from one thread is deliberate, not a dedup miss: the
+        # thread outgrew max_nuggets_per_idea and was cut into chunks.
+        print(
+            f"split {synthesizer.split_groups} oversized thread group(s) into "
+            f"chunks of {cfg.thresholds.max_nuggets_per_idea} nuggets "
+            "(max_nuggets_per_idea)"
+        )
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
     checkpoint("synthesize")
@@ -1678,6 +1686,305 @@ def cmd_migrate(args):
     print(f"migrate OK: schema_version={version}")
 
 
+def cmd_signals(args):
+    """the collector: the problem-signal collector.
+
+    Sub-actions, each one command with an exit code, because every milestone
+    is graded as "this check passes" rather than "this work happened":
+
+        export    seed the labeled fixtures, upsert, write CSV + manifest
+        check     run every fixture case through the classifier (non-zero on a miss)
+        scope     write the scope/access document the owner signs
+        rules     print the loaded rule set
+        field-map print the field map
+        load      copy SQLite -> ClickHouse and reconcile the counts (M2)
+        queries   run the saved SQL and print each answer
+        evidence  load, reconcile, run every query, write the review pack
+
+    There is no live action. Live collection needs approved commercial Reddit
+    API access, which is somebody else's decision, and a path that cannot
+    run cannot misfire.
+    """
+    from jester import signals as sig
+    from jester.signals import filters as sigf
+    from jester.signals import scope as sigscope
+
+    rules_path = getattr(args, "rules", None)
+    try:
+        rules = sigf.load_rules(rules_path)
+    except sigf.RulesError as exc:
+        print(f"signal rules: {exc}")
+        sys.exit(1)
+
+    out_dir = Path(args.out or (Path(args.db).resolve().parent / "exports" / "signals"))
+    action = args.action or "export"
+
+    if action == "field-map":
+        print(sig.field_map_markdown())
+        return
+
+    if action == "rules":
+        print(f"config_version {rules.config_version} · "
+              f"{len(rules.problem)} problem phrase(s), {len(rules.negative)} negative, "
+              f"{len(rules.hard_reject)} hard reject")
+        print(f"thresholds: rejected < {rules.ambiguous_at} <= ambiguous < {rules.relevant_at} <= signal")
+        print(f"scope: {'APPROVED' if rules.approved else 'PROVISIONAL'} · "
+              f"{len(rules.communities)} communities · {len(rules.queries)} queries")
+        for c in rules.communities:
+            print(f"  - {c}")
+        return
+
+    if action == "scope":
+        path = sigscope.write_scope(out_dir, rules)
+        status = "APPROVED" if rules.approved else "PROVISIONAL — awaiting the scope owner"
+        print(f"scope: {status}")
+        print(f"communities: {len(rules.communities)} (task asks 3-5) · queries: {len(rules.queries)}")
+        print(f"written: {path}")
+        return
+
+    if action == "check":
+        from jester.signals import fixtures as sigfx
+        try:
+            res = sigfx.check(rules)
+        except sigfx.FixtureError as exc:
+            print(f"fixture set: {exc}")
+            sys.exit(1)
+        for c in res["cases"]:
+            mark = "PASS" if c["pass"] else "FAIL"
+            conf = f"{c['confidence']:.2f}" if c["confidence"] is not None else "  - "
+            print(f"{mark}  {c['id']:<40}{c['category']:<11}{conf}  {c['got']}")
+            if c["misses"]:
+                print(f"        want {c['want']}")
+                print(f"        {'; '.join(c['misses'])}")
+            elif c.get("detail"):
+                print(f"        {c['detail'][:110]}")
+        print(f"\n{res['passed']}/{res['total']} case(s) passed · "
+              f"categories: {', '.join(res['categories'])}")
+        # Coverage is part of the gate: a set that quietly lost its failure
+        # cases still reads 100%, which is the failure this guards against.
+        if res["missing_categories"]:
+            print(f"MISSING CATEGORIES: {', '.join(res['missing_categories'])}")
+        if res["short_by"]:
+            print(f"SHORT BY {res['short_by']} case(s) of the "
+                  f"{sigfx.REQUIRED_TOTAL} the gate asks for")
+        if res["failed"] or res["missing_categories"] or res["short_by"]:
+            if res["failed"]:
+                print(f"FAILED: {', '.join(res['failed'])}")
+            sys.exit(1)
+        return
+
+    if action == "sources":
+        from jester.signals import sources as sigsrc
+        print("Collectors that exist, and the authority they run on:\n")
+        for s in sigsrc.available():
+            print(f"  {s['name']} ({s['platform']})")
+            print(f"    access: {s['access']}")
+            print(f"    terms:  {s['terms_url']}")
+            print(f"    pace:   {s['rate']}\n")
+        # Named rather than left as an absence. A missing collector that is
+        # missing on purpose is a decision; a missing collector nobody
+        # mentions is an oversight someone will 'fix'.
+        print("  reddit — NOT BUILT ON PURPOSE. The free Data API is "
+              "non-commercial and this work is commercial, so the Reddit path "
+              "needs approved commercial access, which is somebody else's "
+              "decision. A path that cannot legally run "
+              "must not exist as code that can be called by accident.")
+        return
+
+    if action in ("digest", "reclassify"):
+        from jester.signals import digest as sigdigest
+        from jester.signals import run as sigrun
+
+        db = sig.open_signals(args.db)
+        try:
+            if action == "reclassify":
+                baseline = sigf.load_rules(args.baseline) if args.baseline else None
+                res = sigrun.reclassify(db, rules, baseline=baseline,
+                                        mode=args.only_mode, dry_run=not args.apply)
+                print(f"{res['records']} record(s) re-scored against rule set "
+                      f"v{res['config_version']}")
+                if not res["comparable"]:
+                    # Saying so, because the number below looks like an A/B and
+                    # is not: the stored verdict was computed from the whole
+                    # post and only a 600-char excerpt survives.
+                    print("NOTE: compared against STORED verdicts, which were "
+                          "computed from the full post. Only the excerpt is "
+                          "kept, so part of any difference is truncation, not "
+                          "the rules. Pass --baseline <rules.yaml> for a clean "
+                          "comparison.")
+                print(f"before {res['before']}")
+                print(f"after  {res['after']}")
+                print(f"changed {res['changed']}")
+                for c in res["changes"][:25]:
+                    print(f"  {c['from']:>12} -> {c['to']:<12} [{c['confidence']}] {c['title']}")
+                if len(res["changes"]) > 25:
+                    print(f"  … {len(res['changes']) - 25} more")
+                print("applied" if res["applied"] else "dry run — pass --apply to write")
+                return
+
+            data = sigdigest.write_digest(db, out_dir, since=args.digest_since,
+                                          until=args.digest_until,
+                                          mode=args.only_mode or "live", rules=rules)
+            print(f"digest {data['window']['from'][:10]} to {data['window']['to'][:10]} "
+                  f"(mode {data['window']['mode']})")
+            print(f"collected {data['collected']} · buyer {data['buyer']} · "
+                  f"practitioner {data['practitioner']} · rejected {data['rejected']}")
+            print(f"repeated needs: {len(data['repeated_needs'])} · "
+                  f"mentioned once: {len(data['single_mentions'])} · "
+                  f"runs in window: {len(data['runs'])}")
+            print(f"written: {data['path']}")
+            return
+        finally:
+            db.close()
+
+    if action in ("run", "recover", "runs"):
+        from jester.signals import run as sigrun
+        from jester.signals import sources as sigsrc
+
+        db = sig.open_signals(args.db)
+        try:
+            if action == "runs":
+                rows = sigrun.runs(db, limit=args.limit, mode=args.only_mode)
+                if not rows:
+                    print("no runs recorded yet")
+                    return
+                print(f"{'started':<21}{'kind':<11}{'source':<13}{'coll':>5}"
+                      f"{'new':>5}{'buyer':>7}{'pract':>7}{'err':>5}  status")
+                for r in rows:
+                    print(f"{r['started_utc'][:19]:<21}{r['kind']:<11}{r['source']:<13}"
+                          f"{r['collected']:>5}{r['new']:>5}{r['buyer']:>7}"
+                          f"{r['practitioner']:>7}{r['errors']:>5}  {r['status']}"
+                          + (f"  ({r['note']})" if r['note'] else ""))
+                return
+
+            source = sigsrc.get_source(args.source)
+            fn = sigrun.collect if action == "run" else sigrun.recover
+            kwargs = dict(source_name=args.source, rules=rules, since=args.since,
+                          limit_per_query=args.limit, mode="live", source=source)
+            if action == "run":
+                kwargs["queries"] = args.query or None
+            row = fn(db, **kwargs)
+
+            print(f"run {row['run_id']} ({row['kind']}) · {row['source']} · since {row['since']}")
+            print(f"queries: {len(json.loads(row['queries']))} · "
+                  f"collected {row['collected']} · new {row['new']} · "
+                  f"seen again {row['seen_again']} · edited {row['edited']}")
+            print(f"buyer {row['buyer']} · practitioner {row['practitioner']} · "
+                  f"relevant {row['relevant']} · errors {row['errors']}")
+            if row["note"]:
+                print(row["note"])
+            # A run that collected nothing is a valid run. Saying so out loud
+            # stops the next person reading an empty day as a broken collector.
+            if row["collected"] == 0:
+                print("zero results — a valid run; every query was read and "
+                      "returned nothing")
+            print(f"status: {row['status']}")
+            if row["status"] == "failed":
+                sys.exit(1)
+            return
+        except sigsrc.SourceError as exc:
+            print(f"source: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
+
+    if action in ("load", "queries", "evidence"):
+        from jester.signals import clickhouse as ch
+        from jester.signals import evidence as ev
+
+        client = ch.Client()
+        db = sig.open_signals(args.db)
+        try:
+            if action == "queries":
+                # Read-only: answers the questions without touching the
+                # archive, so it is safe to run while a load is in flight.
+                failed = False
+                for q in ch.run_saved_queries(client):
+                    print(f"\n== {q['name']} — {q['title']}")
+                    if not q["ok"]:
+                        print(f"   FAILED: {q['error']}")
+                        failed = True
+                        continue
+                    if not q["rows"]:
+                        print("   (no rows)")
+                        continue
+                    cols = list(q["rows"][0].keys())
+                    print("   " + " | ".join(cols))
+                    for r in q["rows"][:15]:
+                        print("   " + " | ".join(
+                            str(r.get(c, ""))[:40] for c in cols))
+                    if len(q["rows"]) > 15:
+                        print(f"   … {len(q['rows']) - 15} more row(s)")
+                if failed:
+                    sys.exit(1)
+                return
+
+            if action == "load":
+                res = ch.load(db, client, mode=args.only_mode)
+                rec = ch.reconcile(db, client, mode=args.only_mode)
+                print(f"loaded {res['rows_sent']} row(s) in {res['requests']} request(s) "
+                      f"into {res['database']} at {res['url']}")
+                print(f"sqlite {rec['sqlite_rows']} · clickhouse {rec['clickhouse_rows_final']} "
+                      f"(final) · distinct ids {rec['clickhouse_unique_ids']}")
+                # The M2 check in one line. Duplicates are the failure the
+                # milestone names; un-merged parts are not a failure at all.
+                print(f"duplicates: {rec['duplicates']} · "
+                      f"un-merged parts: {rec['unmerged_parts']} (harmless)")
+                if not rec["reconciles"]:
+                    print("MISMATCH: the two stores do not agree")
+                    sys.exit(1)
+                if rec["sqlite_rows"] == 0:
+                    # 0 == 0 reconciles, and saying so would read as a check
+                    # that passed. Nothing was loaded and nothing was verified,
+                    # and that is what the line has to say.
+                    print(f"nothing matched mode={args.only_mode or 'all'}: "
+                          "no rows loaded, nothing checked")
+                    return
+                print("reconciles: yes")
+                return
+
+            pack = out_dir / "evidence"
+            summary = ev.write_evidence(db, pack, client=client, mode=args.only_mode)
+            r = summary["reconcile"]
+            print(f"sqlite {r['sqlite_rows']} · clickhouse {r['clickhouse_rows_final']} · "
+                  f"duplicates {r['duplicates']} · csv {summary['csv']['rows_in_csv']}")
+            bad = [q["name"] for q in summary["queries"] if not q["ok"]]
+            if bad:
+                print(f"QUERIES FAILED: {', '.join(bad)}")
+            print(f"pack: {pack / 'README.md'}")
+            if not summary["passes"]:
+                sys.exit(1)
+            print("evidence: PASS")
+            return
+        except ch.ClickHouseError as exc:
+            print(f"clickhouse: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
+
+    if args.mode != "fixture":
+        print("only --mode fixture exists today: live collection needs approved "
+              "Reddit API access, which is somebody else's decision. "
+              "Nothing here fakes a live run.")
+        sys.exit(1)
+
+    manifest = sig.run_fixture_export(args.db, out_dir, run_id=args.run, rules=rules)
+    up = manifest["upsert"]
+    print(f"upserted: {up['new']} new, {up['seen_again']} seen again, {up['edited']} edited")
+    for mode, c in sorted(manifest["counts_by_mode"].items()):
+        print(f"{mode}: {c['unique_collected']} unique, {c['relevant']} relevant, "
+              f"{c['removed']} removed, {c['errors']} error(s)")
+    xposts = manifest.get("crossposts") or []
+    if xposts:
+        # Reported, never merged: the same question in two communities is two
+        # real records, and collapsing them would make the counts lie.
+        print(f"crossposts: {len(xposts)} text(s) seen in more than one record "
+              f"({', '.join(x['communities'][0] + '…' for x in xposts[:3])})")
+    print(f"csv: {out_dir / manifest['csv']} ({manifest['rows_in_csv']} row(s), "
+          f"reconciles={manifest['reconciles']})")
+    print(f"also written: field-map.md, schema.clickhouse.sql, manifest.json in {out_dir}")
+
+
 def main(argv=None):
     # Secrets live in .env, not in thresholds.yaml — the config files are
     # committed and the console writes to them. Loading here rather than at
@@ -1744,6 +2051,57 @@ def main(argv=None):
     rs = sub.add_parser("runs")
     rs.add_argument("--db", default="data/jester.db")
     rs.set_defaults(func=cmd_runs)
+
+    sg = sub.add_parser(
+        "signals",
+        help="the collector problem-signal collector: fixtures -> classifier -> SQLite -> CSV",
+    )
+    sg.add_argument("action", nargs="?", default="export",
+                    choices=["export", "check", "scope", "rules", "field-map",
+                             "load", "queries", "evidence",
+                             "run", "recover", "runs", "sources",
+                             "digest", "reclassify"],
+                    help="export (default) | check fixtures | write the scope doc | "
+                         "print rules | print the field map | load into ClickHouse | "
+                         "run the saved SQL | write the evidence pack | "
+                         "run a live collection | recover failed queries | "
+                         "list runs | list sources | write the weekly digest | "
+                         "re-score the archive against the rules")
+    sg.add_argument("--db", default="data/jester.db")
+    sg.add_argument("--out", default=None,
+                    help="output directory (default: exports/signals beside the db)")
+    sg.add_argument("--rules", default=None,
+                    help="rule set (default: config/signal_rules.yaml)")
+    # `export` still only knows how to write fixtures. Live collection is the
+    # `run` action against a named approved source, and it labels its rows
+    # live — a fixture row must never be countable as a live one, so the two
+    # do not share a code path.
+    sg.add_argument("--mode", default="fixture", choices=["fixture"],
+                    help="fixture only, for `export`; live collection is `signals run`")
+    sg.add_argument("--source", default="hackernews",
+                    help="which approved collector `run`/`recover` uses")
+    sg.add_argument("--since", default="7d",
+                    help="how far back to search: 7d, 24h, or an ISO date")
+    sg.add_argument("--query", action="append", default=[],
+                    help="override the configured phrases; repeatable")
+    sg.add_argument("--limit", type=int, default=100,
+                    help="max records per query (also the row limit for `runs`)")
+    sg.add_argument("--digest-since", default="",
+                    help="digest window start (ISO); default: seven days back")
+    sg.add_argument("--digest-until", default="",
+                    help="digest window end (ISO); default: now")
+    sg.add_argument("--baseline", default=None,
+                    help="reclassify: another rules file to compare against, "
+                         "so the delta is the rules and not the truncation")
+    sg.add_argument("--apply", action="store_true",
+                    help="reclassify: write the new verdicts (default: dry run)")
+    sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")
+    # Separate from --mode, which says what this command may collect. This one
+    # narrows what is loaded or exported, and defaults to everything: leaving
+    # rows out of an archive is how a count stops reconciling.
+    sg.add_argument("--only-mode", default="", choices=["", "live", "fixture"],
+                    help="load/export only rows of this mode (default: all)")
+    sg.set_defaults(func=cmd_signals)
 
     rt = sub.add_parser("retention")
     rt.add_argument("--db", default="data/jester.db")

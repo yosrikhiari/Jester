@@ -135,11 +135,50 @@ services:
       - CLOAKBROWSER_PROXY=${CLOAKBROWSER_PROXY:-}
       - CLOAKBROWSER_GEOIP=${CLOAKBROWSER_GEOIP:-}
     healthcheck:
-      test: ["CMD", "/bin/sh", "-c", "wget -qO- http://localhost:9222/json/version > /dev/null 2>&1 || exit 1"]
+      # curl, not wget: this image ships curl and has no wget, so the old
+      # probe exited 127 (command not found) on every tick and the container
+      # reported unhealthy for its whole life while answering CDP perfectly.
+      # 127.0.0.1 rather than localhost for the usual reason - the endpoint is
+      # IPv4-only and localhost resolves to ::1 first.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9222/json/version"]
       interval: 30s
       timeout: 5s
       retries: 3
     profiles: ["live"]
+    networks: [jester_net]
+
+  # the collector's queryable store. Profile-gated like the other externals: the
+  # nugget pipeline does not need it, and a service nobody asked for should
+  # not start with `docker compose up`.
+  #
+  # Only the HTTP interface is published. The native protocol would want 9000,
+  # which is already taken on this machine, and the loader speaks HTTP over
+  # stdlib urllib rather than pulling in a driver - the same call the repo
+  # already makes for Groq and Ollama.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8123:8123"
+    environment:
+      - CLICKHOUSE_DB=jester
+      - CLICKHOUSE_USER=jester
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-jester}
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      # 127.0.0.1, not localhost. The server listens on IPv4 only and
+      # `localhost` resolves to ::1 first inside this image, so the check gets
+      # connection refused against a container that is answering perfectly -
+      # the same trap config/scraper.yaml documents for the CDP endpoint.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    profiles: ["signals"]
     networks: [jester_net]
 
   ollama:
@@ -154,6 +193,7 @@ services:
 volumes:
   jester_docker_data:
   qdrant_storage:
+  clickhouse_data:
   cloak_profiles:
   ollama_data:
   cloak_browser_binary:

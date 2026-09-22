@@ -1,0 +1,54 @@
+{
+  "category": "ambiguous",
+  "why": [
+    "Kept and flagged, never quietly promoted and never quietly dropped. These",
+    "are the records where the evidence is real but thin: the right handling is",
+    "to keep them, say why they are doubtful, and let a human decide - which is",
+    "the whole reason the confidence and the reason are stored."
+  ],
+  "cases": [
+    {
+      "id": "amb-01-owner-with-no-cost",
+      "expect": {"audience": "buyer", "ambiguous": true},
+      "why": "A business voice asking a vague question. Real owner, real hesitation, no stated work and no stated cost.",
+      "record": {
+        "source_id": "t3_fx0301", "kind": "post", "community": "r/synthetic-smallbiz",
+        "title": "How do you handle the admin side as you grow?",
+        "text": "I run a small studio and things are getting busier. Not sure what to change first. Curious what worked for other people."
+      }
+    },
+    {
+      "id": "amb-02-practitioner-thin",
+      "expect": {"audience": "practitioner", "ambiguous": true},
+      "why": "Delivery pain with no detail and no business voice: content material at best, and weak content at that.",
+      "record": {
+        "source_id": "t3_fx0302", "kind": "post", "community": "r/synthetic-devops",
+        "title": "Anyone else fighting duplicate form submissions?",
+        "text": "Our integration keeps creating duplicates. Any advice?"
+      }
+    },
+    {
+      "id": "amb-03-inherited-voice",
+      "expect": {"audience": "buyer", "ambiguous": true, "inherited": true},
+      "why": "A named process under a buyer frame. The voice is borrowed from the thread, so it is kept at the lower bar and the reason says where it came from.",
+      "record": {
+        "source_id": "t1_fx0303", "kind": "comment", "community": "r/synthetic-smallbiz",
+        "text": "payroll and timesheets"
+      },
+      "context": {
+        "title": "what business process are you still doing manually or paying too much for?",
+        "text": ""
+      }
+    },
+    {
+      "id": "amb-04-cost-without-a-voice",
+      "expect": {"audience": "practitioner", "ambiguous": false},
+      "why": "Measured misroute: the archive's best cost-comparison post reads like a buyer and is not one - the author did the work himself. Excellent content for the content feed, useless to outreach.",
+      "record": {
+        "source_id": "t3_fx0304", "kind": "post", "community": "r/synthetic-selfhosted",
+        "title": "Migrated 42 workflows off a paid tool to self-hosted",
+        "text": "Got tired of being billed per polling trigger. Moved all forty-two workflows to a self-hosted instance last week. The cost difference is about two hundred per month. The manual migration took a weekend and the integration broke twice."
+      }
+    }
+  ]
+}

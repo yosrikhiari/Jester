@@ -73,6 +73,115 @@ sources:
   enabled: true
   notes: owners describing manual processes they would pay to automate
 - platform: reddit
+  name: msp
+  kind: subreddit
+  url: https://www.reddit.com/r/msp/
+  enabled: true
+  notes: >
+    Added 2026-09-22 for the buyer test. Managed service providers buy
+    automation continuously and hold budgets; proposed, not yet measured.
+- platform: reddit
+  name: nocode
+  kind: subreddit
+  url: https://www.reddit.com/r/nocode/
+  enabled: true
+  notes: >
+    Added 2026-09-22 for the buyer test. People who have already paid to
+    automate and hit the tool's ceiling - the clearest "now it needs an
+    engineer" moment; proposed, not yet measured.
+- platform: reddit
+  name: entrepreneur
+  kind: subreddit
+  url: https://www.reddit.com/r/Entrepreneur/
+  enabled: true
+  notes: >
+    Added 2026-09-22 for the buyer test. Same poster type as
+    r/smallbusiness at much higher volume; proposed, not yet measured.
+- platform: reddit
+  name: automate
+  kind: subreddit
+  url: https://www.reddit.com/r/automate/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. people trying to automate something and asking how; the ones who fail are the offer's exact buyer. Proposed, not yet measured.
+- platform: reddit
+  name: zapier
+  kind: subreddit
+  url: https://www.reddit.com/r/zapier/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. already PAY for automation and hit the tool's limits - proven willingness to spend, now needing code. Proposed, not yet measured.
+- platform: reddit
+  name: ecommerce
+  kind: subreddit
+  url: https://www.reddit.com/r/ecommerce/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. store owners with integration and ops pain, and revenue to pay from. Proposed, not yet measured.
+- platform: reddit
+  name: shopify
+  kind: subreddit
+  url: https://www.reddit.com/r/shopify/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. same buyer as r/ecommerce, narrower: app/integration gaps a small build fixes. Proposed, not yet measured.
+- platform: reddit
+  name: sweatystartup
+  kind: subreddit
+  url: https://www.reddit.com/r/sweatystartup/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. service-business owners: scheduling, quoting, dispatch - the most spreadsheet-bound operators on the site. Proposed, not yet measured.
+- platform: reddit
+  name: accounting
+  kind: subreddit
+  url: https://www.reddit.com/r/Accounting/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. bookkeeping is manual process work at scale; firms buy automation and have budgets. Proposed, not yet measured.
+- platform: reddit
+  name: agency
+  kind: subreddit
+  url: https://www.reddit.com/r/agency/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. agency owners subcontract delivery; they buy engineering capacity rather than hire it. Proposed, not yet measured.
+- platform: reddit
+  name: saas
+  kind: subreddit
+  url: https://www.reddit.com/r/SaaS/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 2. founders who need things built and often have no engineer in-house. Proposed, not yet measured.
+- platform: reddit
+  name: excel
+  kind: subreddit
+  url: https://www.reddit.com/r/excel/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 3. the largest manual-process community on the site: every post is someone doing by hand what software should do. The offer's exact trigger, at volume. Proposed, not yet measured.
+- platform: reddit
+  name: googlesheets
+  kind: subreddit
+  url: https://www.reddit.com/r/googlesheets/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 3. same shape as r/excel, and closer to the small businesses running on Sheets. Proposed, not yet measured.
+- platform: reddit
+  name: airtable
+  kind: subreddit
+  url: https://www.reddit.com/r/Airtable/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 3. a paid tool whose users hit its ceiling and start asking for code - the same 'now it needs an engineer' moment as r/nocode. Proposed, not yet measured.
+- platform: reddit
+  name: entrepreneurridealong
+  kind: subreddit
+  url: https://www.reddit.com/r/EntrepreneurRideAlong/
+  enabled: true
+  notes: >
+    Added 2026-09-22, the collector buyer test wave 3. owners narrating operations rather than asking how to start; far denser in process detail than r/Entrepreneur. Proposed, not yet measured.
+- platform: reddit
   name: organization
   kind: subreddit
   url: https://www.reddit.com/r/organization/

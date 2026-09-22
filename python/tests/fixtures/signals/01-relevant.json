@@ -1,0 +1,53 @@
+{
+  "category": "relevant",
+  "why": [
+    "A buyer signal is a business voice AND work software could remove. These four",
+    "are the shapes that actually appear: toil with a number on it, software that",
+    "does not exist yet, a tool outgrown, and a terse answer that only makes sense",
+    "inside its thread. All synthetic - example.invalid throughout, nothing collected."
+  ],
+  "cases": [
+    {
+      "id": "rel-01-toil-with-a-number",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "record": {
+        "source_id": "t3_fx0101", "kind": "post", "community": "r/synthetic-smallbiz",
+        "title": "We run a small parts distributor and re-key every order by hand",
+        "text": "Two of us spend about six hours a week copying order details out of emails into a spreadsheet and then into the invoicing tool. We tried to automate it and it breaks whenever a supplier changes their format. Is it worth paying someone to build this properly?"
+      }
+    },
+    {
+      "id": "rel-02-software-that-does-not-exist",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "why": "No manual-work language at all. Found by a control test: 'we need someone to build X' is as clear a buyer as exists, and work_pain missed it until needs_built was added.",
+      "record": {
+        "source_id": "t3_fx0102", "kind": "post", "community": "r/synthetic-smallbiz",
+        "title": "Our customers keep asking for a portal and we cannot build it",
+        "text": "I own a small manufacturing business. We need someone to build a simple order portal that talks to our ERP. No idea whether to hire a developer or outsource it."
+      }
+    },
+    {
+      "id": "rel-03-tool-ceiling",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "why": "Already pays for automation and has outgrown it - the clearest 'now it needs an engineer' moment there is.",
+      "record": {
+        "source_id": "t3_fx0103", "kind": "post", "community": "r/synthetic-nocode",
+        "title": "Hit the ceiling of our automation tool",
+        "text": "I run a small agency and we have about forty scenarios stitched together. It costs us a few hundred per month and half of them break when a webhook changes. Do we pay someone to rewrite this properly or keep patching?"
+      }
+    },
+    {
+      "id": "rel-04-terse-answer-in-a-buyer-thread",
+      "expect": {"audience": "buyer", "ambiguous": true, "inherited": true},
+      "why": "The measured case. Alone this is three words with no ownership language; under a survey post it is a business owner naming work they would pay to remove. Ambiguous on purpose: an inherited voice is weaker evidence than a stated one.",
+      "record": {
+        "source_id": "t1_fx0104", "kind": "comment", "community": "r/synthetic-smallbiz",
+        "text": "chasing late invoices, every single month"
+      },
+      "context": {
+        "title": "What is one part of running your small business you wish you could automate?",
+        "text": ""
+      }
+    }
+  ]
+}

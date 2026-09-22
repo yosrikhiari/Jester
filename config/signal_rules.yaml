@@ -1,0 +1,395 @@
+# the collector problem-signal rules — what counts as a signal, and for whom.
+#
+# Version 2, rebuilt 2026-09-22 against 184 real archived Reddit posts after
+# version 1 scored 1 signal in 2,600 records and that one was a false positive.
+# Sixteen of v1's thirty-one phrases never fired on real text: they were
+# phrasings invented for the fixtures, which is the definition of overfitting
+# to your own test set.
+#
+# WHAT CHANGED, AND WHY IT IS A COMBINATION NOW
+# ---------------------------------------------
+# Measured on those 184 posts: "asking for help" language appears in 33% of
+# them, business-owner voice in 8%, hiring/capacity in 11%, cost in 9%, and
+# career/personal/hobby noise in another 33%. A flat sum of phrase weights
+# therefore cannot separate a buyer from a hobbyist — "looking for a" appears
+# in both. What separates them is the COMBINATION: someone speaking as a
+# business, or about hiring, or about cost, WHO ALSO describes work that
+# software could remove.
+#
+# TWO AUDIENCES, BECAUSE THE TASK HAS TWO CONSUMERS
+# -------------------------------------------------
+# The collector supplies source-linked problem evidence for two consumers:
+# a buyer test and a content feed. The archive shows these are different posts.
+# A self-hoster migrating 42 workflows off Zapier is excellent content material
+# and useless to outreach, which needs someone who would PAY for the work
+# rather than do it themselves. So every record is labeled:
+#
+#   buyer        — a business voice describing work software could remove.
+#                  This is what outreach can act on.
+#   practitioner — real delivery pain from someone who builds. Content
+#                  material; NOT a sales lead.
+#   none         — collected and rejected, with the reason recorded.
+#
+# A buyer signal is still only a signal. It is never evidence of a budget, a
+# company or an intent to purchase — those columns stay `unknown`, and a Reddit
+# mention alone is not a qualified sales lead.
+
+config_version: 2
+
+# ---------------------------------------------------------------------------
+# Scope — communities. PROVISIONAL until the scope owner signs.
+#
+# `evidence` says how each line is justified. Four of the five originally
+# proposed communities were measured against real archived posts and produce
+# almost no buyer signal: they are engineers and hobbyists — the people who
+# ARE the offer, not the people who buy it. They are kept only where they earn
+# a place for the content feed's content, and marked as such.
+# ---------------------------------------------------------------------------
+scope:
+  status: provisional        # provisional | approved
+  decided_by: ""
+  decided_on: ""
+
+  communities:
+    # ---- buyer side: decision makers describing work they cannot absorb ----
+    - name: r/smallbusiness
+      serves: buyer
+      evidence: "measured — 11 archived posts; the only community in the current list whose posters are owners. Real titles: 'how should i position my small software consultancy', 'Help me scale my solo freelance business'."
+      why: owners describe manual work and capacity limits in business terms
+    - name: r/Entrepreneur
+      serves: buyer
+      evidence: "proposed — not yet collected; same poster type as r/smallbusiness at ~20x the volume"
+      why: founders describing operational work before they hire for it
+    - name: r/msp
+      serves: buyer
+      evidence: "proposed — not yet collected"
+      why: managed service providers buy automation continuously and have budgets
+    - name: r/nocode
+      serves: buyer
+      evidence: "proposed — not yet collected"
+      why: people who have already paid to automate and hit the ceiling of the tool; the clearest 'now needs an engineer' moment
+    - name: r/sysadmin
+      serves: buyer
+      evidence: "measured — 16 archived posts; tool-selection posts ('small IT documentation tools', 'Ticketing System with templates or something?', 'which AI tool/s can solve IT issues?') are buying-adjacent"
+      why: operational toil and tool selection, sometimes by the budget holder
+
+    # ---- practitioner side: content material, explicitly not leads ----
+    - name: r/ExperiencedDevs
+      serves: practitioner
+      evidence: "measured — 14 archived posts, almost all career/resume/manager questions; one usable content signal ('Implementation is basically instant now, the org around it moves at the same speed as always')"
+      why: delivery-org commentary for content; NOT an outreach source
+    - name: r/devops
+      serves: practitioner
+      evidence: "measured — 14 archived posts: CI questions, tool choices, CV reviews"
+      why: practitioner pain for content
+
+  # Communities measured and NOT recommended, with the reason, so the decision
+  # is auditable rather than a silent omission.
+  excluded:
+    - name: r/selfhosted
+      evidence: "measured — 23 archived posts; hobbyists who build it themselves. Anti-buyer by definition."
+      keep_for: "content only — one strong cost-comparison post ('Migrated 42 workflows from Zapier to self-hosted n8n, $248/mo down to $7.70/mo')"
+    - name: r/productivity
+      evidence: "measured — 15 archived posts, all personal productivity (study habits, ADHD, screen time). No business signal."
+    - name: r/homelab
+      evidence: "measured — 8 archived posts; hobby hardware."
+    - name: r/NoStupidQuestions
+      evidence: "measured — 23 archived posts; general-purpose, no delivery signal."
+    - name: r/personalfinance
+      evidence: "measured — 16 archived posts; personal money, wrong audience entirely."
+
+  # ---- the phrases. These are literal search strings, not descriptions. ----
+  #
+  # W3 measured the alternative and it does not work: walking a community's
+  # /new/ collects whatever was posted that day, and what a community posts on
+  # a given day is mostly not a buyer — 123 posts and 1 113 comments produced
+  # a 0.65% buyer rate, most of those still false positives. Searching for the
+  # sentences a buyer actually writes is the same number of requests at a far
+  # higher hit rate.
+  #
+  # So the decision changed shape. It is no longer only "which 3–5
+  # communities" but "which 5–10 phrases" — and phrases are cheaper to test,
+  # faster to iterate, and reusable as Omar's opening lines.
+  #
+  # Each phrase below is a sentence someone describing work they would pay to
+  # remove actually types. They are grouped by which half of the buyer
+  # definition they catch: the work, the ceiling, or the decision to buy.
+  queries:
+    # the work itself, named and quantified
+    - "we do it manually"
+    - "by hand every week"
+    - "copy paste between"
+    - "hours a week on spreadsheets"
+    # the ceiling: the DIY fix that stopped scaling
+    - "zapier broke"
+    - "outgrown our spreadsheet"
+    - "does not scale anymore"
+    # the decision: someone weighing paying for it
+    - "worth paying someone"
+    - "hire a developer or"
+    - "build it in house or buy"
+
+  retention:
+    excerpt_chars: 600
+    keep_full_text: false
+    identities: "handles as published; never enriched, never contacted"
+    removal: "recorded, not deleted; text pruned by the archive's retention sweep"
+
+# ---------------------------------------------------------------------------
+# Thresholds. `buyer_at` and `practitioner_at` are separate because the two
+# audiences answer different questions and deserve different bars.
+# ---------------------------------------------------------------------------
+buyer_at: 0.60
+practitioner_at: 0.45
+ambiguous_margin: 0.15     # within this much below the bar: kept, flagged ambiguous
+# What a buyer voice borrowed from the parent thread is worth. Below
+# owner_voice's own 0.35 on purpose: a reply under "what would you automate in
+# your business?" is a real signal, but weaker than someone saying it unasked.
+inherited_weight: 0.25
+# An answer to "what would you automate?" is short - two or three words, or a
+# sentence. Advice is long. Measured on the scope corpus: every false positive
+# the inheritance produced was a long reply advising the asker, so a voice can
+# only be inherited by a reply short enough to be an answer.
+inherited_max_chars: 320
+max_reasons: 3
+
+# ---------------------------------------------------------------------------
+# Families. A family fires when ANY of its phrases appears; its weight is
+# counted once, however many phrases matched. That is what stops a long post
+# out-scoring a precise one.
+# ---------------------------------------------------------------------------
+families:
+
+  owner_voice:
+    weight: 0.35
+    role: buyer_required
+    note: >
+      Speaking AS a business, not merely about one. Measured correction: an
+      employee says "our company" and "my team" as readily as an owner does,
+      and those two phrases produced the worst false positive in the first
+      run — an engineer's essay about slow organisations scored as a buyer.
+      Only ownership language stays, and a buyer signal now REQUIRES it.
+    phrases: ["my business", "our business", "i own", "we own", "i run a", "we run a",
+              "small business", "my agency", "our agency", "my consultancy",
+              "our consultancy", "solo founder", "my startup", "our startup",
+              "my customers", "our customers", "my shop", "our shop", "we're a small",
+              "i started a business", "my store"]
+
+  capacity:
+    weight: 0.25
+    role: buyer_boost
+    note: "considering paying someone: hire, outsource, contract, agency"
+    phrases: ["hire a", "hire someone", "hiring a", "outsource", "outsourcing",
+              "hire a contractor", "hire a freelancer", "dev shop", "offshore", "nearshore",
+              "need someone", "who can build", "looking for someone", "another developer",
+              "extra pair of hands", "build it for us", "pay someone"]
+
+  cost:
+    weight: 0.20
+    role: buyer_boost
+    note: "money or time already being spent — the number an offer competes with"
+    phrases: ["costs us", "cost us", "per month", "/mo", "a month", "hours a week",
+              "hours every week", "takes hours", "expensive", "budget", "pricing",
+              "save time", "waste of time", "wastes"]
+
+  work_pain:
+    weight: 0.25
+    role: pain_marker
+    note: "work software could remove, or delivery that keeps failing"
+    phrases: ["manual", "manually", "by hand", "spreadsheet", "copy paste", "copying",
+              "automate", "automation", "workflow", "integrate", "integration", "sync",
+              "export to", "keeps breaking", "breaks every", "falls over", "duplicate data",
+              "re-enter", "double entry", "zapier", "n8n", "make.com", "airtable",
+              "google sheet", "excel", "backlog", "bottleneck", "tech debt", "legacy"]
+
+  needs_built:
+    weight: 0.25
+    role: pain_marker
+    note: >
+      The other half of the pain: not toil to remove, but software that does
+      not exist yet. Found by a control test — "we need someone to build an
+      order portal that talks to our ERP" is as clear a buyer as it gets and
+      contains no manual-work language at all, so work_pain alone missed it.
+    phrases: ["need someone to build", "need to build", "want to build", "looking to build",
+              "custom software", "custom tool", "internal tool", "build a portal",
+              "build an app", "build us", "build it for", "no in-house", "not technical",
+              "non technical", "no developer", "no dev team", "can't build", "cannot build",
+              "we need a system", "we need software"]
+
+  work_named:
+    weight: 0.25
+    role: pain_marker
+    note: >
+      The named back-office processes people actually say when asked what they
+      would automate. Measured need: under "what would you automate in your
+      small business?" the answers are two or three words - "chasing late
+      invoices", "scheduling" - and work_pain's vocabulary (manual, by hand,
+      spreadsheet) fires on none of them. Terseness is the signal in a survey
+      thread, not the absence of one.
+    phrases: ["invoicing", "invoices", "quoting", "quotes", "scheduling", "bookings",
+              "onboarding", "payroll", "bookkeeping", "reconciliation", "reconciling",
+              "dispatch", "inventory", "stock counts", "follow-ups", "follow ups",
+              "chasing payments", "chasing clients", "data entry", "timesheets",
+              "expense reports", "purchase orders", "order entry", "reporting",
+              "month end", "vat return", "tax return", "customer support tickets"]
+
+  asking:
+    weight: 0.10
+    role: pain_marker
+    note: "asking the room for a way out — weak on its own, useful as a tiebreak"
+    phrases: ["how do i", "how do you", "how can i", "how can we", "anyone else",
+              "any advice", "recommend", "recommendations", "looking for a", "is there a",
+              "suggestions", "best way to", "help me", "has anyone", "does anyone",
+              # Survey forms. Added after the frame test failed on the densest
+              # buyer thread in the archive - "What's one part of running your
+              # small business you wish you could automate?" matched none of
+              # the phrases above, so the thread framed nothing and every
+              # reply under it was scored as an orphan.
+              "what do you", "what would you", "what's one", "what is one",
+              "what are you", "wish you could", "wish i could", "curious what",
+              "curious how", "struggling with", "pain point", "still doing"]
+
+  # -- negatives -------------------------------------------------------------
+  career:
+    weight: -0.45
+    role: negative
+    note: "someone's own career, not a company's problem"
+    phrases: ["resume", "cv review", "interview", "salary", "degree", "major",
+              "promotion", "my career", "job hunt", "laid off", "recruiter",
+              "junior role", "senior role", "internship"]
+
+  personal:
+    weight: -0.45
+    role: negative
+    note: "personal life; wrong audience entirely"
+    phrases: ["my day", "screen time", "adhd", "anxiety", "depression", "motivation",
+              "gym", "sleep", "study habits", "dating", "weight loss"]
+
+  hobby:
+    weight: -0.30
+    role: negative
+    note: "home lab and hobby projects: these people build it themselves"
+    phrases: ["homelab", "home lab", "my setup", "my rack", "cable management",
+              "family photos", "plex", "jellyfin", "pokémon", "emulation"]
+
+  supply_side:
+    weight: -0.50
+    role: negative
+    note: >
+      The person SELLS their own time. Three of the first run's seven buyer
+      signals were a contractor asking about the market, a freelancer asking
+      how to scale, and a founder asking how to find customers. They are peers
+      or competitors, never buyers of engineering.
+    phrases: ["i freelance", "my freelance", "as a freelancer", "i'm a contractor",
+              "im a contractor", "get clients", "find clients", "land clients",
+              "finding clients", "my rates", "my portfolio", "available for work",
+              "hire me", "my contract ended", "how do i get my first client",
+              "find its customers", "find customers",
+              # An agency that SELLS development is supply, however much
+              # ownership language it uses. Measured: "I run a solo dev agency
+              # ... looking to gain hands-on experience" survived three rounds
+              # of tightening because `my agency` is legitimate owner voice.
+              "dev agency", "development agency", "software agency", "web agency",
+              "solo dev", "i'm a developer", "im a developer", "experienced developer",
+              "offering my", "taking on clients", "open to work", "dm me"]
+
+  opinion_essay:
+    weight: -0.35
+    role: negative
+    note: >
+      An observation about the industry, not a problem someone has. The single
+      worst false positive was a well-written essay on organisational speed,
+      cross-posted to two communities and scored twice.
+    phrases: ["we all know", "in my experience", "unpopular opinion", "hot take",
+              "rant", "my two cents", "food for thought", "generally speaking"]
+
+  advice_giving:
+    weight: -0.40
+    role: negative
+    note: >
+      Answering someone else's problem, not naming your own. Measured: with
+      thread inheritance switched on, twelve buyer comments appeared in the
+      scope corpus and every one was an advisor, an investor, a vendor's AMA
+      answer or a joke. In a survey thread the majority of replies advise the
+      asker; only a minority answer the question about themselves.
+    phrases: ["you should", "you need to", "you could", "i'd start", "i would start",
+              "my advice", "your biggest problem", "have you tried", "try using",
+              "what you need", "you're trying to", "youre trying to", "if i were you",
+              "the trick is", "start with one", "in my opinion", "great question"]
+
+  showcase:
+    weight: -0.25
+    role: negative
+    note: >
+      Announcing a thing, not asking for help with one. A buyer describes work
+      they want REMOVED; a showcase describes work they DID. Measured on the
+      first live Hacker News run: "I run a fully automated local-LLM news
+      station on a single RTX 3090, and I got tired of benchmarks..." scored
+      0.60 buyer on `i run a` + `automate`. Every word of that is ownership
+      language about automation, and the person is showing off a side project.
+    phrases: ["i built", "i made", "feedback welcome", "showing off", "just showing",
+              "v0.", "v1.", "release notes", "introducing", "check out my",
+              "i've been working on", "ive been working on", "so i built",
+              "so i made", "i wrote a", "here's how i", "heres how i",
+              "my own repo", "my own stack", "my own project", "i benchmark"]
+
+  vendor_pitch:
+    weight: -0.60
+    role: negative
+    note: >
+      THE FINDING FROM THE FIRST LIVE RUN, and the most useful one so far.
+      461 records, 6 scored buyer, and four of those six were vendors:
+      "Launch HN: Rudus (YC P26) - AI for concrete contractors", "Show HN:
+      Praxos", a founder's essay, a developer's i18n system.
+
+      Why phrase matching cannot see this without help: **a vendor's pitch
+      contains the buyer's words, on purpose.** Rudus's launch post says
+      contractors spend hours a week on spreadsheets doing manual takeoffs -
+      which is a perfect buyer sentence, quoted by the person selling the cure.
+      The vocabulary really is there. What separates them is the FRAME: a
+      launch post addresses an audience about a product; a buyer addresses a
+      room about a problem.
+
+      So the marker has to be structural, not vocabulary. On Hacker News the
+      structure is explicit and conventional - Show HN and Launch HN are
+      defined by the site as product announcements - which makes this the one
+      place the frame can be read off the text with certainty.
+
+      Weighted heavier than supply_side because it is more certain: a
+      freelancer might also be a buyer of something else, a launch post is
+      never a buyer.
+    phrases: ["show hn", "launch hn", "(yc ", "we're launching", "were launching",
+              "we've developed", "weve developed", "we've built", "weve built",
+              "our platform", "our product", "our saas", "founder of",
+              "book a demo", "sign up at", "try it free", "waitlist",
+              "pricing starts", "we'd love your feedback", "wed love your feedback",
+              "hi hn, we", "hey hn, we"]
+
+# Second-person address to business owners. Used ONLY to decide whether a post
+# frames the thread beneath it - never as a record's own buyer voice.
+#
+# The distinction matters: "your business" is what someone says when speaking
+# TO owners, which is exactly what a survey post does, and also exactly what an
+# advert does. As a frame it is safe (a frame only lets replies inherit a
+# voice); as a record's own voice it would make every piece of marketing copy a
+# buyer signal.
+frame_phrases:
+  - your business
+  - your company
+  - your shop
+  - your clients
+  - your customers
+  - your team
+  - business process
+  - your workflow
+  - your operations
+  - small business owners
+  - fellow founders
+
+# Never a signal, whatever else matched.
+hard_reject:
+  - "we are hiring"
+  - "we're hiring"
+  - "discount code"
+  - "promo code"
+  - "upvote"
