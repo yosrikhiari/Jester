@@ -1,72 +1,69 @@
-/* Jester operator console — tokens carried verbatim from
-   jester-design-system.html / JESTER-FRONTEND-SYSTEM-DESIGN.md §1.
-   Flat, unlayered custom properties on :root (non-negotiable rule §0). */
+/* Jester console — redesign 2026-09-22.
+   Light, airy, one accent. Tokens measured on ayautomate.com and re-keyed for
+   Jester (plans/2026-09-22-reddit-scraping-and-redesign.md §4). The class
+   vocabulary app.js emits is unchanged: only the paint under it is new.
+   Flat, unlayered custom properties on :root. */
+
+@font-face{
+  font-family:"Lexend";font-style:normal;font-weight:100 900;font-display:swap;
+  src:url(/fonts/lexend-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face{
+  font-family:"Lexend";font-style:normal;font-weight:100 900;font-display:swap;
+  src:url(/fonts/lexend-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;
+}
+
 :root{
-  --r-card:10px; --r-ctrl:8px; --r-sm:6px; --r-pill:999px;
+  --r-card:16px; --r-ctrl:10px; --r-sm:8px; --r-pill:999px;
   --s-1:2px; --s-2:4px; --s-3:6px; --s-4:8px; --s-5:12px; --s-6:16px;
   --s-7:20px; --s-8:24px; --s-9:32px; --s-10:40px; --s-11:48px;
   --ease:cubic-bezier(.2,.8,.2,1);
   --t-fast:120ms; --t-base:200ms; --t-slow:320ms; --t-data:700ms;
-  --fs-hero:32px; --fs-h1:22px; --fs-h2:17px; --fs-body:14px; --fs-sm:12px; --fs-xs:11px;
-  --font-display:'Fraunces',Georgia,serif;
-  --font-ui:'Hanken Grotesk',system-ui,-apple-system,sans-serif;
-  --font-mono:ui-monospace,'Cascadia Mono',Consolas,monospace;
+  --fs-hero:40px; --fs-h1:22px; --fs-h2:16px; --fs-body:14px; --fs-sm:13px; --fs-xs:12px;
+  --font-display:"Lexend",system-ui,-apple-system,sans-serif;
+  --font-ui:"Lexend",system-ui,-apple-system,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
   --z-nav:10; --z-top:20; --z-scrim:40; --z-drawer:50; --z-toast:60;
-  --nav-w:210px; --topbar-h:56px;
-  --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017; --jester-crimson:#8B1A2B;
+  --nav-w:232px; --topbar-h:64px;
+  /* The one accent. Muted jester red; swap the three values to re-key the UI. */
+  --accent:#C8453D; --accent-ink:#FFFFFF; --accent-soft:#FBE7E5; --accent-line:#F1C3BF;
+  /* Kept for the few rules that still name them; both resolve to the accent. */
+  --jester-black:#201D25; --jester-red:#C8453D; --jester-gold:#C8453D; --jester-crimson:#C8453D;
 }
-/* ===== JESTER NOIR — Black / Red / Gold =====
-   `--line` is the hairline that separates rows and panels; `--line-strong` is
-   the one that draws a control the user is meant to click into. Both were
-   referenced below while only the first was declared, which is why every input,
-   segmented control and secondary button rendered with the raw ink border the
-   cascade falls back to when a var() does not resolve. `--surface-3` is the
-   third recess step — pressed control, skeleton sheen — and had the same fault. */
 html[data-theme="light"]{
-  --bg:#FDF6E3; --surface:#FFFFFF; --surface-2:#F7EDD3; --surface-3:#EFE0B8;
-  --ink:#0F141E; --ink-mute:#6B6A7A; --line:#E8D5A8; --line-strong:#D6BE85;
-  --gold:#8F6A0F; --plum:#C1272D; --teal:#C9A227; --coral:#9B1B30; --bell:#D4A017;
-  --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017;
-  --accent-ink:#FFFFFF;
-  --queued:#8A8AA0; --running:#8F6A0F; --done:#8F6A0F; --failed:#C1272D; --requeued:#0F141E;
-  --shadow-1:0 1px 2px rgba(15,20,30,.07),0 1px 1px rgba(15,20,30,.05);
-  --shadow-2:0 6px 18px rgba(15,20,30,.12);
-  --shadow-pop:0 16px 40px rgba(15,20,30,.22);
-  --scrim:rgba(15,20,30,.34);
-  --ring:color-mix(in srgb,var(--plum) 32%,transparent);
-  /* ── status INK ramp ────────────────────────────────────────────────
-     One token per status family is one token short. The tint and the ink are
-     different jobs: a pill paints `color-mix(status 15%, transparent)` behind
-     text painted in that same `status`, so the ink is being asked to read
-     against a 15% wash of ITSELF — and every light-theme pill measured between
-     2.2:1 and 4.1:1 doing it. These are the same hues walked along L until the
-     worst pairing (18% tint over --surface-2) clears 4.6:1, so the fills below
-     — KPI caps, banner and toast edges, dots — keep the palette's values and
-     only the TEXT moves. */
-  --plum-ink:#A81F24; --coral-ink:#9B1B30;
-  --done-ink:#644B0A; --running-ink:#644B0A; --failed-ink:#A12025;
-  --queued-ink:#4E4E60; --requeued-ink:#0F141E; --mute-ink:#54535F;
+  --bg:#F8F5F6; --surface:#FFFFFF; --surface-2:#F4F1F2; --surface-3:#F0EDEE;
+  --ink:#201D25; --ink-2:#4A3D52; --ink-mute:#6B5E72; --ink-soft:#8B7D92;
+  --line:#E9E5E8; --line-strong:#DCD6DA;
+  --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#C8453D; --bell:var(--accent);
+  --ok:#2F8F5B; --ok-bg:#E6F4EC; --warn:#A5730B; --warn-bg:#FBF3DC; --bad:#C8453D; --bad-bg:#FBE7E5;
+  --queued:#8B7D92; --running:#A5730B; --done:#2F8F5B; --failed:#C8453D; --requeued:#4A3D52;
+  --plum-ink:#A6362F; --coral-ink:#A6362F;
+  --done-ink:#23704A; --running-ink:#7F5908; --failed-ink:#A6362F;
+  --queued-ink:#5E5266; --requeued-ink:#201D25; --mute-ink:#5E5266;
+  --shadow-1:none;
+  --shadow-2:0 4px 16px rgba(32,29,37,.06);
+  --shadow-pop:0 16px 48px rgba(32,29,37,.14);
+  --scrim:rgba(32,29,37,.32);
+  --ring:color-mix(in srgb,var(--accent) 30%,transparent);
 }
 html[data-theme="dark"]{
-  --bg:#080C14; --surface:#131A29; --surface-2:#1E2A3D; --surface-3:#28374F;
-  --ink:#F5E6C2; --ink-mute:#A89B7E; --line:#2A3548; --line-strong:#3C4A63;
-  --gold:#E8C05A; --plum:#E03A4E; --teal:#F0C75E; --coral:#C41E3A; --bell:#D4A017;
-  --jester-black:#0F141E; --jester-red:#C1272D; --jester-gold:#D4A017;
-  --accent-ink:#FFFFFF;
-  --queued:#8A8AA0; --running:#E8C05A; --done:#F0C75E; --failed:#E03A4E; --requeued:#C9B78C;
-  --shadow-1:0 1px 2px rgba(0,0,0,.5);
-  --shadow-2:0 8px 22px rgba(0,0,0,.6);
-  --shadow-pop:0 18px 48px rgba(0,0,0,.7);
-  --scrim:rgba(2,5,10,.62);
-  --ring:color-mix(in srgb,var(--gold) 40%,transparent);
-  /* The red family is a FILL colour on both grounds and an INK colour only on
-     the cream one: --plum measures 4.05:1 and --coral 2.98:1 as text on the
-     obsidian surface. These two carry the same hue up to a readable luminance
-     so the nav's current page, a table target and the remove button stay legible
-     in dark without moving the palette out from under the fills that pass. */
-  --plum-ink:#FF6B7A; --coral-ink:#FF8A93;
-  --done-ink:#F0C75E; --running-ink:#E8C05A; --failed-ink:#EA7B89;
-  --queued-ink:#A5A5B6; --requeued-ink:#C9B78C; --mute-ink:#B4A990;
+  --bg:#1A1523; --surface:#231D2D; --surface-2:#2A2434; --surface-3:#332C3D;
+  --ink:#F4F1F2; --ink-2:#D9D3DC; --ink-mute:#A79CAE; --ink-soft:#8B7D92;
+  --line:#332C3D; --line-strong:#463D50;
+  --accent:#E06A62; --accent-ink:#1A1523; --accent-soft:#42231F; --accent-line:#6B342E;
+  --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#E06A62; --bell:var(--accent);
+  --ok:#5CC48A; --ok-bg:#1F3A2C; --warn:#E0B44A; --warn-bg:#3D3416; --bad:#E06A62; --bad-bg:#42231F;
+  --queued:#8B7D92; --running:#E0B44A; --done:#5CC48A; --failed:#E06A62; --requeued:#D9D3DC;
+  --plum-ink:#F08A83; --coral-ink:#F08A83;
+  --done-ink:#7BD6A3; --running-ink:#EBC468; --failed-ink:#F08A83;
+  --queued-ink:#B9AEBF; --requeued-ink:#D9D3DC; --mute-ink:#B9AEBF;
+  --shadow-1:none;
+  --shadow-2:0 4px 16px rgba(0,0,0,.35);
+  --shadow-pop:0 16px 48px rgba(0,0,0,.55);
+  --scrim:rgba(0,0,0,.55);
+  --ring:color-mix(in srgb,var(--accent) 40%,transparent);
 }
 
 *{box-sizing:border-box}
@@ -77,526 +74,364 @@ body{
   -webkit-font-smoothing:antialiased;
   transition:background var(--t-base) var(--ease),color var(--t-base) var(--ease);
 }
-h1,h2,h3{font-family:var(--font-display);font-weight:600;line-height:1.15;margin:0}
+h1,h2,h3{font-family:var(--font-display);font-weight:600;line-height:1.15;margin:0;letter-spacing:-.01em}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit;color:inherit}
-/* Gold on the cream ground measures ~2.6:1 — the focus ring has to be the
-   signal colour in light, and the gold only survives against the dark ground. */
-:focus-visible{outline:2px solid var(--plum);outline-offset:2px;border-radius:var(--r-sm)}
-html[data-theme="dark"] :focus-visible{outline-color:var(--gold)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
 .num{font-variant-numeric:tabular-nums}
-.xs{font-size:var(--fs-xs);color:var(--ink-mute);line-height:1.45}
+.xs{font-size:var(--fs-xs);color:var(--ink-mute);line-height:1.5}
 .sm{font-size:var(--fs-sm)}
-.mono{font-family:var(--font-mono);font-size:var(--fs-sm)}
+.mono{font-family:var(--font-mono);font-size:var(--fs-xs)}
 .mute{color:var(--ink-mute)}
 .hidden{display:none !important}
 .row{display:flex;gap:var(--s-3);flex-wrap:wrap;align-items:center}
 .row-end{margin-inline-start:auto}
+.row-between{display:flex;justify-content:space-between;align-items:center;gap:var(--s-4)}
 .stack{display:flex;flex-direction:column;gap:var(--s-3)}
 .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── shell: side nav + column ────────────────────────────────────────── */
+.shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-block-size:100vh}
+.nav{
+  position:sticky;inset-block-start:0;block-size:100vh;overflow-y:auto;
+  display:flex;flex-direction:column;gap:2px;
+  padding:var(--s-8) var(--s-6);border-inline-end:1px solid var(--line);background:var(--bg);
+}
+.brand{display:flex;align-items:center;gap:10px;padding:var(--s-2) var(--s-4) var(--s-8);min-inline-size:0}
+.brand>span:first-child{
+  inline-size:30px;block-size:30px;border-radius:9px;flex:none;overflow:hidden;
+  display:grid;place-items:center;background:var(--ink);
+}
+.brand>span:last-child{min-inline-size:0}
+.brandmark{inline-size:100%;block-size:100%;display:block;object-fit:cover;image-rendering:pixelated;transform:scale(1.15)}
+.brand strong{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.brand em{
+  display:block;font-style:normal;color:var(--ink-soft);font-size:11px;
+  text-transform:uppercase;letter-spacing:.08em;font-weight:500;
+}
+.nav ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.nav li.grp{
+  font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-soft);
+  padding:var(--s-6) var(--s-4) var(--s-3);font-weight:500;
+}
+.nav li.grp:first-child{padding-block-start:0}
+.nav button{
+  inline-size:100%;display:flex;align-items:center;gap:10px;
+  padding:8px 10px;border:1px solid transparent;border-radius:var(--r-ctrl);background:transparent;
+  color:var(--ink-2);cursor:pointer;font-size:var(--fs-body);font-weight:500;text-align:start;
+  transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease);
+}
+.nav button:hover{background:var(--surface-3)}
+.nav button[aria-current="page"]{background:var(--surface);border-color:var(--line);color:var(--ink)}
+/* The glyph icons become a dot: the current page's dot is the accent. */
+.nav .ico{
+  inline-size:6px;block-size:6px;border-radius:50%;background:var(--ink-soft);flex:none;
+  font-size:0;line-height:0;color:transparent;overflow:hidden;
+}
+.nav button[aria-current="page"] .ico{background:var(--accent)}
+.nav .count{margin-inline-start:auto;font-size:var(--fs-xs);color:var(--ink-mute);font-variant-numeric:tabular-nums}
+.nav-foot{margin-block-start:auto;padding-block-start:var(--s-6)}
+.health{
+  display:flex;align-items:center;gap:var(--s-4);padding:10px;border-radius:var(--r-ctrl);
+  background:var(--surface);border:1px solid var(--line);font-size:var(--fs-sm);color:var(--ink-mute);
+}
+.health .led{inline-size:8px;block-size:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-bg);flex:none}
+.health .led.warn{background:var(--warn);box-shadow:0 0 0 3px var(--warn-bg)}
+.health .led.bad{background:var(--bad);box-shadow:0 0 0 3px var(--bad-bg)}
+.main-col{min-inline-size:0;display:flex;flex-direction:column}
 
 /* ── topbar ─────────────────────────────────────────────────────────── */
 .topbar{
   position:sticky;inset-block-start:0;z-index:var(--z-top);
-  display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);
-  block-size:var(--topbar-h);padding:var(--s-4) var(--s-7);
-  background:color-mix(in srgb,var(--bg) 86%,transparent);
-  backdrop-filter:blur(12px) saturate(140%);
-  border-block-end:2px solid color-mix(in srgb,var(--jester-gold) 55%, var(--line));
-  box-shadow:0 1px 0 color-mix(in srgb,var(--jester-red) 18%,transparent);
+  display:flex;align-items:center;gap:var(--s-5);
+  min-block-size:var(--topbar-h);padding:var(--s-5) var(--s-10);
+  background:var(--bg);border-block-end:1px solid var(--line);
 }
-.brand{display:flex;align-items:center;gap:var(--s-4);min-inline-size:0}
-.brand>span{
-  inline-size:38px;block-size:38px;border-radius:var(--r-pill);
-  display:grid;place-items:center;flex:none;position:relative;overflow:hidden;
-  background:linear-gradient(135deg,var(--jester-black) 0%, #8B1A2B 42%, var(--jester-red) 58%, var(--jester-gold) 100%);
-  border:2px solid var(--jester-gold);
-  box-shadow:0 0 0 3px color-mix(in srgb,var(--jester-gold) 18%,transparent), var(--shadow-1);
-}
-.brand>span::after{
-  content:"";position:absolute;inset:0;
-  background:linear-gradient(180deg,transparent 60%, color-mix(in srgb,var(--jester-gold) 14%,transparent));
-  pointer-events:none;
-}
-[data-theme="dark"] .brand>span{
-  background:linear-gradient(135deg,#080C14 0%, var(--jester-red) 48%, var(--jester-gold) 100%);
-  border-color:var(--gold);
-}
-.brandmark{
-  inline-size:100%;block-size:100%;display:block;
-  object-fit:cover;transform:scale(1.18);image-rendering:pixelated;
-  border-radius:inherit;color:#F5E6C2;
-}
-.brand strong{font-family:var(--font-display);font-size:var(--fs-h2);font-weight:600;letter-spacing:.01em}
-.brand em{
-  font-style:normal;color:var(--ink-mute);font-size:var(--fs-xs);
-  text-transform:uppercase;letter-spacing:.08em;font-weight:600;
-  padding-inline-start:var(--s-4);margin-inline-start:var(--s-1);
-  border-inline-start:1px solid var(--line);
-}
-.topbar-meta{display:flex;gap:var(--s-3);align-items:center;min-inline-size:0;overflow:hidden}
+.topbar-meta{display:flex;gap:var(--s-3);align-items:center;min-inline-size:0;overflow:hidden;flex:1}
 .topbar-actions{display:flex;gap:var(--s-3);align-items:center;flex:none}
+.topbar-meta .chip{font-family:var(--font-ui)}
+.topbar-meta .chip::before{content:"";inline-size:6px;block-size:6px;border-radius:50%;background:var(--ink-soft)}
 
-/* ── shell ──────────────────────────────────────────────────────────── */
-.shell{
-  display:flex;align-items:flex-start;gap:var(--s-7);
-  padding:var(--s-7) var(--s-6) var(--s-11);max-inline-size:1320px;margin:0 auto;min-inline-size:0;
-}
-.nav{
-  position:sticky;inset-block-start:calc(var(--topbar-h) + var(--s-7));
-  inline-size:var(--nav-w);flex:none;
-  padding-inline-end:var(--s-5);border-inline-end:1px solid var(--line);
-}
-.nav ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
-.nav button{
-  position:relative;
-  inline-size:100%;display:flex;align-items:center;gap:var(--s-3);
-  padding:7px 10px;border:0;border-radius:var(--r-ctrl);background:transparent;
-  color:var(--ink-mute);cursor:pointer;font-size:var(--fs-sm);font-weight:500;text-align:start;
-  transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
-}
-.nav button:hover{background:var(--surface-2);color:var(--ink)}
-.nav button[aria-current="page"]{
-  background:color-mix(in srgb,var(--plum) 13%,transparent);color:var(--plum-ink);font-weight:600;
-}
-/* The active marker is a gold rule on the inline edge — the same 4px gold the
-   design system puts beside every section heading, so "where am I" and "what
-   is this" are told by one mark rather than two unrelated ones. */
-.nav button[aria-current="page"]::before{
-  content:"";position:absolute;inset-block:6px;inset-inline-start:-1px;
-  inline-size:3px;border-radius:var(--r-pill);background:var(--jester-gold);
-}
-.nav .ico{inline-size:16px;text-align:center;flex:none;opacity:.85}
-.nav .count{
-  margin-inline-start:auto;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;
-  color:var(--ink-mute);background:var(--surface-2);border:1px solid var(--line);
-  border-radius:var(--r-pill);padding:0 7px;line-height:16px;
-}
-/* The row is already a plum tint; tinting the counter again stacks two washes
-   under the same ink and drops it to 3.5:1. It sits on the flat surface instead
-   and reads as raised, which is also what it is — a count, not a second state. */
-.nav button[aria-current="page"] .count{
-  background:var(--surface);
-  border-color:color-mix(in srgb,var(--plum) 34%,transparent);color:var(--plum-ink);
-}
-.grp{
-  font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.07em;color:var(--ink-mute);
-  padding:var(--s-6) 10px var(--s-2);font-weight:700;opacity:.75;
-}
-.grp:first-child{padding-block-start:0}
-main{flex:1;display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
-/* `display` on a bare type/child selector beats the UA sheet's `[hidden]`
-   rule, so this MUST stay scoped to the visible section or every page renders
-   stacked on top of the one the router chose. */
+main{flex:1;padding:var(--s-9) var(--s-10) var(--s-11);max-inline-size:1240px;inline-size:100%;display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
+/* `display` on a bare selector beats the UA sheet's `[hidden]`, so keep it
+   scoped to the visible section or every page renders stacked. */
 main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
 
-/* ── page furniture ─────────────────────────────────────────────────── */
-/* The hero is the design system's §hero: a panel, not bare text, carrying the
-   red/gold radial wash and the scanline the brand sheet establishes. Without
-   it every page opened on an unframed headline floating in the ground colour. */
-.hero{
-  position:relative;overflow:hidden;
-  display:flex;align-items:flex-end;gap:var(--s-6);flex-wrap:wrap;
-  padding:var(--s-8) var(--s-8) var(--s-7);
-  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  box-shadow:var(--shadow-1);
+/* ── page header ────────────────────────────────────────────────────── */
+/* Was a gradient panel; now the page's own heading, big and plain. */
+.hero{display:flex;align-items:flex-end;gap:var(--s-6);flex-wrap:wrap;padding:var(--s-3) 0 var(--s-4)}
+.hero>*{min-inline-size:0}
+.hero>div:first-child{flex:1 1 380px}
+.hero h1{font-size:var(--fs-hero);font-weight:600;letter-spacing:-.025em;line-height:1.05}
+.hero h1::before{
+  content:attr(data-eyebrow);display:flex;align-items:center;gap:8px;
+  font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-mute);font-weight:500;
+  margin-block-end:10px;
 }
-.hero::before{
-  content:"";position:absolute;inset:0;pointer-events:none;
-  background:
-    radial-gradient(560px 240px at 100% -30%,color-mix(in srgb,var(--jester-red) 16%,transparent),transparent),
-    radial-gradient(420px 200px at -6% 130%,color-mix(in srgb,var(--jester-gold) 16%,transparent),transparent);
-}
-.hero::after{
-  content:"";position:absolute;inset:0;opacity:.03;pointer-events:none;
-  background-image:repeating-linear-gradient(0deg,transparent 0 2px,var(--jester-gold) 2px 3px);
-  mask:linear-gradient(180deg,transparent,black 45%,black 88%,transparent);
-}
-/* The copy block takes the free space so the lead sets to its 66ch measure
-   instead of shrink-to-fit wrapping into a narrow column beside empty space. */
-.hero>*{position:relative;min-inline-size:0}
-.hero>div:first-child{flex:1 1 340px}
-.hero h1{
-  font-size:var(--fs-hero);
-  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
-}
-.hero p{
-  margin:var(--s-3) 0 0;color:var(--ink-mute);max-inline-size:70ch;
-  padding-inline-start:calc(var(--s-5) + 4px);
-}
-.hero .row-end{align-self:center}
+.hero h1:not([data-eyebrow])::before{display:none}
+.hero p{margin:10px 0 0;color:var(--ink-mute);max-inline-size:64ch;font-size:15px}
+.hero p.xs{font-size:var(--fs-xs);margin-block-start:var(--s-3)}
+.hero .row-end{align-self:flex-end}
 
+/* ── surfaces ───────────────────────────────────────────────────────── */
 .card{
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  padding:var(--s-6);box-shadow:var(--shadow-1);min-inline-size:0;
+  padding:var(--s-7);min-inline-size:0;
 }
 .card--flush{padding:0;overflow:hidden}
-.card>h3,.card-head h3,.card-body>h3{
-  font-size:var(--fs-h2);
-  display:flex;align-items:center;gap:var(--s-3);
-}
-.card>h3{margin-block-end:var(--s-5)}
-.card>h3::before,.card-head h3::before,.card-body>h3::before{
-  content:"";inline-size:3px;block-size:.9em;flex:none;
-  border-radius:var(--r-pill);background:var(--jester-gold);
-}
+.card--bad{border-color:var(--accent-line);background:var(--accent-soft)}
+.card>h3,.card-head h3,.card-body>h3{font-size:var(--fs-h2);display:flex;align-items:center;gap:var(--s-3);font-weight:600}
+.card>h3{margin-block-end:var(--s-6)}
+.card>h3 .xs{font-weight:400}
 .card-head{
   display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;
-  padding:var(--s-5) var(--s-6);border-block-end:1px solid var(--line);
-  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
+  padding:var(--s-6) var(--s-7);border-block-end:1px solid var(--line);
 }
 .card-head h3{margin:0}
-.card-body{padding:var(--s-6)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--s-5)}
+.card-body{padding:var(--s-7)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--s-5)}
 
-/* ── KPI tiles ──────────────────────────────────────────────────────── */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--s-4)}
+/* ── stat tiles ─────────────────────────────────────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--s-5)}
 .kpi{
-  position:relative;overflow:hidden;
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  padding:var(--s-5) var(--s-5) var(--s-4);box-shadow:var(--shadow-1);
-  transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
+  padding:var(--s-6) var(--s-7);display:flex;flex-direction:column;
+  transition:border-color var(--t-fast) var(--ease);
 }
-/* A 2px cap rather than a coloured number alone: at a glance the operator reads
-   the row of caps, not six numerals that all look the same weight. */
-.kpi::before{
-  content:"";position:absolute;inset-block-start:0;inset-inline:0;block-size:2px;
-  background:var(--line);
-}
-.kpi:hover{border-color:var(--line-strong);box-shadow:var(--shadow-2)}
+/* app.js emits number then label; the label reads first, then the number,
+   then the trend and the delta. */
+.kpi>span{order:1} .kpi>b{order:2} .kpi .spark{order:3} .kpi .delta{order:4} .kpi .kpi-sub{order:5}
+.kpi:hover{border-color:var(--line-strong)}
 .kpi b{
-  display:block;font-family:var(--font-display);font-size:30px;line-height:1.05;
-  font-weight:600;font-variant-numeric:tabular-nums;
+  display:block;font-size:32px;line-height:1.1;font-weight:600;letter-spacing:-.03em;
+  font-variant-numeric:tabular-nums;margin-block-start:var(--s-4);
 }
-.kpi span{
-  display:block;font-size:var(--fs-xs);color:var(--ink-mute);margin-block-start:var(--s-3);
-  text-transform:uppercase;letter-spacing:.05em;font-weight:600;
-}
-.kpi--alert::before{background:var(--failed)}
-.kpi--alert b{color:var(--failed)}
-.kpi--live::before{background:var(--running)}
-.kpi--live b{color:var(--running)}
-
-.dl{display:grid;grid-template-columns:minmax(130px,auto) 1fr;gap:var(--s-3) var(--s-5);margin:0;font-size:var(--fs-sm)}
+.kpi span{display:block;font-size:var(--fs-xs);color:var(--ink-mute);font-weight:500;letter-spacing:.02em}
+.kpi .kpi-sub{margin-block-start:var(--s-3);font-weight:400;color:var(--ink-soft)}
+.kpi--alert{border-color:var(--accent-line);background:var(--accent-soft)}
+.kpi--alert b{color:var(--failed-ink)}
+.kpi--live b{color:var(--running-ink)}
+.kpi--ok b{color:var(--done-ink)}
+.dl{display:grid;grid-template-columns:minmax(130px,auto) 1fr;gap:var(--s-4) var(--s-6);margin:0;font-size:var(--fs-body)}
 .dl dt{color:var(--ink-mute)}
 .dl dd{margin:0;font-variant-numeric:tabular-nums;word-break:break-word;font-weight:500}
 
 /* ── buttons ────────────────────────────────────────────────────────── */
-.btn{
+.btn,button.primary{
   display:inline-flex;align-items:center;justify-content:center;gap:var(--s-3);
-  font-family:var(--font-ui);font-size:var(--fs-body);font-weight:600;
-  border-radius:var(--r-ctrl);padding:8px 15px;border:1px solid transparent;cursor:pointer;
-  transition:transform var(--t-fast) var(--ease),background var(--t-fast) var(--ease),
-             border-color var(--t-fast) var(--ease),filter var(--t-fast),box-shadow var(--t-fast);
-  white-space:nowrap;
+  font-family:var(--font-ui);font-size:var(--fs-body);font-weight:500;
+  border-radius:var(--r-ctrl);padding:9px 14px;border:1px solid var(--line);cursor:pointer;
+  background:var(--surface);color:var(--ink);white-space:nowrap;
+  transition:background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease),opacity var(--t-fast);
 }
+.btn:hover:not([disabled]){background:var(--surface-3)}
 .btn:active{transform:translateY(1px)}
-.btn[disabled]{opacity:.5;cursor:not-allowed;transform:none;filter:grayscale(.3)}
-.btn--primary{
-  background:var(--jester-gold);color:var(--jester-black);border-color:var(--jester-gold);
-  box-shadow:0 1px 0 color-mix(in srgb,var(--jester-black) 20%,transparent);
-}
-.btn--primary:hover:not([disabled]){filter:brightness(1.06);box-shadow:0 4px 14px color-mix(in srgb,var(--jester-gold) 34%,transparent)}
-.btn--primary:active:not([disabled]){animation:bell-tilt var(--t-slow) var(--ease)}
-/* White ink on the dark theme's lifted --plum is 4.3:1; on the velvet red the
-   hat actually is, it is 5.84:1 in both themes. The accent fill is the brand red. */
-.btn--accent{background:var(--jester-red);color:var(--accent-ink);border-color:var(--jester-red)}
-.btn--accent:hover:not([disabled]){filter:brightness(1.1);box-shadow:0 4px 14px color-mix(in srgb,var(--jester-red) 38%,transparent)}
-.btn--secondary{background:var(--surface-2);color:var(--ink);border-color:var(--line-strong)}
-.btn--secondary:hover:not([disabled]){background:var(--surface-3);border-color:var(--gold)}
-.btn--ghost{background:transparent;color:var(--ink-mute);border-color:var(--line)}
-.btn--ghost:hover:not([disabled]){background:var(--surface-2);color:var(--ink);border-color:var(--line-strong)}
-.btn--danger{background:transparent;color:var(--coral-ink);border-color:color-mix(in srgb,var(--coral-ink) 40%,transparent)}
-.btn--danger:hover:not([disabled]){background:color-mix(in srgb,var(--coral-ink) 14%,transparent);border-color:var(--coral-ink)}
-.btn--sm{padding:5px 11px;font-size:var(--fs-sm);gap:var(--s-2)}
-.btn--icon{padding:6px 9px;font-size:var(--fs-sm)}
-@keyframes bell-tilt{0%,100%{transform:rotate(0)}30%{transform:rotate(-3deg)}65%{transform:rotate(2.4deg)}}
+.btn[disabled]{opacity:.5;cursor:not-allowed;transform:none}
+.btn--primary,button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn--primary:hover:not([disabled]),button.primary:hover{background:var(--ink);opacity:.9}
+.btn--accent{background:var(--surface);color:var(--ink);border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.btn--accent:hover:not([disabled]){background:var(--accent-soft)}
+.btn--secondary{background:var(--surface);color:var(--ink);border-color:var(--line-strong)}
+.btn--ghost{background:transparent;color:var(--ink-mute);border-color:transparent}
+.btn--ghost:hover:not([disabled]){background:var(--surface-3);color:var(--ink)}
+.btn--danger{background:transparent;color:var(--failed-ink);border-color:var(--accent-line)}
+.btn--danger:hover:not([disabled]){background:var(--bad-bg)}
+.btn--sm{padding:6px 10px;font-size:var(--fs-sm);gap:var(--s-2)}
+.btn--icon{padding:7px 9px;font-size:var(--fs-sm)}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
 }
-
-/* The design system's segmented control is a recessed track with a RAISED
-   active chip. A tinted flat pill reads as a row of links, not a switch. */
-.seg{
-  display:inline-flex;gap:2px;padding:3px;
-  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-ctrl);
-}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-ctrl);overflow:hidden;background:var(--surface)}
 .seg button{
   border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-sm);
-  padding:5px 12px;border-radius:var(--r-sm);cursor:pointer;font-weight:600;white-space:nowrap;
+  padding:7px 12px;cursor:pointer;font-weight:500;white-space:nowrap;
   transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
 }
 .seg button:hover{color:var(--ink)}
-.seg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
 
 /* ── pills & chips ──────────────────────────────────────────────────── */
 .pill{
-  display:inline-flex;align-items:center;gap:var(--s-3);font-size:var(--fs-sm);font-weight:600;
-  padding:3px 11px;border-radius:var(--r-pill);white-space:nowrap;
-  border:1px solid transparent;font-variant-numeric:tabular-nums;
-  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--mute-ink);
+  display:inline-flex;align-items:center;gap:var(--s-3);font-size:var(--fs-xs);font-weight:500;
+  padding:3px 10px;border-radius:var(--r-pill);white-space:nowrap;border:1px solid transparent;
+  font-variant-numeric:tabular-nums;background:var(--surface-3);color:var(--mute-ink);
 }
-.pill .dot{inline-size:7px;block-size:7px;border-radius:50%;background:currentColor;flex:none}
-.pill.tone-done,.pill.tone-completed,.pill.tone-ok,.pill.tone-pass{
-  background:color-mix(in srgb,var(--done) 15%,transparent);color:var(--done-ink);
-  border-color:color-mix(in srgb,var(--done) 26%,transparent)}
-.pill.tone-failed,.pill.tone-fail,.pill.tone-error{
-  background:color-mix(in srgb,var(--failed) 15%,transparent);color:var(--failed-ink);
-  border-color:color-mix(in srgb,var(--failed) 28%,transparent)}
-.pill.tone-running,.pill.tone-warn,.pill.tone-building{
-  background:color-mix(in srgb,var(--running) 18%,transparent);color:var(--running-ink);
-  border-color:color-mix(in srgb,var(--running) 28%,transparent)}
-/* A run that is actually moving should say so without waiting for a re-render. */
+.pill .dot{inline-size:6px;block-size:6px;border-radius:50%;background:currentColor;flex:none}
+.pill.tone-done,.pill.tone-completed,.pill.tone-ok,.pill.tone-pass{background:var(--ok-bg);color:var(--done-ink)}
+.pill.tone-failed,.pill.tone-fail,.pill.tone-error{background:var(--bad-bg);color:var(--failed-ink)}
+.pill.tone-running,.pill.tone-warn,.pill.tone-building{background:var(--warn-bg);color:var(--running-ink)}
 .pill.tone-running .dot{animation:pulse 1.2s var(--ease) infinite}
-.pill.tone-queued,.pill.tone-pending,.pill.tone-new{
-  background:color-mix(in srgb,var(--queued) 18%,transparent);color:var(--queued-ink);
-  border-color:color-mix(in srgb,var(--queued) 28%,transparent)}
-.pill.tone-requeued,.pill.tone-reviewed{
-  background:color-mix(in srgb,var(--requeued) 18%,transparent);color:var(--requeued-ink);
-  border-color:color-mix(in srgb,var(--requeued) 28%,transparent)}
-.pill.tone-archived,.pill.tone-neutral,.pill.tone-off{
-  background:color-mix(in srgb,var(--ink-mute) 15%,transparent);color:var(--mute-ink);
-  border-color:color-mix(in srgb,var(--ink-mute) 24%,transparent)}
-.pill--sm{font-size:var(--fs-xs);padding:2px 9px;gap:var(--s-2)}
+.pill.tone-queued,.pill.tone-pending,.pill.tone-new{background:var(--surface-3);color:var(--queued-ink)}
+.pill.tone-requeued,.pill.tone-reviewed{background:var(--surface-3);color:var(--requeued-ink)}
+.pill.tone-archived,.pill.tone-neutral,.pill.tone-off{background:var(--surface-3);color:var(--mute-ink)}
+.pill--sm{font-size:11px;padding:2px 8px;gap:var(--s-2)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-
 .chip{
-  display:inline-flex;align-items:center;gap:var(--s-2);
-  padding:3px 10px;border-radius:var(--r-pill);border:1px solid var(--line);
-  font-size:var(--fs-xs);color:var(--ink-mute);background:var(--surface-2);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:var(--s-3);
+  padding:4px 10px;border-radius:var(--r-pill);border:1px solid var(--line);
+  font-size:var(--fs-xs);color:var(--ink-mute);background:var(--surface);white-space:nowrap;
 }
-.chip--warn{
-  border-color:color-mix(in srgb,var(--running) 45%,transparent);color:var(--running-ink);
-  background:color-mix(in srgb,var(--running) 10%,transparent)}
-.chip--bad{
-  border-color:color-mix(in srgb,var(--failed) 45%,transparent);color:var(--failed-ink);
-  background:color-mix(in srgb,var(--failed) 10%,transparent)}
+.chip--ok{border-color:transparent;background:var(--ok-bg);color:var(--done-ink)}
+.chip--warn{border-color:transparent;background:var(--warn-bg);color:var(--running-ink)}
+.chip--bad{border-color:transparent;background:var(--bad-bg);color:var(--failed-ink)}
+.chip--sched{border-color:transparent;background:var(--accent-soft);color:var(--plum-ink)}
 .chiprow{display:flex;flex-wrap:wrap;gap:var(--s-3)}
-.topbar-meta .chip{font-family:var(--font-mono);background:transparent}
-
-.score{font-family:var(--font-display);font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-h2)}
-.score--hi{color:var(--done)} .score--mid{color:var(--gold)} .score--lo{color:var(--coral-ink)}
+.score{font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-h2);letter-spacing:-.01em}
+.score--hi{color:var(--done-ink)} .score--mid{color:var(--running-ink)} .score--lo{color:var(--failed-ink)}
 
 /* ── tables ─────────────────────────────────────────────────────────── */
 .tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-table{inline-size:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+table{inline-size:100%;border-collapse:collapse;font-size:var(--fs-body)}
 th{
-  text-align:start;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.05em;
-  color:var(--ink-mute);font-weight:700;padding:9px 14px;
-  border-block-end:1px solid var(--line-strong);
-  white-space:nowrap;background:var(--surface-2);position:sticky;inset-block-start:0;z-index:1;
+  text-align:start;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-soft);font-weight:500;padding:12px 16px;
+  border-block-end:1px solid var(--line);white-space:nowrap;
+  background:var(--surface);position:sticky;inset-block-start:0;z-index:1;
 }
-td{
-  padding:11px 14px;border-block-end:1px solid color-mix(in srgb,var(--line) 55%,transparent);
-  vertical-align:top;
-}
+td{padding:12px 16px;border-block-end:1px solid var(--surface-2);vertical-align:top}
 tbody tr:last-child td{border-block-end:0}
-tbody tr{transition:background var(--t-fast) var(--ease)}
-tbody tr:hover td{background:color-mix(in srgb,var(--surface-2) 55%,transparent)}
+tbody tr:hover td{background:var(--surface-2)}
 td.num,th.num{text-align:end;font-variant-numeric:tabular-nums}
-/* Targets in the sources table are the one place a link is not the row itself. */
 td a[href]{
   color:var(--plum-ink);text-decoration-line:underline;text-decoration-color:transparent;
-  text-underline-offset:2px;transition:text-decoration-color var(--t-fast) var(--ease);
+  text-underline-offset:3px;transition:text-decoration-color var(--t-fast) var(--ease);
 }
 td a[href]:hover{text-decoration-color:currentColor}
-.empty{padding:var(--s-9) var(--s-6);text-align:center;color:var(--ink-mute);font-size:var(--fs-sm)}
+.empty{padding:var(--s-10) var(--s-6);text-align:center;color:var(--ink-mute);font-size:var(--fs-body)}
 
 /* ── forms ──────────────────────────────────────────────────────────── */
 .field{display:flex;flex-direction:column;gap:var(--s-2);min-inline-size:0}
-.field label{font-size:var(--fs-xs);font-weight:700;color:var(--ink-mute);text-transform:uppercase;letter-spacing:.05em}
+.field label{font-size:var(--fs-xs);font-weight:500;color:var(--ink-mute)}
+.field .hint{font-size:var(--fs-xs);color:var(--ink-soft)}
 input,select,textarea{
-  font-size:var(--fs-body);background:var(--bg);border:1px solid var(--line-strong);
-  border-radius:var(--r-ctrl);padding:8px 11px;inline-size:100%;
+  font-size:var(--fs-body);background:var(--surface);border:1px solid var(--line-strong);
+  border-radius:var(--r-ctrl);padding:9px 12px;inline-size:100%;color:var(--ink);
   transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
 }
-input:hover,select:hover,textarea:hover{border-color:var(--gold)}
-input:focus,select:focus,textarea:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px var(--ring)}
-input::placeholder{color:var(--ink-mute);opacity:.7}
+input:hover,select:hover,textarea:hover{border-color:var(--ink-soft)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+input::placeholder{color:var(--ink-soft)}
 .formgrid{display:grid;grid-template-columns:170px minmax(220px,1fr) 190px auto;gap:var(--s-4);align-items:end}
-
-/* A bare checkbox in a table cell IS the row's on/off switch, so it gets the
-   design system's track-and-knob rather than the platform default. */
 .switch{display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;font-size:var(--fs-sm)}
 .switch input[type="checkbox"]{
   appearance:none;-webkit-appearance:none;margin:0;flex:none;cursor:pointer;
-  inline-size:36px;block-size:20px;border-radius:var(--r-pill);
+  inline-size:34px;block-size:20px;border-radius:var(--r-pill);
   background:var(--surface-3);border:1px solid var(--line-strong);position:relative;
   transition:background var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease);
 }
 .switch input[type="checkbox"]::after{
   content:"";position:absolute;inset-block-start:2px;inset-inline-start:2px;
-  inline-size:14px;block-size:14px;border-radius:50%;background:var(--ink-mute);
+  inline-size:14px;block-size:14px;border-radius:50%;background:var(--ink-soft);
   transition:inset-inline-start var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
 }
-.switch input[type="checkbox"]:checked{
-  background:var(--jester-gold);border-color:var(--jester-gold);
-}
-/* The knob has to be the light half of the pair. Gold-on-30%-gold was one blob
-   with no readable knob position, which is the only thing a toggle has to say. */
-.switch input[type="checkbox"]:checked::after{inset-inline-start:18px;background:var(--jester-black)}
-
+.switch input[type="checkbox"]:checked{background:var(--ink);border-color:var(--ink)}
+.switch input[type="checkbox"]:checked::after{inset-inline-start:16px;background:var(--bg)}
 .knobgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(224px,1fr));gap:var(--s-5)}
 .knob{
   display:flex;flex-direction:column;gap:var(--s-2);
-  padding:var(--s-4);border:1px solid var(--line);border-radius:var(--r-ctrl);
-  background:color-mix(in srgb,var(--surface-2) 35%,var(--surface));
+  padding:var(--s-5);border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--bg);
   transition:border-color var(--t-fast) var(--ease),background var(--t-fast) var(--ease);
 }
-.knob:focus-within{border-color:var(--gold);background:var(--surface)}
-.knob label{font-size:var(--fs-sm);font-weight:600;text-transform:none;letter-spacing:0;color:var(--ink)}
+.knob:focus-within{border-color:var(--accent);background:var(--surface)}
+.knob label{font-size:var(--fs-sm);font-weight:500;color:var(--ink)}
 .knob .hint{font-size:var(--fs-xs);color:var(--ink-mute);line-height:1.4}
 .knob input,.knob select{background:var(--surface)}
-.knob input.dirty,.knob select.dirty{
-  border-color:var(--gold);box-shadow:0 0 0 3px color-mix(in srgb,var(--gold) 20%,transparent)}
-.knob:has(.dirty){border-color:var(--gold);background:color-mix(in srgb,var(--gold) 6%,var(--surface))}
+.knob input.dirty,.knob select.dirty{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.knob:has(.dirty){border-color:var(--accent-line);background:var(--accent-soft)}
 .savebar{
   position:sticky;inset-block-end:var(--s-4);z-index:var(--z-nav);
   display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;
   margin-block-start:var(--s-5);padding:var(--s-4) var(--s-5);
-  background:var(--surface);border:1px solid var(--gold);border-radius:var(--r-card);
-  box-shadow:var(--shadow-2);
+  background:var(--surface);border:1px solid var(--accent);border-radius:var(--r-card);box-shadow:var(--shadow-2);
 }
 .savebar b{font-variant-numeric:tabular-nums}
 
-/* ── banners, drawer, toasts ────────────────────────────────────────── */
+/* ── banners, drawer, modal, toasts ─────────────────────────────────── */
 .banner{
   display:flex;gap:var(--s-4);align-items:flex-start;
-  padding:var(--s-4) var(--s-5);border-radius:var(--r-ctrl);font-size:var(--fs-sm);
-  background:color-mix(in srgb,var(--bell) 12%,var(--surface));
-  border:1px solid color-mix(in srgb,var(--bell) 45%,transparent);
-  border-inline-start-width:3px;
+  padding:var(--s-5) var(--s-6);border-radius:var(--r-card);font-size:var(--fs-body);
+  background:var(--surface);border:1px solid var(--line);
 }
-.banner--bad{background:color-mix(in srgb,var(--failed) 10%,var(--surface));
-  border-color:color-mix(in srgb,var(--failed) 45%,transparent)}
-.banner--ok{background:color-mix(in srgb,var(--done) 10%,var(--surface));
-  border-color:color-mix(in srgb,var(--done) 40%,transparent)}
-.banner b{display:block;font-weight:700}
-
+/* app.js puts the glyph in the first span; it becomes the icon tile. */
+.banner>span[aria-hidden]{
+  inline-size:28px;block-size:28px;border-radius:8px;flex:none;display:grid;place-items:center;
+  background:var(--accent-soft);color:var(--accent);font-size:13px;
+}
+.banner--bad{border-color:var(--accent-line);background:var(--accent-soft)}
+.banner--bad>span[aria-hidden]{background:var(--bad-bg);color:var(--bad)}
+.banner--ok>span[aria-hidden]{background:var(--ok-bg);color:var(--ok)}
+.banner b{display:block;font-weight:600}
 .scrim{
   position:fixed;inset:0;z-index:var(--z-scrim);background:var(--scrim);
   opacity:0;pointer-events:none;transition:opacity var(--t-base) var(--ease);
-  backdrop-filter:blur(2px);
 }
 .scrim.on{opacity:1;pointer-events:auto}
 .drawer{
   position:fixed;inset-block:0;inset-inline-end:0;z-index:var(--z-drawer);
-  inline-size:min(620px,100%);background:var(--surface);
+  inline-size:min(640px,100%);background:var(--surface);
   border-inline-start:1px solid var(--line);box-shadow:var(--shadow-pop);
   display:flex;flex-direction:column;
   transform:translateX(102%);transition:transform var(--t-slow) var(--ease);
 }
 html[dir="rtl"] .drawer{transform:translateX(-102%)}
 .drawer.on{transform:none}
-.drawer-head{
-  display:flex;align-items:flex-start;gap:var(--s-4);
-  padding:var(--s-6);border-block-end:1px solid var(--line);
-  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
-}
-.drawer-head h2{
-  font-size:var(--fs-h1);min-inline-size:0;
-  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
-}
-.drawer-body{padding:var(--s-6);overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-5)}
+.drawer-head{display:flex;align-items:flex-start;gap:var(--s-4);padding:var(--s-8);border-block-end:1px solid var(--line)}
+.drawer-head h2{font-size:var(--fs-h1);min-inline-size:0;letter-spacing:-.02em}
+.drawer-body{padding:var(--s-8);overflow-y:auto;display:flex;flex-direction:column;gap:var(--s-5)}
 .drawer-body p{margin:0}
 .drawer-body h3{font-size:var(--fs-h2)}
 .evidence{
-  border:1px solid var(--line);border-inline-start:3px solid var(--line-strong);
-  border-radius:var(--r-sm);padding:var(--s-5);
-  background:var(--surface-2);font-size:var(--fs-sm);
+  border:1px solid var(--line);border-inline-start:2px solid var(--line-strong);
+  border-radius:var(--r-sm);padding:var(--s-5);background:var(--bg);font-size:var(--fs-sm);
 }
-.evidence--missing{
-  border-color:color-mix(in srgb,var(--failed) 45%,transparent);
-  border-inline-start-color:var(--failed);
-  background:color-mix(in srgb,var(--failed) 8%,var(--surface));
-}
-
+.evidence--missing{border-color:var(--accent-line);border-inline-start-color:var(--bad);background:var(--accent-soft)}
 .modal{
   position:fixed;inset:50% auto auto 50%;transform:translate(-50%,-50%);
   z-index:calc(var(--z-drawer) + 1);
   inline-size:min(640px,calc(100vw - 32px));max-block-size:calc(100vh - 64px);
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
-  box-shadow:var(--shadow-pop);color:var(--ink);
-  display:none;flex-direction:column;padding:0;
+  box-shadow:var(--shadow-pop);color:var(--ink);display:none;flex-direction:column;padding:0;
 }
 .modal[open]{display:flex}
 .modal::backdrop{background:transparent}
-#modal-scrim{
-  position:fixed;inset:0;z-index:var(--z-drawer);
-  background:var(--scrim);display:none;
-}
+#modal-scrim{position:fixed;inset:0;z-index:var(--z-drawer);background:var(--scrim);display:none}
 #modal-scrim.on{display:block}
-.modal-head{
-  display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);
-  padding:var(--s-6) var(--s-7);border-block-end:1px solid var(--line);
-  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
-}
-.modal-head h2{
-  font-size:var(--fs-h1);margin:0;
-  border-inline-start:4px solid var(--jester-gold);padding-inline-start:var(--s-5);
-}
-.modal-body{padding:var(--s-7);overflow-y:auto;flex:1}
-.modal-body h3{
-  font-size:var(--fs-h2);margin-block:var(--s-8) var(--s-3);
-  display:flex;align-items:center;gap:var(--s-3);
-}
-.modal-body h3::before{
-  content:"";inline-size:3px;block-size:.9em;flex:none;
-  border-radius:var(--r-pill);background:var(--jester-gold);
-}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s-4);padding:var(--s-7) var(--s-8);border-block-end:1px solid var(--line)}
+.modal-head h2{font-size:var(--fs-h1);margin:0;letter-spacing:-.02em}
+.modal-body{padding:var(--s-8);overflow-y:auto;flex:1}
+.modal-body h3{font-size:var(--fs-h2);margin-block:var(--s-8) var(--s-3)}
 .modal-body h3:first-child{margin-block-start:0}
 .modal-body .field{margin-block-end:var(--s-5)}
-.modal-body .field label{
-  display:block;font-size:var(--fs-sm);font-weight:600;margin-block-end:var(--s-3);
-  text-transform:none;letter-spacing:0;color:var(--ink);
-}
-.modal-body .field input[type="text"],
-.modal-body .field input[type="number"],
-.modal-body .field select{
-  inline-size:100%;padding:9px 12px;border-radius:var(--r-ctrl);
-  border:1px solid var(--line-strong);background:var(--bg);color:var(--ink);
-  font-family:var(--font-ui);font-size:var(--fs-body);
-}
+.modal-body .field label{display:block;font-size:var(--fs-sm);font-weight:500;margin-block-end:var(--s-3);color:var(--ink)}
 .modal-body .formgrid{display:grid;gap:var(--s-5);grid-template-columns:1fr 1fr;align-items:start}
 .modal-body .formgrid .field:last-child{grid-column:1/-1}
-.modal-footer{
-  display:flex;gap:var(--s-3);justify-content:flex-end;
-  padding:var(--s-5) var(--s-7);border-block-start:1px solid var(--line);
-  background:var(--surface-2);
-}
-/* Checkboxes inside the modal pick items out of a list; they are choices, not
-   switches, so they keep the platform box the .switch rule above replaces. */
-/* GLOBAL, not modal-scoped. `input,select,textarea{inline-size:100%}` above is
-   right for a text field and catastrophic for a checkbox: it makes the box as
-   wide as its row and shoves everything after it to the far edge. That was
-   masked for months because the only checklist lived inside .modal-body, which
-   carried this override — the moment one appeared on a page, every row broke.
-   `.switch` re-opts into the track-and-knob look for the sources table. */
+.modal-footer{display:flex;gap:var(--s-3);justify-content:flex-end;padding:var(--s-5) var(--s-8);border-block-start:1px solid var(--line);background:var(--bg)}
+/* Checkbox lists pick items; they keep the platform box the .switch rule replaces.
+   GLOBAL: the `inline-size:100%` on inputs above must not reach checkboxes. */
 input[type="checkbox"]:not(.switch input),
 input[type="radio"]{
   appearance:auto;-webkit-appearance:auto;inline-size:auto;block-size:auto;flex:none;
-  accent-color:var(--jester-gold);margin-inline-end:var(--s-3);vertical-align:-2px;
+  accent-color:var(--ink);margin-inline-end:var(--s-3);vertical-align:-2px;
 }
 .source-check{display:flex;align-items:center;gap:var(--s-2);padding:3px 0;font-size:var(--fs-sm)}
-
 .toasts{
   position:fixed;inset-inline-end:var(--s-6);inset-block-end:var(--s-6);z-index:var(--z-toast);
   display:flex;flex-direction:column;gap:var(--s-3);max-inline-size:min(420px,calc(100vw - 32px));
 }
 .toast{
   display:flex;gap:var(--s-4);align-items:flex-start;
-  background:var(--surface);border:1px solid var(--line);border-inline-start:3px solid var(--gold);
-  border-radius:var(--r-ctrl);padding:11px 13px;box-shadow:var(--shadow-pop);font-size:var(--fs-sm);
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-ctrl);padding:12px 14px;box-shadow:var(--shadow-pop);font-size:var(--fs-sm);
   animation:slidein var(--t-slow) var(--ease);
 }
-.toast--bad{border-inline-start-color:var(--failed)}
-.toast--ok{border-inline-start-color:var(--done)}
+.toast::before{content:"";inline-size:8px;block-size:8px;border-radius:50%;background:var(--accent);flex:none;margin-block-start:6px}
+.toast--bad::before{background:var(--bad)}
+.toast--ok::before{background:var(--ok)}
 .toast button{background:none;border:0;color:var(--ink-mute);cursor:pointer;padding:0 2px;line-height:1}
 .toast button:hover{color:var(--ink)}
 @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-
 pre{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);
   padding:var(--s-5);font-family:var(--font-mono);font-size:var(--fs-xs);line-height:1.55;
   overflow:auto;max-block-size:320px;margin:0;white-space:pre-wrap;word-break:break-word;
 }
@@ -615,181 +450,312 @@ pre{
 }
 @keyframes shimmer{to{background-position:-200% 0}}
 [aria-busy="true"]{opacity:.55;transition:opacity var(--t-fast)}
+/* First paint: app.js fills these containers only once /api/overview and
+   /api/infra answer (2-3 s on a busy database). Until then an empty container
+   draws a shimmering placeholder of roughly its final height, so the page
+   reads as "loading" instead of "broken". CSS-only; nothing in app.js changes. */
+#kpis:empty,#last-run:empty,#quota:empty,#infra:empty,#runs-body:empty,#ideas-body:empty,
+#nuggets-body:empty,#src-body:empty,#queue-body:empty,#cfg-knobs:empty,#doctor-card:empty,
+#sched-state:empty,#search-body:empty,#clusters-body:empty{
+  display:block;min-block-size:88px;border-radius:var(--r-ctrl);
+  background:linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2));
+  background-size:200% 100%;animation:shimmer 1.2s linear infinite;
+}
+#kpis:empty{min-block-size:96px;border-radius:var(--r-card)}
+#runs-body:empty,#ideas-body:empty,#nuggets-body:empty,#src-body:empty,#queue-body:empty{
+  display:table-row-group;min-block-size:0;
+}
+#runs-body:empty::after,#ideas-body:empty::after,#nuggets-body:empty::after,
+#src-body:empty::after,#queue-body:empty::after{
+  content:"";display:block;block-size:160px;
+  background:linear-gradient(90deg,var(--surface),var(--surface-2),var(--surface));
+  background-size:200% 100%;animation:shimmer 1.2s linear infinite;
+}
 
 /* ── responsive ─────────────────────────────────────────────────────── */
-@media (max-width:960px){
-  /* Column mode flips the cross axis to horizontal: without stretch the nav
-     and main size to their content and the whole page scrolls sideways. */
-  .shell{flex-direction:column;align-items:stretch;gap:var(--s-5);padding:var(--s-5)}
+@media (max-width:1100px){
+  :root{--nav-w:200px}
+  main,.topbar{padding-inline:var(--s-8)}
+}
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr}
   .nav{
-    position:static;inline-size:100%;
-    border-inline-end:0;border-block-end:1px solid var(--line);
-    padding-inline-end:0;padding-block-end:var(--s-3);
+    position:static;block-size:auto;flex-direction:row;flex-wrap:wrap;align-items:center;
+    gap:var(--s-3);padding:var(--s-5) var(--s-6);border-inline-end:0;border-block-end:1px solid var(--line);
   }
-  .nav ul{flex-direction:row;overflow-x:auto;gap:var(--s-2);padding-block-end:2px}
-  .nav button{inline-size:auto;white-space:nowrap}
-  /* The rail marker has to move to the block edge once the list is a strip. */
-  .nav button[aria-current="page"]::before{
-    inset:auto var(--s-4) 0;inline-size:auto;block-size:2px;
-  }
-  .nav .count{margin-inline-start:var(--s-3)}
-  .grp{display:none}
+  .brand{padding:0 var(--s-4) 0 0;flex:none}
+  .nav ul{flex-direction:row;flex-wrap:wrap;gap:var(--s-2);flex:1}
+  .nav li.grp{display:none}
+  .nav button{inline-size:auto;padding:6px 10px;font-size:var(--fs-sm)}
+  .nav .count{margin-inline-start:var(--s-2)}
+  .nav-foot{margin:0;padding:0;flex:none}
+  .health{padding:6px 10px;font-size:var(--fs-xs)}
+  main,.topbar{padding-inline:var(--s-6)}
+  main{padding-block:var(--s-7) var(--s-9)}
   .formgrid{grid-template-columns:1fr}
-  .hero{padding:var(--s-7) var(--s-6)}
 }
 @media (max-width:600px){
-  :root{--fs-hero:24px}
+  :root{--fs-hero:30px}
   .topbar{padding-inline:var(--s-5);gap:var(--s-3)}
   .topbar-meta{display:none}
-  .brand em{display:none}
-  .kpis{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
   .dl{grid-template-columns:1fr}
   .dl dt{margin-block-start:var(--s-3)}
   .modal-body .formgrid{grid-template-columns:1fr}
 }
 
 /* ── pipeline modal: source checklist ───────────────────────────────── */
-.modal-listhead{
-  margin-block:var(--s-4) var(--s-3);padding-block-end:var(--s-3);
-  border-block-end:1px solid var(--line);
-}
-.checkall{display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;font-weight:600}
-.checklist{
-  max-block-size:260px;overflow-y:auto;
-  border:1px solid var(--line);border-radius:var(--r-ctrl);
-  background:color-mix(in srgb,var(--surface-2) 45%,var(--surface));
-  padding:var(--s-2);
-}
+.modal-listhead{margin-block:var(--s-4) var(--s-3);padding-block-end:var(--s-3);border-block-end:1px solid var(--line)}
+.checkall{display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;font-weight:500;white-space:nowrap}
+.checklist{max-block-size:260px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--bg);padding:var(--s-2)}
 .source-check-row{
   display:flex;align-items:center;gap:var(--s-3);min-inline-size:0;
-  padding:5px var(--s-3);border-radius:var(--r-sm);cursor:pointer;
+  padding:6px var(--s-3);border-radius:var(--r-sm);cursor:pointer;
   transition:background var(--t-fast) var(--ease);
 }
 .source-check-row:hover{background:var(--surface)}
-.source-check-row strong{font-weight:600;min-inline-size:0}
+.source-check-row strong{font-weight:500;min-inline-size:0}
 .source-check-row .chip{flex:none}
 .source-check-row .xs{margin-inline-start:auto;flex:none;padding-inline-start:var(--s-3)}
-/* Grouped by platform: the header ticks its whole platform, so "every
-   subreddit" is one click instead of eighteen, and the list's composition is
-   readable without counting rows. */
-.source-check-row.source-grp{
-  margin-block-start:var(--s-3);
-  border-block-end:1px solid var(--line);
-  border-radius:0;
-}
+.source-check-row.source-grp{margin-block-start:var(--s-3);border-block-end:1px solid var(--line);border-radius:0}
 .source-check-row.source-grp:first-child{margin-block-start:0}
-.source-check-row.source-grp strong{
-  color:var(--jester-gold);text-transform:uppercase;
-  font-size:var(--fs-xs);letter-spacing:.05em;font-weight:700;
-}
+.source-check-row.source-grp strong{color:var(--ink-soft);text-transform:uppercase;font-size:11px;letter-spacing:.08em;font-weight:500}
 .source-check-row.is-child{padding-inline-start:calc(var(--s-3) * 3)}
-
-/* A source with no worker adapter cannot be fetched; it stays listed so the
-   list matches the Sources tab, but it reads as unavailable rather than
-   silently unticked. */
 .source-check-row.is-unsupported{opacity:.55;cursor:not-allowed}
 .source-check-row.is-unsupported strong{text-decoration:line-through}
 
 /* ── schedule ───────────────────────────────────────────────────────── */
-/* The cadence form has three narrow controls, not the wide URL field the
-   shared .formgrid ramp is sized for; left alone the time input stretched
-   across a whole 1fr column for four characters of content. */
-#schedule .formgrid{
-  grid-template-columns:repeat(auto-fit,minmax(150px,190px));
-  justify-content:start;align-items:end;
-}
+#schedule .formgrid{grid-template-columns:repeat(auto-fit,minmax(150px,190px));justify-content:start;align-items:start}
 #schedule .formgrid .field:last-child{grid-column:auto}
 #sched-presets{margin-block-start:var(--s-4)}
 #sched-log{max-block-size:260px}
-/* A schedule that is not registered is the page's headline fact, so the
-   controls that only make sense once it is stay visibly inert. */
 #sched-remove[disabled],#sched-runnow[disabled]{opacity:.45}
-
-/* The scope checklist reuses the modal's row, so both stay in step. */
-.checkall{white-space:nowrap}
 #schedule .checklist{max-block-size:300px}
-/* Hints run to one or two lines; end-aligning staggers the inputs. */
-#schedule .formgrid{align-items:start}
-
-/* ── schedule activity ──────────────────────────────────────────────── */
-/* The KPI tile grew a third line here: a bare count cannot say whether a
-   schedule is healthy, so every tile carries what it should have been. */
-.kpi-sub{display:block;margin-block-start:2px;text-transform:none;letter-spacing:0;font-weight:400}
-.kpi--ok::before{background:var(--done)}
-.kpi--ok b{color:var(--done-ink)}
 #sched-kpis{grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
 #sched-ticks td{white-space:nowrap}
-/* A scheduled row should be findable in a ledger of mostly-manual runs. */
-.chip--sched{
-  border-color:color-mix(in srgb,var(--gold) 55%,transparent);
-  color:var(--running-ink);
-  background:color-mix(in srgb,var(--gold) 12%,transparent);
-}
-/* A timestamp broken across two lines is harder to scan than a wider column. */
 #runs-body td:first-child,#sched-ticks td:first-child{white-space:nowrap}
-
-/* Two buttons in the actions cell now — park sits beside remove, and only
-   appears on a source the worker has actually measured as barren. */
-.row-actions {
-  display: flex;
-  gap: .35rem;
-  align-items: center;
-  justify-content: flex-end;
-}
+.row-actions{display:flex;gap:.35rem;align-items:center;justify-content:flex-end}
 
 /* ── grouped tables ─────────────────────────────────────────────────── */
-/* Sources and nuggets are lists-of-lists: a platform, then the communities
-   inside it. The header rows carry the counts, so the shape of the corpus is
-   readable without scrolling, and fold so a big platform can be set aside. */
-.grp > td{
-  padding:0;
-  border-block-end:1px solid var(--line-strong);
-  background:var(--surface-2);
-}
-.grp--2 > td{
-  background:color-mix(in srgb,var(--surface-2) 55%,transparent);
-  border-block-end:1px solid color-mix(in srgb,var(--line) 70%,transparent);
-}
-/* A sticky <th> already owns z-index 1; group heads sit below it and above
-   the ordinary rows they scroll past. */
-.grp{position:sticky;inset-block-start:33px;z-index:0}
-.grp--2{inset-block-start:66px}
-
+.grp > td{padding:0;border-block-end:1px solid var(--line);background:var(--bg)}
+.grp--2 > td{background:var(--surface-2);border-block-end:1px solid var(--surface-2)}
+.grp{position:sticky;inset-block-start:41px;z-index:0}
+.grp--2{inset-block-start:82px}
 .grp-btn{
   inline-size:100%;display:flex;align-items:center;gap:var(--s-3);
-  padding:9px 14px;border:0;background:transparent;color:var(--ink);
-  font:inherit;font-weight:700;cursor:pointer;text-align:start;
+  padding:10px 16px;border:0;background:transparent;color:var(--ink);
+  font:inherit;font-weight:600;cursor:pointer;text-align:start;
 }
-.grp--2 .grp-btn{padding-inline-start:34px;font-weight:600;font-size:var(--fs-sm)}
-.grp-btn:hover{background:color-mix(in srgb,var(--ink-mute) 10%,transparent)}
-.grp-btn:focus-visible{outline:2px solid var(--jester-gold);outline-offset:-2px}
-
-.grp-caret{
-  display:inline-block;inline-size:1em;color:var(--ink-mute);
-  font-size:var(--fs-xs);flex:none;
-}
-.grp-label{color:var(--jester-gold)}
-.grp--2 .grp-label{color:var(--ink)}
+.grp--2 .grp-btn{padding-inline-start:36px;font-weight:500;font-size:var(--fs-sm)}
+.grp-btn:hover{background:var(--surface-3)}
+.grp-btn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.grp-caret{display:inline-block;inline-size:1em;color:var(--ink-soft);font-size:var(--fs-xs);flex:none}
+.grp-label{color:var(--ink)}
+.grp--2 .grp-label{color:var(--ink-2)}
 .grp-meta{color:var(--ink-mute);font-weight:400;margin-inline-start:auto}
 
 /* ── queue mix ──────────────────────────────────────────────────────── */
-/* The bar is the point: a queue that is mostly one platform should be obvious
-   without reading the numbers, because that is a skew about to be baked into
-   the archive rather than a backlog. */
-.qmix{
-  display:grid;
-  grid-template-columns:minmax(7rem,auto) minmax(4rem,1fr) minmax(14rem,auto);
-  align-items:center;gap:var(--s-4);
+.qmix{display:grid;grid-template-columns:minmax(7rem,auto) minmax(4rem,1fr) minmax(14rem,auto);align-items:center;gap:var(--s-4)}
+.qbar{block-size:6px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;min-inline-size:3rem}
+.qbar i{display:block;block-size:100%;background:var(--ink);border-radius:inherit}
+@media (max-width:640px){.qmix{grid-template-columns:1fr;gap:var(--s-3)}}
+
+/* ── review picks, 2026-09-22 ───────────────────────────────────────── */
+/* run strip: what is running now, on every page */
+.runstrip{
+  display:inline-flex;align-items:center;gap:var(--s-4);padding:6px 12px;border-radius:var(--r-pill);
+  background:var(--warn-bg);color:var(--running-ink);font-size:var(--fs-sm);font-weight:500;white-space:nowrap;
+  max-inline-size:60ch;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border:0;font-family:inherit;
 }
-.qbar{
-  block-size:8px;border-radius:var(--r-pill);
-  background:color-mix(in srgb,var(--ink-mute) 18%,transparent);
-  overflow:hidden;min-inline-size:3rem;
+.runstrip .dot{inline-size:7px;block-size:7px;border-radius:50%;background:currentColor;animation:pulse 1.2s var(--ease) infinite;flex:none}
+.runstrip .mono{color:inherit;opacity:.85}
+/* actions: primary, two outlined, the rest behind "more" */
+.menu{position:relative;display:inline-block}
+.menu>summary{list-style:none;cursor:pointer}
+.menu>summary::-webkit-details-marker{display:none}
+.menu-list{
+  position:absolute;inset-inline-start:0;inset-block-start:calc(100% + 4px);z-index:var(--z-nav);
+  display:flex;flex-direction:column;gap:2px;min-inline-size:200px;padding:6px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);box-shadow:var(--shadow-2);
 }
-.qbar i{
-  display:block;block-size:100%;
-  background:var(--jester-gold);border-radius:inherit;
+.menu-list .btn{justify-content:flex-start;inline-size:100%}
+/* four tiles with a spark each */
+.kpis--4{grid-template-columns:repeat(4,1fr)}
+.kpi .spark{display:block;inline-size:100%;block-size:28px;margin-block-start:var(--s-3)}
+.kpi .spark polyline{fill:none;stroke:var(--ink);stroke-width:1.5}
+.kpi .spark .area{fill:var(--ink);opacity:.06}
+.kpi--alert .spark polyline{stroke:var(--bad)}
+.kpi .delta{display:block;margin-block-start:var(--s-3);font-size:var(--fs-xs);color:var(--ink-mute)}
+.kpi .delta.up{color:var(--done-ink)} .kpi .delta.bad{color:var(--failed-ink)}
+/* quota meter */
+.meter{block-size:8px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;display:flex}
+.meter i{display:block;block-size:100%}
+.meter-legend{display:flex;flex-wrap:wrap;gap:var(--s-3) var(--s-5);margin-block-start:var(--s-4);font-size:var(--fs-xs);color:var(--ink-mute)}
+.meter-legend i{display:inline-block;inline-size:8px;block-size:8px;border-radius:2px;margin-inline-end:5px;vertical-align:-1px}
+/* infrastructure rows with consequences */
+.infra{display:flex;flex-direction:column;gap:var(--s-3)}
+.irow{display:flex;align-items:flex-start;gap:var(--s-4);padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--border-soft,var(--line));background:var(--bg);font-size:var(--fs-sm)}
+.irow .led{inline-size:8px;block-size:8px;border-radius:50%;background:var(--ok);flex:none;margin-block-start:6px}
+.irow.off{border-color:var(--accent-line);background:var(--accent-soft)}
+.irow.off .led{background:var(--bad)}
+.irow.warn .led{background:var(--warn)}
+.irow b{font-weight:500}
+.irow .why{display:block;color:var(--ink-mute);font-size:var(--fs-xs)}
+/* runs: compact signals */
+.sig{display:flex;flex-direction:column;gap:4px;min-inline-size:180px}
+.sigbar{display:flex;block-size:8px;border-radius:var(--r-pill);overflow:hidden;background:var(--surface-3)}
+.sigbar i{display:block;block-size:100%;background:var(--ink);opacity:.9}
+.sigbar i:nth-child(2n){opacity:.55} .sigbar i:nth-child(3n){opacity:.35}
+.sig .xs{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ratio{display:block;block-size:4px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;margin-block-start:4px;inline-size:72px}
+.ratio i{display:block;block-size:100%;background:var(--ink)}
+.ratio.low i{background:var(--warn)} .ratio.high i{background:var(--bad)}
+.why{color:var(--failed-ink);display:block;white-space:nowrap}
+tr.clickable{cursor:pointer}
+/* The chevron used to float, and a float inside a table cell opens its own
+   line box — 22px of dead height on every row, which is what made the run
+   ledger read as six giant cards. Positioned instead, it costs nothing. */
+tr.clickable td:last-child{position:relative;padding-inline-end:24px}
+tr.clickable td:last-child::after{
+  content:"›";position:absolute;inset-inline-end:10px;inset-block-start:50%;
+  transform:translateY(-50%);color:var(--ink-soft);font-size:16px;line-height:1;
 }
-@media (max-width:640px){
-  .qmix{grid-template-columns:1fr;gap:var(--s-3)}
+/* sortable headers + pager */
+th[data-sort]{cursor:pointer;user-select:none}
+th[data-sort]:hover{color:var(--ink)}
+th[data-sort][aria-sort="ascending"]::after{content:" ↑";color:var(--ink)}
+th[data-sort][aria-sort="descending"]::after{content:" ↓";color:var(--ink)}
+.pager{display:inline-flex;align-items:center;gap:var(--s-3);font-size:var(--fs-xs);color:var(--ink-mute);font-variant-numeric:tabular-nums}
+.pager .btn{padding:4px 8px}
+/* score bars */
+.sbar{display:inline-grid;grid-auto-flow:column;gap:4px;align-items:end;vertical-align:middle}
+.sbar i{display:block;inline-size:22px;block-size:16px;border-radius:4px;background:var(--surface-3);position:relative;overflow:hidden}
+.sbar i::after{content:"";position:absolute;inset-inline:0;inset-block-end:0;block-size:var(--v,0%);background:var(--ink);opacity:.8}
+.sbar i.hi::after{background:var(--ok)} .sbar i.lo::after{background:var(--bad)} .sbar i.na{background:repeating-linear-gradient(45deg,var(--surface-3) 0 3px,var(--surface) 3px 6px)}
+/* facet rail */
+/* The rail collapses. It is a narrowing tool, not a permanent fixture: once
+   you have picked r/smallbusiness you want the width back for the insights,
+   and the active filters stay visible as removable chips either way. */
+.facetlayout{
+  display:grid;grid-template-columns:230px minmax(0,1fr);gap:var(--s-5);align-items:start;
+  transition:grid-template-columns var(--t-base) var(--ease);
+}
+.facetlayout.is-collapsed{grid-template-columns:0 minmax(0,1fr);gap:0}
+.facetlayout.is-collapsed>.facets{opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-8px)}
+.facets{
+  display:flex;flex-direction:column;gap:var(--s-6);overflow:hidden;
+  position:sticky;inset-block-start:calc(var(--topbar-h) + var(--s-5));
+  transition:opacity var(--t-fast) var(--ease),transform var(--t-base) var(--ease);
+}
+/* toggle + the active-filter chips share one bar above the layout */
+.facetbar{display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;margin-block-end:var(--s-4)}
+.facetbar .fic{
+  inline-size:13px;block-size:11px;flex:none;border:1.5px solid currentColor;border-radius:2px;
+  border-inline-start-width:5px;transition:border-inline-start-width var(--t-fast) var(--ease);
+}
+.facetbar [aria-expanded="false"] .fic{border-inline-start-width:1.5px}
+.activefacets{display:flex;align-items:center;gap:var(--s-3);flex-wrap:wrap;font-size:var(--fs-sm);color:var(--ink-mute)}
+.activefacets .fchip{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;border-radius:var(--r-pill);
+  background:var(--ink);color:var(--bg);font-size:var(--fs-xs);font-weight:500;
+}
+.activefacets .fchip b{font-weight:500;opacity:.7}
+.activefacets .fchip button{
+  border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;line-height:1;
+  font-size:13px;opacity:.75;
+}
+.activefacets .fchip button:hover{opacity:1}
+.facet h4{margin:0 0 var(--s-3);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:500}
+.facet button{
+  display:flex;align-items:center;gap:var(--s-3);inline-size:100%;padding:5px 8px;border:1px solid transparent;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink-2);font-size:var(--fs-sm);cursor:pointer;text-align:start;
+}
+.facet button:hover{background:var(--surface-3)}
+.facet button[aria-pressed="true"]{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
+.facet button .n{margin-inline-start:auto;font-size:var(--fs-xs);color:var(--ink-mute);font-variant-numeric:tabular-nums}
+.facet .more{color:var(--ink-mute);font-size:var(--fs-xs);padding:4px 8px}
+.nug-insight{max-inline-size:60ch}
+.nug-from b{font-weight:500;display:block}
+/* clusters grid */
+.grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s-5)}
+.grid3 .card{display:flex;flex-direction:column;gap:var(--s-4)}
+.grid3 .card>.row:last-child{margin-block-start:auto}
+.card--wide{grid-column:1/-1}
+/* doctor fix cards */
+.fix{display:grid;grid-template-columns:auto 1fr auto;gap:var(--s-5);align-items:center;padding:var(--s-5) var(--s-6);border:1px solid var(--line);border-radius:var(--r-card);background:var(--surface)}
+.fix.bad{border-color:var(--accent-line);background:var(--accent-soft)}
+.fix .sevdot{inline-size:10px;block-size:10px;border-radius:50%;background:var(--bad)}
+.fix.warn .sevdot{background:var(--warn)} .fix.ok .sevdot{background:var(--ok)}
+.fix b{display:block;font-weight:600}
+.fix .xs{margin-block-start:2px}
+/* schedule two columns */
+.twocol{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s-5);align-items:start}
+.twocol .col{display:flex;flex-direction:column;gap:var(--s-5);min-inline-size:0}
+/* help */
+details.help{display:inline;font-size:var(--fs-sm)}
+details.help summary{cursor:pointer;color:var(--plum-ink);display:inline;list-style:none}
+details.help summary::-webkit-details-marker{display:none}
+details.help[open]{display:block;margin-block-start:var(--s-3);color:var(--ink-mute)}
+.modal--sm{inline-size:min(520px,calc(100vw - 32px))}
+kbd{font-family:var(--font-mono);font-size:11px;padding:1px 6px;border:1px solid var(--line-strong);border-block-end-width:2px;border-radius:5px;background:var(--bg)}
+.keys{row-gap:var(--s-5)}
+.empty .btn{margin-block-start:var(--s-4)}
+/* search */
+.simbar{display:inline-block;inline-size:60px;block-size:6px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;vertical-align:middle;margin-inline-end:6px}
+.simbar i{display:block;block-size:100%;background:var(--ink)}
+mark{background:var(--warn-bg);color:inherit;border-radius:3px;padding:0 2px}
+@media (max-width:1100px){.kpis--4{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:900px){
+  /* Narrow: the rail starts shut and, when opened, lays out across the top
+     instead of squeezing the list. The chips carry the state meanwhile. */
+  .facetlayout,.twocol{grid-template-columns:1fr}
+  .facetlayout:not(.is-collapsed)>.facets{position:static;flex-direction:row;flex-wrap:wrap}
+  .facetlayout.is-collapsed{grid-template-columns:1fr}
+  .facet{min-inline-size:160px}
+}
+/* config groups + map knob */
+.cfg-group{border:1px solid var(--line);border-radius:var(--r-card);padding:var(--s-5) var(--s-6);margin-block-end:var(--s-4);background:var(--surface)}
+.cfg-group>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:var(--s-3)}
+.cfg-group>summary::-webkit-details-marker{display:none}
+.cfg-group>summary::before{content:"▾";color:var(--ink-soft);font-size:12px}
+.cfg-group:not([open])>summary::before{content:"▸"}
+.mapknob td{padding:3px 6px 3px 0;border:0}
+.mapknob input{padding:5px 8px}
+[data-knob-map].dirty{outline:2px solid var(--accent);outline-offset:4px;border-radius:var(--r-sm)}
+/* bare buttons inside cluster cards get the outlined look */
+#clusters-body button:not(.primary):not(.btn){
+  display:inline-flex;align-items:center;gap:var(--s-2);padding:7px 12px;border-radius:var(--r-ctrl);
+  border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:var(--fs-sm);font-weight:500;cursor:pointer;
+}
+#clusters-body button:not(.primary):not(.btn):hover{background:var(--surface-3)}
+
+/* ── runs table: fit the width, two lines a row ─────────────────────── */
+/* Measured: the signals cell forced the table 102px past its container, so
+   the last column was clipped at the card edge and read as broken. Fixed
+   layout with declared widths makes the signals column absorb the remainder
+   instead of pushing everything out. */
+[data-page="runs"] table{table-layout:fixed}
+[data-page="runs"] th:nth-child(1),[data-page="runs"] td:nth-child(1){inline-size:23%}
+[data-page="runs"] th:nth-child(2),[data-page="runs"] td:nth-child(2){inline-size:10%}
+[data-page="runs"] th:nth-child(3),[data-page="runs"] td:nth-child(3){inline-size:15%}
+[data-page="runs"] th:nth-child(4),[data-page="runs"] td:nth-child(4){inline-size:12%}
+[data-page="runs"] th:nth-child(5),[data-page="runs"] td:nth-child(5){inline-size:11%}
+[data-page="runs"] td{padding-block:10px;vertical-align:top}
+[data-page="runs"] .why{white-space:nowrap}
+.dur-exp{display:flex;align-items:center;gap:var(--s-3);justify-content:flex-end;margin-block-start:3px;white-space:nowrap}
+.dur-exp .ratio{margin:0;inline-size:36px;flex:none}
+.sig{min-inline-size:0;gap:5px}
+.sig .xs{max-inline-size:100%}
+.sig-flags{gap:4px;margin-block-start:1px}
+.sig-flags .chip{font-size:10.5px;padding:1px 7px}
+/* Segments need a hairline between them or a five-platform mix reads as one
+   black slab — which is what it looked like on a real run. */
+.sigbar{gap:1px;background:transparent}
+.sigbar i{background:var(--ink);opacity:1;border-radius:1px}
+.sigbar i:nth-child(1){opacity:.85} .sigbar i:nth-child(2){opacity:.62}
+.sigbar i:nth-child(3){opacity:.45} .sigbar i:nth-child(4){opacity:.32}
+.sigbar i:nth-child(5){opacity:.24} .sigbar i:nth-child(n+6){opacity:.16}
+@media (max-width:1100px){
+  /* Origin is the first thing to go: the ledger is mostly scheduled ticks. */
+  [data-page="runs"] th:nth-child(5),[data-page="runs"] td:nth-child(5){display:none}
 }

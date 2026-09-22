@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jester Console Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F8F5F6; --bg-2:#F4F1F2; --bg-3:#F0EDEE; --card:#fff; --line:#E9E5E8; --line-2:#DCD6DA;
+    --ink:#201D25; --ink-2:#4A3D52; --mute:#6B5E72; --soft:#8B7D92;
+    --accent:#C8453D; --accent-soft:#FBE7E5; --accent-line:#F1C3BF;
+    --ok:#2F8F5B; --ok-bg:#E6F4EC; --warn:#A5730B; --warn-bg:#FBF3DC; --bad:#C8453D; --bad-bg:#FBE7E5;
+    --sk-ink:#3a3342; --sk-line:#cfc7cc; --sk-fill:#e9e3e6; --sk-acc:#C8453D;
+    --font:"Lexend",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#1A1523; --bg-2:#201b2a; --bg-3:#2a2434; --card:#231D2D; --line:#332C3D; --line-2:#463D50;
+    --ink:#F4F1F2; --ink-2:#D9D3DC; --mute:#A79CAE; --soft:#8B7D92;
+    --accent:#E06A62; --accent-soft:#42231F; --accent-line:#6B342E;
+    --ok:#5CC48A; --ok-bg:#1F3A2C; --warn:#E0B44A; --warn-bg:#3D3416; --bad:#E06A62; --bad-bg:#42231F;
+    --sk-ink:#d9d3dc; --sk-line:#4a4254; --sk-fill:#2f2839; --sk-acc:#E06A62;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#1A1523; --bg-2:#201b2a; --bg-3:#2a2434; --card:#231D2D; --line:#332C3D; --line-2:#463D50;
+    --ink:#F4F1F2; --ink-2:#D9D3DC; --mute:#A79CAE; --soft:#8B7D92;
+    --accent:#E06A62; --accent-soft:#42231F; --accent-line:#6B342E;
+    --ok:#5CC48A; --ok-bg:#1F3A2C; --warn:#E0B44A; --warn-bg:#3D3416; --bad:#E06A62; --bad-bg:#42231F;
+    --sk-ink:#d9d3dc; --sk-line:#4a4254; --sk-fill:#2f2839; --sk-acc:#E06A62;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  body{padding-block:0 80px}
+  .wrap{max-width:1180px;margin:0 auto;padding-inline:20px}
+  header.top{padding:56px 0 28px;border-bottom:1px solid var(--line)}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:500}
+  .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  h1{margin:10px 0 0;font-size:clamp(32px,5vw,52px);line-height:1.02;letter-spacing:-.03em;font-weight:600;text-wrap:balance}
+  h1 em{font-style:italic;font-weight:500;color:var(--accent)}
+  .lede{margin:14px 0 0;color:var(--mute);font-size:17px;max-width:66ch}
+  h2{font-size:26px;letter-spacing:-.02em;font-weight:600;margin:0}
+  h3{font-size:15px;font-weight:600;margin:0}
+  p{margin:0}
+  a{color:inherit}
+  .muted{color:var(--mute)}
+  code{font-family:ui-monospace,Consolas,monospace;font-size:.9em;background:var(--bg-3);padding:1px 5px;border-radius:5px}
+
+  /* method + toc */
+  .method{display:grid;grid-template-columns:1.2fr 1fr;gap:28px;padding:32px 0;border-bottom:1px solid var(--line)}
+  .method ul{margin:10px 0 0;padding-left:18px;color:var(--ink-2)}
+  .method li{margin:4px 0}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:12px}
+  .toc a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);text-decoration:none;font-size:14px;font-weight:500}
+  .toc a b{font-weight:500;color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+  .score{display:inline-grid;grid-auto-flow:column;gap:3px;vertical-align:middle}
+  .score i{width:8px;height:8px;border-radius:2px;background:var(--bg-3);display:block}
+  .score i.on{background:var(--ink)}
+
+  /* global moves */
+  .moves{padding:36px 0;border-bottom:1px solid var(--line)}
+  .moves ol{margin:16px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;counter-reset:m}
+  .moves li{counter-increment:m;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+  .moves li::before{content:counter(m,decimal-leading-zero);display:block;font-size:11.5px;letter-spacing:.1em;color:var(--accent);font-weight:600;margin-bottom:6px}
+  .moves li b{display:block;font-weight:600;margin-bottom:3px}
+  .moves li span{color:var(--mute);font-size:14px}
+
+  /* page sections */
+  section.page{padding:48px 0;border-bottom:1px solid var(--line)}
+  .page-head{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(280px,.9fr);gap:28px;align-items:start}
+  .page-head .lede{font-size:15px;margin-top:8px}
+  .facts{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px;margin-top:14px}
+  .facts dt{color:var(--soft)} .facts dd{margin:0;color:var(--ink-2)}
+  .review{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:18px 20px}
+  .review h3{display:flex;align-items:center;gap:10px}
+  .review ul{margin:10px 0 0;padding-left:18px;color:var(--ink-2);font-size:14px}
+  .review li{margin:6px 0}
+  .review li b{font-weight:600;color:var(--ink)}
+  .sev{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;vertical-align:1px;margin-right:4px}
+  .sev.hi{background:var(--bad-bg);color:var(--bad)} .sev.md{background:var(--warn-bg);color:var(--warn)} .sev.lo{background:var(--bg-3);color:var(--mute)}
+  .rating{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:13px;color:var(--mute)}
+  .rating span{display:inline-flex;align-items:center;gap:8px}
+
+  .options{margin-top:26px}
+  .options-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
+  .options-head h3{font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:500}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+  .opt{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:10px;display:flex;flex-direction:column;gap:8px;transition:border-color .12s}
+  .opt:hover{border-color:var(--line-2)}
+  .opt.pick{border-color:var(--accent-line);background:var(--accent-soft)}
+  .opt svg{width:100%;height:auto;display:block;border-radius:8px;background:var(--bg-2);border:1px solid var(--line)}
+  .opt .n{font-size:11px;color:var(--soft);font-variant-numeric:tabular-nums;letter-spacing:.06em}
+  .opt b{font-weight:600;font-size:14px;line-height:1.3}
+  .opt p{font-size:12.5px;color:var(--mute);line-height:1.45}
+  .opt .tag{align-self:flex-start;font-size:10.5px;padding:2px 7px;border-radius:999px;background:var(--bg-3);color:var(--ink-2);letter-spacing:.04em}
+  .opt.pick .tag{background:var(--accent);color:#fff}
+  .legend{margin-top:16px;font-size:12.5px;color:var(--soft)}
+
+  footer{padding:36px 0;color:var(--mute);font-size:13px}
+  @media (max-width:760px){ .method,.page-head{grid-template-columns:1fr} header.top{padding-top:32px} }
+  @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">Jester · operator console · 22 Sep 2026</div>
+  <h1>Eleven pages, <em>110 ways</em> to make them better.</h1>
+  <p class="lede">A page-by-page review of the Jester console after today's restyle, with ten sketched options per page. Every finding comes from the real app on the real archive (39 000 nuggets, 1 321 ideas, 115 sources), not from a mock.</p>
+</header>
+
+<div class="method">
+  <div>
+    <h2>How this was reviewed</h2>
+    <ul>
+      <li><b>Walked every page live</b> at 1440 px and at the pane's narrow width, light and dark, with real data loading (2–3 s API waits included).</li>
+      <li><b>Read the renderer</b> for each page in <code>app.js</code> (what it fetches, what it hides, what it never shows) and the API it calls.</li>
+      <li><b>Five lenses per page</b>, scored 1–5: <b>Clarity</b> (can you tell what it's for in 3 s), <b>Density</b> (right amount on screen), <b>Feedback</b> (loading / success / error states), <b>Speed</b> (perceived), <b>Action</b> (is the next thing to do obvious).</li>
+      <li><b>Design rules applied</b>: summary before detail; state encoded in form (pill, stripe) not only number; semantic color separate from the accent; repeated things composed as one object; nothing interactive that doesn't look interactive; no dead space, no clipped text.</li>
+      <li>Each option is a <b>sketch</b> — a wireframe, a title, and why. One per page is marked <b>pick</b>: what I would build first.</li>
+    </ul>
+  </div>
+  <div>
+    <h2>Pages</h2>
+    <div class="toc" id="toc"></div>
+    <p class="legend">Score bar = average of the five lenses today (before any option is built).</p>
+  </div>
+</div>
+
+<div class="moves">
+  <h2>Twelve moves that lift the whole app</h2>
+  <ol>
+    <li><b>Cache <code>/api/infra</code> for 30 s</b><span>It probes Ollama, cloakserve, Qdrant and Go on every page load — 3 s of blank. One cache kills most of the perceived slowness.</span></li>
+    <li><b>Paginate or virtualise the big tables</b><span>Nuggets renders 39 745 rows into the DOM. Ideas renders 1 321 with a &lt;select&gt; each. Both freeze the tab; screenshots time out.</span></li>
+    <li><b>One "what is running now" strip in the top bar</b><span>Run id, phase, elapsed, a stop button — visible on every page, not only Overview. Today you learn a run exists by hunting.</span></li>
+    <li><b>Sort actions by frequency, hide the rest</b><span>Quick actions is 10 buttons in one row; you use three. Primary, secondary, then an "…more" menu.</span></li>
+    <li><b>Say why a number is what it is</b><span>"0 / 0 kept / ideas" for 14 cycles in a row is the biggest fact on the Runs page and nothing explains it (it was the dedup outage + the Groq cap).</span></li>
+    <li><b>Replace jargon with the user's words</b><span>"unprocessed", "reembed backlog", "floor flags", "R41/R50" → "waiting for ideas", "not yet searchable", "run warnings".</span></li>
+    <li><b>Empty and loading states with a next step</b><span>Every empty state says what to do and links there: "No sources enabled → Add one".</span></li>
+    <li><b>Detail in place, not far below</b><span>Queue opens a batch in a div under a 300-row table. Use the drawer pattern Ideas already has, everywhere.</span></li>
+    <li><b>Trends, not just totals</b><span>Nuggets, ideas and queue size over the last 7 days as a small sparkline next to the number. The archive is growing again today — the UI can't show that.</span></li>
+    <li><b>Keyboard: <code>/</code> to search, <code>r</code> refresh, <code>g o</code> go overview</b><span>Only <code>r</code> exists and it isn't discoverable. A "?" sheet lists them.</span></li>
+    <li><b>Consistent status vocabulary</b><span>producing / quiet / barren, new / reviewed / building, pending / done / failed — three different families of pills with no shared color rule. One legend, one palette.</span></li>
+    <li><b>The Posts page</b><span>The plan's Reddit-watch library (plan §3-A) — the only new page; it should be born in the new system, not retrofitted.</span></li>
+  </ol>
+</div>
+
+<div id="pages"></div>
+
+<footer>
+  Sketch key: grey blocks are content, the red block is where the option's idea lives, a darker strip is a table header or toolbar. Everything is drawn from one 200 × 120 wireframe grammar so the options compare like-for-like. Source: plans/2026-09-22-console-review.html · pairs with plans/2026-09-22-reddit-scraping-and-redesign.md.
+</footer>
+
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Wireframe grammar: rows separated by "/", cells by spaces.
+//  h heading · k kpi · K kpi+spark · c card · C tall card · t table · T short table
+//  b horizontal bars · v vertical bars · s sparkline · l list · f filter bar
+//  i input · p pills · g timeline · m matrix · n big number · x spacer · w two-col text
+//  prefix "!" = accent (the option's idea). Suffix flags on the option: nav (side nav),
+//  drawer, modal, popover, split (right pane).
+// ---------------------------------------------------------------------------
+const H = { h:16, k:18, K:20, c:26, C:44, t:36, T:24, b:26, v:26, s:20, l:32, f:8, i:10, p:8, g:22, m:30, n:22, x:10, w:22 };
+function draw(spec, flags = "") {
+  const W = 200, HT = 120; let out = [];
+  const acc = "var(--sk-acc)", ink = "var(--sk-ink)", line = "var(--sk-line)", fill = "var(--sk-fill)";
+  let x0 = 6, cw = W - 12;
+  const F = flags.split(/\s+/).filter(Boolean);
+  if (F.includes("nav")) { out.push(`<rect x="0" y="0" width="34" height="${HT}" fill="${fill}"/>`);
+    for (let i = 0; i < 6; i++) out.push(`<rect x="7" y="${12 + i * 12}" width="${i===0?20:16}" height="3" rx="1.5" fill="${i===0?acc:line}"/>`);
+    x0 = 40; cw = W - 46; }
+  if (F.includes("top")) { out.push(`<rect x="${x0}" y="4" width="${cw}" height="6" rx="2" fill="${fill}"/>`); }
+  let y = F.includes("top") ? 14 : 8;
+  const rows = spec.split("/").map(r => r.trim()).filter(Boolean);
+  for (const row of rows) {
+    const cells = row.split(/\s+/);
+    // width weights: cell may be like "c*2"
+    const parsed = cells.map(c => { const m = c.match(/^(!?)([a-zA-Z])(?:\*(\d))?$/); return { acc: !!m[1], t: m[2], w: +(m[3] || 1) }; });
+    const totalW = parsed.reduce((a, c) => a + c.w, 0);
+    const rh = Math.max(...parsed.map(c => H[c.t] || 16));
+    let x = x0;
+    for (const c of parsed) {
+      const w = (cw - 3 * (parsed.length - 1)) * c.w / totalW;
+      out.push(cell(c.t, x, y, w, rh, c.acc));
+      x += w + 3;
+    }
+    y += rh + 4;
+    if (y > HT - 4) break;
+  }
+  if (F.includes("drawer")) { out.push(`<rect x="${W-70}" y="0" width="70" height="${HT}" fill="var(--card)" stroke="${acc}"/>`);
+    out.push(`<rect x="${W-62}" y="10" width="40" height="4" rx="2" fill="${ink}"/>`); for (let i=0;i<5;i++) out.push(`<rect x="${W-62}" y="${22+i*10}" width="${54-(i%3)*8}" height="3" rx="1.5" fill="${line}"/>`); }
+  if (F.includes("modal")) { out.push(`<rect x="0" y="0" width="${W}" height="${HT}" fill="${ink}" opacity=".12"/><rect x="50" y="22" width="100" height="76" rx="6" fill="var(--card)" stroke="${acc}"/>`);
+    out.push(`<rect x="58" y="30" width="50" height="4" rx="2" fill="${ink}"/>`); for (let i=0;i<4;i++) out.push(`<rect x="58" y="${42+i*10}" width="84" height="3" rx="1.5" fill="${line}"/>`); out.push(`<rect x="112" y="84" width="30" height="8" rx="3" fill="${ink}"/>`); }
+  if (F.includes("popover")) { out.push(`<rect x="120" y="40" width="64" height="40" rx="5" fill="var(--card)" stroke="${acc}"/>`); for (let i=0;i<3;i++) out.push(`<rect x="126" y="${48+i*9}" width="${50-i*10}" height="3" rx="1.5" fill="${line}"/>`); }
+  return `<svg viewBox="0 0 ${W} ${HT}" role="img" aria-label="wireframe">${out.join("")}</svg>`;
+  function cell(t, x, y, w, h, a) {
+    const st = a ? acc : line, fl = a ? "var(--accent-soft)" : "var(--card)";
+    const box = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${fl}" stroke="${st}"/>`;
+    const r = (dx, dy, ww, hh, c = line) => `<rect x="${x+dx}" y="${y+dy}" width="${Math.max(2, Math.min(ww, w-dx-3))}" height="${hh}" rx="1.5" fill="${c}"/>`;
+    switch (t) {
+      case "h": return r(0, 2, Math.min(w*.55, 70), 7, a ? acc : ink) + r(0, 11, Math.min(w*.8, 110), 3);
+      case "k": return box + r(4, 4, w*.4, 3) + r(4, 10, w*.5, 5, a ? acc : ink);
+      case "K": return box + r(4, 4, w*.4, 3) + r(4, 10, w*.35, 5, a ? acc : ink) + `<polyline points="${[0,1,2,3,4,5].map(i=>`${x+w*.55+i*(w*.4/5)},${y+h-4-[3,7,4,9,6,11][i]}`).join(" ")}" fill="none" stroke="${a?acc:ink}" stroke-width="1.2"/>`;
+      case "c": return box + r(4, 4, w*.45, 4, ink) + r(4, 12, w*.8, 3) + r(4, 18, w*.6, 3);
+      case "C": return box + r(4, 4, w*.45, 4, ink) + [0,1,2,3,4].map(i=>r(4, 12+i*6, w*(.85-(i%2)*.2), 3)).join("");
+      case "t": return box + r(0, 0, w, 7, a ? acc : fill) + [0,1,2,3].map(i=>r(4, 11+i*6, w-8, 1.5)).join("") + [0,1,2,3].map(i=>r(4, 9+i*6, w*.3, 3, ink)).join("");
+      case "T": return box + r(0, 0, w, 6, a ? acc : fill) + [0,1,2].map(i=>r(4, 9+i*5, w*.35, 2.5, ink)).join("");
+      case "b": return box + [0,1,2,3].map(i=>r(4, 4+i*5.5, w*[.9,.6,.35,.15][i], 3, i===0&&a?acc:ink)).join("");
+      case "v": return box + [0,1,2,3,4,5,6].map(i=>`<rect x="${x+4+i*(w-8)/7}" y="${y+h-3-[6,10,14,9,18,12,20][i]}" width="${(w-8)/7-2}" height="${[6,10,14,9,18,12,20][i]}" fill="${i===6&&a?acc:ink}"/>`).join("");
+      case "s": return box + `<polyline points="${[0,1,2,3,4,5,6,7].map(i=>`${x+4+i*(w-8)/7},${y+h-3-[4,6,5,9,8,12,11,15][i]}`).join(" ")}" fill="none" stroke="${a?acc:ink}" stroke-width="1.3"/>`;
+      case "l": return box + [0,1,2,3].map(i=>`<circle cx="${x+7}" cy="${y+7+i*7}" r="1.8" fill="${i===0&&a?acc:ink}"/>` + r(12, 5.5+i*7, w*.6, 3) ).join("");
+      case "f": return [0,1,2,3].map(i=>r(i*(w/4), 0, w/4-3, 8, i===0?(a?acc:ink):fill)).join("");
+      case "i": return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="var(--card)" stroke="${st}"/>` + r(5, 3, w*.4, 3);
+      case "p": return [0,1,2,3,4].map(i=>`<rect x="${x+i*(w/5)}" y="${y}" width="${w/5-3}" height="7" rx="3.5" fill="${i===0&&a?acc:fill}"/>`).join("");
+      case "g": return box + [0,1,2].map(i=>`<rect x="${x+4+i*14}" y="${y+5+i*6}" width="${w*.35}" height="4" rx="2" fill="${i===1&&a?acc:ink}"/>`).join("") + r(4, h-4, w-8, 1);
+      case "m": { let s=""; for(let i=0;i<5;i++)for(let j=0;j<4;j++) s+=`<rect x="${x+4+i*(w-8)/5}" y="${y+4+j*6}" width="${(w-8)/5-2}" height="5" fill="${(i+j)%3===0?(a?acc:ink):fill}" opacity="${.35+((i*j)%4)*.2}"/>`; return box+s; }
+      case "n": return r(0, 2, w*.5, 12, a ? acc : ink) + r(0, 17, w*.4, 3);
+      case "w": return r(0, 0, w*.48, 3) + r(0, 6, w*.44, 3) + r(0, 12, w*.4, 3) + r(w*.52, 0, w*.48, 3) + r(w*.52, 6, w*.46, 3) + r(w*.52, 12, w*.3, 3);
+      case "x": return "";
+      default: return box;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The review content
+// ---------------------------------------------------------------------------
+const PAGES = [
+{ id:"overview", name:"Overview", score:[3,2,2,2,3],
+  what:"The landing page. Seven count tiles, warning banners, last run, the daily quota ledger, infrastructure pills and ten quick-action buttons.",
+  facts:[["shows","7 KPIs · 2 banners · last run · 12-row quota · 5 infra pills · 10 actions"],["loads","/api/overview ≈ 2 s, /api/infra ≈ 3 s, no cache"],["real data","39 474 nuggets · 1 321 ideas · 33 635 pending batches · 0 ideas in 14 cycles"]],
+  findings:[
+    ["hi","Blank for 2–3 s on every open","app.js renders nothing until both calls return; skeletons added today, but the wait itself is the problem (see move 01)."],
+    ["hi","Seven tiles, one orphan","'active runs' wraps alone to a second row; the numbers have no trend, so 'nuggets 39 474' can't say it grew by 10 000 today."],
+    ["md","Quota ledger is mostly zeros","12 platform rows, 9 of them 0. The ledger is a debugging view, not a glance view."],
+    ["md","Ten actions in one row","Three you use daily (run, ingest, export), seven you touch monthly. The primary is black, the rest all look the same weight."],
+    ["md","'unprocessed' / 'reembed backlog' / 'pending batches'","Three counts that all mean 'waiting' for different reasons; nothing explains which one blocks ideas."],
+    ["lo","Infrastructure is a pill row","Up/down only. cloakserve was down for 26 days and the page never said 'Reddit is being skipped'."],
+    ["lo","Explanatory paragraph under actions","Seven lines of prose in a dashboard; it belongs in a tooltip or a help sheet."],
+  ],
+  options:[
+    ["Headline that changes","Replace the static 'Overview' with a one-sentence status the data writes: 'Archive grew 10 k today; ideas stalled 14 cycles'.","!h / k k k k / c c c","nav top"],
+    ["Four tiles, each with a 7-day spark","Nuggets, ideas, queue, failures — the rest move into a 'more counts' popover. Every number shows direction.","h / !K !K !K !K / c c","nav top",true],
+    ["Pipeline as a horizontal funnel","Comments → kept → nuggets → ideas as four connected bars with the drop-off between each. Shows where work is stuck.","h / !b*3 c / t","nav top"],
+    ["Attention lane","A left column 'needs you' (failed batches, unparked barren sources, reconnect Reddit) with one button each; the stats sit right.","h / !l*2 k k / !l*2 c c","nav top"],
+    ["Run strip in the top bar","Run id · phase · elapsed · stop, on every page. Overview drops its 'last run' card and shows the last five as a timeline.","!h / k k k k / !g*3 c","nav top"],
+    ["Quota as a single meter","One bar 'used 3 210 of 20 000 today' with platform segments, instead of 12 rows of zeros. Details on hover.","h / k k k k / !b*2 c","nav top popover"],
+    ["Infra as a checklist with consequences","Each service row states what breaks when it is down: 'cloakserve down → 18 Reddit sources skipped'. Red rows come first.","h / k k k k / c !l*2","nav top"],
+    ["Actions split by weight","One black button (Run), two outlined (Ingest, Export), the rest inside a '⋯' menu. Prose becomes a '?' tooltip.","h / k k k k / c c / !f","nav top popover"],
+    ["Source health heat-strip","115 sources as a single row of tiny squares coloured by health (producing / quiet / barren). Click a square → Sources.","h / k k k k / !m*3 c","nav top"],
+    ["Today vs. yesterday table","One small table: fetched, kept, nuggets, ideas — today, yesterday, 7-day average. Makes 'is the pipeline healthy' a two-second read.","h / k k k k / !T*2 c","nav top"],
+  ]},
+{ id:"runs", name:"Runs", score:[3,2,3,3,2],
+  what:"The run ledger: every pipeline tick, manual or scheduled, with status, funnel and warnings. Filter by origin.",
+  facts:[["shows","25 runs · 7 columns · 'signals' cell holds 8–12 chips per row"],["today","every scheduled run since 09-19 reads '0 / 0' with LOW_NUGGETS + DEDUP_UNAVAILABLE"],["interaction","row click opens details (title tooltip only)"]],
+  findings:[
+    ["hi","The signals cell is a chip explosion","Platform counts × 8, funnel counts, floor flags and near-misses all rendered as identical grey chips. The two that matter (flags) drown."],
+    ["hi","'0 / 0' for two weeks, unexplained","The most important fact on the page has no colour, no note, no link to Doctor. Today's cause (Qdrant down, Groq cap) was found by reading logs."],
+    ["md","No time axis","A ledger of hourly ticks with no view of cadence gaps (the 09-21 06:09 kill after 7 200 s is invisible)."],
+    ["md","Expected vs actual duration as two small numbers","112 s vs expected 2 443 s means 'it did almost nothing'; that is a signal, not a footnote."],
+    ["lo","Clickable rows don't look clickable","Only a title tooltip says so."],
+  ],
+  options:[
+    ["Signals become a compact score-line","Platforms as one stacked mini-bar, flags as red pills, funnel in a tooltip. One glance per row.","h / f / !t","nav top",true],
+    ["Cadence timeline above the table","24 h strip, one tick per run, height = nuggets kept, red = flagged/aborted. Gaps and kills become visible.","h / !g*3 k / t","nav top"],
+    ["Zero-yield runs explain themselves","A '0 / 0' cell shows a short reason chip ('dedup down', 'model capped', 'nothing new') derived from flags + log.","h / f / !t","nav top popover"],
+    ["Duration as a ratio bar","One bar per row: actual over expected, coloured when < 20 % (did nothing) or > 150 % (stuck).","h / f / t*3 !b","nav top"],
+    ["Run drawer","Click a row → right drawer with phases, per-platform counts, log tail and 'requeue' / 'resynth' actions. Same pattern as Ideas.","h / f / t","nav top drawer"],
+    ["Group by day","Day headers with a daily total row; hourly ticks collapse under them. 25 rows become 4 groups.","h / f / !T / t","nav top"],
+    ["Compare two runs","Select two rows → side-by-side diff of counts and flags. Answers 'what changed since it worked'.","h / f / !c !c / t","nav top"],
+    ["Only-problems toggle","Segmented: all · flagged · aborted · zero-yield. The default view after a bad night is the problem list.","h / !f / t","nav top"],
+    ["Live row pinned at top","The running cycle is a highlighted first row with a progress bar and phase, updating without refresh.","h / !c / t","nav top"],
+    ["Column diet","Drop 'run id' (mono noise) into the row's secondary line; promote 'kept / ideas' to the first data column with colour.","h / f / !t","nav top"],
+  ]},
+{ id:"queue", name:"Queue", score:[2,2,4,3,3],
+  what:"What was scraped and is waiting for treatment. Status filter, a treatment-blocked notice, a platform-mix bar list, and the batch table (oldest 300).",
+  facts:[["shows","33 635 pending · 71 655 comments · 8 platforms · batch table capped at 300"],["good","the mix bars are the best visual in the app"],["interaction","open batch → detail div rendered under the table"]],
+  findings:[
+    ["hi","Batch detail lands under a 300-row table","You click 'open' and scroll a long way to find it; there is no scroll-into-view or drawer."],
+    ["md","Three paragraphs of theory in the hero","Why ingestion and treatment run on separate clocks is true and interesting — and not what someone opening Queue needs first."],
+    ["md","25 067 of 33 635 are real-estate listings","The mix says so, but the hero count doesn't; 'pending' conflates two very different queues."],
+    ["lo","Table columns: #, source, comments, queued, run, status","Source is a URL; the platform / community would read better as a two-line cell."],
+  ],
+  options:[
+    ["Split the queues","Comments and listings as two tabs (or two counters) since they are treated by different code and different budgets.","h / !f / b*2 c / t","nav top",true],
+    ["Batch drawer","'open' slides the comments in from the right; the table stays where it was.","h / f / t","nav top drawer"],
+    ["Mix bar → stacked strip + legend","The 8 horizontal bars become one stacked strip with a legend, saving a whole card of height.","h / !b*3 k / t","nav top"],
+    ["Age histogram","How old the oldest pending batches are (hours → days). Shows whether treatment keeps up.","h / f / !v*2 c / t","nav top"],
+    ["Treatment status as the page header","'Treatment paused until 14:00 — Groq rate limit' becomes the headline when blocked; otherwise a green line.","!h / f / b c / t","nav top"],
+    ["Theory moves to a '?' sheet","The three paragraphs go into a help sheet opened from the title.","h / f / b c / t","nav top popover"],
+    ["Source as platform + community","Two-line cell: 'reddit · r/selfhosted' with the thread title from thread_meta below.","h / f / b c / !t","nav top"],
+    ["Bulk actions on selection","Checkboxes + 'requeue', 'drop', 'treat now' for the selected batches.","h / !f / b c / t","nav top"],
+    ["Throughput sparkline","Queued vs. treated per hour over 24 h; if the lines diverge the backlog is growing.","h / f / !s*2 c / t","nav top"],
+    ["Show newest first, with 'oldest 300' as a toggle","Most operators want to see what just landed; the cap stays but the default flips.","h / !f / b c / t","nav top"],
+  ]},
+{ id:"ideas", name:"Ideas", score:[3,2,3,2,3],
+  what:"The review loop: every synthesized idea with scores, status, critic model, and per-row status select + resynth. Row → drawer with citations.",
+  facts:[["shows","1 321 rows · 7 columns · a <select> and a button on every row"],["drawer","citations with found/missing evidence blocks — the strongest detail view in the app"],["cost","1 321 rows × select = slow paint; the tab froze under screenshots"]],
+  findings:[
+    ["hi","1 321 rows with a control each","No pagination, no virtualisation. The page is the heaviest in the app."],
+    ["hi","No sort","Can't sort by score, date, evidence count; only filter by status and text."],
+    ["md","Three scores as 'd / f / c' text","'7.0 / 6.0 / 3.0' is unreadable at scan speed; competition often 'unchecked'."],
+    ["md","No way to see why ideas stopped","1 321 ideas, 0 new since 09-19; nothing links to the run flags."],
+    ["lo","Critic model column","'openai/gpt-oss-120b' repeated 1 321 times. Belongs in the drawer."],
+  ],
+  options:[
+    ["Paged table with sort","50 per page, sortable headers (score, date, evidence). Status change and resynth move into the drawer.","h / f / !t","nav top",true],
+    ["Score as three small bars","Demand, feasibility, competition as a three-cell bar chip; unchecked = hollow.","h / f / t*3 !k","nav top"],
+    ["Cards instead of rows","Title, problem statement (2 lines), platforms, score. Better for reading, worse for triage — offer as a toggle.","h / f / !c !c !c","nav top"],
+    ["Triage mode","Keyboard-driven: j/k to move, 1–4 to set status, o to open. A counter 'reviewed 12 of 60 new'.","h / !f / t","nav top"],
+    ["Group by theme","Ideas grouped under their cluster label; collapsible groups like Nuggets.","h / f / !T / t","nav top"],
+    ["Evidence strength column","One column: nuggets × threads × platforms as a small stack, replacing the critic model column.","h / f / !t","nav top"],
+    ["Drawer with tabs","Summary · Evidence · Critique · History. Today it's one long scroll.","h / f / t","nav top drawer"],
+    ["Saved shelf","A right-side shelf of 'saved' ideas pinned while you browse; drag a row onto it.","h / f / t*3 !C","nav top"],
+    ["Score distribution header","Histogram of overall scores with a draggable threshold; the table filters live.","h / !v*2 k k / t","nav top"],
+    ["'Why no new ideas' banner","When zero ideas were synthesized in the last N cycles, a banner names the cause and links to Runs / Doctor.","h / !c / f / t","nav top"],
+  ]},
+{ id:"nuggets", name:"Nuggets", score:[3,1,3,1,3],
+  what:"The archive of extracted pain signals, grouped platform → community, with text filter and trivial / needs-reembed flags.",
+  facts:[["shows","39 745 rows rendered at once · 108 group headers · 5 columns"],["cost","several seconds to paint; the browser struggles"],["key column","'discourse-dc-419363-9b1e63b5…' in mono — noise on every row"]],
+  findings:[
+    ["hi","Everything rendered","39 745 rows in the DOM. Grouping helps reading, not painting."],
+    ["hi","Key column","A hash key is the first thing in every row; the insight is the fourth column."],
+    ["md","Insight text is a table cell","Two-line insights in a 40 % column; reading 39 k of them in a table is the wrong container."],
+    ["md","Flags only for trivial / reembed","Category (pain_point…) and community are the useful facets and they are not filters."],
+    ["lo","Count line '39 637 shown · 9 platform(s), 99 source(s)'","Useful, but it's a caption; make it the page's subtitle."],
+  ],
+  options:[
+    ["Facet rail + paged list","Left facets (platform, community, category, flags) with counts; right, 100 nuggets at a time as reading cards.","h / f / !l*1 c*3","nav top",true],
+    ["Insight-first rows","Insight becomes the first column, wide; key and platform shrink into a secondary line.","h / f / !t","nav top"],
+    ["Collapse groups by default","Show only the 108 group headers with counts; expand one to load its rows on demand.","h / f / !l","nav top"],
+    ["Community leaderboard","A card per community sorted by nuggets this week; click to open that group.","h / f / !k !k !k !k / t","nav top"],
+    ["Search inside the archive here","The Search page's semantic search as the filter box on this page, with 'meaning / text' toggle.","h / !i / t","nav top"],
+    ["Flag toolbar with counts","'trivial 1 204 · needs reembed 7 · unclustered 6 122' as clickable counts, not a plain segmented control.","h / !p / t","nav top"],
+    ["Nugget drawer","Click a row → drawer with raw comment, source link, the idea(s) it supports, and a 'mark trivial' action.","h / f / t","nav top drawer"],
+    ["Timeline of arrivals","Nuggets per day for 30 days across the top; click a day to filter.","h / !v*3 k / t","nav top"],
+    ["Bulk select → resynth","Checkbox selection with 'synthesize these' — the manual clustering the CLI supports, in the UI.","h / !f / t","nav top"],
+    ["Text density toggle","Compact / comfortable rows. Compact = one line per nugget for scanning, comfortable = full insight.","h / !f / t","nav top"],
+  ]},
+{ id:"clusters", name:"Clusters", score:[3,3,3,3,3],
+  what:"The archive regrouped by meaning (embeddings). Cards per theme with coherence, nugget count, platforms, expandable chunks and 'generate idea'.",
+  facts:[["shows","85 themes · cards with 3 lines of stats each · 'show N chunks' expander"],["warning","a red card if clusters were built from fake vectors"],["today","theme labels are keyword lists ('security · device · fcc · updates')"]],
+  findings:[
+    ["md","Labels are keyword soup","'years · age · still · programming' — a theme needs a sentence; the synthesizer could write one."],
+    ["md","Flat list of 85 cards","No sort by size or coherence, no filter by platform."],
+    ["md","'generate idea' is a per-card button","No feedback about which themes already produced ideas beyond a count."],
+    ["lo","'12 related comment(s) mentioning …' on every card","Same sentence 85 times."],
+  ],
+  options:[
+    ["Sortable card grid","Sort by size, coherence, recency; filter by platform. Three columns instead of one.","h / f / !c !c !c / c c c","nav top",true],
+    ["Themes as a bubble map","Circle per theme sized by nuggets, coloured by coherence; click to open. A real overview of the archive's shape.","h / !m*3 c","nav top"],
+    ["Sentence labels","Ask the synthesizer for a one-line label per theme once; keywords become a secondary line.","h / f / !c c c","nav top"],
+    ["Theme → ideas link","Each card shows the ideas it produced as small pills; 'generate' is disabled with a reason when one exists.","h / f / c !c c","nav top"],
+    ["Split view","Themes list left (compact), selected theme's chunks and ideas right.","h / f / l*1 !C*2","nav top split"],
+    ["Regroup as a job with progress","'regroup' shows a progress bar and the run summary inline instead of a toast.","h / !c / c c c","nav top"],
+    ["Coherence threshold slider","A slider at the top re-filters themes live; weak groups fade instead of vanishing.","h / !f / c c c","nav top"],
+    ["Merge / split","Select two themes → merge; a theme → split at a lower threshold. The manual curation the archive needs.","h / f / !c !c c","nav top"],
+    ["Platform mix per theme","Small stacked bar of platforms on each card, replacing the chip list.","h / f / !c c c","nav top"],
+    ["'Not meaningful' warning as a gate","When vectors are fake, hide the cards and show only the fix (set embedding_provider, then regroup) with a button.","h / !c","nav top"],
+  ]},
+{ id:"search", name:"Search", score:[3,3,3,3,3],
+  what:"Semantic search over the archive: one input, a note about meaning vs. text mode, results as cards with platform, category, insight, raw text, source link.",
+  facts:[["shows","input · mode note · result cards"],["good","results carry the raw comment and a source link"],["missing","history, filters, 'save as idea'"]],
+  findings:[
+    ["md","No filters","Can't restrict to a platform, a date range, or a category."],
+    ["md","No memory","Previous queries vanish; no 'recent searches'."],
+    ["lo","Score shown as '0.812' mono","A similarity number means nothing to the reader; a bar or 'strong / weak' does."],
+    ["lo","Empty state is empty","No example queries."],
+  ],
+  options:[
+    ["Search + facets","Platform, category, date chips under the input; results update live.","h / !i / !p / c c","nav top",true],
+    ["Recent searches","Last 10 queries as chips below the input; click to rerun.","h / i / !p / c c","nav top"],
+    ["Similarity as a bar","Each result gets a short bar and 'strong / fair / weak' instead of 0.812.","h / i / !c c","nav top"],
+    ["Group results by theme","Results clustered by the nearest theme; headers show the theme label.","h / i / !T / c c","nav top"],
+    ["Select → synthesize","Tick results and 'make an idea from these' — search becomes a way to hand-pick evidence.","h / i / !f / c c","nav top"],
+    ["Example queries in the empty state","Three real queries from the archive ('backups fail silently') as buttons.","h / i / !c","nav top"],
+    ["Highlight the match","The words that matched (text mode) or the closest sentence (meaning mode) highlighted in the raw text.","h / i / !c c","nav top"],
+    ["Result drawer","Click a result → drawer with the whole thread context and 'open on source'.","h / i / c c","nav top drawer"],
+    ["Global search in the top bar","'/' opens a palette that searches ideas, nuggets, sources and pages at once.","!i / h / c c","nav top modal"],
+    ["Mode as a visible switch","'Meaning · Text' segmented next to the input instead of a note after the fact; text mode explains why (Qdrant down).","h / i !f / c c","nav top"],
+  ]},
+{ id:"sources", name:"Sources", score:[4,3,4,4,4],
+  what:"The curated ingest list: add-a-source form, then a grouped table (platform → source) with on/off switch, kind, target, last fetched, health, park/remove.",
+  facts:[["shows","115 sources · 11 platforms · health pills (producing / quiet / barren / not visited)"],["good","best page in the app: form, grouped table, health, park offered not applied"],["today","18 Reddit sources say 'skipped' for 26 days without the page shouting"]],
+  findings:[
+    ["md","Skipped-because-browser-down is silent","Health says 'quiet', not 'cannot fetch: cloakserve down'."],
+    ["md","Hint chips are paragraphs","'quiet list … ' and 'TikTok has no adapter …' are 2–3 lines rendered as chips."],
+    ["lo","Target column mixes URL and description","Two facts in one cell."],
+    ["lo","No per-source yield chart","'+51 comments · 162 visits · 3 792 total' is good; a spark would be better."],
+  ],
+  options:[
+    ["Fetch path + blocker column","'api / browser' badge and a red 'blocked: cloakserve down' when a source can't be fetched. Ties into the Reddit API plan.","h / c / !t","nav top",true],
+    ["Yield sparkline per source","Comments per visit over the last 20 visits as a tiny line; barren sources flatline visibly.","h / c / !t","nav top"],
+    ["Platform summary strip","One card per platform: enabled / total, comments this week, health mix. Click to jump.","h / !k !k !k !k / c / t","nav top"],
+    ["Add-source as a drawer","The form leaves the top of the page; a '+ add' button opens it. The list moves up.","h / !f / t","nav top drawer"],
+    ["Hints as a help footer","The two paragraph-chips become a footnote block under the table.","h / c / t / !w","nav top"],
+    ["Watch config inline","For Reddit sources: keywords, min score, sort, comments — the plan's watch block — edited in a row expander.","h / c / t*3 !c","nav top"],
+    ["Bulk enable / park","Select rows → enable, park, remove. Today it's one row at a time.","h / !f / t","nav top"],
+    ["Health legend","A one-line legend for the four health states with counts, above the table.","h / c / !p / t","nav top"],
+    ["Rotation order shown","A number per row: where it sits in the next run's order (least recently fetched first).","h / c / !t","nav top"],
+    ["Preview a source","'preview' fetches 3 threads live and shows them in a drawer before you add it.","h / !c / t","nav top drawer"],
+  ]},
+{ id:"config", name:"Config", score:[3,2,4,4,3],
+  what:"Every threshold the pipeline reads, as a knob grid with a sticky save bar; agent model pickers per profile; scraper.yaml and environment as definition lists.",
+  facts:[["shows","19 knobs in one grid · 4 model pickers · 2 read-only lists"],["bug","max_threads_per_platform renders as '[object Object]' (map-typed knob)"],["good","range-checked saves, dirty state, discard"]],
+  findings:[
+    ["hi","'[object Object]'","The per-platform map is shown as a string. It needs a small sub-table editor."],
+    ["md","19 knobs in one flat grid","Pre-filter, pacing, scoring, budgets and providers are mixed; no headings, no search."],
+    ["md","Hints are the doc","'cap on comments taken from one thread · 1–100000' is good; but 'why' (the incident that set it) lives only in thresholds.yaml comments."],
+    ["lo","Environment list shows secrets as '…'","Fine, but there's no 'set' / 'missing' indicator for the ones that matter (GROQ_API_KEY, REDDIT_*)."],
+  ],
+  options:[
+    ["Knobs grouped by stage","Sections: Fetch · Pre-filter · Extraction · Synthesis · Budgets · Providers, each collapsible with a one-line summary.","h / !c*2 c / c c","nav top",true],
+    ["Map knob editor","max_threads_per_platform as a small platform × value table with add/remove.","h / c / !T*2 c","nav top"],
+    ["Search the knobs","A filter box; typing 'groq' shows the three relevant knobs.","h / !i / c c c","nav top"],
+    ["Show the default and the diff","Each knob shows its default greyed; changed knobs get a 'reset' link. The profile switch shows what differs.","h / !c c c / c c c","nav top"],
+    ["Impact preview","Changing prefilter_max_chars shows 'would have kept 12 % fewer comments last run' from the funnel numbers.","h / c !c c / c c c","nav top popover"],
+    ["Env checklist","Required env vars as a checklist: set / missing / not needed for current providers.","h / c c c / !l*1 c","nav top"],
+    ["Model picker with health","Each role's model shows provider status (Ollama up, Groq limited) and last latency.","h / !k !k !k !k / c c c","nav top"],
+    ["Change log","Who changed what when — read from git or a small table; shown as a timeline at the bottom.","h / c c c / !g*3","nav top"],
+    ["Profiles side by side","config vs config-live as two columns with differences highlighted.","h / !w*2 / c c c","nav top"],
+    ["Why-lines from the yaml","Render the comment block above each knob (already in thresholds.yaml) as the knob's expandable 'why'.","h / !C c c","nav top"],
+  ]},
+{ id:"schedule", name:"Schedule", score:[3,2,4,4,3],
+  what:"Unattended runs: status banner, current schedule facts, activity KPIs + tick table, scope checklist, depth ceilings, cadence presets, last log.",
+  facts:[["shows","6 cards stacked · every 30 min via schtasks · 172 runs all time"],["today","'runs — last hour: 1 of 3 expected' (red), last 24 h: 4 of 49"],["order","the log — the thing you check when it misbehaves — is at the very bottom"]],
+  findings:[
+    ["md","Six cards, one column","Status, activity, scope, depth, cadence, log — a long scroll for two questions: is it running, and what will it do next."],
+    ["md","'1 of 3 expected' is red without a reason","The reason (previous tick still running) is in the paragraph above the tiles."],
+    ["md","Scope checklist duplicates the run modal","Same 115-row list in two places; picking is slow both times."],
+    ["lo","Cadence form: presets + minutes + daily time + two buttons","Four ways to say one thing."],
+  ],
+  options:[
+    ["Two columns: state | control","Left: status, next run, activity, log tail. Right: what it scrapes, how deep, how often, one Apply button.","h / !C*1 !C*1","nav top",true],
+    ["Next-run preview","'Next tick at 11:20 will walk 96 sources up to 3 threads each, ~40 min'. Computed from scope + depth + history.","h / !c / c c","nav top"],
+    ["Activity calendar","Last 14 days × 48 slots as a heat strip: ran / stood down / failed. The cadence shortfall becomes visible.","h / c / !m*3 k","nav top"],
+    ["Cadence as one control","A single segmented 'every 15 · 30 · 60 min · daily at …' with Apply; the minutes field appears only for 'custom'.","h / c / !f / c","nav top"],
+    ["Scope by platform","Tick platforms, not sources; expand a platform to exclude individual sources. Shared component with the run modal.","h / c / !l*2 c","nav top"],
+    ["Log as a live tail","The log card streams while a tick runs, with the current phase pinned at the top.","h / c / !C*2 c","nav top"],
+    ["Shortfall explained","'4 of 49 expected' shows the breakdown: 31 stood down (previous still running), 12 skipped (worker missing), 2 failed.","h / !k !k !k / c c","nav top"],
+    ["Dry-run button","'Try one tick now, capped at 5 posts' — proves the schedule works without waiting for the next slot.","h / c / !f / c c","nav top"],
+    ["Health gate","If the last three ticks produced nothing, a banner suggests the likely fix (cloakserve / quota / Qdrant) with a link.","!c / h / c c","nav top"],
+    ["Compact state card","Status, cadence, next run, scope in one row of four tiles instead of a seven-row definition list.","h / !k !k !k !k / c c","nav top"],
+  ]},
+{ id:"doctor", name:"Doctor", score:[3,3,3,4,2],
+  what:"Silent-degradation guards (a banner per finding) and the eval calibration gate (badge + table of known-good / known-bad ideas).",
+  facts:[["shows","3 findings today · eval table with expected vs gate"],["findings are prose","'1 run(s) …' as a red banner each, no action"],["good","the eval table is honest: every row shows expected side and actual score"]],
+  findings:[
+    ["md","Findings without actions","Each banner states a problem; none links to the page or button that fixes it."],
+    ["md","No history","Was this finding new today or has it been there a week? Nothing says."],
+    ["lo","'R40 / R55' in the subtitle","Rule numbers from the setup doc mean nothing on screen."],
+    ["lo","Eval gate needs a sentence","'≥ gate / < gate' per row but no 'gate = 7.0, 9 of 10 good ideas pass'."],
+  ],
+  options:[
+    ["Findings as fix cards","Each finding: what · since when · impact · one button ('Requeue', 'Restart cloakserve', 'Open Config').","h / !c !c / c","nav top",true],
+    ["Severity lanes","Critical / warning / info columns; the page reads as a triage board.","h / !C !C !C","nav top"],
+    ["Service map","Ollama, cloakserve, Qdrant, Go, Groq, schtasks as a row of tiles with latency and last checked; findings attach to a tile.","h / !k !k !k !k / c","nav top"],
+    ["Finding history","A small timeline per finding: first seen, last seen, times fired.","h / c / !g*3","nav top"],
+    ["Eval gate as a chart","Known-good vs known-bad scores as two dot rows against the gate line; misplaced dots are red.","h / c / !s*2 k","nav top"],
+    ["'Run all checks' button with progress","Doctor is passive; a button that re-probes everything and re-runs the gate, with a progress bar.","h / !f / c c","nav top"],
+    ["Plain-language subtitles","Replace 'R40 / R55 / M2.2' with 'checks that catch a pipeline that quietly does nothing'.","!h / c c","nav top"],
+    ["Snooze / acknowledge","Findings you accept (e.g. TikTok unsupported) can be acknowledged and drop to a footer.","h / c / !l","nav top"],
+    ["Doctor badge in the nav","The nav count already exists; colour it by worst severity and show it in the top bar too.","!h / c c","nav top"],
+    ["Link findings to Runs","'3 runs flagged LOW_NUGGETS' opens Runs pre-filtered to those runs.","h / !c / c","nav top"],
+  ]},
+{ id:"posts", name:"Posts (planned)", score:[0,0,0,0,0],
+  what:"The Reddit-watch library from the plan (§2.3 / §3-A): posts your subreddit watches caught, keep / dismiss, top comments, export. Not built yet — these are options for how it should be born.",
+  facts:[["data","saved_post table: title, body, author, score, comments, flair, matched keywords, fetched_via, status"],["source","watches per subreddit: keywords, min score, sort, include_comments"],["decision","OPEN-1 in the plan: console page (A), files (B), push to Coppler (C)"]],
+  findings:[
+    ["lo","Nothing built","The mockup shows list + detail; the options below are the alternatives before committing."],
+  ],
+  options:[
+    ["List + detail (the mockup)","Left: posts with score, matched keyword, api/browser badge. Right: body, top comments, Keep / Dismiss / note.","h / f / !l*1 !C*1","nav top",true],
+    ["Inbox triage","New posts one at a time, full width; j/k and keyboard keep/dismiss. Fast for 12 a day, wrong for 200.","h / !f / !C","nav top"],
+    ["Card wall","Grid of post cards with the first lines of body; good for browsing, weak for triage.","h / f / !c !c !c / c c c","nav top"],
+    ["Grouped by watch","Sections per subreddit/watch with counts; each collapsible.","h / f / !T / l / T","nav top"],
+    ["Digest view","One card per day: 'r/selfhosted caught 8, r/devops 3' with the top three titles each; click to expand.","h / f / !c / c","nav top"],
+    ["Post → idea bridge","'Send to synthesizer' turns a kept post (and its comments) into nuggets; the post shows the idea it produced.","h / f / l*1 !C*1","nav top"],
+    ["Watch manager tab","Same page, second tab: the watches (subreddit, keywords, min score, interval, last run, caught count) with add/edit.","h / !f / t","nav top"],
+    ["Keyword heat","Which keywords catch the most posts, over time; tune the watch from the data.","h / f / !v*2 k / l","nav top"],
+    ["Export shelf","A right shelf of kept posts with 'export .md / .csv' and 'send to Coppler' for the batch.","h / f / l*2 !C","nav top"],
+    ["Reader mode","Open a post in a clean full-width reader with comments threaded; 'keep' floats at the bottom.","h / !C","nav top drawer"],
+  ]},
+];
+
+// ---------------------------------------------------------------------------
+const toc = document.getElementById("toc");
+const root = document.getElementById("pages");
+const lens = ["Clarity","Density","Feedback","Speed","Action"];
+for (const p of PAGES) {
+  const avg = p.score.some(Boolean) ? p.score.reduce((a,b)=>a+b,0)/5 : 0;
+  toc.insertAdjacentHTML("beforeend", `<a href="#${p.id}">${p.name}<b>${avg ? avg.toFixed(1) : "new"}</b></a>`);
+  const sc = i => `<span class="score">${[1,2,3,4,5].map(n=>`<i class="${n<=i?"on":""}"></i>`).join("")}</span>`;
+  root.insertAdjacentHTML("beforeend", `
+  <section class="page" id="${p.id}">
+    <div class="page-head">
+      <div>
+        <div class="eyebrow">Page ${String(PAGES.indexOf(p)+1).padStart(2,"0")} · ${p.name}</div>
+        <h2>${p.name}</h2>
+        <p class="lede">${p.what}</p>
+        <dl class="facts">${p.facts.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+      </div>
+      <div class="review">
+        <h3>What holds it back today</h3>
+        <ul>${p.findings.map(([s,t,d])=>`<li><span class="sev ${s}">${{hi:"high",md:"medium",lo:"low"}[s]}</span><b>${t}</b> — ${d}</li>`).join("")}</ul>
+        ${avg ? `<div class="rating">${lens.map((l,i)=>`<span>${l} ${sc(p.score[i])}</span>`).join("")}</div>` : ""}
+      </div>
+    </div>
+    <div class="options">
+      <div class="options-head"><h3>Ten options</h3><span class="muted" style="font-size:13px">one is marked <b>pick</b> — the first I'd build</span></div>
+      <div class="grid">
+        ${p.options.map(([t,d,w,f,pick],i)=>`
+          <div class="opt ${pick?"pick":""}">
+            ${draw(w,f)}
+            <span class="n">${p.name.toUpperCase().replace(" (PLANNED)","")} · ${String(i+1).padStart(2,"0")}</span>
+            <b>${t}</b>
+            <p>${d}</p>
+            ${pick?`<span class="tag">pick</span>`:""}
+          </div>`).join("")}
+      </div>
+    </div>
+  </section>`);
+}
+</script>
+</body>
+</html>

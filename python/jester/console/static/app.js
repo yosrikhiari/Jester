@@ -14,6 +14,15 @@ const num = (v, digits = 1) =>
   (v === null || v === undefined || v === '' || Number.isNaN(+v)) ? '—' : (+v).toFixed(digits);
 
 const int = v => (v === null || v === undefined || v === '') ? '—' : String(v);
+/** 41,633 -> "41.6k". A run's platform mix is five of these side by side; the
+ *  exact figure belongs in the tooltip, not in a column that then overflows. */
+function compact(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  if (Math.abs(n) < 1000) return String(n);
+  if (Math.abs(n) < 1e6) return (n / 1000).toFixed(n % 1000 === 0 || Math.abs(n) >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+}
 
 /** SQLite stamps are UTC without a zone marker; render local, never "Invalid Date". */
 function when(stamp) {
@@ -161,8 +170,28 @@ function vectorPill(v) {
 }
 
 
-const emptyRow = (cols, text) =>
-  `<tr><td colspan="${cols}"><div class="empty">${esc(text)}</div></td></tr>`;
+const emptyRow = (cols, text, next) =>
+  `<tr><td colspan="${cols}"><div class="empty">${esc(text)}${next
+    ? `<div><button class="btn btn--sm" data-go="${esc(next.page)}">${esc(next.label)}</button></div>` : ''}</div></td></tr>`;
+/** Plain words for the counters. The table names are the pipeline's; these are the operator's. */
+const LABEL = {
+  nuggets: 'nuggets', ideas: 'ideas', pending_batches: 'queued batches', failed_batches: 'failed batches',
+  reembed_backlog: 'not yet searchable', unprocessed: 'waiting for ideas', runs_active: 'active runs',
+};
+/** A 7-point sparkline as inline SVG. `values` newest last. */
+function spark(values, { w = 120, h = 28 } = {}) {
+  const v = (values || []).map(Number);
+  if (!v.length) return '';
+  const max = Math.max(1, ...v), n = v.length;
+  const pts = v.map((y, i) => `${(i / (n - 1 || 1)) * w},${h - 2 - (y / max) * (h - 6)}`);
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <polygon class="area" points="0,${h} ${pts.join(' ')} ${w},${h}"/>
+    <polyline points="${pts.join(' ')}"/>
+    <circle cx="${w}" cy="${pts[n - 1].split(',')[1]}" r="2.5" fill="currentColor"/></svg>`;
+}
+/** Which platforms the worker reaches through cloakserve. Mirrors needsBrowser() in go/cmd/worker. */
+const BROWSER_PLATFORMS = new Set(['reddit', 'youtube', 'tiktok', 'realestate']);
+let INFRA = null;
 
 // ── transport ───────────────────────────────────────────────────────────
 async function api(path, body) {
@@ -202,6 +231,10 @@ const PAGES = [
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
+  // Its own group: this is a task deliverable with its own database, its
+  // own rules and its own reviewer, not another view of Jester's archive.
+  { group: 'the collector', id: 'signals', label: 'Problem signals', icon: '◎',
+    load: loadSignals, count: () => COUNTS.signals },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
   { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
@@ -310,35 +343,55 @@ async function refreshCounts() {
 }
 
 async function loadOverview() {
-  const [ov, infra] = await Promise.all([refreshCounts(), api('/api/infra')]);
+  const [ov, infra, tr] = await Promise.all([refreshCounts(), api('/api/infra'), api('/api/trends?days=7')]);
   if (ov.ok === false) { toast(ov.error, 'bad'); return; }
+  if (infra.ok !== false) INFRA = infra;
   const c = ov.counts;
+  const t = tr.ok === false ? null : tr;
+  const today = k => t ? Number(t[k][t[k].length - 1] || 0) : null;
+  const sum = k => t ? t[k].reduce((a, b) => a + Number(b), 0) : 0;
 
+  // Headline: what changed today, in one sentence.
+  const bits = [];
+  if (t) {
+    bits.push(today('nuggets') ? `+${today('nuggets').toLocaleString()} nuggets today` : 'no new nuggets today');
+    bits.push(today('ideas') ? `+${today('ideas')} idea(s) today` : `no new ideas today`);
+    if (today('bad_runs')) bits.push(`${today('bad_runs')} run(s) ended badly`);
+  }
+  $('#ov-lede').textContent = bits.length ? bits.join(' · ') + '.' : 'Archive and pipeline at a glance.';
+
+  const tile = (key, value, series, deltaText, cls = '') =>
+    `<div class="kpi ${cls}"><b class="num">${int(value)}</b><span>${esc(LABEL[key] || key)}</span>
+       ${series ? spark(series) : ''}${deltaText ? `<span class="delta ${cls.includes('alert') ? 'bad' : deltaText.startsWith('+') ? 'up' : ''}">${esc(deltaText)}</span>` : ''}</div>`;
   $('#kpis').innerHTML = [
-    ['nuggets', c.nuggets, ''],
-    ['ideas', c.ideas, ''],
-    ['pending batches', c.pending_batches, ''],
-    ['failed batches', c.failed_batches, c.failed_batches ? 'kpi--alert' : ''],
-    ['reembed backlog', c.reembed_backlog, c.reembed_backlog ? 'kpi--alert' : ''],
+    tile('nuggets', c.nuggets, t && t.nuggets, t ? `+${today('nuggets').toLocaleString()} today · ${sum('nuggets').toLocaleString()} this week` : ''),
+    tile('ideas', c.ideas, t && t.ideas, t ? (today('ideas') ? `+${today('ideas')} today` : `none this week — see Runs`) : ''),
+    tile('pending_batches', c.pending_batches, t && t.queued, t ? `${today('queued').toLocaleString()} queued today` : ''),
+    tile('failed_batches', c.failed_batches, t && t.bad_runs, t ? `${sum('bad_runs')} bad run(s) this week` : '', c.failed_batches ? 'kpi--alert' : ''),
+  ].join('');
+  $('#kpis-more').innerHTML = [
+    ['reembed_backlog', c.reembed_backlog, c.reembed_backlog ? 'kpi--alert' : ''],
     ['unprocessed', c.unprocessed, ''],
-    ['active runs', c.runs_active, c.runs_active ? 'kpi--live' : ''],
-  ].map(([k, v, cls]) =>
-    `<div class="kpi ${cls}"><b class="num">${int(v)}</b><span>${esc(k)}</span></div>`).join('');
+    ['runs_active', c.runs_active, c.runs_active ? 'kpi--live' : ''],
+  ].map(([k, v, cls]) => `<div class="kpi ${cls}"><b class="num">${int(v)}</b><span>${esc(LABEL[k])}</span></div>`).join('');
 
   const banners = [];
   if (c.failed_batches) banners.push(['bad',
-    `${c.failed_batches} failed ingest batch(es)`, 'Requeue them from Quick actions, or check the worker log.']);
+    `${c.failed_batches} failed ingest batch(es)`, 'Requeue them, or check the worker log.', { act: '/api/requeue', label: 'requeue' }]);
   if (c.reembed_backlog) banners.push(['',
-    `${c.reembed_backlog} nugget(s) awaiting reembed`, 'The archive is searchable but incomplete until this clears.']);
+    `${c.reembed_backlog} nugget(s) not yet searchable`, 'They are archived but skipped by dedup and search until re-embedded.', { act: '/api/reembed', label: 're-embed now' }]);
   const s = ov.sources_summary;
   if (s && s.unsupported) banners.push(['',
     `${s.unsupported} enabled source(s) have no adapter yet`,
-    'The worker will report them as skipped rather than ingest them. See the Sources tab.']);
+    'The worker reports them as skipped rather than ingesting them.', { page: 'sources', label: 'open Sources' }]);
   if (s && !s.enabled) banners.push(['bad', 'No sources are enabled',
-    'A live worker run has nothing to fetch. Add or enable one in the Sources tab.']);
-  $('#ov-banners').innerHTML = banners.map(([tone, head, body]) =>
+    'A live worker run has nothing to fetch.', { page: 'sources', label: 'add a source' }]);
+  if (INFRA && !INFRA.cloakserve_9222) banners.push(['bad', 'cloakserve is down',
+    'Every Reddit, YouTube and real-estate source is skipped until it is back (docker compose --profile live up -d cloakbrowser).', { page: 'sources', label: 'see affected sources' }]);
+  $('#ov-banners').innerHTML = banners.map(([tone, head, body, next]) =>
     `<div class="banner ${tone === 'bad' ? 'banner--bad' : ''}"><span aria-hidden="true">${tone === 'bad' ? '⚠' : 'ℹ'}</span>
-     <span><b>${esc(head)}</b>${esc(body)}</span></div>`).join('');
+     <span style="flex:1"><b>${esc(head)}</b>${esc(body)}</span>
+     ${next ? `<button class="btn btn--sm" ${next.act ? `data-act="${next.act}"` : `data-go="${next.page}"`}>${esc(next.label)}</button>` : ''}</div>`).join('');
 
   const lr = ov.last_run;
   $('#last-run').innerHTML = lr
@@ -346,37 +399,71 @@ async function loadOverview() {
        <dl class="dl" style="margin-block-start:var(--s-4)">
          <dt>run</dt><dd class="mono">${esc(lr.run_id)}</dd>
          <dt>started</dt><dd>${esc(when(lr.started_at))} <span class="xs">${esc(ago(lr.started_at))}</span></dd>
-         <dt>kept / ideas</dt><dd>${int(lr.n_nuggets_kept)} / ${int(lr.n_ideas)}</dd>
+         <dt>kept / ideas</dt><dd>${int(lr.n_nuggets_kept)} / ${int(lr.n_ideas)}${zeroYieldWhy(lr)}</dd>
          <dt>duration</dt><dd>${num(lr.duration_actual_s, 1)}s <span class="xs">expected ${num(lr.duration_expected_s, 1)}s</span></dd>
-       </dl>`
-    : '<p class="empty">No run yet — hit ▶ run pipeline.</p>';
+       </dl>
+       <p style="margin:var(--s-4) 0 0"><button class="btn btn--ghost btn--sm" data-go="runs">all runs ›</button></p>`
+    : `<div class="empty">No run yet.<div><button class="btn btn--sm" data-act="/api/run">▶ run pipeline</button></div></div>`;
 
+  // Quota: one meter, platform segments, zeros hidden behind the legend.
   const q = ov.quota;
-  $('#quota').innerHTML = `<dl class="dl">
-      <dt>day</dt><dd class="mono">${esc(q.day_key)}</dd>
-      <dt>used today</dt><dd><b>${int(q.used_total)}</b></dd>
-      ${Object.entries(q.used_by_platform).map(([k, v]) =>
-        `<dt>${esc(k)}</dt><dd>${int(v)}</dd>`).join('')}
-    </dl>`;
+  const used = Object.entries(q.used_by_platform).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const total = q.used_total || 0;
+  const shades = ['1', '.75', '.55', '.4', '.3', '.22', '.16', '.12'];
+  $('#quota').innerHTML = total
+    ? `<div class="row" style="justify-content:space-between"><b class="num">${total.toLocaleString()}</b><span class="xs mono">${esc(q.day_key)}</span></div>
+       <div class="meter" style="margin-block-start:var(--s-3)">${used.map(([k, v], i) =>
+         `<i style="inline-size:${(v / total) * 100}%;background:var(--ink);opacity:${shades[i] || '.1'}" title="${esc(k)} ${v}"></i>`).join('')}</div>
+       <div class="meter-legend">${used.map(([k, v], i) =>
+         `<span><i style="background:var(--ink);opacity:${shades[i] || '.1'}"></i>${esc(k)} <span class="num">${v.toLocaleString()}</span></span>`).join('')}</div>`
+    : `<p class="xs">Nothing fetched yet today (${esc(q.day_key)}). The ledger fills as the worker walks sources.</p>`;
 
-  if (infra.ok !== false) {
-    $('#infra').innerHTML = [
-      [infra.ollama.up, infra.ollama.up ? `Ollama · ${infra.ollama.models.length} model(s)` : 'Ollama down'],
-      [infra.cloakserve_9222, 'cloakserve :9222'],
-      [infra.worker_go_available, 'Go worker'],
-    ].map(([up, label]) => tag(up ? 'done' : 'off', label, 'pill--sm')).join(' ')
-    // Vectors get their own pill, because "the port is open" and "the app
-    // writes there" are different claims and only the second one matters.
-    // For a whole day this panel was green while every write went to a
-    // 32-dimension local file.
-    + ' ' + vectorPill(infra.vectors);
+  if (INFRA) {
+    const rows = [
+      [INFRA.ollama.up, 'Ollama', INFRA.ollama.up ? `${INFRA.ollama.models.length} model(s) · local models and embeddings` : 'down → live extraction and embeddings fall back to the deterministic stand-in'],
+      [INFRA.cloakserve_9222, 'cloakserve :9222', INFRA.cloakserve_9222 ? 'browser scraping available' : 'down → Reddit, YouTube and real-estate sources are skipped'],
+      [INFRA.vectors && INFRA.vectors.usable, 'Vectors', vectorPill(INFRA.vectors) || 'no store', true],
+      [INFRA.worker_go_available, 'Go worker', INFRA.worker_go_available ? esc(INFRA.go_bin || 'found') : 'not found → nothing can be fetched'],
+    ];
+    $('#infra').innerHTML = rows.map(([up, name, why, raw]) =>
+      `<div class="irow ${up ? '' : 'off'}"><span class="led"></span><span><b>${esc(name)}</b><span class="why">${raw ? why : esc(why)}</span></span></div>`).join('')
+      + `<p class="xs" style="margin:var(--s-3) 0 0">${INFRA.cached ? 'checked within the last 30 s' : 'checked just now'} · <button class="btn btn--ghost btn--sm" data-infra-fresh>re-check</button></p>`;
     $('#btn-live-models').classList.toggle('hidden',
-      !(infra.ollama.up && infra.ollama.models.some(m => /qwen|mistral|phi|llama|gemma/i.test(m))));
-    $('#btn-ingest-live').classList.toggle('hidden', !infra.can_ingest_live);
-    $('#btn-ingest-mock').classList.toggle('hidden', !infra.worker_go_available);
+      !(INFRA.ollama.up && INFRA.ollama.models.some(m => /qwen|mistral|phi|llama|gemma/i.test(m))));
+    $('#btn-ingest-live').classList.toggle('hidden', !INFRA.can_ingest_live);
+    $('#btn-ingest-mock').classList.toggle('hidden', !INFRA.worker_go_available);
   }
 }
-
+/** Why a run kept nothing, from the flags it raised. "0 / 0" for two weeks was
+ *  the biggest fact on the Runs page and nothing explained it. */
+function zeroYieldWhy(r) {
+  if (r.status !== 'completed' || Number(r.n_nuggets_kept) > 0) return '';
+  const flags = r.floor_flags_list || (typeof r.floor_flags === 'string' ? JSON.parse(r.floor_flags || '[]') : []);
+  const why = flags.includes('DEDUP_UNAVAILABLE') ? 'dedup down'
+    : flags.includes('QUOTA_EXHAUSTED') ? 'quota spent'
+    : flags.includes('LOW_NUGGETS') ? 'nothing new'
+    : Number(r.n_comments) === 0 ? 'nothing fetched' : '';
+  return why ? ` <span class="xs why" title="${esc(flags.join(', '))}">· ${esc(why)}</span>` : '';
+}
+$('#ov-more').onclick = () => {
+  const card = $('#kpis-more-card');
+  card.classList.toggle('hidden');
+  $('#ov-more').setAttribute('aria-expanded', String(!card.classList.contains('hidden')));
+};
+$('#qa-help').onclick = () => {
+  const t = $('#qa-help-text');
+  t.classList.toggle('hidden');
+  $('#qa-help').setAttribute('aria-expanded', String(!t.classList.contains('hidden')));
+};
+$('#infra').addEventListener('click', async e => {
+  if (!e.target.closest('[data-infra-fresh]')) return;
+  const res = await api('/api/infra?fresh=1');
+  if (res.ok !== false) { INFRA = res; loadOverview(); }
+});
+$('#ov-banners').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  if (b) runAction(b.dataset.act, {}, b);
+});
 $('#quick-actions').addEventListener('click', e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
@@ -466,8 +553,9 @@ function renderPlatformOptions(platformKinds, gaps = {}) {
 let SOURCES_RES = { sources: [] };
 
 async function loadSources() {
-  const res = await api('/api/sources');
+  const [res, infra] = await Promise.all([api('/api/sources'), INFRA ? Promise.resolve(INFRA) : api('/api/infra')]);
   if (res.ok === false) { toast(res.error, 'bad'); return; }
+  if (infra && infra.ok !== false) INFRA = infra;
   SOURCES_RES = res;
   renderPlatformOptions(res.platform_kinds, res.platform_gaps);
   renderSources();
@@ -504,11 +592,23 @@ function renderSources() {
       barren ? `${barren} barren` : '',
     ].filter(Boolean).join(' · ');
     const head = groupRow({
-      key, depth: 1, span: 7, count: rows.length, meta: esc(meta),
+      key, depth: 1, span: 8, count: rows.length, meta: esc(meta),
       label: esc(PLATFORM_LABEL[platform] || platform),
     });
     return head + (FOLDED.has(key) ? '' : rows.map(sourceRow).join(''));
-  }).join('') || emptyRow(7, 'No sources yet — add one above.');
+  }).join('') || emptyRow(8, 'No sources yet — add one above.');
+  /** How the worker reaches this source, and whether it can right now. A
+   *  Reddit source read "quiet" for 26 days while cloakserve was down; the
+   *  page never said the fetch was impossible. */
+  function fetchCell(s) {
+    if (!s.supported) return '<span class="xs">—</span>';
+    const browser = BROWSER_PLATFORMS.has(s.platform);
+    const blocked = browser && INFRA && !INFRA.cloakserve_9222;
+    const noGo = INFRA && !INFRA.worker_go_available;
+    return `<span class="chip" title="${browser ? 'fetched through the stealth browser (cloakserve)' : 'fetched through a public HTTP API'}">${browser ? 'browser' : 'api'}</span>`
+      + (blocked ? '<div class="xs why" title="start it: docker compose --profile live up -d cloakbrowser">blocked · cloakserve down</div>'
+        : noGo ? '<div class="xs why">blocked · no Go worker</div>' : '');
+  }
 
   function sourceRow(s) {
     const status = !s.enabled ? tag('off', 'paused', 'pill--sm')
@@ -523,6 +623,7 @@ function renderSources() {
              class="truncate" style="display:block;max-inline-size:34ch"
              title="${esc(s.url)}">${esc(s.url.replace(/^https?:\/\/(www\.)?/, ''))}</a>
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
+      <td>${fetchCell(s)}</td>
       <td>${fetchedCell(s.state)}</td>
       <td>${status}</td>
       <td class="row-actions">${parkButton(s)}<button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
@@ -633,33 +734,43 @@ function renderRuns() {
   const rows = RUNS.filter(r =>
     RUNS_ORIGIN === 'all' || (r.origin || 'manual') === RUNS_ORIGIN);
   $('#runs-count').textContent = `${rows.length} of ${RUNS.length} run(s)`;
-
   $('#runs-body').innerHTML = rows.map(r => {
     const funnel = Object.entries(r.prefilter_funnel_obj || {});
     const near = (r.top_near_misses_list || []).map(v => (+v).toFixed(2));
-    const platforms = Object.entries(r.platform_counts_obj || {});
-    const signals = [
-      ...platforms.map(([p, n]) => `<span class="chip">${esc(p)} ${esc(n)}</span>`),
-      ...(r.floor_flags_list || []).map(f => `<span class="chip chip--bad">${esc(f)}</span>`),
-      ...funnel.map(([k, v]) => `<span class="chip">${esc(k)} ${esc(v)}</span>`),
-      near.length ? `<span class="chip">near ${esc(near.join(', '))}</span>` : '',
-      r.error ? `<span class="chip chip--bad" title="${esc(r.error)}">error</span>` : '',
-    ].filter(Boolean).join('');
+    const platforms = Object.entries(r.platform_counts_obj || {}).sort((a, b) => b[1] - a[1]);
+    const totalP = platforms.reduce((t, [, n]) => t + Number(n), 0) || 1;
+    // One stacked bar for the platform mix, red pills only for what needs
+    // eyes, the funnel and near-misses in a tooltip. The old cell rendered
+    // twelve identical grey chips and the flags drowned in them.
+    const mixTitle = platforms.map(([p, n]) => `${p} ${Number(n).toLocaleString()}`).join(' · ');
+    const sigbar = platforms.length
+      ? `<div class="sigbar" title="${esc(mixTitle)}">${platforms.map(([p, n], i) =>
+          `<i style="inline-size:${(Number(n) / totalP) * 100}%;--i:${i}" title="${esc(p)} ${Number(n).toLocaleString()}"></i>`).join('')}</div>
+         <span class="xs truncate" title="${esc(mixTitle)}">${esc(platforms.slice(0, 2).map(([p, n]) => `${p} ${compact(n)}`).join(' · '))}${platforms.length > 2 ? ` +${platforms.length - 2}` : ''}</span>`
+      : '<span class="xs">nothing fetched</span>';
+    const flags = (r.floor_flags_list || []).map(f => `<span class="chip chip--bad" title="run warning">${esc(f.toLowerCase().replace(/_/g, ' '))}</span>`).join('');
+    const funnelTip = [...funnel.map(([k, v]) => `${k} ${v}`), near.length ? `near-misses ${near.join(', ')}` : ''].filter(Boolean).join(' · ');
+    const errorChip = r.error ? `<span class="chip chip--bad" title="${esc(r.error)}">error</span>` : '';
     const origin = r.origin || 'manual';
-    return `<tr data-id="${r.id}" style="cursor:pointer" title="Click to view details">
-      <td><span class="mono">${esc(when(r.started_at))}</span>
-          <div class="xs">${esc(ago(r.started_at))} · ${int(r.n_posts)} post(s)</div></td>
-      <td class="mono">${esc(r.run_id)}</td>
+    const exp = Number(r.duration_expected_s) || 0, act = Number(r.duration_actual_s) || 0;
+    const ratio = exp ? act / exp : 0;
+    const ratioCls = exp && ratio < .2 ? 'low' : exp && ratio > 1.5 ? 'high' : '';
+    const kept = Number(r.n_nuggets_kept) || 0;
+    return `<tr data-id="${r.id}" class="clickable" title="Open this run">
+      <td><span>${esc(when(r.started_at))}</span>
+          <div class="xs truncate" title="${esc(r.run_id)}">${esc(ago(r.started_at))} · ${compact(r.n_posts)} posts · <span class="mono">${esc(r.run_id)}</span></div></td>
       <td>${pill(r.status)}</td>
-      <td class="num">${int(r.n_nuggets_kept)} / ${int(r.n_ideas)}</td>
-      <td class="num">${num(r.duration_actual_s, 1)}s<div class="xs">exp ${num(r.duration_expected_s, 1)}s</div></td>
+      <td class="num"><span class="${kept ? '' : 'mute'}">${int(r.n_nuggets_kept)} / ${int(r.n_ideas)}</span>${zeroYieldWhy(r)}</td>
+      <td class="num">${num(r.duration_actual_s, 1)}s
+          <div class="xs dur-exp">${exp ? `<span class="ratio ${ratioCls}" title="${Math.round(ratio * 100)}% of the ${num(r.duration_expected_s, 1)}s expected"><i style="inline-size:${Math.min(100, ratio * 100)}%"></i></span>` : ''}exp ${num(r.duration_expected_s, 0)}s</div></td>
       <td><span class="chip${origin === 'scheduled' ? ' chip--sched' : ''}"
             >${origin === 'scheduled' ? '◷ ' : ''}${esc(origin)}</span></td>
-      <td><div class="chiprow">${signals || '<span class="xs">clean</span>'}</div></td>
+      <td><div class="sig" title="${esc(funnelTip)}">${sigbar}
+        ${flags || errorChip ? `<div class="chiprow sig-flags">${flags}${errorChip}</div>` : ''}</div></td>
     </tr>`;
-  }).join('') || emptyRow(7, RUNS.length
+  }).join('') || emptyRow(6, RUNS.length
     ? `No ${esc(RUNS_ORIGIN)} runs yet.`
-    : 'No runs yet — hit ▶ run pipeline on the Overview tab.');
+    : 'No runs yet.', RUNS.length ? null : { page: 'overview', label: '▶ run pipeline from Overview' });
 }
 
 async function loadRuns() {
@@ -774,79 +885,124 @@ function showRun(id) {
 const IDEA_STATUSES = ['new', 'reviewed', 'building', 'archived'];
 let IDEAS = [];
 let IDEA_FILTER = 'all';
+const IDEA_PAGE = 50;
+const IDEA = { offset: 0, sort: 'overall', dir: 'desc', q: '' };
+let IDEAS_TOTAL = 0;
+let IDEA_STATUS_COUNTS = {};
 
 function renderIdeaFilter() {
-  const counts = IDEAS.reduce((acc, i) => (acc[i.status] = (acc[i.status] || 0) + 1, acc), {});
+  const all = Object.values(IDEA_STATUS_COUNTS).reduce((a, b) => a + b, 0);
   $('#ideas-filter').innerHTML = ['all', ...IDEA_STATUSES].map(s =>
     `<button data-f="${s}" aria-pressed="${IDEA_FILTER === s}">${esc(s)}` +
-    `${s === 'all' ? ` ${IDEAS.length}` : counts[s] ? ` ${counts[s]}` : ''}</button>`).join('');
+    `${s === 'all' ? ` <span class="num">${all}</span>` : IDEA_STATUS_COUNTS[s] ? ` <span class="num">${IDEA_STATUS_COUNTS[s]}</span>` : ''}</button>`).join('');
 }
-
+/** Three scores as three small bars; a missing competition check is hatched,
+ *  not "3.0". "7.0 / 6.0 / unchecked" was unreadable at scan speed. */
+function scoreBars(i) {
+  // Demand and feasibility are "more is better" and get the good/bad tint;
+  // competition is a reading, not a verdict, so it stays neutral.
+  const cell = (v, ok, tint) => v === null || v === undefined || !ok
+    ? '<i class="na" title="unchecked"></i>'
+    : `<i class="${tint ? (+v >= 7.5 ? 'hi' : +v < 4 ? 'lo' : '') : ''}" style="--v:${Math.max(4, Math.min(100, (+v / 10) * 100))}%" title="${num(v)}"></i>`;
+  return `<span class="sbar" title="demand ${num(i.demand_signal)} · feasibility ${num(i.feasibility)} · competition ${i.competition_checked ? num(i.competition) : 'unchecked'}">
+    ${cell(i.demand_signal, true, true)}${cell(i.feasibility, true, true)}${cell(i.competition, i.competition_checked, false)}</span>`;
+}
+function evidenceCount(i) {
+  try { const a = typeof i.supporting_nuggets === 'string' ? JSON.parse(i.supporting_nuggets) : i.supporting_nuggets; return Array.isArray(a) ? a.length : 0; }
+  catch { return 0; }
+}
 function renderIdeas() {
-  const q = $('#ideas-q').value.trim().toLowerCase();
-  const rows = IDEAS.filter(i =>
-    (IDEA_FILTER === 'all' || i.status === IDEA_FILTER) &&
-    (!q || `${i.title} ${i.problem_statement || ''}`.toLowerCase().includes(q)));
-
-  $('#ideas-body').innerHTML = rows.map(i => {
+  $('#ideas-body').innerHTML = IDEAS.map(i => {
     const overall = +i.overall || 0;
     const tone = overall >= 7.5 ? 'score--hi' : overall >= 5 ? 'score--mid' : 'score--lo';
-    const comp = i.competition_checked ? num(i.competition) : '<span class="xs">unchecked</span>';
-    return `<tr data-id="${i.id}">
-      <td class="num mono">${i.id}</td>
-      <td><button class="btn btn--ghost btn--sm" data-open style="max-inline-size:42ch;text-align:start;white-space:normal">${esc(i.title)}</button></td>
+    return `<tr data-id="${i.id}" class="clickable">
+      <td><button class="btn btn--ghost btn--sm" data-open style="max-inline-size:46ch;text-align:start;white-space:normal;padding-inline:0"><b>${esc(i.title)}</b></button>
+          <div class="xs" style="max-inline-size:52ch">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
       <td class="num"><span class="score ${tone}">${num(overall)}</span></td>
-      <td class="num">${num(i.demand_signal)} / ${num(i.feasibility)} / ${comp}</td>
+      <td>${scoreBars(i)}</td>
       <td>${pill(i.status)}</td>
-      <td class="mono xs">${esc(i.critic_model || '—')}</td>
-      <td><div class="row" style="gap:var(--s-2);flex-wrap:nowrap">
-        <select data-mark aria-label="Set status for idea ${i.id}" style="inline-size:118px">
-          ${IDEA_STATUSES.map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
-        </select>
-        <button class="btn btn--ghost btn--sm" data-resynth>resynth</button>
-      </div></td>
+      <td class="num" style="white-space:nowrap">${evidenceCount(i)} <span class="xs">nuggets · ${int(i.source_threads)} threads</span></td>
+      <td class="xs">${esc(ago(i.created_at))}</td>
     </tr>`;
-  }).join('') || emptyRow(7, IDEAS.length
-    ? 'No idea matches that filter.'
-    : 'Archive empty — run the pipeline to synthesize ideas.');
+  }).join('') || emptyRow(6, IDEAS_TOTAL ? 'No idea matches that filter.' : 'Archive empty.',
+    IDEAS_TOTAL ? null : { page: 'overview', label: '▶ run pipeline from Overview' });
+  const from = IDEAS_TOTAL ? IDEA.offset + 1 : 0, to = Math.min(IDEAS_TOTAL, IDEA.offset + IDEAS.length);
+  $('#ideas-shown').textContent = IDEAS_TOTAL ? `${from}–${to} of ${IDEAS_TOTAL.toLocaleString()}` : '';
+  $('#ideas-pager').innerHTML = pagerHTML(IDEA.offset, IDEA_PAGE, IDEAS_TOTAL, 'idea');
+  $$('#ideas-body').length && $$('[data-page="ideas"] th[data-sort]').forEach(th =>
+    th.setAttribute('aria-sort', th.dataset.sort === IDEA.sort ? (IDEA.dir === 'asc' ? 'ascending' : 'descending') : 'none'));
 }
-
+/** No new ideas for a while is the page's headline fact, and it has a cause. */
+function renderIdeasNote() {
+  const box = $('#ideas-note');
+  if (!box) return;
+  const recent = RUNS.filter(r => r.status === 'completed').slice(0, 10);
+  const dry = recent.length >= 3 && recent.every(r => !Number(r.n_ideas));
+  if (!dry) { box.innerHTML = ''; return; }
+  const flags = new Set(recent.flatMap(r => r.floor_flags_list || []));
+  const why = flags.has('DEDUP_UNAVAILABLE') ? 'the dedup store was unreachable' : flags.has('LOW_NUGGETS') ? 'too few new nuggets reached the synthesizer'
+    : 'synthesis produced nothing the critic would archive';
+  box.innerHTML = `<div class="banner"><span aria-hidden="true">ℹ</span><span style="flex:1"><b>No new ideas in the last ${recent.length} completed runs</b>Most likely because ${esc(why)}. The nuggets stay queued and are picked up once the cause clears.</span>
+    <button class="btn btn--sm" data-go="runs">open Runs</button> <button class="btn btn--sm" data-go="doctor">Doctor</button></div>`;
+}
 async function loadIdeas() {
-  const res = await api('/api/ideas');
+  const qs = new URLSearchParams({ status: IDEA_FILTER, q: IDEA.q, sort: IDEA.sort, dir: IDEA.dir, offset: IDEA.offset, limit: IDEA_PAGE });
+  const [res, runs] = await Promise.all([api('/api/ideas?' + qs), RUNS.length ? Promise.resolve(null) : api('/api/runs')]);
   if (res.ok === false) { toast(res.error, 'bad'); return; }
+  if (runs && runs.ok !== false) RUNS = runs.runs || [];
   IDEAS = res.ideas || [];
-  COUNTS.ideas = IDEAS.length;
+  IDEAS_TOTAL = res.total || 0;
+  IDEA_STATUS_COUNTS = res.status_counts || {};
+  COUNTS.ideas = Object.values(IDEA_STATUS_COUNTS).reduce((a, b) => a + b, 0);
   renderNav();
   renderIdeaFilter();
   renderIdeas();
+  renderIdeasNote();
 }
-
-$('#ideas-q').addEventListener('input', renderIdeas);
+let ideaTimer = null;
+$('#ideas-q').addEventListener('input', () => {
+  clearTimeout(ideaTimer);
+  ideaTimer = setTimeout(() => { IDEA.q = $('#ideas-q').value.trim(); IDEA.offset = 0; loadIdeas(); }, 250);
+});
 $('#ideas-filter').addEventListener('click', e => {
   const b = e.target.closest('button[data-f]');
   if (!b) return;
-  IDEA_FILTER = b.dataset.f;
-  renderIdeaFilter();
-  renderIdeas();
+  IDEA_FILTER = b.dataset.f; IDEA.offset = 0;
+  loadIdeas();
+});
+$$('[data-page="ideas"] th[data-sort]').forEach(th => th.addEventListener('click', () => {
+  if (IDEA.sort === th.dataset.sort) IDEA.dir = IDEA.dir === 'asc' ? 'desc' : 'asc';
+  else { IDEA.sort = th.dataset.sort; IDEA.dir = th.dataset.sort === 'title' || th.dataset.sort === 'status' ? 'asc' : 'desc'; }
+  IDEA.offset = 0;
+  loadIdeas();
+}));
+$('#ideas-pager').addEventListener('click', e => {
+  const b = e.target.closest('button[data-page-idea]');
+  if (!b || b.disabled) return;
+  IDEA.offset = Number(b.dataset.pageIdea);
+  loadIdeas();
 });
 $('#ideas-body').addEventListener('click', e => {
   const tr = e.target.closest('tr[data-id]');
   if (!tr) return;
-  const id = +tr.dataset.id;
-  if (e.target.closest('[data-open]')) showIdea(id);
-  else if (e.target.closest('[data-resynth]')) runAction('/api/resynth', { id }, e.target.closest('button'));
+  showIdea(+tr.dataset.id);
 });
-$('#ideas-body').addEventListener('change', async e => {
+// Status change and resynth live in the drawer now — one control per idea
+// on screen, not 1 321 <select>s in a table.
+$('#drawer-body').addEventListener('change', async e => {
   const sel = e.target.closest('select[data-mark]');
   if (!sel) return;
-  const id = +sel.closest('tr').dataset.id;
+  const id = +sel.dataset.mark;
   const res = await api('/api/mark', { id, status: sel.value });
   if (res.ok === false) toast(`mark failed: ${res.error || res.code}`, 'bad');
   else toast(`idea #${id} → ${sel.value}`, 'ok');
   loadIdeas();
 });
+$('#drawer-body').addEventListener('click', e => {
+  const b = e.target.closest('button[data-resynth]');
+  if (b) runAction('/api/resynth', { id: +b.dataset.resynth }, b);
+});
 
-// ── idea drawer ─────────────────────────────────────────────────────────
 function openDrawer() {
   $('#drawer').classList.add('on');
   $('#drawer').setAttribute('aria-hidden', 'false');
@@ -870,7 +1026,13 @@ async function showIdea(id) {
   const missing = cites.filter(c => !c.found).length;
   $('#drawer-body').innerHTML = `
     <div class="row">${pill(i.status)}
-      <span class="score">${num(i.overall)}</span><span class="xs">overall</span></div>
+      <span class="score">${num(i.overall)}</span><span class="xs">overall</span>
+      <span class="row-end row" style="gap:var(--s-2)">
+        <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}" style="inline-size:130px">
+          ${IDEA_STATUSES.map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <button class="btn btn--sm" data-resynth="${i.id}" title="Re-run synthesis on this idea's nuggets">resynth</button>
+      </span></div>
     <dl class="dl">
       <dt>demand</dt><dd>${num(i.demand_signal)}</dd>
       <dt>feasibility</dt><dd>${num(i.feasibility)}</dd>
@@ -901,40 +1063,78 @@ async function showIdea(id) {
 // search has existed the whole time, wired only into dedup. The archive was
 // searchable and there was no way to search it.
 
+const SEARCH = { platform: '', category: '' };
+let SEARCH_LAST = null;
+const SEARCH_EXAMPLES = ['backups fail silently', 'onboarding takes too long', 'no way to export my data'];
+function recentSearches() { try { return JSON.parse(localStorage.getItem('jester-searches') || '[]'); } catch { return []; } }
+function rememberSearch(q) {
+  try {
+    const list = [q, ...recentSearches().filter(x => x !== q)].slice(0, 8);
+    localStorage.setItem('jester-searches', JSON.stringify(list));
+  } catch { /* private mode */ }
+}
+function renderSearchChrome() {
+  const recent = recentSearches();
+  $('#search-recent').innerHTML = recent.length
+    ? `<span class="xs">recent</span>${recent.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}`
+    : '';
+  const res = SEARCH_LAST;
+  if (!res) { $('#search-facets').innerHTML = ''; return; }
+  const count = (key) => { const m = new Map(); for (const r of res.results || []) { const k = r[key] || ''; if (k) m.set(k, (m.get(k) || 0) + 1); } return [...m].sort((a, b) => b[1] - a[1]); };
+  const chips = (key, items) => items.map(([v, n]) =>
+    `<button class="chip" data-facet="${key}" data-value="${esc(v)}" aria-pressed="${SEARCH[key] === v}" style="${SEARCH[key] === v ? 'background:var(--ink);color:var(--bg);border-color:var(--ink)' : ''}">${esc(key === 'platform' ? (PLATFORM_LABEL[v] || v) : v)} ${n}</button>`).join('');
+  const active = SEARCH.platform || SEARCH.category;
+  $('#search-facets').innerHTML = [
+    `<span class="xs">${res.mode === 'semantic' ? 'meaning' : 'text'} match</span>`,
+    chips('platform', count('platform')), chips('category', count('category')),
+    active ? `<button class="btn btn--ghost btn--sm" data-facet-clear>clear</button>` : '',
+  ].join(' ');
+}
+function highlight(text, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  let out = esc(text);
+  for (const w of words) out = out.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>');
+  return out;
+}
 function renderSearch(res) {
   const note = $('#search-note');
   if (note) {
-    // Say WHICH search answered. Semantic and substring return very different
-    // things, and a user who thinks they got one when they got the other will
-    // draw the wrong conclusion from an empty result.
     const bits = [];
     if (res) {
-      bits.push(res.mode === 'semantic' ? 'matched on meaning' : 'matched on text');
+      bits.push(res.mode === 'semantic' ? 'matched on meaning' : 'matched on text — vector store unreachable');
       bits.push(`${res.returned} result(s)`);
       if (res.detail) bits.push(res.detail);
     }
     note.textContent = bits.join(' · ');
     note.className = res && res.mode === 'text' ? 'xs chip chip--warn' : 'xs';
   }
-
+  SEARCH_LAST = res;
+  renderSearchChrome();
+  const q = ($('#search-q').value || '').trim();
   const rows = (res && res.results) || [];
-  $('#search-body').innerHTML = rows.length ? rows.map(n => `
+  const shown = rows.filter(n => (!SEARCH.platform || n.platform === SEARCH.platform) && (!SEARCH.category || n.category === SEARCH.category));
+  $('#search-body').innerHTML = shown.length ? shown.map(n => {
+    const s = n.score !== undefined && n.score !== null ? Number(n.score) : null;
+    const strength = s === null ? '' : s >= .8 ? 'strong' : s >= .6 ? 'fair' : 'weak';
+    return `
     <div class="card">
       <div class="row row-between">
         <div class="chiprow">
-          <span class="chip">${esc(n.platform || '—')}</span>
+          <span class="chip">${esc(PLATFORM_LABEL[n.platform] || n.platform || '—')}</span>
           <span class="chip">${esc(n.category || 'uncategorised')}</span>
           ${n.author ? `<span class="chip">${esc(n.author)}</span>` : ''}
           ${n.created_utc ? `<span class="xs">${esc(String(n.created_utc).slice(0, 10))}</span>` : ''}
         </div>
-        ${n.score !== undefined && n.score !== null
-          ? `<span class="xs mono">${Number(n.score).toFixed(3)}</span>` : ''}
+        ${s === null ? '' : `<span class="xs" title="similarity ${s.toFixed(3)}"><span class="simbar"><i style="inline-size:${Math.round(s * 100)}%"></i></span>${strength}</span>`}
       </div>
       <p><strong>${esc(n.extracted_insight || '')}</strong></p>
-      <p class="xs">${esc((n.raw_text || '').slice(0, 400))}</p>
+      <p class="xs">${res.mode === 'text' ? highlight((n.raw_text || '').slice(0, 400), q) : esc((n.raw_text || '').slice(0, 400))}</p>
       ${n.source_url ? `<a href="${esc(n.source_url)}" target="_blank" rel="noopener noreferrer" class="xs">source ↗</a>` : ''}
-    </div>`).join('')
-    : `<div class="empty">${esc(res ? 'Nothing matched that.' : 'Describe a problem to search for.')}</div>`;
+    </div>`;
+  }).join('') : res
+    ? `<div class="empty">Nothing matched${SEARCH.platform || SEARCH.category ? ' inside that filter' : ''}.</div>`
+    : `<div class="empty">Ask the archive something. Try:
+        <div class="row" style="justify-content:center;margin-block-start:var(--s-4)">${SEARCH_EXAMPLES.map(x => `<button class="btn btn--sm" data-q="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
 }
 
 async function runSearch() {
@@ -945,20 +1145,37 @@ async function runSearch() {
   const res = await api(`/api/search?q=${encodeURIComponent(q)}&limit=40`);
   btn.disabled = false;
   if (res.ok === false) { toast(res.error, 'bad'); return; }
+  rememberSearch(q);
   renderSearch(res);
 }
 
-function loadSearch() { renderSearch(null); }
+function loadSearch() { renderSearch(SEARCH_LAST); }
 
 $('#search-go').addEventListener('click', runSearch);
 $('#search-q').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+$('[data-page="search"]').addEventListener('click', e => {
+  const q = e.target.closest('[data-q]');
+  if (q) { $('#search-q').value = q.dataset.q; runSearch(); return; }
+  const clear = e.target.closest('[data-facet-clear]');
+  if (clear) { SEARCH.platform = ''; SEARCH.category = ''; renderSearch(SEARCH_LAST); return; }
+  const f = e.target.closest('[data-facet]');
+  if (f) { SEARCH[f.dataset.facet] = SEARCH[f.dataset.facet] === f.dataset.value ? '' : f.dataset.value; renderSearch(SEARCH_LAST); }
+});
 
-// ── clusters ────────────────────────────────────────────────────────────
-// The archive regrouped by meaning instead of by scrape origin. Ideas drafted
-// here live in `cluster_ideas` until somebody saves one — drafts are cheap and
-// most get discarded, so letting them straight into the Ideas archive would
-// turn it into a scratchpad.
+// ── clusters ──────────────────────────────────────────────────────────────
 let CLUSTERS = [];
+let CLUSTER_SORT = 'size';
+let CLUSTER_PLATFORM = '';
+const CLUSTER_SORTS = { size: (a, b) => (b.n_nuggets || 0) - (a.n_nuggets || 0), coherence: (a, b) => (b.coherence || 0) - (a.coherence || 0), ideas: (a, b) => (b.n_ideas || 0) - (a.n_ideas || 0) };
+function renderClusterControls() {
+  $('#clusters-sort').innerHTML = Object.keys(CLUSTER_SORTS).map(k =>
+    `<button data-csort="${k}" aria-pressed="${CLUSTER_SORT === k}">${k}</button>`).join('');
+  const platforms = [...new Set(CLUSTERS.flatMap(c => c.platforms || []))].sort();
+  $('#clusters-platform').innerHTML = ['', ...platforms].map(p =>
+    `<button data-cplat="${esc(p)}" aria-pressed="${CLUSTER_PLATFORM === p}">${esc(p ? (PLATFORM_LABEL[p] || p) : 'all')}</button>`).join('');
+}
+$('#clusters-sort').addEventListener('click', e => { const b = e.target.closest('[data-csort]'); if (!b) return; CLUSTER_SORT = b.dataset.csort; renderClusterControls(); renderClusters(); });
+$('#clusters-platform').addEventListener('click', e => { const b = e.target.closest('[data-cplat]'); if (!b) return; CLUSTER_PLATFORM = b.dataset.cplat; renderClusterControls(); renderClusters(); });
 let CLUSTER_OPEN = null;      // id of the expanded theme
 let CLUSTER_DETAIL = {};      // id -> full detail once fetched
 let CLUSTER_FAKE = false;     // last pass ran on hash vectors
@@ -1015,8 +1232,10 @@ function renderClusterIdea(i) {
 
 function renderClusters() {
   const q = ($('#clusters-q').value || '').trim().toLowerCase();
-  const rows = CLUSTERS.filter(c => !q ||
-    `${c.label || ''} ${c.problem_statement || ''}`.toLowerCase().includes(q));
+  const rows = CLUSTERS.filter(c => (!q ||
+    `${c.label || ''} ${c.problem_statement || ''}`.toLowerCase().includes(q))
+    && (!CLUSTER_PLATFORM || (c.platforms || []).includes(CLUSTER_PLATFORM)))
+    .sort(CLUSTER_SORTS[CLUSTER_SORT] || CLUSTER_SORTS.size);
 
   const warn = $('#clusters-warn');
   if (warn) {
@@ -1032,7 +1251,7 @@ function renderClusters() {
   $('#clusters-body').innerHTML = rows.length ? rows.map(c => {
     const open = CLUSTER_OPEN === c.id;
     const detail = CLUSTER_DETAIL[c.id];
-    return `<div class="card">
+    return `<div class="card${open ? ' card--wide' : ''}">
       <div class="row row-between">
         <div>
           <h3 style="margin:0">${esc(c.label || 'unnamed theme')}</h3>
@@ -1077,6 +1296,7 @@ async function loadClusters() {
   CLUSTER_FAKE = !!res.fake_embeddings;
   COUNTS.clusters = res.total ?? CLUSTERS.length;
   renderNav();
+  renderClusterControls();
   renderClusters();
 }
 
@@ -1194,6 +1414,15 @@ $('#clusters-body').addEventListener('click', async e => {
 let QUEUE_STATUS = 'pending';
 const QUEUE_STATUSES = ['pending', 'failed', 'done'];
 let QUEUE_OPEN = null;
+let QUEUE_KIND = 'comment';
+const QUEUE_KIND_LABEL = { comment: 'comments', listing: 'listings' };
+let QUEUE_BY_KIND = {};
+function renderQueueKinds() {
+  $('#queue-kind').innerHTML = Object.keys(QUEUE_KIND_LABEL).map(k => {
+    const n = (QUEUE_BY_KIND[k] || {}).batches || 0;
+    return `<button data-kind="${k}" aria-pressed="${QUEUE_KIND === k}">${QUEUE_KIND_LABEL[k]} <span class="num">${n.toLocaleString()}</span></button>`;
+  }).join('');
+}
 
 function renderQueueStatuses() {
   $('#queue-status').innerHTML = QUEUE_STATUSES.map(st =>
@@ -1261,40 +1490,38 @@ function queueRow(b) {
 
 function renderQueue(res) {
   const batches = res.batches || [];
+  QUEUE_BY_KIND = res.by_kind || {};
+  renderQueueKinds();
   $('#queue-body').innerHTML = batches.map(queueRow).join('')
-    || emptyRow(7, `Nothing ${esc(res.status)} in the queue.`);
-
-  // R55: always say what is on screen against what exists.
+    || emptyRow(7, `No ${esc(QUEUE_KIND_LABEL[QUEUE_KIND])} ${esc(res.status)} in the queue.`,
+      res.status === 'pending' ? { page: 'overview', label: 'fetch some — ingest from Overview' } : null);
   const parts = [`${(res.total_batches || 0).toLocaleString()} batch(es)`,
-                 `${(res.total_comments || 0).toLocaleString()} comment(s)`];
+                 `${(res.total_comments || 0).toLocaleString()} ${QUEUE_KIND === 'listing' ? 'listing(s)' : 'comment(s)'}`];
   if (res.truncated) parts.push(`showing the oldest ${res.shown}`);
   $('#queue-shown').textContent = parts.join(' · ');
-
   const t = res.totals || {};
   $('#queue-count').textContent = QUEUE_STATUSES
     .filter(st => t[st])
-    .map(st => `${t[st].batches.toLocaleString()} ${st} (${t[st].comments.toLocaleString()} comment(s))`)
+    .map(st => `${t[st].batches.toLocaleString()} ${st}`)
     .join(' · ') || 'the queue is empty';
-
   renderTreatment(res.treatment);
   renderQueueMix(res.by_platform, res.total_comments);
 }
 
 async function loadQueue() {
-  const res = await api(`/api/queue?status=${encodeURIComponent(QUEUE_STATUS)}`);
+  const res = await api(`/api/queue?status=${encodeURIComponent(QUEUE_STATUS)}&kind=${encodeURIComponent(QUEUE_KIND)}`);
   if (res.ok === false) { toast(res.error, 'bad'); return; }
-  COUNTS.pending = (res.totals && res.totals.pending) ? res.totals.pending.batches : 0;
+  COUNTS.pending = (res.by_kind && res.by_kind.comment) ? res.by_kind.comment.batches : 0;
   renderNav();
   renderQueueStatuses();
   renderQueue(res);
-  if (QUEUE_OPEN) await openBatch(QUEUE_OPEN);
 }
 
-/** One batch's actual comments — fetched only when opened, because the list
- *  deliberately carries counts rather than bodies. */
+/** One batch's comments, in the drawer — the table stays where it was. It
+ *  used to render under a 300-row table, out of sight. */
 async function openBatch(id) {
   const res = await api(`/api/queue/batch/${id}`);
-  if (res.ok === false) { toast(res.error, 'bad'); $('#queue-detail').innerHTML = ''; return; }
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
   QUEUE_OPEN = id;
   const b = res.batch, post = res.post || {};
   const rows = (res.comments || []).map(c => {
@@ -1303,38 +1530,30 @@ async function openBatch(id) {
                   d.upvotes !== undefined && d.upvotes !== null ? `${d.upvotes} up` : '',
                   d.depth ? `depth ${d.depth}` : '']
       .filter(Boolean).join(' · ');
-    return `<tr>
-      <td class="xs mono">${esc((c.fingerprint || '').slice(0, 10))}</td>
-      <td style="max-inline-size:62ch">${esc(c.body || d.body || '')}
-        ${meta ? `<div class="xs">${esc(meta)}</div>` : ''}</td>
-    </tr>`;
-  }).join('') || emptyRow(2, 'This batch carries no comments.');
-
-  $('#queue-detail').innerHTML = `<div class="card card--flush">
-    <div class="card-head">
-      <h3>Batch #${b.id}</h3>
-      <span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform)}</span>
-      <span class="row-end"><button class="btn btn--sm" data-close-batch>close</button></span>
-    </div>
-    <p class="xs" style="padding:0 var(--s-5)">
-      ${post.title ? `<b>${esc(post.title)}</b> — ` : ''}
-      ${post.community ? esc(post.community) + ' · ' : ''}
-      <a href="${esc(b.source || '')}" target="_blank" rel="noopener noreferrer">${esc(b.source || '')}</a>
-    </p>
-    <div class="tablewrap"><table>
-      <thead><tr><th>fingerprint</th><th>comment</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
-  </div>`;
-  $('#queue-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return `<div class="evidence">${esc(c.body || d.body || '')}
+        ${meta ? `<div class="xs" style="margin-block-start:4px">${esc(meta)}</div>` : ''}</div>`;
+  }).join('') || '<p class="xs">This batch carries no comments.</p>';
+  $('#drawer-title').textContent = `Batch #${b.id}`;
+  $('#drawer-body').innerHTML = `
+    <div class="row"><span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform)}</span>${tag(b.status === 'failed' ? 'bad' : b.status === 'done' ? 'done' : 'warn', b.status, 'pill--sm')}
+      <span class="xs">${esc(ago(b.created_at))}</span></div>
+    ${post.title ? `<div><b>${esc(post.title)}</b></div>` : ''}
+    <p class="xs">${post.community ? esc(post.community) + ' · ' : ''}<a href="${esc(b.source || '')}" target="_blank" rel="noopener noreferrer">${esc(b.source || '')}</a></p>
+    ${b.error ? `<div class="banner banner--bad"><span aria-hidden="true">⚠</span><span>${esc(b.error)}</span></div>` : ''}
+    <h3>${(res.comments || []).length} comment(s)</h3>
+    ${rows}`;
+  openDrawer();
 }
-
 $('#queue-status').addEventListener('click', e => {
   const b = e.target.closest('button[data-qs]');
   if (!b) return;
   QUEUE_STATUS = b.dataset.qs;
-  QUEUE_OPEN = null;
-  $('#queue-detail').innerHTML = '';
+  loadQueue();
+});
+$('#queue-kind').addEventListener('click', e => {
+  const b = e.target.closest('button[data-kind]');
+  if (!b) return;
+  QUEUE_KIND = b.dataset.kind;
   loadQueue();
 });
 $('#queue-refresh').onclick = loadQueue;
@@ -1342,174 +1561,192 @@ $('#queue-body').addEventListener('click', e => {
   const b = e.target.closest('button[data-open-batch]');
   if (b) openBatch(Number(b.dataset.openBatch));
 });
-// Delegated, because the close button is rendered by openBatch and does not
-// exist at load. A `$('#queue-close')` here would also be a lookup nothing can
-// verify — the console's own id test checks every such lookup against the
-// markup, and a dynamic id would have to be exempted from it.
-$('#queue-detail').addEventListener('click', e => {
-  if (!e.target.closest('button[data-close-batch]')) return;
-  QUEUE_OPEN = null;
-  $('#queue-detail').innerHTML = '';
-});
 
 // ── nuggets ─────────────────────────────────────────────────────────────
 let NUGGETS = [];
-//: What the archive holds, as opposed to what this page received. They differ
-//: only if a caller asked for a limit — but when they do differ, saying so is
-//: the difference between a filter and a lie.
 let NUGGET_TOTAL = 0;
-let NUGGET_TRUNCATED = false;
-let NUGGET_FILTER = 'all';
-const NUGGET_FILTERS = ['all', 'flagged', 'trivial', 'needs reembed'];
-//: Grouping by source trades the archive's global newest-first order for its
-//: shape, which is the right default but not always the right view — so it is
-//: a toggle, not a decision made once on the operator's behalf.
-let NUGGET_GROUPED = true;
+//: How many the archive holds regardless of the filters — the number that
+//: decides whether an empty list means "nothing here" or "too narrow".
+let NUGGET_ARCHIVE_TOTAL = 0;
+const NUGGET_PAGE = 100;
+const NUG = { offset: 0, platform: '', community: '', category: '', flag: '', q: '' };
+const NUGGET_FLAG_LABEL = { flagged: 'flagged', trivial: 'trivial', reembed: 'not yet searchable', unclustered: 'waiting for ideas' };
+let NUGGET_FACETS = { platform: [], community: [], category: [], flags: {} };
+let NUGGET_FACET_MORE = { community: false, category: false };
 
 function renderNuggetFilter() {
-  $('#nuggets-filter').innerHTML = NUGGET_FILTERS.map(f =>
-    `<button data-f="${esc(f)}" aria-pressed="${NUGGET_FILTER === f}">${esc(f)}</button>`).join('');
+  const f = NUGGET_FACETS.flags || {};
+  $('#nuggets-filter').innerHTML = [['', 'all'], ...Object.entries(NUGGET_FLAG_LABEL)].map(([k, label]) =>
+    `<button data-f="${esc(k)}" aria-pressed="${NUG.flag === k}">${esc(label)}${k && f[k] !== undefined ? ` <span class="num">${Number(f[k]).toLocaleString()}</span>` : ''}</button>`).join('');
 }
-
-//: `community` is the sub-source a nugget was read from — r/datascience,
-//: discuss.python.org, unix. It was added after the archive already held
-//: thousands of rows, so the older ones carry nothing and get a bucket that
-//: says exactly that rather than being lumped in with a real community.
-const NO_COMMUNITY = 'source not recorded';
-//: The fixture runs' marker. Text under it was written for a test and never
-//: scraped from anywhere, so it is named rather than left looking like a
-//: community whose name got lost.
-const FIXTURE_COMMUNITY = 'test fixture — not scraped';
-
-/** Which bucket a nugget belongs in. Three outcomes, and they are different
- *  facts: a named community, an origin the archive never recorded, and text
- *  that was never scraped at all. */
-function communityOf(g) {
-  if (g.community) return g.community;
-  if (String(g.source_url || '').trim().toLowerCase() === 'mock') return FIXTURE_COMMUNITY;
-  return NO_COMMUNITY;
-}
-
 function nuggetRow(g) {
   const flags = [
     g.trivial ? '<span class="chip chip--warn">trivial</span>' : '',
-    g.needs_reembed ? '<span class="chip chip--bad">needs reembed</span>' : '',
-    g.synthesized_at ? '' : '<span class="chip">unprocessed</span>',
+    g.needs_reembed ? '<span class="chip chip--bad">not yet searchable</span>' : '',
+    g.synthesized_at ? '' : '<span class="chip" title="not yet part of an idea">waiting for ideas</span>',
   ].filter(Boolean).join('');
   return `<tr>
-    <td class="mono xs">${esc(g.unique_key)}${g.source_url
-      ? `<div><a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer" class="xs">source ↗</a></div>` : ''}</td>
-    <td>${esc(g.platform || '—')}</td>
+    <td class="nug-insight">${esc(g.extracted_insight || '')}
+      <div class="xs mono" style="margin-block-start:4px">${esc(g.unique_key)}${g.source_url
+        ? ` · <a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</div></td>
+    <td class="nug-from"><b>${esc(PLATFORM_LABEL[g.platform] || g.platform || '—')}</b><span class="xs">${esc(g.community || '')}</span></td>
     <td><span class="chip">${esc(g.category || 'uncategorised')}</span></td>
-    <td style="max-inline-size:52ch">${esc(g.extracted_insight || '')}</td>
     <td><div class="chiprow">${flags || '<span class="xs">—</span>'}</div></td>
   </tr>`;
 }
+function facetBlock(title, key, items, limit = 12) {
+  const list = NUGGET_FACET_MORE[key] ? items : items.slice(0, limit);
+  return `<div class="facet"><h4>${esc(title)}</h4>
+    ${list.map(it => `<button data-facet="${key}" data-value="${esc(it.value)}" aria-pressed="${NUG[key] === it.value}">
+       <span class="truncate">${esc(key === 'platform' ? (PLATFORM_LABEL[it.value] || it.value || '—') : (it.value || 'not recorded'))}</span><span class="n">${Number(it.n).toLocaleString()}</span></button>`).join('')}
+    ${items.length > limit ? `<button class="more" data-facet-more="${key}">${NUGGET_FACET_MORE[key] ? 'show fewer' : `+${items.length - limit} more`}</button>` : ''}
+  </div>`;
+}
+/** The rail's open/shut state. Remembered per browser: whether you like the
+ *  filters in view is a preference, not something to re-decide every visit.
+ *  Default follows the width - there is no room for a 230px rail on a phone. */
+let FACETS_OPEN = true;
+try {
+  const saved = localStorage.getItem('jester-facets');
+  FACETS_OPEN = saved === null ? window.innerWidth >= 900 : saved === 'open';
+} catch { /* private mode */ }
 
-/** Platform, then the community inside it. Groups are ordered by size, so the
- *  platforms actually carrying the archive sit at the top; rows keep the
- *  newest-first order they arrived in. */
-function groupedNuggets(rows) {
-  const bySize = (a, b) => b[1].length - a[1].length;
-  return [...groupBy(rows, g => g.platform || 'unknown')].sort(bySize)
-    .map(([platform, inPlatform]) => {
-      const pKey = `nug:${platform}`;
-      const communities = [...groupBy(inPlatform, communityOf)].sort(bySize);
-      const head = groupRow({
-        key: pKey, depth: 1, span: 5, count: inPlatform.length,
-        label: esc(PLATFORM_LABEL[platform] || platform),
-        meta: esc(`${communities.length} source(s)`),
-      });
-      if (FOLDED.has(pKey)) return head;
-      return head + communities.map(([community, items]) => {
-        const cKey = `${pKey}:${community}`;
-        const real = community !== NO_COMMUNITY && community !== FIXTURE_COMMUNITY;
-        const sub = groupRow({
-          key: cKey, depth: 2, span: 5, count: items.length,
-          label: real ? esc(community) : `<span class="mute">${esc(community)}</span>`,
-        });
-        return sub + (FOLDED.has(cKey) ? '' : items.map(nuggetRow).join(''));
-      }).join('');
-    }).join('');
+function applyFacetsOpen() {
+  const layout = $('#nuggets-layout');
+  const btn = $('#facets-toggle');
+  if (!layout || !btn) return;
+  layout.classList.toggle('is-collapsed', !FACETS_OPEN);
+  btn.setAttribute('aria-expanded', String(FACETS_OPEN));
+  $('#facets-toggle-label').textContent = FACETS_OPEN ? 'hide filters' : 'filters';
+  try { localStorage.setItem('jester-facets', FACETS_OPEN ? 'open' : 'shut'); } catch { /* private mode */ }
 }
 
-function renderNuggets() {
-  const q = $('#nuggets-q').value.trim().toLowerCase();
-  const rows = NUGGETS.filter(g => {
-    if (NUGGET_FILTER === 'trivial' && !g.trivial) return false;
-    if (NUGGET_FILTER === 'needs reembed' && !g.needs_reembed) return false;
-    if (NUGGET_FILTER === 'flagged' && !g.trivial && !g.needs_reembed) return false;
-    if (!q) return true;
-    return `${g.unique_key} ${g.category || ''} ${g.community || ''} ${g.extracted_insight || ''}`
-      .toLowerCase().includes(q);
-  });
+/** What is narrowing the list right now, as removable chips. These stay on
+ *  screen when the rail is shut, so a hidden filter can never silently shape
+ *  what you are reading - which is the one real risk of collapsing it. */
+function renderActiveFacets() {
+  const label = { platform: 'platform', community: 'community', category: 'category', flag: 'flag', q: 'text' };
+  const chips = ['platform', 'community', 'category', 'flag', 'q']
+    .filter(k => NUG[k])
+    .map(k => `<span class="fchip"><b>${label[k]}</b> ${esc(k === 'flag' ? (NUGGET_FLAG_LABEL[NUG[k]] || NUG[k]) : NUG[k])}
+        <button data-facet-drop="${k}" aria-label="Remove ${label[k]} filter">\u2715</button></span>`).join('');
+  $('#nuggets-active').innerHTML = chips
+    ? chips + '<button class="btn btn--ghost btn--sm" data-facet-clear>clear all</button>'
+    : '<span class="xs">showing the whole archive</span>';
+}
 
-  $('#nuggets-body').innerHTML =
-    (NUGGET_GROUPED ? groupedNuggets(rows) : rows.map(nuggetRow).join(''))
-    || emptyRow(5, NUGGETS.length
-      ? 'No nugget matches that filter.'
-      : 'No nuggets archived yet.');
+function renderNuggetFacets() {
+  const f = NUGGET_FACETS;
+  $('#nuggets-facets').innerHTML =
+    facetBlock('Platform', 'platform', f.platform || [], 12)
+    + facetBlock('Community', 'community', f.community || [], 10)
+    + facetBlock('Category', 'category', f.category || [], 8);
+  renderActiveFacets();
+  applyFacetsOpen();
+}
 
-  // Always say what is on screen versus what exists. A row count that only
-  // ever describes itself cannot tell you something is missing.
-  const note = $('#nuggets-count');
-  if (note) {
-    const shown = rows.length;
-    const parts = [`${shown.toLocaleString()} shown`];
-    if (NUGGET_GROUPED && shown) {
-      const platforms = new Set(rows.map(g => g.platform || 'unknown'));
-      const communities = new Set(rows.map(g => `${g.platform}/${communityOf(g)}`));
-      parts.push(`${platforms.size} platform(s), ${communities.size} source(s)`);
-    }
-    if (shown !== NUGGETS.length) parts.push(`${NUGGETS.length.toLocaleString()} loaded`);
-    if (NUGGET_TRUNCATED) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive — response was capped`);
-    else if (NUGGET_TOTAL !== NUGGETS.length) parts.push(`${NUGGET_TOTAL.toLocaleString()} in archive`);
-    note.textContent = parts.join(' · ');
-    note.className = NUGGET_TRUNCATED ? 'xs chip chip--warn' : 'xs';
+$('#facets-toggle').onclick = () => { FACETS_OPEN = !FACETS_OPEN; applyFacetsOpen(); };
+$('#nuggets-active').addEventListener('click', e => {
+  const drop = e.target.closest('[data-facet-drop]');
+  if (drop) {
+    NUG[drop.dataset.facetDrop] = '';
+    if (drop.dataset.facetDrop === 'q') $('#nuggets-q').value = '';
+    NUG.offset = 0;
+    loadNuggets();
+    return;
   }
+  if (e.target.closest('[data-facet-clear]')) {
+    Object.assign(NUG, { offset: 0, platform: '', community: '', category: '', flag: '', q: '' });
+    $('#nuggets-q').value = '';
+    loadNuggets();
+  }
+});
+function renderNuggets() {
+  // NUGGET_TOTAL is the count under the current filters, so it is 0 whenever
+  // the filters match nothing — including on a full archive. Deciding the
+  // empty state from it told the operator to run the pipeline when what he
+  // actually had to do was drop a filter.
+  const filtered = !!(NUG.platform || NUG.community || NUG.category || NUG.flag || NUG.q);
+  $('#nuggets-body').innerHTML = NUGGETS.map(nuggetRow).join('')
+    || (NUGGET_ARCHIVE_TOTAL
+      ? emptyRow(4, filtered
+          ? `No nugget matches these filters — ${NUGGET_ARCHIVE_TOTAL.toLocaleString()} in the archive.`
+          : 'Nothing to show.')
+      : emptyRow(4, 'No nuggets archived yet.', { page: 'overview', label: '▶ run pipeline from Overview' }));
+  if (!NUGGETS.length && filtered && NUGGET_ARCHIVE_TOTAL) {
+    $('#nuggets-body .empty').insertAdjacentHTML('beforeend',
+      '<div><button class="btn btn--sm" data-facet-clear>clear the filters</button></div>');
+  }
+  const from = NUGGET_TOTAL ? NUG.offset + 1 : 0, to = Math.min(NUGGET_TOTAL, NUG.offset + NUGGETS.length);
+  $('#nuggets-shown').textContent = NUGGET_TOTAL ? `${from.toLocaleString()}–${to.toLocaleString()} of ${NUGGET_TOTAL.toLocaleString()}` : '';
+  $('#nuggets-pager').innerHTML = pagerHTML(NUG.offset, NUGGET_PAGE, NUGGET_TOTAL, 'nug');
 }
-
+function pagerHTML(offset, size, total, key) {
+  if (total <= size) return '';
+  const page = Math.floor(offset / size) + 1, pages = Math.ceil(total / size);
+  return `<button class="btn btn--ghost btn--sm" data-page-${key}="${Math.max(0, offset - size)}" ${offset === 0 ? 'disabled' : ''}>‹</button>
+    <span>page ${page} of ${pages}</span>
+    <button class="btn btn--ghost btn--sm" data-page-${key}="${offset + size}" ${offset + size >= total ? 'disabled' : ''}>›</button>`;
+}
 async function loadNuggets() {
-  const res = await api('/api/nuggets');
+  const qs = new URLSearchParams({ offset: NUG.offset, limit: NUGGET_PAGE, platform: NUG.platform,
+    community: NUG.community, category: NUG.category, flag: NUG.flag, q: NUG.q });
+  const res = await api('/api/nuggets/page?' + qs.toString());
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   NUGGETS = res.nuggets || [];
-  // The ARCHIVE's count, not this page's. These were the same line before,
-  // so a capped response reported its own length as the total and the nav
-  // badge read "500" over an archive of 1,761.
-  NUGGET_TOTAL = typeof res.total === 'number' ? res.total : NUGGETS.length;
-  NUGGET_TRUNCATED = !!res.truncated;
-  COUNTS.nuggets = NUGGET_TOTAL;
+  NUGGET_TOTAL = res.total || 0;
+  NUGGET_FACETS = res.facets || NUGGET_FACETS;
+  NUGGET_ARCHIVE_TOTAL = res.archive_total ?? NUGGET_TOTAL;
+  COUNTS.nuggets = NUGGET_ARCHIVE_TOTAL;
   renderNav();
   renderNuggetFilter();
-  renderNuggetGrouping();
+  renderNuggetFacets();
   renderNuggets();
+  const note = $('#nuggets-count');
+  if (note) {
+    const parts = [`${NUGGET_TOTAL.toLocaleString()} match`];
+    if (res.archive_total && res.archive_total !== NUGGET_TOTAL) parts.push(`${res.archive_total.toLocaleString()} in archive`);
+    note.textContent = parts.join(' · ');
+  }
 }
-
-bindFolding('#nuggets-body', renderNuggets);
-
-function renderNuggetGrouping() {
-  $('#nuggets-grouping').innerHTML = [['grouped', true], ['flat', false]].map(([label, on]) =>
-    `<button data-grouped="${on}" aria-pressed="${NUGGET_GROUPED === on}">${label}</button>`).join('');
-}
-
-$('#nuggets-grouping').addEventListener('click', e => {
-  const b = e.target.closest('button[data-grouped]');
-  if (!b) return;
-  NUGGET_GROUPED = b.dataset.grouped === 'true';
-  renderNuggetGrouping();
-  renderNuggets();
+let nugTimer = null;
+$('#nuggets-q').addEventListener('input', () => {
+  clearTimeout(nugTimer);
+  nugTimer = setTimeout(() => { NUG.q = $('#nuggets-q').value.trim(); NUG.offset = 0; loadNuggets(); }, 250);
 });
-
-$('#nuggets-q').addEventListener('input', renderNuggets);
 $('#nuggets-filter').addEventListener('click', e => {
   const b = e.target.closest('button[data-f]');
   if (!b) return;
-  NUGGET_FILTER = b.dataset.f;
-  renderNuggetFilter();
-  renderNuggets();
+  NUG.flag = b.dataset.f; NUG.offset = 0;
+  loadNuggets();
+});
+$('#nuggets-body').addEventListener('click', e => {
+  if (!e.target.closest('[data-facet-clear]')) return;
+  Object.assign(NUG, { offset: 0, platform: '', community: '', category: '', flag: '', q: '' });
+  $('#nuggets-q').value = '';
+  loadNuggets();
+});
+$('#nuggets-facets').addEventListener('click', e => {
+  // "clear" lives on the bar above with the active chips, not in the rail —
+  // the rail can be shut, and a clear button you cannot reach is not one.
+  const more = e.target.closest('[data-facet-more]');
+  if (more) { NUGGET_FACET_MORE[more.dataset.facetMore] = !NUGGET_FACET_MORE[more.dataset.facetMore]; renderNuggetFacets(); return; }
+  const b = e.target.closest('button[data-facet]');
+  if (!b) return;
+  const k = b.dataset.facet;
+  NUG[k] = NUG[k] === b.dataset.value ? '' : b.dataset.value;
+  if (k === 'platform') NUG.community = '';
+  NUG.offset = 0;
+  loadNuggets();
+});
+$('#nuggets-pager').addEventListener('click', e => {
+  const b = e.target.closest('button[data-page-nug]');
+  if (!b || b.disabled) return;
+  NUG.offset = Number(b.dataset.pageNug);
+  loadNuggets();
+  $('#nuggets-body').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
-// ── config ──────────────────────────────────────────────────────────────
 const KNOB_HELP = {
   max_comments_per_thread: 'cap on comments taken from one thread',
   max_threads_per_source: 'threads / videos / topics the live worker walks per source, per run',
@@ -1536,16 +1773,43 @@ const KNOB_HELP = {
 // the moment a third llm_provider existed: the console kept offering two.
 // Kept only as the fallback for a server that predates the field.
 let CFG_BASE = {};
-
+/** Knobs by pipeline stage. A flat grid of 26 mixed one prefilter char cap
+ *  with a Groq budget; the operator thinks in stages, so the page does too. */
+const KNOB_GROUPS = [
+  ['Fetch', 'how much the worker walks and how politely', ['max_threads_per_source', 'max_threads_per_platform', 'max_comments_per_thread', 'min_comments_per_thread', 'max_reviews_per_app', 'realestate_detail_per_page', 'request_delay_ms', 'ingest_timeout_seconds']],
+  ['Pre-filter', 'what is dropped before any model sees it', ['prefilter_min_chars', 'prefilter_max_chars', 'prefilter_min_words', 'prefilter_max_emoji', 'prefilter_max_mentions', 'min_upvotes']],
+  ['Archive & synthesis', 'dedup and how ideas are formed', ['dedup_threshold', 'max_nuggets_per_idea', 'good_idea_min']],
+  ['Critic web step', 'competition checks and their budget', ['competitor_search_provider', 'competitor_ttl_days', 'critic_web_rate_limit', 'critic_web_daily_budget']],
+  ['Providers & output', 'backends and what a run leaves behind', ['llm_provider', 'embedding_provider', 'export_after_run', 'export_rows_per_file']],
+];
+function mapKnobValue(key) {
+  const out = {};
+  for (const row of $$(`[data-knob-map="${key}"] tr[data-map-row]`)) {
+    const k = row.querySelector('[data-map-key]').value.trim();
+    const v = row.querySelector('[data-map-val]').value.trim();
+    if (k && v !== '') out[k] = +v;
+  }
+  return out;
+}
 function cfgDirty() {
   const out = {};
   for (const [key, base] of Object.entries(CFG_BASE)) {
+    if (base && typeof base === 'object') {
+      const box = $(`[data-knob-map="${key}"]`);
+      if (!box) continue;
+      const cur = mapKnobValue(key);
+      const changed = JSON.stringify(cur) !== JSON.stringify(base);
+      box.classList.toggle('dirty', changed);
+      if (changed) out[key] = cur;
+      continue;
+    }
     const el = $(`[data-knob="${key}"]`);
     if (!el) continue;
     const raw = el.value.trim();
-    const changed = typeof base === 'number' ? +raw !== base : raw !== String(base);
+    const changed = typeof base === 'number' ? +raw !== base
+      : typeof base === 'boolean' ? (raw === 'true') !== base : raw !== String(base);
     el.classList.toggle('dirty', changed);
-    if (changed) out[key] = typeof base === 'number' ? +raw : raw;
+    if (changed) out[key] = typeof base === 'number' ? +raw : typeof base === 'boolean' ? raw === 'true' : raw;
   }
   return out;
 }
@@ -1559,43 +1823,77 @@ function syncSavebar() {
 async function loadConfig() {
   const res = await api('/api/config');
   if (res.ok === false) { toast(res.error, 'bad'); return; }
-
   CFG_BASE = {};
-  // embedding_model lives in the Agent models card, where the Ollama list is.
-  $('#cfg-knobs').innerHTML = Object.entries(res.editable)
-    .filter(([key]) => key !== 'embedding_model')
-    .map(([key, meta]) => {
+  const editable = { ...res.editable };
+  delete editable.embedding_model;
+  const knob = (key, meta) => {
     CFG_BASE[key] = meta.value;
     const range = meta.range ? `${meta.range[0]} – ${meta.range[1]}` : '';
     const choices = meta.choices;
-    const control = choices
-      ? `<select id="knob-${key}" data-knob="${key}">${choices.map(p =>
-          `<option ${p === meta.value ? 'selected' : ''}>${p}</option>`).join('')}</select>`
-      : `<input id="knob-${key}" data-knob="${key}" value="${esc(meta.value)}"
+    let control;
+    if (meta.value && typeof meta.value === 'object') {
+      // A platform → number map. It rendered as "[object Object]" before.
+      const rows = Object.entries(meta.value);
+      control = `<div data-knob-map="${key}"><table class="mapknob">
+        <tbody>${rows.map(([k, v]) => `<tr data-map-row><td><input data-map-key value="${esc(k)}" placeholder="platform" style="inline-size:120px"></td>
+          <td><input data-map-val type="number" min="1" max="200" step="1" value="${esc(v)}" style="inline-size:80px"></td>
+          <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`).join('')}</tbody></table>
+        <button class="btn btn--ghost btn--sm" data-map-add>+ platform</button></div>`;
+    } else if (typeof meta.value === 'boolean') {
+      control = `<select id="knob-${key}" data-knob="${key}"><option value="true" ${meta.value ? 'selected' : ''}>on</option><option value="false" ${meta.value ? '' : 'selected'}>off</option></select>`;
+    } else if (choices) {
+      control = `<select id="knob-${key}" data-knob="${key}">${choices.map(p =>
+        `<option ${p === meta.value ? 'selected' : ''}>${p}</option>`).join('')}</select>`;
+    } else {
+      control = `<input id="knob-${key}" data-knob="${key}" value="${esc(meta.value)}"
            ${meta.type === 'int' ? 'type="number" step="1"' : meta.type === 'float' ? 'type="number" step="0.01"' : ''}
            ${meta.range ? `min="${meta.range[0]}" max="${meta.range[1]}"` : ''}>`;
+    }
     return `<div class="knob">
       <label for="knob-${key}">${esc(key.replace(/_/g, ' '))}</label>
       ${control}
       <span class="hint">${esc(KNOB_HELP[key] || '')}${range ? ` · ${range}` : ''}</span>
     </div>`;
-  }).join('');
-  $$('#cfg-knobs [data-knob]').forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
+  };
+  const placed = new Set();
+  const sections = KNOB_GROUPS.map(([title, sub, keys]) => {
+    const here = keys.filter(k => editable[k]);
+    here.forEach(k => placed.add(k));
+    if (!here.length) return '';
+    return `<details class="cfg-group" open><summary><h3 style="display:inline">${esc(title)}</h3> <span class="xs">${esc(sub)} · ${here.length} knob(s)</span></summary>
+      <div class="knobgrid" style="margin-block-start:var(--s-5)">${here.map(k => knob(k, editable[k])).join('')}</div></details>`;
+  });
+  const rest = Object.keys(editable).filter(k => !placed.has(k));
+  if (rest.length) sections.push(`<details class="cfg-group" open><summary><h3 style="display:inline">Other</h3> <span class="xs">${rest.length} knob(s)</span></summary>
+      <div class="knobgrid" style="margin-block-start:var(--s-5)">${rest.map(k => knob(k, editable[k])).join('')}</div></details>`);
+  $('#cfg-knobs').innerHTML = sections.join('');
+  $('#cfg-knobs').classList.remove('knobgrid');
+  $$('#cfg-knobs [data-knob], #cfg-knobs [data-map-key], #cfg-knobs [data-map-val]').forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
   syncSavebar();
-
   $('#cfg-scraper').innerHTML = Object.entries(res.scraper).map(([k, v]) => {
-    const shown = /license|proxy/i.test(k) ? (v ? '•••• set' : 'not set') : (v || '—');
+    const shown = /license|proxy|secret|key/i.test(k) ? (v ? '•••• set' : 'not set') : (v || '—');
     return `<dt>${esc(k)}</dt><dd class="mono">${esc(shown)}</dd>`;
   }).join('');
-
   $('#cfg-env').innerHTML = Object.entries(res.env).map(([k, v]) =>
-    `<dt class="mono xs">${esc(k)}</dt><dd class="mono">${v === true ? 'set' : v === false ? 'not set' : esc(v || '—')}</dd>`
+    `<dt class="mono xs">${esc(k)}</dt><dd>${v === true ? tag('done', 'set', 'pill--sm') : v === false ? tag('off', 'not set', 'pill--sm') : `<span class="mono">${esc(v || '—')}</span>`}</dd>`
   ).join('');
-
   loadModels();
 }
+$('#cfg-knobs').addEventListener('click', e => {
+  const add = e.target.closest('[data-map-add]');
+  if (add) {
+    const tbody = add.parentElement.querySelector('tbody');
+    tbody.insertAdjacentHTML('beforeend', `<tr data-map-row><td><input data-map-key placeholder="platform" style="inline-size:120px"></td>
+      <td><input data-map-val type="number" min="1" max="200" step="1" value="3" style="inline-size:80px"></td>
+      <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`);
+    $$('[data-map-key], [data-map-val]', tbody).forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
+    syncSavebar();
+    return;
+  }
+  const del = e.target.closest('[data-map-del]');
+  if (del) { del.closest('tr').remove(); syncSavebar(); }
+});
 
-// ── agent models ────────────────────────────────────────────────────────
 const ROLE_HELP = {
   extractor: 'turns one comment into a nugget — one call per comment, so this is the throughput role',
   archivist: 'dedups and files nuggets into the archive',
@@ -1999,20 +2297,37 @@ $('#sched-runnow').onclick = async e => {
 };
 
 // ── doctor ──────────────────────────────────────────────────────────────
+/** A finding is prose from the guards; the fix is one of a few known moves. */
+const DOCTOR_FIXES = [
+  [/stuck in 'running'/i, 'warn', { page: 'runs', label: 'open Runs' }, 'A run row says running but no process owns it (crashed session). It clears itself on the next successful run.'],
+  [/reembed_backlog/i, 'warn', { act: '/api/reembed', label: 're-embed now' }, 'Those nuggets are archived but invisible to dedup and search until re-embedded.'],
+  [/failed/i, 'bad', { act: '/api/requeue', label: 'requeue failed' }, 'Failed batches hold comments that were fetched and never treated.'],
+  [/cloakserve|9222/i, 'bad', { page: 'sources', label: 'see affected sources' }, 'Browser-fetched sources are skipped until cloakserve is back.'],
+  [/ollama/i, 'bad', { page: 'config', label: 'open Config' }, 'Live models fall back to the deterministic stand-in.'],
+  [/quota|rate.?limit|groq/i, 'warn', { page: 'queue', label: 'open Queue' }, 'Treatment pauses; the queue is the buffer.'],
+  [/source/i, 'warn', { page: 'sources', label: 'open Sources' }, ''],
+];
 async function loadDoctor() {
   const doc = await api('/api/doctor');
-  // ok:false here means "found problems", not "the call failed" — only an
-  // explicit error field is a transport failure.
   if (doc.error) { toast(doc.error, 'bad'); return; }
   const findings = doc.findings || [];
   COUNTS.findings = findings.length;
   renderNav();
   $('#doctor-card').innerHTML = findings.length === 0
     ? '<div class="banner banner--ok"><span aria-hidden="true">✓</span><span><b>Doctor clean</b>No silent-degradation guard tripped.</span></div>'
-    : findings.map(f => `<div class="banner banner--bad" style="margin-block-end:var(--s-3)">
-        <span aria-hidden="true">⚠</span><span>${esc(f)}</span></div>`).join('');
+    : `<div class="stack">${findings.map(f => {
+        const fix = DOCTOR_FIXES.find(([re]) => re.test(f)) || [null, 'warn', { page: 'runs', label: 'open Runs' }, ''];
+        const [, sev, next, why] = fix;
+        return `<div class="fix ${sev}"><span class="sevdot"></span>
+          <span><b>${esc(f)}</b>${why ? `<span class="xs">${esc(why)}</span>` : ''}</span>
+          <button class="btn btn--sm" ${next.act ? `data-act="${next.act}"` : `data-go="${next.page}"`}>${esc(next.label)}</button></div>`;
+      }).join('')}</div>`;
   loadEval();
 }
+$('#doctor-card').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  if (b) runAction(b.dataset.act, {}, b);
+});
 
 async function loadEval() {
   const res = await api('/api/eval');
@@ -2168,15 +2483,64 @@ $('#modal-run').onclick = async () => {
 // arrangement fired a real run and then opened the modal to configure the run
 // it had just started.
 
+// ── run strip: what is running now, on every page ────────────────────────
+async function pollRunning() {
+  const res = await api('/api/running');
+  const strip = $('#runstrip');
+  if (!strip) return;
+  const runs = (res.ok !== false && res.running) || [];
+  if (!runs.length) { strip.classList.add('hidden'); strip.innerHTML = ''; return; }
+  const r = runs[0];
+  strip.classList.remove('hidden');
+  strip.innerHTML = `<span class="dot"></span><span class="mono">${esc(r.run_id)}</span>
+    <span>${esc(r.phase)}</span><span class="xs">${esc(ago(r.started_at))}${r.n_comments ? ` · ${Number(r.n_comments).toLocaleString()} comment(s)` : ''}</span>
+    ${runs.length > 1 ? `<span class="xs">+${runs.length - 1} more</span>` : ''}`;
+  strip.title = `${r.origin} run · click for Runs`;
+}
+$('#runstrip').addEventListener('click', () => go('runs'));
+pollRunning();
+setInterval(pollRunning, 15000);
+
+// ── help sheet + delegated navigation ────────────────────────────────────
+function openHelp() { $('#help-modal').showModal(); }
+function closeHelp() { $('#help-modal').close(); }
+$('#help-btn').onclick = openHelp;
+$('#help-close').onclick = closeHelp;
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-go]');
+  if (b && b.dataset.go) go(b.dataset.go);
+});
+// Close the "more" menu when clicking elsewhere.
+document.addEventListener('click', e => {
+  $$('details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+});
+
+// ── keyboard ─────────────────────────────────────────────────────────────
+const PAGE_KEYS = { o: 'overview', r: 'runs', q: 'queue', i: 'ideas', n: 'nuggets', c: 'clusters', s: 'sources', d: 'doctor' };
+let chord = null;
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if ($('#pipeline-modal').open) closeModal();
+    else if ($('#help-modal').open) closeHelp();
     else closeDrawer();
+    return;
   }
-  // e.target is `document` when nothing is focused — it has no .matches().
   const t = e.target;
   if ((t instanceof Element && t.matches('input, select, textarea, [contenteditable]'))
       || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (chord === 'g') {
+    chord = null;
+    if (PAGE_KEYS[e.key]) { e.preventDefault(); go(PAGE_KEYS[e.key]); }
+    return;
+  }
+  if (e.key === 'g') { chord = 'g'; setTimeout(() => { chord = null; }, 1200); return; }
+  if (e.key === '?') { e.preventDefault(); openHelp(); return; }
+  if (e.key === '/') {
+    const box = $(`[data-page="${CURRENT}"] input[type="text"], [data-page="${CURRENT}"] input:not([type])`);
+    if (box) { e.preventDefault(); box.focus(); box.select(); }
+    else { e.preventDefault(); go('search'); setTimeout(() => $('#search-q').focus(), 50); }
+    return;
+  }
   if (e.key === 'r') $('#refresh-btn').click();
   const idx = '12345678'.indexOf(e.key);
   if (idx >= 0 && PAGES[idx]) go(PAGES[idx].id);
@@ -2191,4 +2555,229 @@ window.addEventListener('hashchange', () => {
 let saved = null;
 try { saved = localStorage.getItem('jester-theme'); } catch { /* private mode */ }
 applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+
+/* ── the collector problem signals ─────────────────────────────────────────────────
+ * A page of its own, reading a database of its own. The nugget archive and
+ * the problem-signal archive answer to different people: one is Jester's, the
+ * other is a task deliverable whose every row has to declare whether it is
+ * live or fixture. Showing them in one table would make that distinction a
+ * column nobody reads.
+ *
+ * What this page is for is narrow, and the layout says so: the counts, then
+ * the runs that produced them, then the records. A reader's first question is
+ * "did the collector run and what did it find", not "show me row 1".
+ */
+const SIG = { audience: '', community: '', kind: '', mode: '', q: '', offset: 0, limit: 50 };
+let SIG_FACETS = {};
+let SIG_TOTAL = 0;
+let SIG_EXISTS = true;
+let SFACETS_OPEN = FACETS_OPEN;
+
+const AUDIENCE_TONE = { buyer: 'tone-ok', practitioner: 'tone-info', none: 'tone-neutral' };
+
+function applySignalFacetsOpen() {
+  const layout = $('#signals-layout'); const btn = $('#sfacets-toggle');
+  if (!layout || !btn) return;
+  layout.classList.toggle('is-collapsed', !SFACETS_OPEN);
+  btn.setAttribute('aria-expanded', String(SFACETS_OPEN));
+  $('#sfacets-toggle-label').textContent = SFACETS_OPEN ? 'hide filters' : 'filters';
+}
+
+function signalFacetBlock(title, key, items, limit) {
+  if (!items || !items.length) return '';
+  return '<div class="facet"><h4>' + esc(title) + '</h4>'
+    + items.slice(0, limit).map(it =>
+      '<button data-sfacet="' + key + '" data-value="' + esc(it.value) + '"'
+      + ' aria-pressed="' + (SIG[key] === it.value) + '">'
+      + '<span class="truncate">' + esc(it.value || 'not recorded') + '</span>'
+      + '<span class="n">' + Number(it.n).toLocaleString() + '</span></button>').join('')
+    + '</div>';
+}
+
+function renderSignalActive() {
+  const label = { audience: 'audience', community: 'source', kind: 'kind', mode: 'mode', q: 'text' };
+  const chips = Object.keys(label).filter(k => SIG[k]).map(k =>
+    '<span class="fchip"><b>' + label[k] + '</b> ' + esc(SIG[k])
+    + '<button data-sfacet-drop="' + k + '" aria-label="Remove ' + label[k] + ' filter">✕</button></span>'
+  ).join('');
+  $('#signals-active').innerHTML = chips
+    ? chips + '<button class="btn btn--ghost btn--sm" data-sfacet-clear>clear all</button>'
+    : '<span class="xs">showing every record, kept and rejected</span>';
+}
+
+function renderSignalTiles(counts) {
+  /* Split by mode, never summed. A fixture row counted as a live one is the
+   * first item on this task's fail list, so the tiles never add them up. */
+  const modes = Object.keys(counts || {});
+  if (!modes.length) { $('#signals-tiles').innerHTML = ''; return; }
+  const live = counts.live || { unique_collected: 0, buyer: 0, practitioner: 0, errors: 0 };
+  const fixture = counts.fixture;
+  const tiles = [
+    ['collected (live)', live.unique_collected, 'unique records, deduplicated'],
+    ['buyer signals', live.buyer, 'what outreach can act on'],
+    ['practitioner', live.practitioner, 'content material, not leads'],
+    ['failed fetches', live.errors, live.errors ? 'stored as rows, not lost' : 'none in this archive'],
+  ];
+  $('#signals-tiles').innerHTML = tiles.map(t =>
+    '<div class="kpi' + (t[0] === 'failed fetches' && t[1] ? ' kpi--alert' : '') + '">'
+    + '<span>' + esc(t[0]) + '</span><b class="num">' + Number(t[1] || 0).toLocaleString() + '</b>'
+    + '<div class="kpi-sub">' + esc(t[2]) + '</div></div>').join('')
+    + (fixture
+      ? '<div class="kpi"><span>fixture rows</span><b class="num">'
+        + Number(fixture.unique_collected).toLocaleString()
+        + '</b><div class="kpi-sub">never counted as live</div></div>'
+      : '');
+}
+
+function renderSignalRuns(runs, sources) {
+  const body = $('#signal-runs-body');
+  if (!runs || !runs.length) {
+    const hint = sources && sources.length
+      ? ' Collect with <span class="mono">jester signals run --source ' + esc(sources[0].name) + '</span>.'
+      : '';
+    body.innerHTML = '<tr><td colspan="8" class="empty">No run recorded yet.' + hint + '</td></tr>';
+    return;
+  }
+  const tone = { ok: 'tone-ok', partial: 'tone-warn', failed: 'tone-bad' };
+  body.innerHTML = runs.map(r =>
+    '<tr><td class="mono xs">' + esc((r.started_utc || '').slice(0, 19).replace('T', ' ')) + '</td>'
+    + '<td>' + esc(r.kind) + '</td><td class="mono xs">' + esc(r.source) + '</td>'
+    + '<td class="num">' + Number(r.collected).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.new).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.buyer).toLocaleString() + '</td>'
+    + '<td class="num">' + Number(r.errors).toLocaleString() + '</td>'
+    + '<td><span class="pill pill--sm ' + (tone[r.status] || 'tone-neutral') + '">' + esc(r.status) + '</span>'
+    + (r.note ? '<span class="xs"> ' + esc(r.note) + '</span>' : '') + '</td></tr>').join('');
+}
+
+function renderSignals(rows) {
+  const body = $('#signals-body');
+  if (!rows.length) {
+    /* The empty state has to know why it is empty. "Nothing here" on a
+     * filtered view of a full archive sends people to re-run a collector that
+     * is working fine. */
+    const filtered = ['audience', 'community', 'kind', 'mode', 'q'].some(k => SIG[k]);
+    const msg = !SIG_EXISTS
+      ? 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.'
+      : filtered
+        ? 'Nothing matches these filters. <button class="btn btn--ghost btn--sm" data-sfacet-clear>clear the filters</button>'
+        : 'The archive is empty. <span class="mono">jester signals run</span> collects into it.';
+    body.innerHTML = '<tr><td colspan="4" class="empty">' + msg + '</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => {
+    const what = (r.title || r.excerpt || '').trim();
+    const flags = [];
+    if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
+    if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
+    if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
+    if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
+    if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
+    return '<tr><td><a href="' + esc(r.source_url) + '" target="_blank" rel="noopener">'
+      + (esc(what.slice(0, 110)) || '(no title)') + '</a>'
+      + '<div class="xs">' + esc(r.community) + ' &middot; ' + esc(r.kind)
+      + ' &middot; found by <span class="mono">' + esc(r.query) + '</span></div>'
+      + (flags.length
+        ? '<div class="row" style="gap:var(--s-2);margin-block-start:var(--s-2)">' + flags.join('') + '</div>'
+        : '')
+      + '</td><td><span class="pill pill--sm ' + (AUDIENCE_TONE[r.audience] || 'tone-neutral') + '">'
+      + esc(r.audience) + '</span></td>'
+      + '<td class="num">' + Number(r.match_confidence).toFixed(2) + '</td>'
+      + '<td class="xs">' + esc(r.match_reason || '') + '</td></tr>';
+  }).join('');
+}
+
+function renderSignalPager() {
+  const from = SIG_TOTAL ? SIG.offset + 1 : 0;
+  const to = Math.min(SIG.offset + SIG.limit, SIG_TOTAL);
+  $('#signals-shown').textContent = SIG_TOTAL
+    ? from.toLocaleString() + '–' + to.toLocaleString() + ' of ' + SIG_TOTAL.toLocaleString() : '';
+  $('#signals-pager').innerHTML =
+    '<button class="btn btn--ghost btn--sm" data-spage="prev" ' + (SIG.offset ? '' : 'disabled') + '>&lsaquo; prev</button>'
+    + '<button class="btn btn--ghost btn--sm" data-spage="next" ' + (to < SIG_TOTAL ? '' : 'disabled') + '>next &rsaquo;</button>';
+}
+
+async function loadSignals() {
+  const qs = new URLSearchParams(
+    Object.entries(SIG).filter(e => e[1] !== '' && e[1] !== null)).toString();
+  const pair = await Promise.all([
+    api('/api/signals?' + qs).catch(() => null),
+    api('/api/signals/runs').catch(() => null),
+  ]);
+  const d = pair[0]; const runs = pair[1];
+  if (!d) return;
+  SIG_EXISTS = d.exists !== false;
+  SIG_TOTAL = d.total || 0;
+  SIG_FACETS = d.facets || {};
+  const live = (d.counts || {}).live || {};
+  $('#signals-count').textContent = SIG_EXISTS
+    ? (live.unique_collected || 0).toLocaleString() + ' live record(s) in ' + d.path
+    : 'no archive at ' + d.path + ' yet';
+  renderSignalTiles(d.counts || {});
+  renderSignalRuns((runs || {}).runs || [], (runs || {}).sources || []);
+  $('#signals-facets').innerHTML =
+    signalFacetBlock('Audience', 'audience', SIG_FACETS.audience || [], 6)
+    + signalFacetBlock('Source', 'community', SIG_FACETS.community || [], 10)
+    + signalFacetBlock('Kind', 'kind', SIG_FACETS.kind || [], 4)
+    + signalFacetBlock('Mode', 'mode', SIG_FACETS.mode || [], 4);
+  renderSignalActive();
+  applySignalFacetsOpen();
+  renderSignals(d.rows || []);
+  renderSignalPager();
+  // The nav badge counts what this page is FOR. Total records would make the
+  // badge read 455 on an archive holding three things anyone can act on.
+  COUNTS.signals = (live.buyer || 0) || null;
+  renderNav();
+}
+
+$('#sfacets-toggle').onclick = () => { SFACETS_OPEN = !SFACETS_OPEN; applySignalFacetsOpen(); };
+$('#signals-facets').addEventListener('click', e => {
+  const b = e.target.closest('[data-sfacet]');
+  if (!b) return;
+  const k = b.dataset.sfacet;
+  SIG[k] = SIG[k] === b.dataset.value ? '' : b.dataset.value;
+  SIG.offset = 0;
+  loadSignals();
+});
+function clearSignalFilters() {
+  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', q: '', offset: 0 });
+  $('#signals-q').value = '';
+  loadSignals();
+}
+$('#signals-active').addEventListener('click', e => {
+  const drop = e.target.closest('[data-sfacet-drop]');
+  if (drop) {
+    SIG[drop.dataset.sfacetDrop] = '';
+    if (drop.dataset.sfacetDrop === 'q') $('#signals-q').value = '';
+    SIG.offset = 0;
+    loadSignals();
+    return;
+  }
+  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+});
+$('#signals-body').addEventListener('click', e => {
+  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+});
+$('#signals-pager').addEventListener('click', e => {
+  const b = e.target.closest('[data-spage]');
+  if (!b) return;
+  SIG.offset = Math.max(0, SIG.offset + (b.dataset.spage === 'next' ? SIG.limit : -SIG.limit));
+  loadSignals();
+});
+let sigTimer;
+$('#signals-q').addEventListener('input', () => {
+  clearTimeout(sigTimer);
+  sigTimer = setTimeout(() => {
+    SIG.q = $('#signals-q').value.trim();
+    SIG.offset = 0;
+    loadSignals();
+  }, 250);
+});
+
+// The topbar chips and the nav badges come from /api/overview, which until
+// now was only fetched by the Overview page's own loader. Deep-linking to
+// any other page - which is what a bookmark, a shared link and every
+// screenshot do - left the chips reading "db -" and the nav counts blank.
+// Fetch the counts on boot regardless of which page is opening.
+if ((location.hash.slice(1) || 'overview') !== 'overview') refreshCounts();
 go(location.hash.slice(1) || 'overview', { push: false });

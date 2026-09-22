@@ -29,6 +29,9 @@ _STATIC_TYPES = {
     ".ico": "image/x-icon",
     ".webmanifest": "application/manifest+json",
     ".json": "application/json",
+    # Self-hosted UI font (static/fonts/). The console runs on machines with no
+    # internet, so the typeface ships with it rather than loading from a CDN.
+    ".woff2": "font/woff2",
 }
 
 
@@ -120,18 +123,46 @@ class Handler(BaseHTTPRequestHandler):
         routes = {
             "/api/overview": api.overview,
             "/api/runs": api.runs,
-            "/api/ideas": api.ideas,
             "/api/doctor": api.doctor,
             "/api/eval": api.eval_gate,
             "/api/config": api.config,
-            "/api/infra": api.infra,
             "/api/sources": api.sources,
             "/api/schedule": api.schedule,
             "/api/clusters": api.clusters,
             "/api/jobs": api.jobs,
+            "/api/running": api.running,
         }
         if path in routes:
             self._json(routes[path]())
+            return
+        if path == "/api/trends":
+            self._json(api.trends(parse_qs(query).get("days", [7])[0]))
+            return
+        if path == "/api/infra":
+            self._json(api.infra(fresh=parse_qs(query).get("fresh", ["0"])[0] == "1"))
+            return
+        if path == "/api/ideas":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.ideas(status=g("status"), q=g("q"), sort=g("sort", "overall"),
+                                 dir=g("dir", "desc"), offset=g("offset", 0), limit=g("limit", 0)))
+            return
+        if path == "/api/signals":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.signals(audience=g("audience"), community=g("community"),
+                                   kind=g("kind"), q=g("q"), mode=g("mode"),
+                                   offset=g("offset", 0), limit=g("limit", 50)))
+            return
+        if path == "/api/signals/runs":
+            self._json(api.signal_runs(limit=parse_qs(query).get("limit", [25])[0]))
+            return
+        if path == "/api/nuggets/page":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.nuggets_page(offset=g("offset", 0), limit=g("limit", 100),
+                                        platform=g("platform"), community=g("community"),
+                                        category=g("category"), flag=g("flag"), q=g("q")))
             return
         if path == "/api/nuggets":
             # Query-aware, unlike the plain table above, which calls its
@@ -144,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(api.queue(
                 status=qs.get("status", ["pending"])[0],
                 limit=qs.get("limit", [None])[0],
+                kind=qs.get("kind", [""])[0],
             ))
             return
         if path.startswith("/api/queue/batch/"):

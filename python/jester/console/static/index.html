@@ -6,76 +6,87 @@
 <title>Jester — Operator Console</title>
 <meta name="description" content="Local operator console for the Jester scrape → nugget → idea pipeline.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#0F141E">
+<meta name="theme-color" content="#F8F5F6">
 <link rel="icon" href="/icon.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 
+<div class="shell">
+<nav class="nav" aria-label="Sections">
+  <a class="brand" href="#overview">
+    <span><img src="/icon.png" alt="" width="30" height="30" class="brandmark"></span>
+    <span><strong>Jester</strong><em>local pipeline</em></span>
+  </a>
+  <ul id="nav"></ul>
+  <div class="nav-foot">
+    <div class="health" id="nav-health"><span class="led"></span><span>console up</span></div>
+  </div>
+</nav>
+
+<div class="main-col">
 <header class="topbar">
-  <span class="brand">
-    <span><img src="/icon.png" alt="" width="28" height="28" class="brandmark"></span>
-    <strong>Jester</strong>
-    <em>operator console</em>
-  </span>
   <span class="topbar-meta">
     <span class="chip" id="db-chip" title="active database">db —</span>
     <span class="chip" id="cfg-chip" title="active config directory">config —</span>
   </span>
+  <span class="runstrip hidden" id="runstrip" role="status" aria-live="polite"></span>
   <span class="topbar-actions">
+    <button class="btn btn--ghost btn--icon" id="help-btn" title="keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
     <button class="btn btn--ghost btn--icon" id="theme-btn" title="toggle light / dark" aria-label="Toggle theme">◐</button>
-    <button class="btn btn--secondary btn--sm" id="refresh-btn" title="reload the current page (r)">↻ refresh</button>
+    <button class="btn btn--sm" id="refresh-btn" title="reload the current page (r)">↻ refresh</button>
   </span>
 </header>
-
-<div class="shell">
-<nav class="nav" aria-label="Sections"><ul id="nav"></ul></nav>
 
 <main id="main">
 
   <!-- ── overview ─────────────────────────────────────────────────── -->
   <section data-page="overview">
     <div class="hero">
-      <div><h1>Overview</h1><p>Archive and pipeline at a glance.</p></div>
+      <div><h1 data-eyebrow="Pipeline" id="ov-title">Overview</h1><p id="ov-lede">Archive and pipeline at a glance.</p></div>
+      <div class="row row-end"><button class="btn btn--ghost btn--sm" id="ov-more" aria-expanded="false">all counts</button></div>
     </div>
     <div id="ov-banners" class="stack"></div>
-    <div class="kpis" id="kpis"></div>
+    <div class="kpis kpis--4" id="kpis"></div>
+    <div class="card hidden" id="kpis-more-card"><h3>All counts</h3><div class="kpis" id="kpis-more"></div></div>
     <div class="grid">
       <div class="card"><h3>Last run</h3><div id="last-run"></div></div>
-      <div class="card"><h3>Quota ledger</h3><div id="quota"></div></div>
-      <div class="card"><h3>Infrastructure</h3><div id="infra" class="chiprow"></div>
-        <p class="xs" style="margin-block-end:0">Live ingestion needs cloakserve; live models need Ollama.</p></div>
+      <div class="card"><h3>Quota today</h3><div id="quota"></div></div>
+      <div class="card"><h3>Infrastructure</h3><div id="infra" class="infra"></div></div>
     </div>
     <div class="card">
-      <h3>Quick actions</h3>
+      <div class="row" style="margin-block-end:var(--s-5)">
+        <h3 style="margin:0">Actions</h3>
+        <button class="btn btn--ghost btn--icon row-end" id="qa-help" title="what these do" aria-expanded="false">?</button>
+      </div>
       <div class="row" id="quick-actions">
         <button class="btn btn--primary" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
-        <button class="btn btn--accent btn--sm hidden" id="btn-ingest-live"
+        <button class="btn btn--accent hidden" id="btn-ingest-live"
                 data-act="/api/ingest" data-live="1" data-run-prefix="ingest"
-                title="Fetch the enabled sources through cloakserve">⇣ ingest sources (live)</button>
-        <button class="btn btn--accent btn--sm hidden" id="btn-live-models"
+                title="Fetch the enabled sources through cloakserve">⇣ ingest sources</button>
+        <button class="btn hidden" id="btn-live-models"
                 data-act="/api/run" data-live-models="1" data-run-prefix="live-models">▶ run with live models</button>
-        <button class="btn btn--secondary btn--sm hidden" id="btn-ingest-mock"
-                data-act="/api/ingest" data-run-prefix="ingest-mock">⇣ ingest (worker mock)</button>
-        <button class="btn btn--secondary btn--sm" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
-        <button class="btn btn--secondary btn--sm" data-act="/api/seed-mock">seed fixture</button>
-        <button class="btn btn--secondary btn--sm" data-act="/api/smoke">smoke check</button>
-        <button class="btn btn--ghost btn--sm" data-act="/api/requeue">requeue failed</button>
-        <button class="btn btn--ghost btn--sm" data-act="/api/reembed">reembed backlog</button>
-        <button class="btn btn--ghost btn--sm" data-act="/api/migrate">migrate schema</button>
-        <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
+        <button class="btn" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
+        <details class="menu">
+          <summary class="btn btn--ghost">⋯ more</summary>
+          <div class="menu-list">
+            <button class="btn btn--ghost btn--sm hidden" id="btn-ingest-mock" data-act="/api/ingest" data-run-prefix="ingest-mock">ingest (worker mock)</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/requeue">requeue failed</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/reembed">reembed backlog</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/smoke">smoke check</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/seed-mock">seed fixture</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/migrate">migrate schema</button>
+            <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
+          </div>
+        </details>
       </div>
-      <p class="xs" style="margin-block-end:0">
+      <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
         <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
         the whole loop: fetch those sources with the Go worker, extract, archive and synthesize.
-        <b>ingest</b> does the fetch half on its own, and the pipeline will still process anything
-        already queued. Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear
-        once both are reachable.
+        <b>ingest</b> does the fetch half on its own; the pipeline still processes anything already queued.
+        Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear once both are reachable.
       </p>
     </div>
   </section>
@@ -83,7 +94,7 @@
   <!-- ── sources ──────────────────────────────────────────────────── -->
   <section data-page="sources" hidden>
     <div class="hero">
-      <div><h1>Sources</h1><p>The curated ingest list the live worker walks, grouped by
+      <div><h1 data-eyebrow="Setup">Sources</h1><p>The curated ingest list the live worker walks, grouped by
         platform — fold one shut to read the rest. Within a run the worker takes the least
         recently fetched first, so a depth ceiling spreads across the list instead of
         re-walking the top of it. Paste a subreddit, a thread, a YouTube channel or video,
@@ -121,7 +132,7 @@
         <table>
           <thead><tr>
             <th>on</th><th>name</th><th>kind</th><th>target</th>
-            <th>last fetched</th><th>status</th><th></th>
+            <th>fetch</th><th>last fetched</th><th>status</th><th></th>
           </tr></thead>
           <tbody id="src-body"></tbody>
         </table>
@@ -132,7 +143,7 @@
   <!-- ── runs ─────────────────────────────────────────────────────── -->
   <section data-page="runs" hidden>
     <div class="hero">
-      <div><h1>Runs</h1><p>Run ledger — status, funnel, durations and floor flags.
+      <div><h1 data-eyebrow="Pipeline">Runs</h1><p>Run ledger — status, platform mix, durations and run warnings.
         Scheduled ticks land here alongside the ones you start by hand.</p></div>
       <div class="row row-end">
         <span class="pill pill--sm tone-neutral" id="runs-count">—</span>
@@ -143,8 +154,8 @@
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th>started</th><th>run</th><th>status</th><th class="num">kept / ideas</th>
-            <th class="num">duration</th><th>origin</th><th>signals</th>
+            <th>started</th><th>status</th><th class="num">kept / ideas</th>
+            <th class="num">duration</th><th>origin</th><th>platform mix &amp; warnings</th>
           </tr></thead>
           <tbody id="runs-body"></tbody>
         </table>
@@ -155,18 +166,27 @@
   <!-- ── ideas ────────────────────────────────────────────────────── -->
   <section data-page="ideas" hidden>
     <div class="hero">
-      <div><h1>Ideas</h1><p>Review loop — open one to verify its citations, then mark it.</p></div>
+      <div><h1 data-eyebrow="Archive">Ideas</h1><p>Review loop — open one to verify its citations, then mark it.</p></div>
       <div class="row row-end">
-        <input id="ideas-q" placeholder="filter ideas…" style="inline-size:200px" autocomplete="off">
+        <input id="ideas-q" placeholder="filter ideas… ( / )" style="inline-size:220px" autocomplete="off">
         <div class="seg" id="ideas-filter" role="group" aria-label="Filter by status"></div>
       </div>
     </div>
+    <div id="ideas-note"></div>
     <div class="card card--flush">
+      <div class="card-head">
+        <h3>Ideas</h3><span class="xs" id="ideas-shown"></span>
+        <div class="pager row-end" id="ideas-pager"></div>
+      </div>
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th class="num">#</th><th>title</th><th class="num">overall</th>
-            <th class="num">demand / feasibility / competition</th><th>status</th><th>critic</th><th></th>
+            <th data-sort="title">idea</th>
+            <th class="num" data-sort="overall">overall</th>
+            <th data-sort="demand_signal">demand · feasibility · competition</th>
+            <th data-sort="status">status</th>
+            <th class="num">evidence</th>
+            <th data-sort="created_at">created</th>
           </tr></thead>
           <tbody id="ideas-body"></tbody>
         </table>
@@ -178,7 +198,7 @@
   <section data-page="search" hidden>
     <div class="hero">
       <div>
-        <h1>Search</h1>
+        <h1 data-eyebrow="Archive">Search</h1>
         <p>
           Ask the archive a question in your own words. Matches on meaning, not
           keywords — "backups fail silently" finds someone who wrote "my cron
@@ -187,10 +207,12 @@
         <p id="search-note" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="search-q" placeholder="describe a problem…" style="inline-size:280px" autocomplete="off">
+        <input id="search-q" placeholder="describe a problem… ( / )" style="inline-size:300px" autocomplete="off">
         <button id="search-go" class="primary">search</button>
       </div>
     </div>
+    <div id="search-facets" class="row"></div>
+    <div id="search-recent" class="row"></div>
     <div id="search-body" class="stack"></div>
   </section>
 
@@ -198,7 +220,7 @@
   <section data-page="clusters" hidden>
     <div class="hero">
       <div>
-        <h1>Clusters</h1>
+        <h1 data-eyebrow="Archive">Clusters</h1>
         <p>
           The archive regrouped by MEANING rather than by the thread each
           comment was scraped from — so the same complaint on Reddit and on
@@ -208,27 +230,33 @@
         <p id="clusters-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="clusters-q" placeholder="filter themes…" style="inline-size:200px" autocomplete="off">
+        <input id="clusters-q" placeholder="filter themes… ( / )" style="inline-size:200px" autocomplete="off">
+        <div class="seg" id="clusters-sort" role="group" aria-label="Sort themes"></div>
+        <div class="seg" id="clusters-platform" role="group" aria-label="Filter by platform"></div>
         <button id="clusters-run" class="primary">⟳ regroup</button>
       </div>
     </div>
     <div id="clusters-warn"></div>
-    <div id="clusters-body" class="stack"></div>
+    <div id="clusters-body" class="grid3"></div>
   </section>
 
   <!-- ── queue ────────────────────────────────────────────────────── -->
   <section data-page="queue" hidden>
     <div class="hero">
       <div>
-        <h1>Queue</h1>
-        <p>Scraped and waiting to be treated. Ingestion and treatment run on
-          separate clocks by design &mdash; scraping is cheap and bounded by
-          politeness, treatment is bounded by a token quota that resets on
-          someone else&rsquo;s schedule &mdash; so this gap is a real, long-lived
-          thing rather than a moment between steps.</p>
+        <h1 data-eyebrow="Pipeline">Queue</h1>
+        <p>Scraped and waiting to be treated. Comments and listings are two
+          different queues — different treatment, different budget — so they are
+          counted apart.
+          <details class="help"><summary>why is there a queue at all?</summary>
+          Ingestion and treatment run on separate clocks by design: scraping is
+          cheap and bounded by politeness, treatment is bounded by a token quota
+          that resets on someone else's schedule. The gap is a standing state,
+          not a moment between steps.</details></p>
         <p id="queue-count" class="xs"></p>
       </div>
       <div class="row row-end">
+        <div class="seg" id="queue-kind" role="group" aria-label="Queue kind"></div>
         <div class="seg" id="queue-status" role="group" aria-label="Queue status"></div>
         <button class="btn btn--sm" id="queue-refresh">refresh</button>
       </div>
@@ -239,10 +267,7 @@
     <div id="queue-treatment"></div>
 
     <div class="card">
-      <div class="card-head"><h3>Where it came from</h3></div>
-      <p class="xs">A queue that is mostly one platform is not a backlog, it is a
-        skew about to be baked into the archive &mdash; better seen before it is
-        treated than found afterwards.</p>
+      <h3>Where it came from <span class="xs">a queue that is mostly one platform is a skew about to be baked into the archive</span></h3>
       <div id="queue-mix" class="stack"></div>
     </div>
 
@@ -270,27 +295,92 @@
   <section data-page="nuggets" hidden>
     <div class="hero">
       <div>
-        <h1>Nuggets</h1>
-        <p>Archived pain signals, grouped by the platform and community they were read from &mdash; newest first inside each. Switch to <b>flat</b> for one newest-first list across everything. Trivial and reembed flags shown inline.</p>
-        <!-- Filled by renderNuggets: what is on screen vs what the archive
-             holds. Silence here is what let a capped view pass for the whole
-             archive. -->
+        <h1 data-eyebrow="Archive">Nuggets</h1>
+        <p>Archived pain signals, newest first. Narrow by platform, community,
+          category or flag on the left; the counts say what each click would show.</p>
         <p id="nuggets-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="nuggets-q" placeholder="filter nuggets…" style="inline-size:200px" autocomplete="off">
-        <div class="seg" id="nuggets-grouping" role="group" aria-label="Group nuggets"></div>
+        <input id="nuggets-q" placeholder="filter nuggets… ( / )" style="inline-size:220px" autocomplete="off">
         <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>
       </div>
     </div>
-    <div class="card card--flush">
+    <div class="facetbar">
+      <button class="btn btn--sm" id="facets-toggle" aria-expanded="true" aria-controls="nuggets-facets">
+        <span class="fic" aria-hidden="true"></span><span id="facets-toggle-label">hide filters</span>
+      </button>
+      <div class="activefacets" id="nuggets-active"></div>
+    </div>
+    <div class="facetlayout" id="nuggets-layout">
+      <aside class="facets" id="nuggets-facets" aria-label="Narrow the archive"></aside>
+      <div class="card card--flush">
+        <div class="card-head">
+          <h3>Nuggets</h3><span class="xs" id="nuggets-shown"></span>
+          <div class="pager row-end" id="nuggets-pager"></div>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>insight</th><th>from</th><th>category</th><th>flags</th>
+            </tr></thead>
+            <tbody id="nuggets-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── signals (the collector) ──────────────────────────────────────────── -->
+  <section data-page="signals" hidden>
+    <div class="hero">
+      <div>
+        <h1 data-eyebrow="the collector">Problem signals</h1>
+        <p>One row per post, from an approved source. <b>buyer</b> is what outreach can act on;
+          <b>practitioner</b> is content material, not a lead. Every row keeps the words that
+          classified it, so a verdict can be checked against the post itself.</p>
+        <p id="signals-count" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <input id="signals-q" placeholder="filter signals…" style="inline-size:220px" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="kpis kpis--4" id="signals-tiles"></div>
+
+    <div class="card card--flush" style="margin-block-start:var(--s-5)">
+      <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th>key</th><th>platform</th><th>category</th><th>insight</th><th>flags</th>
+            <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
+            <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
           </tr></thead>
-          <tbody id="nuggets-body"></tbody>
+          <tbody id="signal-runs-body"></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="facetbar" style="margin-block-start:var(--s-5)">
+      <button class="btn btn--sm" id="sfacets-toggle" aria-expanded="true" aria-controls="signals-facets">
+        <span class="fic" aria-hidden="true"></span><span id="sfacets-toggle-label">hide filters</span>
+      </button>
+      <div class="activefacets" id="signals-active"></div>
+    </div>
+    <div class="facetlayout" id="signals-layout">
+      <aside class="facets" id="signals-facets" aria-label="Narrow the archive"></aside>
+      <div class="card card--flush">
+        <div class="card-head">
+          <h3>Records</h3><span class="xs" id="signals-shown"></span>
+          <div class="pager row-end" id="signals-pager"></div>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>record</th><th>audience</th><th class="num">conf</th><th>why it was kept</th>
+            </tr></thead>
+            <tbody id="signals-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>
@@ -298,7 +388,7 @@
   <!-- ── config ───────────────────────────────────────────────────── -->
   <section data-page="config" hidden>
     <div class="hero">
-      <div><h1>Config</h1><p>Every knob the pipeline reads. Editable values write straight back to
+      <div><h1 data-eyebrow="Setup">Config</h1><p>Every knob the pipeline reads. Editable values write straight back to
         <span class="mono">thresholds.yaml</span>; comments in the file are preserved.</p></div>
     </div>
     <div class="card">
@@ -345,11 +435,13 @@
   <!-- ── schedule ─────────────────────────────────────────────────── -->
   <section id="schedule" data-page="schedule" hidden>
     <div class="hero">
-      <div><h1>Schedule</h1><p>Run the whole loop unattended — fetch the enabled sources with the
+      <div><h1 data-eyebrow="Setup">Schedule</h1><p>Run the whole loop unattended — fetch the enabled sources with the
         Go worker, then extract, archive and synthesize. Registered with the host's own scheduler,
         so it survives a reboot and runs whether or not this console is open.</p></div>
     </div>
     <div id="sched-banner" class="stack"></div>
+    <div class="twocol">
+      <div class="col">
     <div class="card">
       <h3>Current schedule</h3>
       <dl class="dl" id="sched-state"></dl>
@@ -375,6 +467,15 @@
         </table>
       </div>
     </div>
+    <div class="card card--flush">
+      <div class="card-head">
+        <h3>Last scheduled output</h3>
+        <span class="row-end xs mono" id="sched-logpath"></span>
+      </div>
+      <div class="card-body"><pre id="sched-log">no scheduled run has written a log yet</pre></div>
+    </div>
+      </div>
+      <div class="col">
     <div class="card">
       <h3>What each tick scrapes</h3>
       <p class="xs">Leave every box ticked to walk the whole enabled list. The depth
@@ -435,19 +536,14 @@
         </div>
       </div>
     </div>
-    <div class="card card--flush">
-      <div class="card-head">
-        <h3>Last scheduled output</h3>
-        <span class="row-end xs mono" id="sched-logpath"></span>
       </div>
-      <div class="card-body"><pre id="sched-log">no scheduled run has written a log yet</pre></div>
     </div>
   </section>
 
   <!-- ── doctor ───────────────────────────────────────────────────── -->
   <section data-page="doctor" hidden>
     <div class="hero">
-      <div><h1>Doctor</h1><p>Silent-degradation guards (R40 / R55) plus the M2.2 calibration gate.</p></div>
+      <div><h1 data-eyebrow="Health">Doctor</h1><p>Checks that catch a pipeline quietly doing nothing, plus the scoring calibration gate.</p></div>
     </div>
     <div class="card"><h3>Health findings</h3><div id="doctor-card"></div></div>
     <div class="card">
@@ -461,7 +557,8 @@
   </section>
 
 </main>
-</div>
+</div><!-- /main-col -->
+</div><!-- /shell -->
 
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true">
@@ -519,6 +616,23 @@
   <div class="modal-footer">
     <button class="btn btn--ghost" id="modal-cancel">Cancel</button>
     <button class="btn btn--primary" id="modal-run">▶ Start Pipeline</button>
+  </div>
+</dialog>
+
+<dialog class="modal modal--sm" id="help-modal" aria-labelledby="help-title">
+  <div class="modal-head">
+    <h2 id="help-title">Keyboard shortcuts</h2>
+    <button class="btn btn--ghost btn--icon" id="help-close" aria-label="Close">✕</button>
+  </div>
+  <div class="modal-body">
+    <dl class="dl keys">
+      <dt><kbd>/</kbd></dt><dd>focus the page's search or filter box</dd>
+      <dt><kbd>r</kbd></dt><dd>refresh the current page</dd>
+      <dt><kbd>g</kbd> then <kbd>o</kbd> <kbd>r</kbd> <kbd>q</kbd> <kbd>i</kbd> <kbd>n</kbd> <kbd>c</kbd> <kbd>s</kbd> <kbd>d</kbd></dt><dd>go to Overview · Runs · Queue · Ideas · Nuggets · Clusters · Sources · Doctor</dd>
+      <dt><kbd>1</kbd> … <kbd>8</kbd></dt><dd>jump to the nth page in the rail</dd>
+      <dt><kbd>Esc</kbd></dt><dd>close the drawer or dialog</dd>
+      <dt><kbd>?</kbd></dt><dd>this sheet</dd>
+    </dl>
   </div>
 </dialog>
 

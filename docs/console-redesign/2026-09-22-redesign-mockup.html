@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-accent="red">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jester — redesign mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ------------------------------------------------------------------
+     TOKENS — measured on ayautomate.com, re-keyed for Jester.
+     Production version self-hosts Lexend (console runs offline).
+     ------------------------------------------------------------------ */
+  :root {
+    --bg: #f8f5f6;          /* page */
+    --bg-2: #f4f1f2;        /* section wash */
+    --bg-3: #f0edee;        /* muted / input */
+    --card: #ffffff;
+    --border: #e9e5e8;
+    --border-soft: #f0edee;
+    --ink: #201d25;
+    --ink-2: #4a3d52;
+    --muted: #6b5e72;
+    --soft: #8b7d92;
+    --ok: #2f8f5b;   --ok-bg: #e6f4ec;
+    --warn: #b8860b; --warn-bg: #fbf3dc;
+    --bad: #c8453d;  --bad-bg: #fbe7e5;
+    --info-bg: #ecebf7;
+    --radius: 10px;
+    --radius-card: 16px;
+    --nav-w: 232px;
+    --font: "Lexend", system-ui, sans-serif;
+  }
+  :root[data-accent="red"]      { --accent: #c8453d; --accent-ink: #fff; --accent-soft: #fbe7e5; --accent-line: #f1c3bf; }
+  :root[data-accent="gold"]     { --accent: #b8860b; --accent-ink: #fff; --accent-soft: #fbf3dc; --accent-line: #ecd9a0; }
+  :root[data-accent="lavender"] { --accent: #8082c1; --accent-ink: #fff; --accent-soft: #e4e6ff; --accent-line: #c7c9f8; }
+
+  :root[data-theme="dark"] {
+    --bg: #1a1523; --bg-2: #201b2a; --bg-3: #2a2434;
+    --card: #231d2d; --border: #332c3d; --border-soft: #2a2434;
+    --ink: #f4f1f2; --ink-2: #d9d3dc; --muted: #a79cae; --soft: #8b7d92;
+    --ok-bg: #1f3a2c; --warn-bg: #3d3416; --bad-bg: #42231f; --info-bg: #2a2740;
+  }
+  :root[data-theme="dark"][data-accent="red"]      { --accent-soft: #42231f; --accent-line: #6b342e; }
+  :root[data-theme="dark"][data-accent="gold"]     { --accent-soft: #3d3416; --accent-line: #6b5a1c; }
+  :root[data-theme="dark"][data-accent="lavender"] { --accent-soft: #2a2740; --accent-line: #4a4d84; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; }
+
+  /* ---------------- shell ---------------- */
+  .shell { display: grid; grid-template-columns: var(--nav-w) 1fr; min-height: 100vh; }
+  nav.side { padding: 24px 16px; border-right: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 20px; }
+  .brand .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+  .brand b { font-weight: 600; font-size: 17px; letter-spacing: -0.02em; }
+  .brand small { display: block; color: var(--soft); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 500; }
+  .group { margin-top: 14px; padding: 0 8px 6px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--soft); font-weight: 500; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius); color: var(--ink-2); font-weight: 500; font-size: 14px; cursor: pointer; border: 1px solid transparent; }
+  .item:hover { background: var(--bg-3); }
+  .item.active { background: var(--card); border-color: var(--border); color: var(--ink); }
+  .item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--soft); }
+  .item.active .dot { background: var(--accent); }
+  .item .count { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .item .count.new { color: var(--accent); }
+  nav .spacer { flex: 1; }
+  .health { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+  .health .led { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+
+  main { min-width: 0; }
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 16px 40px; border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 5; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); font-size: 12.5px; color: var(--muted); }
+  .chip code { font-family: ui-monospace, monospace; color: var(--ink-2); font-size: 12px; }
+  .topbar .grow { flex: 1; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); color: var(--ink); font-weight: 500; font-size: 14px; cursor: pointer; transition: background .12s, border-color .12s; }
+  .btn:hover { background: var(--bg-3); }
+  .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .btn.primary:hover { opacity: .92; }
+  .btn.accent { background: var(--card); border-color: var(--accent); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
+  .btn.sm { padding: 6px 10px; font-size: 13px; }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+  .btn.ghost:hover { background: var(--bg-3); color: var(--ink); }
+  .icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  .page { padding: 36px 40px 64px; max-width: 1200px; }
+  .page-head { margin-bottom: 28px; }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 500; margin-bottom: 10px; }
+  .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  h1 { margin: 0; font-size: 44px; line-height: 1.05; letter-spacing: -0.025em; font-weight: 600; }
+  h1 em { font-style: italic; font-weight: 500; color: var(--accent); }
+  .lede { margin: 10px 0 0; color: var(--muted); font-size: 16px; max-width: 60ch; }
+  h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  h3 { margin: 0; font-size: 14px; font-weight: 600; }
+
+  .banner { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--radius-card); border: 1px solid var(--border); background: var(--card); margin-bottom: 24px; }
+  .banner .i { width: 26px; height: 26px; border-radius: 8px; background: var(--info-bg); display: grid; place-items: center; color: var(--accent); flex: none; }
+  .banner b { font-weight: 600; }
+  .banner p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  .banner .btn { margin-left: auto; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 18px 20px; }
+  .stat .k { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: .02em; }
+  .stat .v { font-size: 34px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .stat .d { margin-top: 8px; font-size: 12.5px; color: var(--soft); display: flex; align-items: center; gap: 6px; }
+  .stat .d.up { color: var(--ok); } .stat .d.warn { color: var(--warn); } .stat .d.bad { color: var(--bad); }
+  .stat.alert { border-color: var(--accent-line); background: var(--accent-soft); }
+
+  .grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-card); padding: 20px; }
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .card-head .btn { margin-left: auto; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; row-gap: 10px; font-size: 14px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .kv .mono { font-family: ui-monospace, monospace; font-size: 13px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--bg-3); color: var(--ink-2); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.run { background: var(--accent-soft); color: var(--accent); }
+  .pill.plain::before { display: none; }
+
+  .bar { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; margin-top: 6px; }
+  .bar i { display: block; height: 100%; background: var(--ink); border-radius: 999px; }
+  .ledger { display: grid; grid-template-columns: 1fr auto; row-gap: 8px; font-size: 14px; }
+  .ledger span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .ledger .zero { color: var(--soft); }
+
+  .infra { display: flex; flex-direction: column; gap: 8px; }
+  .infra .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--border-soft); background: var(--bg); font-size: 14px; }
+  .infra .row .led { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .infra .row .led.off { background: var(--bad); } .infra .row .led.idle { background: var(--warn); }
+  .infra .row small { margin-left: auto; color: var(--soft); font-size: 12.5px; }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .actions .btn { justify-content: flex-start; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--soft); font-weight: 500; padding: 0 12px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: var(--bg-2); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .title-cell b { font-weight: 600; display: block; }
+  .title-cell span { color: var(--muted); font-size: 13px; }
+  .score { display: inline-grid; grid-auto-flow: column; gap: 4px; }
+  .score i { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-style: normal; font-size: 11.5px; font-weight: 600; background: var(--bg-3); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .score i.hi { background: var(--ok-bg); color: var(--ok); } .score i.lo { background: var(--bad-bg); color: var(--bad); }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .search { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--soft); font-size: 14px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; padding: 8px 12px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .seg button.on { background: var(--ink); color: var(--bg); }
+
+  /* posts page */
+  .posts { display: grid; grid-template-columns: 1fr 380px; gap: 14px; }
+  .post { display: grid; grid-template-columns: 56px 1fr auto; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-soft); align-items: start; cursor: pointer; }
+  .post:hover { background: var(--bg-2); }
+  .post.sel { background: var(--accent-soft); }
+  .post .sc { text-align: center; font-variant-numeric: tabular-nums; }
+  .post .sc b { display: block; font-size: 16px; font-weight: 600; }
+  .post .sc span { font-size: 11px; color: var(--soft); }
+  .post .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .post .meta .kw { color: var(--accent); }
+  .post h3 { font-weight: 500; font-size: 15px; line-height: 1.35; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--bg-3); font-size: 11.5px; color: var(--ink-2); }
+  .detail .body { font-size: 14px; color: var(--ink-2); line-height: 1.6; white-space: pre-line; }
+  .detail .comment { padding: 10px 12px; border-left: 2px solid var(--border); margin-top: 10px; font-size: 13.5px; color: var(--ink-2); }
+  .detail .comment small { display: block; color: var(--soft); margin-bottom: 4px; font-size: 12px; }
+  .detail .row-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+  /* mock controls (not part of the product) */
+  .mock { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; padding: 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 8px 30px rgba(0,0,0,.08); z-index: 10; font-size: 12px; align-items: center; }
+  .mock .sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+  .mock .sw.on { border-color: var(--ink); }
+  .pages > section { display: none; } .pages > section.on { display: block; }
+
+  @media (max-width: 1100px) { .stats { grid-template-columns: repeat(2,1fr);} .grid2, .grid3, .posts { grid-template-columns: 1fr; } }
+  @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } nav.side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; } .page, .topbar { padding-left: 16px; padding-right: 16px; } h1 { font-size: 32px; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="side">
+    <div class="brand">
+      <div class="mark">J</div>
+      <div><b>Jester</b><small>local pipeline</small></div>
+    </div>
+
+    <div class="group">Pipeline</div>
+    <a class="item active" data-go="overview"><span class="dot"></span>Overview</a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Runs</a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Queue<span class="count">33 614</span></a>
+
+    <div class="group">Archive</div>
+    <a class="item" data-go="ideas"><span class="dot"></span>Ideas<span class="count">1 321</span></a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Nuggets<span class="count">31 818</span></a>
+    <a class="item" data-go="posts"><span class="dot"></span>Posts<span class="count new">12 new</span></a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Clusters</a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Search</a>
+
+    <div class="group">Setup</div>
+    <a class="item" data-go="ideas"><span class="dot"></span>Sources<span class="count">115</span></a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Config</a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Schedule</a>
+    <a class="item" data-go="ideas"><span class="dot"></span>Doctor</a>
+
+    <div class="spacer"></div>
+    <div class="health"><span class="led"></span>All services up · next cycle 10:20</div>
+  </nav>
+
+  <main>
+    <div class="topbar">
+      <span class="chip">db <code>jester.db</code></span>
+      <span class="chip">config <code>config/</code></span>
+      <span class="chip"><span class="pill run plain" style="padding:0 6px">running</span> cycle-20260922T0920Z · archive</span>
+      <div class="grow"></div>
+      <button class="btn ghost" id="themeBtn" title="Toggle dark">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <button class="btn">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>refresh
+      </button>
+      <button class="btn primary">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run pipeline
+      </button>
+    </div>
+
+    <div class="pages">
+
+      <!-- ============================ OVERVIEW ============================ -->
+      <section id="overview" class="on">
+        <div class="page">
+          <div class="page-head">
+            <div class="eyebrow">Tuesday, 22 Sep 2026</div>
+            <h1>The archive is <em>growing</em> again.</h1>
+            <p class="lede">Reddit is back after 26 days: 30 comments from r/selfhosted this morning. Dedup is reachable, so the 71 309 deferred nuggets are being archived now.</p>
+          </div>
+
+          <div class="banner">
+            <div class="i"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></div>
+            <div><b>7 nuggets awaiting re-embed</b><p>The archive is searchable but incomplete until this clears. Usually a minute.</p></div>
+            <button class="btn sm">Re-embed now</button>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><div class="k">Nuggets</div><div class="v">31 818</div><div class="d up"><svg class="icon" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>+2 938 today</div></div>
+            <div class="stat"><div class="k">Ideas</div><div class="v">1 321</div><div class="d">no new ideas in 14 cycles</div></div>
+            <div class="stat"><div class="k">Pending batches</div><div class="v">33 614</div><div class="d warn">25 067 are real-estate listings</div></div>
+            <div class="stat alert"><div class="k">Failed batches</div><div class="v">0</div><div class="d">7 in the re-embed backlog</div></div>
+          </div>
+
+          <div class="grid2">
+            <div class="card">
+              <div class="card-head"><h2>Last run</h2><span class="pill run">running</span><button class="btn sm ghost">open log</button></div>
+              <dl class="kv">
+                <dt>run</dt><dd class="mono">cycle-20260922T082003Z</dd>
+                <dt>started</dt><dd>10:12 · 11 min ago</dd>
+                <dt>phase</dt><dd>archive → synthesize <div class="bar"><i style="width:62%"></i></div></dd>
+                <dt>kept / ideas</dt><dd>2 938 / —</dd>
+                <dt>duration</dt><dd>112 s <span style="color:var(--soft)">· expected 2 443 s</span></dd>
+                <dt>flags</dt><dd><span class="pill warn">LOW_NUGGETS</span></dd>
+              </dl>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><h2>Quota today</h2><span class="chip">2026-09-22</span></div>
+              <div class="ledger">
+                <span>reddit</span><span>30</span>
+                <span>hackernews</span><span>1 204</span>
+                <span>discourse</span><span>2 611</span>
+                <span>lemmy</span><span>118</span>
+                <span>stackexchange</span><span>86</span>
+                <span>youtube</span><span class="zero">0</span>
+                <span>github</span><span class="zero">0</span>
+                <span>steam</span><span class="zero">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid3">
+            <div class="card">
+              <div class="card-head"><h2>Infrastructure</h2></div>
+              <div class="infra">
+                <div class="row"><span class="led"></span>Ollama<small>8 models · native</small></div>
+                <div class="row"><span class="led"></span>cloakserve<small>:9222 · Chrome 146</small></div>
+                <div class="row"><span class="led"></span>Qdrant<small>1.19 · docker</small></div>
+                <div class="row"><span class="led idle"></span>Reddit API<small>no credentials</small></div>
+                <div class="row"><span class="led"></span>Go worker<small>go 1.22</small></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Quick actions</h2></div>
+              <div class="actions">
+                <button class="btn sm">▶ run pipeline</button>
+                <button class="btn sm">▶ live models</button>
+                <button class="btn sm">⇣ ingest</button>
+                <button class="btn sm">⇪ export CSV</button>
+                <button class="btn sm">requeue failed</button>
+                <button class="btn sm">re-embed backlog</button>
+                <button class="btn sm">retention sweep</button>
+                <button class="btn sm">smoke check</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Reddit watches</h2><button class="btn sm ghost">manage</button></div>
+              <table>
+                <tr><td class="title-cell"><b>r/selfhosted</b><span>backup, self-host*, migrat*</span></td><td class="num">8 new</td></tr>
+                <tr><td class="title-cell"><b>r/devops</b><span>score ≥ 20</span></td><td class="num">3 new</td></tr>
+                <tr><td class="title-cell"><b>r/dataengineering</b><span>flair: Discussion</span></td><td class="num">1 new</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ IDEAS ============================ -->
+      <section id="ideas">
+        <div class="page">
+          <div class="page-head">
+            <div class="eyebrow">Archive · 1 321 ideas</div>
+            <h1>Ideas worth a <em>second look</em>.</h1>
+            <p class="lede">Scored by the critic on demand, feasibility and competition. Open one to check its citations against the real comments.</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search ideas, problems, sources…</div>
+            <div class="seg"><button class="on">All</button><button>Saved</button><button>Discarded</button></div>
+            <div class="seg"><button class="on">Score</button><button>Newest</button><button>Evidence</button></div>
+            <button class="btn">Filters</button>
+          </div>
+
+          <div class="card" style="padding:8px 0">
+            <table>
+              <thead><tr><th style="width:44%">Idea</th><th>Platforms</th><th>Evidence</th><th>Score</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td class="title-cell"><b>Backup Drill Scheduler</b><span>Self-hosters never test restores; runs a monthly restore into a scratch VM and reports what broke.</span></td><td><span class="tag">reddit</span> <span class="tag">discourse</span></td><td class="num">14 nuggets · 3 threads</td><td><div class="score"><i class="hi">8</i><i class="hi">7</i><i>5</i></div></td><td><span class="pill ok">saved</span></td></tr>
+                <tr><td class="title-cell"><b>Pipeline Drift Ledger</b><span>Data engineers lose hours to silent schema changes upstream; diffs every source schema per run and pages the owner.</span></td><td><span class="tag">reddit</span> <span class="tag">hackernews</span></td><td class="num">22 nuggets · 5 threads</td><td><div class="score"><i class="hi">9</i><i>6</i><i class="lo">3</i></div></td><td><span class="pill">new</span></td></tr>
+                <tr><td class="title-cell"><b>Homelab Power Budget</b><span>Meters per-device draw and price, and says which container is costing the most per month.</span></td><td><span class="tag">reddit</span></td><td class="num">9 nuggets · 2 threads</td><td><div class="score"><i>6</i><i class="hi">8</i><i>5</i></div></td><td><span class="pill">new</span></td></tr>
+                <tr><td class="title-cell"><b>On-call Handover Notes</b><span>Pager rotations lose context at every handoff; captures the shift's incidents into a one-page brief.</span></td><td><span class="tag">reddit</span> <span class="tag">stackexchange</span></td><td class="num">11 nuggets · 4 threads</td><td><div class="score"><i class="hi">7</i><i class="hi">8</i><i>4</i></div></td><td><span class="pill bad">discarded</span></td></tr>
+                <tr><td class="title-cell"><b>Forum Migration Checker</b><span>Discourse admins moving hosts break every embed and redirect; crawls both and lists what changed.</span></td><td><span class="tag">discourse</span></td><td class="num">6 nuggets · 1 thread</td><td><div class="score"><i>5</i><i class="hi">9</i><i>6</i></div></td><td><span class="pill">new</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ POSTS (new) ============================ -->
+      <section id="posts">
+        <div class="page">
+          <div class="page-head">
+            <div class="eyebrow">Reddit watches · 12 new</div>
+            <h1>Posts your watches <em>caught</em>.</h1>
+            <p class="lede">Every post that matched a subreddit watch since the last cycle. Keep the ones worth reading later, dismiss the rest — nothing here is deleted.</p>
+          </div>
+
+          <div class="toolbar">
+            <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search saved posts…</div>
+            <div class="seg"><button class="on">New</button><button>Kept</button><button>Dismissed</button></div>
+            <div class="seg"><button class="on">All subs</button><button>r/selfhosted</button><button>r/devops</button></div>
+            <button class="btn">Export .md</button>
+          </div>
+
+          <div class="posts">
+            <div class="card" style="padding:0">
+              <div class="post sel">
+                <div class="sc"><b>342</b><span>67 cmts</span></div>
+                <div><h3>Hardening security for public services — what am I missing?</h3><div class="meta"><span>r/selfhosted</span><span>u/quietfox</span><span>2 h ago</span><span class="kw">self-host*</span><span class="tag">Help</span></div></div>
+                <span class="pill plain">api</span>
+              </div>
+              <div class="post">
+                <div class="sc"><b>128</b><span>31 cmts</span></div>
+                <div><h3>Migrated 40 containers from Portainer to plain compose. Notes.</h3><div class="meta"><span>r/selfhosted</span><span>u/etulastrada</span><span>5 h ago</span><span class="kw">migrat*</span></div></div>
+                <span class="pill plain">api</span>
+              </div>
+              <div class="post">
+                <div class="sc"><b>96</b><span>12 cmts</span></div>
+                <div><h3>Our restic backups were silently empty for 3 months</h3><div class="meta"><span>r/selfhosted</span><span>u/dbwatcher</span><span>9 h ago</span><span class="kw">backup</span><span class="tag">Guide</span></div></div>
+                <span class="pill plain">browser</span>
+              </div>
+              <div class="post">
+                <div class="sc"><b>54</b><span>19 cmts</span></div>
+                <div><h3>How do you keep on-call handovers from losing context?</h3><div class="meta"><span>r/devops</span><span>u/pager_pete</span><span>12 h ago</span><span class="kw">score ≥ 20</span></div></div>
+                <span class="pill plain">api</span>
+              </div>
+              <div class="post">
+                <div class="sc"><b>27</b><span>8 cmts</span></div>
+                <div><h3>Schema drift detection — anything better than dbt tests?</h3><div class="meta"><span>r/dataengineering</span><span>u/lakehouse_lu</span><span>1 d ago</span><span class="tag">Discussion</span></div></div>
+                <span class="pill plain">api</span>
+              </div>
+            </div>
+
+            <div class="card detail">
+              <div class="card-head"><span class="tag">r/selfhosted</span><span class="pill plain">342 · 67 comments</span><a class="btn sm ghost" style="margin-left:auto">open on Reddit ↗</a></div>
+              <h2 style="font-size:17px;line-height:1.35">Hardening security for public services — what am I missing?</h2>
+              <p class="body" style="margin-top:10px">I run Nextcloud, Immich and Vaultwarden behind Traefik with Authelia in front. Fail2ban on the host, Cloudflare tunnel, no ports open except 443. Is there anything obvious I'm missing before I let family use it?
+
+Currently no WAF and I've never actually tried a restore from my backups…</p>
+              <h3 style="margin-top:18px">Top comments</h3>
+              <div class="comment"><small>u/restic_rob · 88</small>"Never tested a restore" is the whole answer. Schedule one. Everything else is decoration until that works.</div>
+              <div class="comment"><small>u/zt_person · 41</small>Cloudflare tunnel + Authelia is fine. Add CrowdSec instead of fail2ban, it shares blocklists across your boxes.</div>
+              <div class="comment"><small>u/nc_admin · 23</small>Watch the Nextcloud brute-force setting, it silently disables itself after an upgrade.</div>
+              <div class="row-actions">
+                <button class="btn accent">Keep</button>
+                <button class="btn">Dismiss</button>
+                <button class="btn ghost">Add note</button>
+                <button class="btn ghost" style="margin-left:auto">Send to Coppler</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- mock-only controls: pick the accent (OPEN-3) and theme -->
+<div class="mock">
+  <span style="color:var(--muted)">accent</span>
+  <span class="sw on" data-acc="red" style="background:#c8453d" title="muted red"></span>
+  <span class="sw" data-acc="gold" style="background:#b8860b" title="flat gold"></span>
+  <span class="sw" data-acc="lavender" style="background:#8082c1" title="lavender (reference)"></span>
+  <span style="color:var(--muted);margin-left:6px">page</span>
+  <button class="btn sm" data-go="overview">Overview</button>
+  <button class="btn sm" data-go="ideas">Ideas</button>
+  <button class="btn sm" data-go="posts">Posts</button>
+</div>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('themeBtn').onclick = () => root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.querySelectorAll('.sw').forEach(s => s.onclick = () => { root.dataset.accent = s.dataset.acc; document.querySelectorAll('.sw').forEach(x => x.classList.toggle('on', x === s)); });
+  document.querySelectorAll('[data-go]').forEach(el => el.onclick = () => {
+    const id = el.dataset.go;
+    document.querySelectorAll('.pages > section').forEach(s => s.classList.toggle('on', s.id === id));
+    document.querySelectorAll('nav .item').forEach(i => i.classList.toggle('active', i.dataset.go === id && i.textContent.trim().startsWith({overview:'Overview',ideas:'Ideas',posts:'Posts'}[id])));
+    window.scrollTo(0,0);
+  });
+</script>
+</body>
+</html>

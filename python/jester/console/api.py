@@ -9,6 +9,7 @@ import re
 import socket
 import sqlite3
 import subprocess
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +58,7 @@ from jester.sources import (
     unique_name,
 )
 from jester.store import (
+    _NUGGET_DETAIL_COLUMNS,
     cluster_members,
     count_nuggets,
     delete_cluster_idea,
@@ -188,6 +190,68 @@ class ConsoleAPI:
             },
         }
 
+    def trends(self, days=7):
+        """Daily counts for the last `days` days: nuggets archived, ideas
+        synthesized, batches queued, runs that ended badly. The Overview tiles
+        used to show a total and nothing else, so "39 474 nuggets" could not
+        say it grew by ten thousand today or by nothing in a week."""
+        try:
+            days = max(2, min(30, int(days)))
+        except (TypeError, ValueError):
+            days = 7
+        from datetime import timedelta
+        today = datetime.now(timezone.utc).date()
+        keys = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+        since = keys[0]
+
+        def daily(sql):
+            out = {k: 0 for k in keys}
+            try:
+                for day, n in self.db.execute(sql, (since,)).fetchall():
+                    if day in out:
+                        out[day] = n
+            except Exception:  # noqa: BLE001 - table absent on a fresh db
+                pass
+            return [out[k] for k in keys]
+
+        return {
+            "ok": True,
+            "days": keys,
+            "nuggets": daily("SELECT substr(created_at,1,10) d, COUNT(*) FROM nuggets "
+                             "WHERE substr(created_at,1,10) >= ? GROUP BY d"),
+            "ideas": daily("SELECT substr(created_at,1,10) d, COUNT(*) FROM ideas "
+                           "WHERE substr(created_at,1,10) >= ? GROUP BY d"),
+            "queued": daily("SELECT substr(created_at,1,10) d, COUNT(*) FROM ingest_batch "
+                            "WHERE substr(created_at,1,10) >= ? GROUP BY d"),
+            "bad_runs": daily("SELECT substr(started_at,1,10) d, COUNT(*) FROM runs "
+                              "WHERE substr(started_at,1,10) >= ? "
+                              "AND (status IN ('failed','aborted') OR error IS NOT NULL) GROUP BY d"),
+        }
+
+    def running(self):
+        """The runs in flight right now, for the strip every page shows.
+        Cheap on purpose: a few columns, no JSON unpacking except the last
+        phase checkpoint."""
+        try:
+            rows = self.db.execute(
+                "SELECT run_id, started_at, origin, phase_checkpoints, n_comments, n_nuggets_kept "
+                "FROM runs WHERE status='running' ORDER BY id DESC LIMIT 3"
+            ).fetchall()
+        except Exception:  # noqa: BLE001
+            rows = []
+        out = []
+        for r in rows:
+            try:
+                phases = json.loads(r[3] or "[]")
+            except (TypeError, ValueError):
+                phases = []
+            out.append({
+                "run_id": r[0], "started_at": r[1], "origin": r[2] or "manual",
+                "phase": (phases[-1].get("phase") if phases else None) or "fetch",
+                "n_comments": r[4], "n_nuggets_kept": r[5],
+            })
+        return {"ok": True, "running": out}
+
     def runs(self, limit=25):
         out = []
         for r in get_runs(self.db, limit=limit):
@@ -200,9 +264,144 @@ class ConsoleAPI:
             out.append(d)
         return {"ok": True, "runs": out}
 
-    def ideas(self):
-        rows = list_ideas(self.db)
-        return {"ok": True, "ideas": [self._rowdict(r) for r in rows]}
+    # ---- the collector problem signals -------------------------------------------
+    #
+    # A separate database on purpose. The nugget pipeline and the problem-signal
+    # collector answer to different people and different rules — one is Jester's
+    # own archive, the other is a task deliverable whose every row has to say
+    # whether it is live or fixture. Mixing them into one file would make "how
+    # many live records do we have" a question about a join.
+
+    @property
+    def _signals_path(self) -> str:
+        return os.environ.get("JESTER_SIGNALS_DB") or str(
+            Path(self.db_path).parent / "signals-live.db")
+
+    def _signals_db(self):
+        from jester.signals import open_signals
+        return open_signals(self._signals_path)
+
+    def signals(self, *, audience="", community="", kind="", q="", mode="",
+                offset=0, limit=50):
+        """The archive, filtered, with the facet counts for what is left.
+
+        Facets are counted UNDER the other filters, not over the whole table:
+        a count that ignores the filters beside it tells you how many records
+        exist, when the question on screen is how many you would get if you
+        clicked.
+        """
+        from jester.signals import FIELD_NAMES, TABLE
+        offset, limit = int(offset or 0), max(1, min(int(limit or 50), 200))
+        if not Path(self._signals_path).exists():
+            return {"ok": True, "exists": False, "path": self._signals_path,
+                    "total": 0, "rows": [], "counts": {}, "facets": {}}
+
+        db = self._signals_db()
+        try:
+            filters = {"audience": audience, "community": community,
+                       "kind": kind, "mode": mode}
+            where, args = [], []
+            for col, val in filters.items():
+                if val:
+                    where.append(f"{col} = ?")
+                    args.append(val)
+            if q:
+                where.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
+                args += [f"%{q}%"] * 3
+            clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+            total = db.execute(
+                f"SELECT COUNT(*) FROM {TABLE} {clause}", args).fetchone()[0]
+            cols = ("record_id, mode, community, kind, author, title, excerpt, "
+                    "query, match_reason, match_confidence, audience, relevant, "
+                    "run_status, error, created_utc, first_seen_utc, last_seen_utc, "
+                    "edited_utc, removed_utc, revisions, source_url")
+            rows = [dict(r) for r in db.execute(
+                f"SELECT {cols} FROM {TABLE} {clause} "
+                "ORDER BY match_confidence DESC, first_seen_utc DESC "
+                "LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()]
+
+            facets = {}
+            for col in ("audience", "community", "kind", "mode"):
+                # Each facet is counted with its OWN filter dropped, so the
+                # options a reader can switch to still show a number.
+                sub = [f"{c} = ?" for c, v in filters.items() if v and c != col]
+                subargs = [v for c, v in filters.items() if v and c != col]
+                if q:
+                    sub.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
+                    subargs += [f"%{q}%"] * 3
+                sub_clause = ("WHERE " + " AND ".join(sub)) if sub else ""
+                facets[col] = [
+                    {"value": r[0], "n": r[1]} for r in db.execute(
+                        f"SELECT {col}, COUNT(*) FROM {TABLE} {sub_clause} "
+                        f"GROUP BY {col} ORDER BY COUNT(*) DESC", subargs).fetchall()
+                    if r[0]]
+
+            from jester.signals import counts as signal_counts
+            return {"ok": True, "exists": True, "path": self._signals_path,
+                    "total": total, "rows": rows, "facets": facets,
+                    "counts": signal_counts(db), "fields": FIELD_NAMES,
+                    "offset": offset, "limit": limit}
+        finally:
+            db.close()
+
+    def signal_runs(self, limit=25):
+        """The run ledger. Whether the collector ran on schedule, and whether
+        a failure was recovered, is read off this — so it is a first-class view
+        rather than something to grep out of a log."""
+        if not Path(self._signals_path).exists():
+            return {"ok": True, "exists": False, "runs": [], "sources": []}
+        from jester.signals.run import runs as signal_run_rows
+        from jester.signals.sources import available
+        db = self._signals_db()
+        try:
+            return {"ok": True, "exists": True,
+                    "runs": signal_run_rows(db, limit=int(limit or 25)),
+                    "sources": available()}
+        finally:
+            db.close()
+
+    IDEA_SORTS = {"overall", "created_at", "demand_signal", "feasibility", "competition", "id", "title", "status"}
+
+    def ideas(self, status="", q="", sort="overall", dir="desc", offset=0, limit=0):
+        """Ideas, filtered and sorted server-side, one page at a time.
+
+        1 321 rows each carrying a <select> froze the tab; the page now asks
+        for 50 and says how many exist. `limit=0` keeps the old
+        everything-at-once answer for callers that need it."""
+        all_rows = [self._rowdict(r) for r in list_ideas(self.db)]
+        counts = {}
+        for r in all_rows:
+            s = r.get("status") or "new"
+            counts[s] = counts.get(s, 0) + 1
+        rows = all_rows
+        q = (q or "").strip().lower()
+        if status and status != "all":
+            rows = [r for r in rows if r.get("status") == status]
+        if q:
+            rows = [r for r in rows if q in f"{r.get('title') or ''} {r.get('problem_statement') or ''}".lower()]
+        sort = sort if sort in self.IDEA_SORTS else "overall"
+        rev = (dir or "desc") != "asc"
+
+        def key(r):
+            v = r.get(sort)
+            if sort in ("title", "status", "created_at"):
+                return (v is None, str(v or "").lower())
+            try:
+                return (v is None, float(v))
+            except (TypeError, ValueError):
+                return (True, 0.0)
+        rows.sort(key=key, reverse=rev)
+        total = len(rows)
+        try:
+            offset = max(0, int(offset or 0))
+            limit = max(0, int(limit or 0))
+        except (TypeError, ValueError):
+            offset, limit = 0, 0
+        page = rows[offset:offset + limit] if limit else rows
+        return {"ok": True, "ideas": page, "total": total, "offset": offset,
+                "limit": limit, "sort": sort, "dir": "desc" if rev else "asc",
+                "status_counts": counts}
 
     def idea(self, idea_id):
         row = get_idea(self.db, int(idea_id))
@@ -224,6 +423,124 @@ class ConsoleAPI:
             })
         d["citations"] = cites
         return {"ok": True, "idea": d}
+
+    #: Indexes the Nuggets facet rail needs. Without them every filter click
+    #: rescans 80k rows for three GROUP BYs and four counts — measured at
+    #: 630 ms of SQL per click before, 150 ms after. Created on demand so a
+    #: fresh database gets them without a migration step someone has to run.
+    NUGGET_INDEXES = (
+        ("idx_nuggets_platform", "nuggets(platform)"),
+        ("idx_nuggets_community", "nuggets(community)"),
+        ("idx_nuggets_category", "nuggets(category)"),
+        ("idx_nuggets_trivial", "nuggets(trivial)"),
+        ("idx_nuggets_unsynth", "nuggets(synthesized_at)"),
+    )
+    _indexed: set = set()
+
+    def _ensure_nugget_indexes(self):
+        key = str(self.db_path)
+        if key in self._indexed:
+            return
+        try:
+            for name, target in self.NUGGET_INDEXES:
+                self.db.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - a read page must not die on an index
+            pass
+        self._indexed.add(key)
+
+    NUGGET_FLAGS = {
+        "trivial": "trivial = 1",
+        "reembed": "needs_reembed = 1",
+        "unclustered": "synthesized_at IS NULL",
+        "flagged": "(trivial = 1 OR needs_reembed = 1)",
+    }
+
+    def nuggets_page(self, offset=0, limit=100, platform="", community="", category="",
+                     flag="", q=""):
+        """One page of the archive plus the facet counts the rail needs.
+
+        The old endpoint handed the console every row (39 745 at the time of
+        writing) and the browser painted them all. This one filters in SQL,
+        returns a page, and reports the true total and the per-facet counts so
+        the rail can say "reddit 935" without loading reddit."""
+        self._ensure_nugget_indexes()
+        # Each filter is (column-or-None, clause, args). The column lets a
+        # facet drop its own filter and keep the others, so a count is always
+        # "what you would get if you clicked this".
+        filters = []
+        if platform:
+            filters.append(("platform", "platform = ?", [platform]))
+        if community:
+            filters.append(("community", "COALESCE(community,'') = ?", [community]))
+        if category:
+            filters.append(("category", "COALESCE(category,'') = ?", [category]))
+        if flag in self.NUGGET_FLAGS:
+            filters.append((None, self.NUGGET_FLAGS[flag], []))
+        q = (q or "").strip()
+        if q:
+            filters.append((None, "(extracted_insight LIKE ? OR raw_text LIKE ? OR unique_key LIKE ?)",
+                            [f"%{q}%"] * 3))
+
+        def build(skip=None):
+            ws, args = [], []
+            for col, clause, a in filters:
+                if skip and col == skip:
+                    continue
+                ws.append(clause); args += a
+            return ((" WHERE " + " AND ".join(ws)) if ws else ""), args
+
+        sql_where, args = build()
+        try:
+            offset = max(0, int(offset or 0)); limit = max(1, min(500, int(limit or 100)))
+        except (TypeError, ValueError):
+            offset, limit = 0, 100
+        self.db.row_factory = sqlite3.Row
+        # Only what the list renders. The full row is 44 columns and 2 KB —
+        # `raw_text` alone was two thirds of a 205 KB response for one page —
+        # and the table shows nine of them. Same rule the queue already
+        # follows: the list carries what you scan, the detail view fetches the
+        # body when you open one.
+        cols = ("unique_key, category, extracted_insight, platform, community, source_url, "
+                "trivial, needs_reembed, synthesized_at")
+        try:
+            rows = self.db.execute(
+                f"SELECT {cols} FROM nuggets{sql_where} ORDER BY id DESC LIMIT ? OFFSET ?",
+                (*args, limit, offset)).fetchall()
+            total = self.db.execute(f"SELECT COUNT(*) FROM nuggets{sql_where}", args).fetchone()[0]
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+        def facet(col):
+            w2, a2 = build(skip=col)
+            try:
+                return [{"value": r[0] or "", "n": r[1]} for r in self.db.execute(
+                    f"SELECT COALESCE({col},''), COUNT(*) FROM nuggets{w2} GROUP BY 1 ORDER BY 2 DESC LIMIT 60",
+                    a2).fetchall()]
+            except Exception:  # noqa: BLE001
+                return []
+
+        flags = {}
+        for name, cond in self.NUGGET_FLAGS.items():
+            try:
+                flags[name] = self.db.execute(
+                    f"SELECT COUNT(*) FROM nuggets{sql_where}{' AND ' if sql_where else ' WHERE '}{cond}", args
+                ).fetchone()[0]
+            except Exception:  # noqa: BLE001
+                flags[name] = 0
+        return {
+            "ok": True,
+            "nuggets": [self._rowdict(r) for r in rows],
+            "total": total,
+            "archive_total": count_nuggets(self.db),
+            "offset": offset, "limit": limit,
+            "facets": {
+                "platform": facet("platform"),
+                "community": facet("community"),
+                "category": facet("category"),
+                "flags": flags,
+            },
+        }
 
     def nuggets(self, limit=None):
         """Every archived nugget, newest first.
@@ -262,7 +579,13 @@ class ConsoleAPI:
     #: fetches that batch.
     QUEUE_PAGE_SIZE = 300
 
-    def _queue_rows(self, status, limit):
+    QUEUE_KINDS = ("comment", "listing")
+
+    @staticmethod
+    def _kind_clause(kind):
+        return (" AND kind = ?", (kind,)) if kind in ConsoleAPI.QUEUE_KINDS else ("", ())
+
+    def _queue_rows(self, status, limit, kind=""):
         """Batch metadata plus a comment COUNT, without the comments.
 
         json_array_length does the counting inside SQLite. Selecting the blob
@@ -275,22 +598,23 @@ class ConsoleAPI:
                 "       created_at, claimed_at, attempts, error, "
                 "       CASE WHEN json_valid(comments) "
                 "            THEN json_array_length(comments) ELSE NULL END AS n_comments "
-                "FROM ingest_batch WHERE status = ? "
+                "FROM ingest_batch WHERE status = ?" + self._kind_clause(kind)[0] + " "
                 "ORDER BY id LIMIT ?",
-                (status, int(limit)),
+                (status, *self._kind_clause(kind)[1], int(limit)),
             ).fetchall()
         except Exception:  # noqa: BLE001 - table absent until the worker runs
             return []
 
-    def _queue_totals(self):
-        """Per-status batch and comment counts for the whole queue."""
+    def _queue_totals(self, kind=""):
+        """Per-status batch and comment counts for the whole queue (or one kind)."""
         out = {}
+        clause, args = self._kind_clause(kind)
         try:
             rows = self.db.execute(
                 "SELECT status, COUNT(*), "
                 "       COALESCE(SUM(CASE WHEN json_valid(comments) "
                 "                    THEN json_array_length(comments) ELSE 0 END), 0) "
-                "FROM ingest_batch GROUP BY status"
+                "FROM ingest_batch WHERE 1=1" + clause + " GROUP BY status", args
             ).fetchall()
         except Exception:  # noqa: BLE001
             return out
@@ -298,7 +622,25 @@ class ConsoleAPI:
             out[status] = {"batches": batches, "comments": comments}
         return out
 
-    def _queue_by_platform(self, status):
+    def _queue_by_kind(self, status):
+        """Comment batches and listing batches are two queues wearing one
+        table: different treatment, different budget. The page shows them as
+        two tabs, and the pending headline must not add them together."""
+        out = {k: {"batches": 0, "items": 0} for k in self.QUEUE_KINDS}
+        try:
+            rows = self.db.execute(
+                "SELECT kind, COUNT(*), "
+                "  COALESCE(SUM(CASE WHEN kind='listing' AND json_valid(listings) THEN json_array_length(listings) "
+                "                    WHEN json_valid(comments) THEN json_array_length(comments) ELSE 0 END), 0) "
+                "FROM ingest_batch WHERE status = ? GROUP BY kind", (status,)
+            ).fetchall()
+        except Exception:  # noqa: BLE001
+            return out
+        for kind, batches, items in rows:
+            out[kind or "comment"] = {"batches": batches, "items": items}
+        return out
+
+    def _queue_by_platform(self, status, kind=""):
         """Where the waiting work came from.
 
         This is the number that matters most on the page: a queue that is 93%
@@ -311,9 +653,9 @@ class ConsoleAPI:
                 "SELECT platform, COUNT(*), "
                 "       COALESCE(SUM(CASE WHEN json_valid(comments) "
                 "                    THEN json_array_length(comments) ELSE 0 END), 0) "
-                "FROM ingest_batch WHERE status = ? GROUP BY platform "
+                "FROM ingest_batch WHERE status = ?" + self._kind_clause(kind)[0] + " GROUP BY platform "
                 "ORDER BY 3 DESC",
-                (status,),
+                (status, *self._kind_clause(kind)[1]),
             ).fetchall()
         except Exception:  # noqa: BLE001
             return []
@@ -349,7 +691,7 @@ class ConsoleAPI:
             "reason": st.get("reason") or "",
         }
 
-    def queue(self, status="pending", limit=None):
+    def queue(self, status="pending", limit=None, kind=""):
         """Everything scraped and not yet treated.
 
         The gap this fills: ingestion and treatment run on separate clocks by
@@ -359,14 +701,17 @@ class ConsoleAPI:
         only as a single number on the Overview page.
         """
         cap = int(limit or self.QUEUE_PAGE_SIZE)
-        rows = self._queue_rows(status, cap)
-        totals = self._queue_totals()
+        kind = kind if kind in self.QUEUE_KINDS else ""
+        rows = self._queue_rows(status, cap, kind)
+        totals = self._queue_totals(kind)
         here = totals.get(status, {"batches": 0, "comments": 0})
         return {
             "ok": True,
             "status": status,
+            "kind": kind,
             "totals": totals,
-            "by_platform": self._queue_by_platform(status),
+            "by_kind": self._queue_by_kind(status),
+            "by_platform": self._queue_by_platform(status, kind),
             "treatment": self._treatment_block(),
             # R55: the page says what it is showing versus what exists, so a
             # capped list can never read as the whole queue.
@@ -1142,7 +1487,24 @@ class ConsoleAPI:
         `jester.worker` alongside the code that runs the binary."""
         return go_binary()
 
-    def infra(self):
+    #: /api/infra probes Ollama, cloakserve, Qdrant and the Go toolchain on
+    #: every call — about 3 s — and the console asked for it on every page
+    #: open, which was most of the blank first paint. One answer is good for
+    #: 30 s; a service that flips inside that window shows up on the next
+    #: refresh, and the run buttons re-check before they act anyway.
+    INFRA_TTL_S = 30
+    _infra_cache: dict = {}
+
+    def infra(self, fresh=False):
+        key = str(self.db_path)
+        hit = self._infra_cache.get(key)
+        if hit and not fresh and time.monotonic() - hit[0] < self.INFRA_TTL_S:
+            return dict(hit[1], cached=True)
+        out = self._infra_probe()
+        self._infra_cache[key] = (time.monotonic(), out)
+        return dict(out, cached=False)
+
+    def _infra_probe(self):
         def tcp(host, port, timeout=1.5):
             try:
                 with socket.create_connection((host, port), timeout=timeout):
