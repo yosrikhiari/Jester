@@ -197,3 +197,73 @@ def test_repo_root_points_at_the_project(tmp_path):
     root = schedule.repo_root()
     assert (root / "python" / "jester").is_dir()
     assert (root / "config").is_dir()
+
+
+# ---- a scheduled run has to actually happen on a laptop --------------------
+
+def test_install_sets_the_three_settings_schtasks_cannot(monkeypatch):
+    """Task Scheduler's defaults refuse to start on battery, kill a run when
+    you unplug, and never retry a slot missed while asleep. Read off this
+    machine's own JesterNightly task, all three were wrong — so a nightly job
+    on an unplugged or sleeping laptop produced nothing, silently. `schtasks`
+    has no switch for any of them, which is why they were never set."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: True)
+    fake = FakeRun()
+    monkeypatch.setattr(schedule, "_run", fake)
+
+    res = schedule.install(at="04:30", db="data/j.db", config="config")
+    assert res["ok"] is True
+    powershell = [c for c in fake.calls if c and c[0] == "powershell"]
+    assert powershell, "nothing applied the power settings"
+    script = powershell[0][-1]
+    assert "-StartWhenAvailable" in script
+    assert "-AllowStartIfOnBatteries" in script
+    assert "-DontStopIfGoingOnBatteries" in script
+    # Waking someone's laptop at 03:00 to scrape a forum is their decision,
+    # and StartWhenAvailable already covers the missed slot by running late.
+    assert "-WakeToRun" not in script
+
+
+def test_a_task_that_cannot_be_hardened_says_so(monkeypatch):
+    """The task still works on mains power, so this downgrades the install
+    rather than failing it — but an operator who believes the missed-run
+    setting is on when it is not will read an empty day as an empty internet."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: True)
+
+    class Refuses(FakeRun):
+        def __call__(self, cmd, **kw):
+            out = super().__call__(cmd, **kw)
+            if cmd and cmd[0] == "powershell":
+                out.returncode = 1
+                out.stderr = "Access is denied."
+            return out
+
+    monkeypatch.setattr(schedule, "_run", Refuses())
+    res = schedule.install(at="04:30", db="data/j.db", config="config")
+    assert res["ok"] is True, "a task on mains power is still a working task"
+    assert "WARNING" in res["detail"] and "will not catch up" in res["detail"]
+
+
+def test_signals_is_schedulable_and_gets_its_own_task():
+    assert "signals" in schedule.TASK_FOR_COMMAND
+    assert schedule.TASK_FOR_COMMAND["signals"] != schedule.TASK_NAME
+
+
+def test_the_signals_launcher_runs_the_subcommand_and_drops_config():
+    """`signals` is a sub-command (`signals run`), and it has no `--config`
+    option — the launcher's fixed `--db X --config Y` shape would have made it
+    exit 2 on every single tick."""
+    script = schedule.launcher_script("data/signals.db", "config", "py.exe", "signals")
+    assert "jester.cli signals run" in script
+    assert "--config" not in script
+    assert '--db "data/signals.db"' in script
+    # The commands that do take it must be untouched.
+    assert '--config "config"' in schedule.launcher_script(
+        "data/j.db", "config", "py.exe", "cycle")
+
+
+def test_the_signals_cron_line_matches_the_same_shape():
+    line = schedule.cron_line("03:00", "data/signals.db", "config", "py.exe",
+                              command="signals")
+    assert "jester.cli signals run" in line
+    assert "--config" not in line

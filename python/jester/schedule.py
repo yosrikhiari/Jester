@@ -155,6 +155,7 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
     root = repo_root()
     py = python or sys.executable
     args = "".join(f' "{a}"' for a in extra)
+    cfg = f' --config "{config}"' if command_takes_config(command) else ""
     log = log_path(command)
     return (
         "@echo off\r\n"
@@ -183,7 +184,8 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # exits. From outside, a healthy long run and a hung one look identical,
         # and the console only says "running". One flag makes the difference
         # between the two visible while it is still happening.
-        f'"{py}" -u -m jester.cli {command} --db "{db}" --config "{config}"{args} '
+        f'"{py}" -u -m jester.cli {" ".join(command_argv(command))} '
+        f'--db "{db}"{cfg}{args} '
         f'>>"{log}" 2>&1\r\n'
         f'>>"{log}" echo [%DATE% %TIME%] jester {command} exited %ERRORLEVEL%\r\n'
     )
@@ -221,6 +223,57 @@ def write_launcher(db, config, python, command="cycle", extra=()) -> Path:
     return path
 
 
+#: The three Task Scheduler settings that decide whether a scheduled run on a
+#: laptop actually happens. All three default the wrong way for this, and
+#: `schtasks /create` has no switch for any of them — they need task XML or
+#: PowerShell, which is why every task this module has ever registered carried
+#: the defaults.
+#:
+#: Read off this machine's own JesterNightly task before the fix:
+#:
+#:     StartWhenAvailable         : False   <- a slot missed while asleep is
+#:                                            never retried
+#:     DisallowStartIfOnBatteries : True    <- the run is refused on battery
+#:     StopIfGoingOnBatteries     : True    <- unplugging kills a run
+#:
+#: So a nightly job on an unplugged or sleeping laptop produces nothing, and
+#: produces it silently: no error, no row, no notification. For a milestone
+#: that asks for "three scheduled daily runs", that is the exact failure the
+#: schedule exists to rule out.
+#:
+#: WakeToRun is deliberately NOT set. Waking someone's laptop at 03:00 to
+#: scrape a forum is a decision for the person who owns the laptop, and
+#: StartWhenAvailable already covers the missed slot by running late.
+_POWER_SETTINGS_PS = (
+    "$ErrorActionPreference='Stop';"
+    "$s = New-ScheduledTaskSettingsSet"
+    " -StartWhenAvailable"
+    " -AllowStartIfOnBatteries"
+    " -DontStopIfGoingOnBatteries"
+    " -MultipleInstances IgnoreNew;"
+    "Set-ScheduledTask -TaskName '{task}' -Settings $s | Out-Null"
+)
+
+
+def apply_power_settings(task_name: str) -> dict:
+    """Make a registered task survive a laptop. Best-effort by design.
+
+    A task that runs on mains power and a woken machine is still a working
+    task, so a failure here downgrades the install rather than failing it —
+    but it is reported, because an operator who thinks the missed-run setting
+    is on when it is not is worse off than one who knows it is off.
+    """
+    if not is_windows():
+        return {"ok": True, "applied": False, "detail": "not Windows"}
+    p = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+              _POWER_SETTINGS_PS.format(task=task_name)])
+    if p.returncode != 0:
+        return {"ok": False, "applied": False,
+                "detail": (p.stderr or p.stdout).strip()[:200]}
+    return {"ok": True, "applied": True,
+            "detail": "runs when available, and on battery"}
+
+
 def _windows_action(db, config, python, command="cycle", extra=()):
     """The argv schtasks registers: the generated launcher, nothing more."""
     return [str(write_launcher(db, config, python, command, extra))]
@@ -237,7 +290,32 @@ TASK_FOR_COMMAND = {
     "cycle": TASK_NAME,
     "ingest": TASK_NAME + "Scrape",
     "treat": TASK_NAME + "Treat",
+    "signals": TASK_NAME + "Signals",
 }
+
+#: What each schedulable command expands to on the command line, and whether it
+#: takes `--config`.
+#:
+#: `signals` needed both: it is a sub-command (`signals run`, not `signals`),
+#: and it has no `--config` option, so the launcher's fixed
+#: `--db X --config Y` shape would have made it exit 2 on every tick. A table
+#: is cheaper than a branch in the launcher, and it is the place to look when
+#: the next command does not fit the mould either.
+COMMAND_SPEC = {
+    "cycle": {"argv": ("cycle",), "config": True},
+    "ingest": {"argv": ("ingest",), "config": True},
+    "treat": {"argv": ("treat",), "config": True},
+    "signals": {"argv": ("signals", "run"), "config": False},
+}
+
+
+def command_argv(command: str):
+    """The argv tail for a command, without the `--db` / `--config` pair."""
+    return COMMAND_SPEC.get(command, {"argv": (command,)})["argv"]
+
+
+def command_takes_config(command: str) -> bool:
+    return COMMAND_SPEC.get(command, {"config": True}).get("config", True)
 
 
 def humanise_repeat(raw: str) -> str:
@@ -491,7 +569,10 @@ def installed_options(task_name: str = TASK_NAME, command: str = "cycle") -> dic
     except OSError:
         return {}
     for line in text.splitlines():
-        if f"jester.cli {command}" not in line:
+        # `signals` registers as `signals run`, so match the argv tail rather
+        # than the bare key — otherwise a signals line would never be found
+        # and `status` would report it uninstalled while it ran every night.
+        if f"jester.cli {' '.join(command_argv(command))}" not in line:
             continue
         # The launcher quotes every argument it interpolates, and the trailing
         # redirect is not an argument — cut it before splitting.
@@ -534,10 +615,12 @@ def cron_line(
         hh, _, mm = at.partition(":")
         when = f"{int(mm or 0)} {int(hh)} * * *"
     args = "".join(f" {a}" for a in extra)
+    cfg = f" --config {config}" if command_takes_config(command) else ""
     return (
         f"{when}  "
         f"cd {root} && PYTHONPATH={root / 'python'} "
-        f"{py} -m jester.cli {command} --db {db} --config {config}{args} "
+        f"{py} -m jester.cli {' '.join(command_argv(command))} "
+        f"--db {db}{cfg}{args} "
         f">> {log_path(command)} 2>&1"
     )
 
@@ -611,15 +694,28 @@ def install(
             "action": "create",
             "detail": (p.stderr or p.stdout).strip(),
         }
+    # schtasks cannot set these, so they are applied to the task it just made.
+    power = apply_power_settings(task_name)
     what = {
         "cycle": "jester cycle: ingest + pipeline",
         "ingest": "jester ingest: scrape only, no LLM",
         "treat": "jester treat: drain the queue while the quota lasts",
     }.get(command, f"jester {command}")
+    detail = f"{task_name} runs {cadence} ({what})"
+    if power.get("applied"):
+        detail += f"; {power['detail']}"
+    elif not power.get("ok"):
+        # Named, not swallowed: the task works on mains power either way, but
+        # an operator who believes the missed-run setting is on when it is not
+        # will read an empty day as an empty internet.
+        detail += (f"; WARNING could not set power/missed-run options "
+                   f"({power.get('detail', 'unknown')}) — a run missed while "
+                   "asleep or on battery will not catch up")
     return {
         "ok": True,
         "action": "create",
-        "detail": f"{task_name} runs {cadence} ({what})",
+        "detail": detail,
+        "power": power,
     }
 
 
