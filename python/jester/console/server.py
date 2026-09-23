@@ -153,6 +153,7 @@ class Handler(BaseHTTPRequestHandler):
             g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
             self._json(api.signals(audience=g("audience"), community=g("community"),
                                    kind=g("kind"), q=g("q"), mode=g("mode"),
+                                   outcome=g("outcome"),
                                    offset=g("offset", 0), limit=g("limit", 50)))
             return
         if path == "/api/signals/runs":

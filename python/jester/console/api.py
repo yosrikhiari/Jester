@@ -285,7 +285,7 @@ class ConsoleAPI:
         return open_signals(self._signals_path)
 
     def signals(self, *, audience="", community="", kind="", q="", mode="",
-                offset=0, limit=50):
+                outcome="", offset=0, limit=50):
         """The archive, filtered, with the facet counts for what is left.
 
         Facets are counted UNDER the other filters, not over the whole table:
@@ -302,7 +302,7 @@ class ConsoleAPI:
         db = self._signals_db()
         try:
             filters = {"audience": audience, "community": community,
-                       "kind": kind, "mode": mode}
+                       "kind": kind, "mode": mode, "outcome": outcome}
             where, args = [], []
             for col, val in filters.items():
                 if val:
@@ -322,6 +322,11 @@ class ConsoleAPI:
             cols = ("record_id, mode, community, kind, author, title, excerpt, "
                     "query, match_reason, match_confidence, audience, relevant, "
                     "company, buyer_intent, "
+                    # The one column a person writes, and the only evidence in
+                    # the archive that is not the rules agreeing with
+                    # themselves. A console that cannot show it can only
+                    # report how confident the classifier is about itself.
+                    "outcome, outcome_at, outcome_note, "
                     "run_status, error, created_utc, first_seen_utc, last_seen_utc, "
                     "edited_utc, removed_utc, revisions, source_url")
             rows = [dict(r) for r in db.execute(
@@ -330,7 +335,7 @@ class ConsoleAPI:
                 "LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()]
 
             facets = {}
-            for col in ("audience", "community", "kind", "mode"):
+            for col in ("audience", "community", "kind", "mode", "outcome"):
                 # Each facet is counted with its OWN filter dropped, so the
                 # options a reader can switch to still show a number.
                 sub = [f"{c} = ?" for c, v in filters.items() if v and c != col]

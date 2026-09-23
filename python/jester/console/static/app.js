@@ -2567,7 +2567,7 @@ applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark'
  * the runs that produced them, then the records. A reader's first question is
  * "did the collector run and what did it find", not "show me row 1".
  */
-const SIG = { audience: '', community: '', kind: '', mode: '', q: '', offset: 0, limit: 50 };
+const SIG = { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', offset: 0, limit: 50 };
 let SIG_FACETS = {};
 let SIG_TOTAL = 0;
 let SIG_EXISTS = true;
@@ -2595,7 +2595,8 @@ function signalFacetBlock(title, key, items, limit) {
 }
 
 function renderSignalActive() {
-  const label = { audience: 'audience', community: 'source', kind: 'kind', mode: 'mode', q: 'text' };
+  const label = { audience: 'audience', community: 'source', kind: 'kind',
+                  mode: 'mode', outcome: 'outcome', q: 'text' };
   const chips = Object.keys(label).filter(k => SIG[k]).map(k =>
     '<span class="fchip"><b>' + label[k] + '</b> ' + esc(SIG[k])
     + '<button data-sfacet-drop="' + k + '" aria-label="Remove ' + label[k] + ' filter">✕</button></span>'
@@ -2656,7 +2657,7 @@ function renderSignals(rows) {
     /* The empty state has to know why it is empty. "Nothing here" on a
      * filtered view of a full archive sends people to re-run a collector that
      * is working fine. */
-    const filtered = ['audience', 'community', 'kind', 'mode', 'q'].some(k => SIG[k]);
+    const filtered = ['audience', 'community', 'kind', 'mode', 'outcome', 'q'].some(k => SIG[k]);
     const msg = !SIG_EXISTS
       ? 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.'
       : filtered
@@ -2671,6 +2672,18 @@ function renderSignals(rows) {
     if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
     if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
     if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
+    // What came of it, if anyone has said. An untouched buyer signal is not
+    // a neutral fact - it is the reason none of the precision numbers on this
+    // page mean anything yet - so it is shown rather than left blank.
+    if (r.audience === 'buyer') {
+      const tone = { replied: 'tone-ok', meeting: 'tone-ok', won: 'tone-ok',
+                     contacted: 'tone-info', no: 'tone-neutral', unfit: 'tone-bad' };
+      flags.push(r.outcome
+        ? '<span class="pill pill--sm ' + (tone[r.outcome] || 'tone-neutral') + '">'
+          + esc(r.outcome) + (r.outcome_note ? ': ' + esc(r.outcome_note.slice(0, 60)) : '')
+          + '</span>'
+        : '<span class="pill pill--sm tone-warn">not worked yet</span>');
+    }
     if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
     if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
     // A hiring record names its own company and quotes its engagement line;
@@ -2725,7 +2738,8 @@ async function loadSignals() {
     signalFacetBlock('Audience', 'audience', SIG_FACETS.audience || [], 6)
     + signalFacetBlock('Source', 'community', SIG_FACETS.community || [], 10)
     + signalFacetBlock('Kind', 'kind', SIG_FACETS.kind || [], 4)
-    + signalFacetBlock('Mode', 'mode', SIG_FACETS.mode || [], 4);
+    + signalFacetBlock('Mode', 'mode', SIG_FACETS.mode || [], 4)
+    + signalFacetBlock('Outcome', 'outcome', SIG_FACETS.outcome || [], 8);
   renderSignalActive();
   applySignalFacetsOpen();
   renderSignals(d.rows || []);
@@ -2746,7 +2760,7 @@ $('#signals-facets').addEventListener('click', e => {
   loadSignals();
 });
 function clearSignalFilters() {
-  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', q: '', offset: 0 });
+  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', offset: 0 });
   $('#signals-q').value = '';
   loadSignals();
 }
