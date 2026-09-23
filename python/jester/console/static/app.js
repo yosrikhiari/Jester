@@ -228,8 +228,11 @@ function toast(msg, tone = 'ok') {
   close.onclick = () => el.remove();
   el.append(text, close);
   $('#toasts').appendChild(el);
-  // Failures stay until dismissed — an error that vanishes is an error missed.
-  if (tone !== 'bad') setTimeout(() => el.remove(), 5000);
+  // Only success disappears on its own. 'bad' is an error and 'warn' is
+  // something the operator still has to do — a crontab line to copy, a job to
+  // go and look at — and a message that vanishes after five seconds is a
+  // message missed either way.
+  if (tone === 'ok') setTimeout(() => el.remove(), 5000);
 }
 
 // ── page registry ───────────────────────────────────────────────────────
@@ -2278,8 +2281,12 @@ async function installSchedule(body, el) {
   // A POSIX install is `ok:false` with the crontab line as its detail — that
   // is an instruction, not a failure, so it must not render as an error.
   const manual = res.action === 'manual';
+  // `manual` was computed and then thrown away: both arms of the ternary
+  // below said 'bad', so the crontab line the operator is supposed to copy
+  // was rendered in red as a failure — the exact thing the comment above
+  // says it must not be.
   toast(res.detail || (res.ok ? 'scheduled' : 'could not schedule'),
-        res.ok ? 'ok' : (manual ? 'bad' : 'bad'));
+        res.ok ? 'ok' : (manual ? 'warn' : 'bad'));
   if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
 }
 
