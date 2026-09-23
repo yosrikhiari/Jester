@@ -63,8 +63,11 @@ def compute_price_per_m2(price: Optional[int], surface) -> Optional[float]:
     try:
         if price is None or surface is None:
             return None
-        s = float(surface) if isinstance(surface, str) else float(surface)
-        p = float(price) if isinstance(price, str) else float(price)
+        # float() reads a numeric string and a number the same way, so the
+        # isinstance check that used to guard this did nothing: both arms of
+        # the conditional were the identical call.
+        s = float(surface)
+        p = float(price)
         if s > 0:
             return p / s
     except Exception:
@@ -248,8 +251,8 @@ def compute_market_trends(listings: list[dict], area_field: str, period_days: in
             continue
 
         try:
-            s = float(surface) if isinstance(surface, str) else float(surface)
-            p = float(price) if isinstance(price, str) else float(price)
+            s = float(surface)   # see compute_price_per_m2: str and number
+            p = float(price)     # take the same path through float()
             ppm2 = p / s if s > 0 else None
             if ppm2 is None:
                 continue

@@ -5,8 +5,31 @@ FROM node:24-slim
 
 WORKDIR /app
 
+# `ci` rather than `install`: it installs exactly what package-lock.json
+# resolved, and fails instead of quietly drifting when the lock and the
+# manifest disagree. A dev image that silently picks up a different tree than
+# the one that was tested is a dev image that reproduces nothing.
+#
+# `--ignore-scripts` blocks lifecycle hooks during install, which is where a
+# compromised transitive package gets its code run. Vite's toolchain resolves
+# its native pieces through optional platform packages rather than a
+# postinstall, so nothing here needs them.
 COPY frontend/package*.json ./
-RUN npm install
+RUN npm ci --ignore-scripts
+
+# The image ships a `node` user at uid 1000; the dev server has no reason to
+# be root. /app is chowned because npm wrote it as root above, and because the
+# runtime bind mount lands here.
+#
+# MIGRATION: compose keeps node_modules in an ANONYMOUS volume, and Docker
+# gives a new volume the ownership the image directory had when it was first
+# created. A stack built before this line already has a root-owned one, and
+# reuses it, so vite dies on startup with
+#   EACCES ... open '/app/node_modules/.vite-temp/...'
+# which names a temp file and not the cause. Renew the volume once:
+#   docker compose up -d --build -V frontend
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

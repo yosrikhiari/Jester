@@ -215,8 +215,18 @@ async function api(path, body) {
 function toast(msg, tone = 'ok') {
   const el = document.createElement('div');
   el.className = `toast toast--${tone}`;
-  el.innerHTML = `<span style="flex:1">${esc(msg)}</span><button aria-label="Dismiss">✕</button>`;
-  el.querySelector('button').onclick = () => el.remove();
+  // Built as nodes rather than innerHTML. The message was already escaped,
+  // but a toast carries server text and error strings - the two things most
+  // likely to contain someone else's markup - and textContent cannot be
+  // wrong the way an escaper can be forgotten.
+  const text = document.createElement('span');
+  text.style.flex = '1';
+  text.textContent = msg;
+  const close = document.createElement('button');
+  close.setAttribute('aria-label', 'Dismiss');
+  close.textContent = '✕';
+  close.onclick = () => el.remove();
+  el.append(text, close);
   $('#toasts').appendChild(el);
   // Failures stay until dismissed — an error that vanishes is an error missed.
   if (tone !== 'bad') setTimeout(() => el.remove(), 5000);
@@ -724,7 +734,10 @@ function renderRunsFilter() {
   }
   // Only offer an origin the ledger actually contains; a "scheduled 0" tab on a
   // box with no schedule is a dead control.
-  const origins = ['all', ...Object.keys(counts).filter(o => o !== 'all').sort()];
+  // localeCompare, not the default: `sort()` coerces to string, so a list
+  // that ever holds numbers would put 10 before 9. These are names today.
+  const origins = ['all', ...Object.keys(counts).filter(o => o !== 'all')
+    .sort((a, b) => String(a).localeCompare(String(b)))];
   $('#runs-filter').innerHTML = origins.map(o =>
     `<button data-origin="${esc(o)}" aria-pressed="${o === RUNS_ORIGIN}">` +
     `${esc(o)} <span class="num">${counts[o] || 0}</span></button>`).join('');
@@ -1170,7 +1183,8 @@ const CLUSTER_SORTS = { size: (a, b) => (b.n_nuggets || 0) - (a.n_nuggets || 0),
 function renderClusterControls() {
   $('#clusters-sort').innerHTML = Object.keys(CLUSTER_SORTS).map(k =>
     `<button data-csort="${k}" aria-pressed="${CLUSTER_SORT === k}">${k}</button>`).join('');
-  const platforms = [...new Set(CLUSTERS.flatMap(c => c.platforms || []))].sort();
+  const platforms = [...new Set(CLUSTERS.flatMap(c => c.platforms || []))]
+    .sort((a, b) => String(a).localeCompare(String(b)));
   $('#clusters-platform').innerHTML = ['', ...platforms].map(p =>
     `<button data-cplat="${esc(p)}" aria-pressed="${CLUSTER_PLATFORM === p}">${esc(p ? (PLATFORM_LABEL[p] || p) : 'all')}</button>`).join('');
 }
@@ -1974,7 +1988,8 @@ async function loadModels(profile) {
       : provider === 'ollama' ? (res.ollama_choices || []) : [];
     // The configured model always appears, even when it is not available —
     // the console must show what the file says, then flag the gap.
-    const options = [...new Set([...pool, value].filter(Boolean))].sort();
+    const options = [...new Set([...pool, value].filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b)));
     const known = options.includes(value);
     // Only an Ollama-served role can be "not pulled"; Groq has nothing to pull.
     const missing = (res.missing || []).includes(value);
@@ -2651,41 +2666,58 @@ function renderSignalRuns(runs, sources) {
     + (r.note ? '<span class="xs"> ' + esc(r.note) + '</span>' : '') + '</td></tr>').join('');
 }
 
+/* Why the list is empty, which is three different situations. A nested
+ * ternary hid that; separate returns say each one plainly. "Nothing here" on
+ * a filtered view of a full archive sends people to re-run a collector that
+ * is working fine. */
+function emptyMessage() {
+  if (!SIG_EXISTS) {
+    return 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.';
+  }
+  const filtered = ['audience', 'community', 'kind', 'mode', 'outcome', 'q'].some(k => SIG[k]);
+  if (filtered) {
+    return 'Nothing matches these filters. '
+      + '<button class="btn btn--ghost btn--sm" data-sfacet-clear>clear the filters</button>';
+  }
+  return 'The archive is empty. <span class="mono">jester signals run</span> collects into it.';
+}
+
+/* The pills on a row: what went wrong with the record, and what came of it.
+ * Lifted out of renderSignals because six conditionals inside a map inside a
+ * function is where it stopped being readable. */
+function signalFlags(r) {
+  const flags = [];
+  if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
+  if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
+  if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
+  // An untouched buyer signal is not a neutral fact — it is the reason none
+  // of the precision numbers on this page mean anything yet — so it is shown.
+  if (r.audience === 'buyer') {
+    const tone = { replied: 'tone-ok', meeting: 'tone-ok', won: 'tone-ok',
+                   contacted: 'tone-info', no: 'tone-neutral', unfit: 'tone-bad' };
+    flags.push(r.outcome
+      ? '<span class="pill pill--sm ' + (tone[r.outcome] || 'tone-neutral') + '">'
+        + esc(r.outcome) + (r.outcome_note ? ': ' + esc(r.outcome_note.slice(0, 60)) : '')
+        + '</span>'
+      : '<span class="pill pill--sm tone-warn">not worked yet</span>');
+  }
+  if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
+  if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
+  return flags;
+}
+
 function renderSignals(rows) {
   const body = $('#signals-body');
   if (!rows.length) {
     /* The empty state has to know why it is empty. "Nothing here" on a
      * filtered view of a full archive sends people to re-run a collector that
      * is working fine. */
-    const filtered = ['audience', 'community', 'kind', 'mode', 'outcome', 'q'].some(k => SIG[k]);
-    const msg = !SIG_EXISTS
-      ? 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.'
-      : filtered
-        ? 'Nothing matches these filters. <button class="btn btn--ghost btn--sm" data-sfacet-clear>clear the filters</button>'
-        : 'The archive is empty. <span class="mono">jester signals run</span> collects into it.';
-    body.innerHTML = '<tr><td colspan="4" class="empty">' + msg + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="empty">' + emptyMessage() + '</td></tr>';
     return;
   }
   body.innerHTML = rows.map(r => {
     const what = (r.title || r.excerpt || '').trim();
-    const flags = [];
-    if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
-    if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
-    if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
-    // What came of it, if anyone has said. An untouched buyer signal is not
-    // a neutral fact - it is the reason none of the precision numbers on this
-    // page mean anything yet - so it is shown rather than left blank.
-    if (r.audience === 'buyer') {
-      const tone = { replied: 'tone-ok', meeting: 'tone-ok', won: 'tone-ok',
-                     contacted: 'tone-info', no: 'tone-neutral', unfit: 'tone-bad' };
-      flags.push(r.outcome
-        ? '<span class="pill pill--sm ' + (tone[r.outcome] || 'tone-neutral') + '">'
-          + esc(r.outcome) + (r.outcome_note ? ': ' + esc(r.outcome_note.slice(0, 60)) : '')
-          + '</span>'
-        : '<span class="pill pill--sm tone-warn">not worked yet</span>');
-    }
-    if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
-    if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
+    const flags = signalFlags(r);
     // A hiring record names its own company and quotes its engagement line;
     // a forum record leaves both "unknown" and shows neither.
     const named = r.company && r.company !== 'unknown' ? esc(r.company) : '';

@@ -152,6 +152,31 @@ def test_a_dead_service_is_an_error_not_an_empty_month():
         list(_hn(http).search("1"))
 
 
+def test_a_refusal_is_not_retried():
+    """400 means the request was wrong. Sending it four more times is how a
+    bug becomes a rate-limit complaint from the other end."""
+    http = FakeHTTP(raise_with=urllib.error.HTTPError("u", 400, "Bad", {}, None))
+    from jester.signals.sources import SourceError
+
+    with pytest.raises(SourceError):
+        list(_hn(http).search("1"))
+    assert len(http.calls) == 1
+
+
+def test_being_rate_limited_says_so_after_the_retries_run_out():
+    """The run ledger keeps this string. "exhausted its retries" with no 429
+    in it reads as "something is broken" — the opposite next action from
+    "we are asking too fast"."""
+    http = FakeHTTP(raise_with=urllib.error.HTTPError("u", 429, "Slow", {}, None))
+    from jester.signals.sources import SourceError
+    from jester.signals.sources.hackernews import RETRIES
+
+    with pytest.raises(SourceError, match="HTTP 429") as exc:
+        list(_hn(http).search("1"))
+    assert exc.value.status == "429"
+    assert len(http.calls) == RETRIES, "a retryable status must actually retry"
+
+
 # ---- the rule set ----------------------------------------------------------
 
 def test_the_rule_set_asks_a_different_question(rules):

@@ -304,7 +304,10 @@ def structured_similarity_detailed(
         max_score += 1.0
         loc_score = location_matches / location_total
         score += loc_score
-        if loc_score == 1.0:
+        # Compare the counts, not the quotient: "every field agreed" is what
+        # is meant, and it is an integer fact. Asking a float whether it is
+        # exactly 1.0 is the same question asked in a way that can be wrong.
+        if location_matches == location_total:
             reasons.append("exact location match")
         elif loc_score > 0:
             reasons.append(f"partial location match ({location_matches}/{location_total})")
@@ -518,14 +521,24 @@ def semantic_similarity(
         return " ".join(filter(None, parts))
 
     try:
-        # Search for similar vectors
-        results = vec_store.search(listing_text(a), top_k=10)
-        for result in results:
+        # Two things were wrong here, and the `except` below hid both: the
+        # call was `search(text, top_k=10)`, but VectorStore.search takes
+        # (text, threshold) and has no top_k, so every call raised TypeError
+        # and this function returned 0.0 with the message tucked into its
+        # second return value that nobody reads. And the results are Qdrant
+        # ScoredPoint objects, so `.get("payload")` would have failed next.
+        #
+        # Threshold 0.0 rather than a cut: the caller wants the score for one
+        # specific listing, and discarding the neighbours that scored low is
+        # exactly how a genuine "these are not duplicates" answer becomes an
+        # indistinguishable 0.0.
+        results = vec_store.search(listing_text(a), 0.0)
+        for point in results:
             # Check if this result corresponds to listing b
-            payload = result.get("payload", {})
+            payload = getattr(point, "payload", None) or {}
             if (payload.get("portal") == b.portal and
-                payload.get("listing_id") == b.listing_id):
-                return result.get("score", 0.0), None
+                    payload.get("listing_id") == b.listing_id):
+                return float(getattr(point, "score", 0.0) or 0.0), None
         return 0.0, None
     except Exception as e:
         return 0.0, str(e)

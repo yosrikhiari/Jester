@@ -19,14 +19,37 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install dependencies once at build time (static requirements file).
-# The repo's requirements.txt ships with Windows-1252 comments (the `§`
-# section markers), which pip can't decode as UTF-8. Re-encode to UTF-8
-# first so the build is reproducible on any host.
-COPY python/requirements.txt /tmp/requirements.txt
-RUN python -c "open('/tmp/requirements.utf8.txt','w',encoding='utf-8').write(open('/tmp/requirements.txt',encoding='cp1252',errors='replace').read())" \
-    && pip install -r /tmp/requirements.utf8.txt
+# Install from the PEP 751 lock, not the requirements file: pinned versions
+# and a sha256 per wheel, so a rebuild installs the bytes that were tested
+# rather than whatever is newest that morning.
+#
+# `--only-binary :all:` refuses to fall back to a source distribution, which
+# is what stops `pip install` executing an arbitrary setup.py at build time.
+# Every entry in the lock is already a wheel, so nothing legitimate is lost.
+#
+# This also retires a workaround: requirements.txt used to carry Windows-1252
+# section markers that pip could not decode, and the build re-encoded the file
+# before installing. The file is plain ASCII now and the lock is generated, so
+# the dance goes.
+#
+# `pip lock` output needs pip 25.1+, and the slim image's pip can lag, so it
+# is upgraded first rather than failing with a parse error about TOML.
+COPY python/pylock.toml /tmp/pylock.toml
+# pip itself is pinned and binary-only for the same reason everything else
+# is: it is a dependency being installed from the network at build time, and
+# "latest" is not a version anyone chose. Bump it deliberately.
+RUN pip install --no-cache-dir -q --only-binary :all: "pip==26.2.1" \
+    && pip install --no-cache-dir --only-binary :all: -r /tmp/pylock.toml
 
+# WHY THIS CONTAINER RUNS AS ROOT, deliberately and not by omission:
+# the entrypoint starts the cron daemon and the Schedule tab writes crontabs
+# at runtime. cron owns /var/spool/cron/crontabs at mode 1730 and refuses to
+# run without it, so dropping to a non-root user turns the scheduler into a
+# feature that silently never fires. The go-worker image stays root for the
+# matching reason - it shares the SQLite database with this container through
+# a volume, and two different uids writing one SQLite file is the cross-process
+# contract breaking quietly rather than loudly.
+#
 # `cron` so the Schedule tab can register a real job inside the container.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends cron \
