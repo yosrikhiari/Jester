@@ -73,7 +73,29 @@ FIELDS = [
     ("run_id", "TEXT", "String", "the run that last touched this row"),
     ("run_status", "TEXT", "LowCardinality(String)", "ok | error"),
     ("error", "TEXT", "String", "what went wrong on this record, empty when ok"),
+    # -- what happened NEXT ---------------------------------------------------
+    #
+    # The only fields here that do not come from the source or from the rules.
+    # Everything above describes what was collected and how it was scored; a
+    # collector can be perfectly right about all of it and still be useless,
+    # because "matches our criteria" is not the same claim as "this company
+    # replied". Validating the rules against the rules is circular, and until
+    # these columns have values in them that is all anyone has been doing.
+    #
+    # Set BY HAND, never inferred. There is no code path that writes an
+    # outcome from a heuristic, because a guessed outcome would poison the one
+    # measurement in the archive that comes from reality.
+    ("outcome", "TEXT", "LowCardinality(String)",
+     "what came of it: '' untouched | contacted | replied | meeting | won | no | unfit"),
+    ("outcome_at", "TEXT", "Nullable(DateTime64(3))", "when the outcome was recorded"),
+    ("outcome_note", "TEXT", "String", "one line from whoever worked it; empty is fine"),
 ]
+
+#: The outcomes a record may carry, in the order a lead moves through them.
+#: `unfit` is deliberately separate from `no`: a company that never should
+#: have reached outreach is a fault in the rules, and one that said no is not.
+#: Collapsing them would hide the only signal that can improve the classifier.
+OUTCOMES = ("", "contacted", "replied", "meeting", "won", "no", "unfit")
 FIELD_NAMES = [f[0] for f in FIELDS]
 
 #: How much permitted text a record carries. An excerpt, not a copy: retention
@@ -164,6 +186,10 @@ class Signal:
     text: str = ""
     company: str = "unknown"
     buyer_intent: str = "unknown"
+    #: Filled in later by a person, never by the collector.
+    outcome: str = ""
+    outcome_at: str = ""
+    outcome_note: str = ""
 
     def row(self, seen_at: Optional[str] = None) -> dict:
         seen = seen_at or _now()
@@ -195,6 +221,10 @@ class Signal:
             "run_id": self.run_id,
             "run_status": self.run_status,
             "error": self.error,
+            # A newly collected record has no outcome. Nothing infers one.
+            "outcome": self.outcome,
+            "outcome_at": self.outcome_at,
+            "outcome_note": self.outcome_note,
         }
 
 
@@ -238,7 +268,16 @@ def _catch_up_columns(db: sqlite3.Connection) -> List[str]:
     added = []
     for name, sqltype, _ch, _doc in FIELDS:
         if name not in have:
-            db.execute(f"ALTER TABLE {TABLE} ADD COLUMN {name} {sqltype}")
+            # WITH A DEFAULT, which sqlite backfills into every existing row.
+            # Without one the new column is NULL on old records and '' on new
+            # ones, so `WHERE outcome = ''` silently skipped the entire
+            # existing archive - 34 of 35 leads - while looking like a
+            # perfectly ordinary query. The promise of this function is that a
+            # caught-up table is indistinguishable from a fresh one, and a
+            # column full of NULLs where a fresh table has '' breaks it.
+            default = "0" if sqltype in ("INTEGER", "REAL") else "''"
+            db.execute(f"ALTER TABLE {TABLE} ADD COLUMN {name} {sqltype} "
+                       f"NOT NULL DEFAULT {default}")
             added.append(name)
     if added:
         db.commit()
@@ -303,6 +342,79 @@ def mark_removed(db: sqlite3.Connection, record_ids: Iterable[str], *, at: Optio
     )
     db.commit()
     return db.total_changes and len(ids)
+
+
+class OutcomeError(ValueError):
+    """An outcome that is not one of the seven, or a record that is not there.
+
+    Loud, because the alternative is a silent no-op: someone records the one
+    meeting this archive has ever produced, sees no error, and the row stays
+    empty.
+    """
+
+
+def set_outcome(db: sqlite3.Connection, record_id: str, outcome: str,
+                *, note: str = "", at: Optional[str] = None) -> dict:
+    """Record what came of a signal. The only field a person writes.
+
+    Deliberately one record at a time and deliberately by hand. Everything
+    else in this archive is derived from a source or from the rules; this is
+    the one column that comes from reality, and the moment anything infers it
+    the archive stops being able to answer whether the rules are any good.
+
+    Re-recording is allowed and overwrites, because a lead moves: contacted
+    today, replied on Friday, meeting next week. The note is replaced with it
+    rather than appended - a field that grows without bound is a field nobody
+    reads.
+    """
+    if outcome not in OUTCOMES:
+        raise OutcomeError(
+            f"{outcome!r} is not an outcome; use one of: "
+            + ", ".join(repr(o) for o in OUTCOMES if o))
+    row = db.execute(
+        f"SELECT outcome FROM {TABLE} WHERE record_id = ?", (record_id,)).fetchone()
+    if row is None:
+        raise OutcomeError(f"no record {record_id!r} in this archive")
+    stamp = "" if not outcome else (at or _now())
+    db.execute(
+        f"UPDATE {TABLE} SET outcome = ?, outcome_at = ?, outcome_note = ? "
+        "WHERE record_id = ?", (outcome, stamp, note[:400], record_id))
+    db.commit()
+    return {"record_id": record_id, "was": row["outcome"] or "",
+            "now": outcome, "at": stamp}
+
+
+def outcomes(db: sqlite3.Connection, *, mode: str = "") -> dict:
+    """What came of the buyer signals, and how much of the archive was worked.
+
+    `untouched` is the number that matters most early on: a high buyer count
+    with nothing acted on means the collector is producing and nobody is
+    consuming, which is a different problem from producing badly.
+    """
+    where = ["audience = 'buyer'"]
+    args = []
+    if mode:
+        where.append("mode = ?")
+        args.append(mode)
+    rows = db.execute(
+        "SELECT COALESCE(NULLIF(outcome, ''), 'untouched') AS o, COUNT(*) AS n "
+        f"FROM {TABLE} WHERE {' AND '.join(where)} GROUP BY o", args).fetchall()
+    by_outcome = {r["o"]: r["n"] for r in rows}
+    total = sum(by_outcome.values())
+    untouched = by_outcome.get("untouched", 0)
+    return {
+        "by_outcome": by_outcome,
+        "buyers": total,
+        "worked": total - untouched,
+        "untouched": untouched,
+        # The only conversion figure in the project that is not circular:
+        # every other number here is the rules agreeing with themselves.
+        "replied_or_better": sum(by_outcome.get(o, 0)
+                                 for o in ("replied", "meeting", "won")),
+        # A lead that should never have reached outreach is a fault in the
+        # rules; one that said no is not. Kept apart for that reason.
+        "unfit": by_outcome.get("unfit", 0),
+    }
 
 
 def counts(db: sqlite3.Connection) -> dict:
