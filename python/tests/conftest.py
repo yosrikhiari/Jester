@@ -65,3 +65,44 @@ def offline_config(tmp_path):
     shutil.copytree(REPO_CONFIG, dst)
     _force_offline(dst / "thresholds.yaml")
     return dst
+
+
+# ---------------------------------------------------------------------------
+# The suite must not need a model server installed.
+#
+# `config/thresholds.yaml` ships `embedding_provider: ollama`, and twenty-odd
+# test modules point straight at that directory. On this project's own laptop
+# Ollama is installed and listening on :11434, so the whole suite was green
+# and had been for months. On CI's first run, sixteen of those tests failed
+# with "nothing was archived" — the visible end of a ConnectionError to a
+# machine that has no Ollama and never will.
+#
+# That is the same bug as the two a reviewer found on a clean clone: something
+# true only here, invisible from the inside. It is worse than those two,
+# because it meant the test suite had never been green on anyone else's
+# machine, so "885 passed" was a statement about this laptop.
+#
+# `offline_config` above already existed and says exactly why. These two
+# fixtures make it the default instead of an opt-in a test has to remember,
+# because remembering is what failed.
+
+@pytest.fixture(scope="session")
+def _offline_repo_config(tmp_path_factory):
+    """One offline copy of the repo config for the whole session."""
+    dst = tmp_path_factory.mktemp("offline") / "config"
+    shutil.copytree(REPO_CONFIG, dst)
+    _force_offline(dst / "thresholds.yaml")
+    return dst
+
+
+@pytest.fixture(autouse=True)
+def _repo_config_is_offline(request, monkeypatch, _offline_repo_config):
+    """Point a module's REPO_CONFIG at the offline copy for the test's life.
+
+    monkeypatch, so it is undone afterwards and nothing leaks between tests.
+    A module that genuinely wants the shipped file — to lint it, say — should
+    read it by its own path rather than through this constant.
+    """
+    if getattr(request.module, "REPO_CONFIG", None) is not None:
+        monkeypatch.setattr(request.module, "REPO_CONFIG", _offline_repo_config,
+                            raising=False)
