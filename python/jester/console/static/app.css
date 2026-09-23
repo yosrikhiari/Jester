@@ -427,6 +427,7 @@ input[type="radio"]{
 .toast::before{content:"";inline-size:8px;block-size:8px;border-radius:50%;background:var(--accent);flex:none;margin-block-start:6px}
 .toast--bad::before{background:var(--bad)}
 .toast--ok::before{background:var(--ok)}
+.toast--warn::before{background:var(--warn)}
 .toast button{background:none;border:0;color:var(--ink-mute);cursor:pointer;padding:0 2px;line-height:1}
 .toast button:hover{color:var(--ink)}
 @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
