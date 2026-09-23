@@ -99,16 +99,38 @@ families:
     weight: 0.35
     role: pain_marker
     note: >
-      The work we actually do. Named from the adverts that matched, not from
-      the service page: AI-native workflows, automation, integrations,
-      internal tooling and the data plumbing under them.
-    phrases: ["ai", "llm", "genai", "machine learning", "automation", "automate",
-              "workflow", "integration", "integrations", "api integration",
-              "internal tool", "internal tools", "internal platform",
-              "data pipeline", "etl", "scraping", "agent", "agents", "rag",
-              "back office", "backoffice", "no-code", "low-code", "zapier",
-              "n8n", "make.com", "airtable", "python", "typescript", "node",
-              "full-stack", "fullstack", "backend", "platform engineer"]
+      Engineering work we can do - which is nearly all of it, because the offer
+      is "an engineer in the client's team" and not "an AI consultancy".
+
+      This family was originally scoped to AI, automation and integrations,
+      and that was the offer described too narrowly. It rejected ODK's
+      "Senior Product Manager | Remote | Long-term contract, 30-40 hrs/week |
+      $90-110/hr" and Lopaka's "Embedded UI | REMOTE | Contract | Part-time |
+      $80-140/hr" for "never says what work it needs done" - two of the
+      clearest leads in the sample - because neither said the word "AI".
+      Nine of seventeen rejected contract-and-remote adverts failed this way.
+
+      So it now covers engineering broadly. That does not make the rules
+      permissive: `engagement` is still required, and wrong_discipline,
+      onsite_only, employment_only and the hard rejects still carry the weight
+      of saying no. What changed is that a contract role stops being rejected
+      for using a different stack.
+    phrases: ["engineer", "engineering", "developer", "development", "programmer",
+              "software", "architect", "technical lead", "tech lead", "cto",
+              "product manager", "product engineer", "sre", "devops",
+              "ai", "llm", "genai", "machine learning", "automation", "automate",
+              "workflow", "integration", "integrations", "api", "internal tool",
+              "internal tools", "internal platform", "data pipeline", "etl",
+              "scraping", "agent", "agents", "rag", "back office", "no-code",
+              "low-code", "zapier", "n8n", "airtable",
+              "python", "typescript", "javascript", "node", "react", "go",
+              "golang", "rust", "java", "ruby", "rails", "php", "elixir",
+              "flutter", "dart", "swift", "kotlin", "unity", "c++", "c#",
+              "full-stack", "fullstack", "frontend", "front-end", "backend",
+              "back-end", "mobile", "ios", "android", "platform", "infrastructure",
+              "kubernetes", "aws", "gcp", "azure", "postgres", "database",
+              "graphics", "embedded", "firmware engineer", "security engineer",
+              "data engineer", "qa", "testing"]
 
   budget:
     weight: 0.20
