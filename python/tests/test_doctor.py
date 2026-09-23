@@ -162,3 +162,65 @@ def test_parity_mismatch_names_the_collection(tmp_path, monkeypatch):
     findings = [f for f in evaluate_doctor(db) if "parity" in f]
     assert findings, "a real mismatch must still be reported"
     assert "nuggets__probe" in findings[0], findings[0]
+
+
+# ---- a run that never starts never fails -----------------------------------
+
+def _run_at(db, hours_ago, run_id="r1"):
+    from datetime import datetime, timedelta, timezone
+
+    ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+    db.execute("DELETE FROM runs")
+    db.execute("INSERT INTO runs (run_id, status, started_at) VALUES (?, ?, ?)",
+               (run_id, "completed", ts))
+    db.commit()
+
+
+def test_silence_is_a_finding(tmp_path):
+    """Every other check reacts to something going wrong. This one reacts to
+    nothing happening, which the notifier cannot see: JESTER_NOTIFY_CMD fires
+    when a run fails, and a run that never started never fails.
+
+    That is the exact shape Task Scheduler produces on a laptop — refuses to
+    start on battery, never retries a slot missed while asleep. The symptom is
+    a quiet gap that looks identical to a quiet week."""
+    from jester.cli import _schedule_silence
+    from jester.store import open_db
+
+    db = open_db(str(tmp_path / "d.db"))
+    _run_at(db, 30, "r-gone")
+    found = _schedule_silence(db)
+    assert found and "no run in 30h" in found[0]
+    assert "r-gone" in found[0], "the finding must name the last run"
+
+
+def test_a_run_that_drifted_an_hour_does_not_cry_wolf(tmp_path):
+    """26 hours, not 24, so a run that starts late — or catches up after the
+    machine woke — is not reported every morning."""
+    from jester.cli import _schedule_silence
+    from jester.store import open_db
+
+    db = open_db(str(tmp_path / "d.db"))
+    _run_at(db, 25, "r-late")
+    assert _schedule_silence(db) == []
+
+
+def test_a_fresh_checkout_is_not_scolded(tmp_path):
+    """Never having run is a real state, but it is also what a clean clone
+    looks like, and telling someone their schedule is silent before they have
+    installed one is noise."""
+    from jester.cli import _schedule_silence
+    from jester.store import open_db
+
+    assert _schedule_silence(open_db(str(tmp_path / "d.db"))) == []
+
+
+def test_silence_reaches_the_doctor_findings(tmp_path):
+    from jester.cli import evaluate_doctor
+    from jester.store import open_db
+
+    db = open_db(str(tmp_path / "d.db"))
+    _run_at(db, 40, "r-old")
+    res = evaluate_doctor(db)
+    findings = res["findings"] if isinstance(res, dict) else res
+    assert any("no run in" in str(f) for f in findings)

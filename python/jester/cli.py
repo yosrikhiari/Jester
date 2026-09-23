@@ -1262,8 +1262,15 @@ def cmd_treat(args):
 
 def cmd_schedule(args):
     """D-2: register / inspect / remove the nightly job with the host scheduler."""
+    # Every branch here has to resolve the task the same way. `status` and
+    # `run` used to ignore --command and always act on the cycle task, which
+    # was invisible while cycle was the only one anybody scheduled and became
+    # wrong the moment a second task existed: `schedule run --command signals`
+    # cheerfully started the nightly pipeline instead.
+    _cmd = getattr(args, "command", None) or "cycle"
+    _task = _schedule.TASK_FOR_COMMAND.get(_cmd, _schedule.TASK_NAME)
     if args.action == "status":
-        st = _schedule.status()
+        st = _schedule.status(_task)
         if st["installed"]:
             nxt = st.get("next_run")
             cadence = st.get("cadence")
@@ -1313,11 +1320,9 @@ def cmd_schedule(args):
             command=command,
         )
     elif args.action == "remove":
-        command = getattr(args, "command", None) or "cycle"
-        res = _schedule.remove(
-            _schedule.TASK_FOR_COMMAND.get(command, _schedule.TASK_NAME))
+        res = _schedule.remove(_task)
     else:  # run
-        res = _schedule.run_now()
+        res = _schedule.run_now(_task)
     print(res["detail"])
     if not res["ok"] and res["action"] != "manual":
         sys.exit(1)
@@ -1505,6 +1510,57 @@ def _qdrant_point_count(url, collection=None):
     return VectorStore.count_points_at(url, collection or "nuggets")
 
 
+#: How long a scheduled run may be absent before that is itself a finding.
+#: Twenty-six rather than twenty-four so a run that drifts an hour, or starts
+#: late because the machine was asleep, does not cry wolf every morning.
+SCHEDULE_SILENCE_HOURS = 26
+
+
+def _schedule_silence(db):
+    """A dead man's switch for the schedule.
+
+    Every other check here reacts to something that went WRONG. This one reacts
+    to nothing happening at all, which is a different failure and the one the
+    notifier cannot see: `JESTER_NOTIFY_CMD` fires when a run fails, and a run
+    that never started never fails.
+
+    That is the exact shape Task Scheduler produces on a laptop. Its defaults
+    refuse to start on battery and never retry a slot missed while asleep, so
+    the symptom is a quiet gap: no error, no row, no notification. Nothing in
+    the archive could tell that from a genuinely quiet week.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    row = db.execute(
+        "SELECT run_id, started_at FROM runs WHERE run_id NOT LIKE 'mock%' "
+        "ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    # Indexed, not keyed: this connection hands back plain tuples, which is
+    # why every other check in this function reads `.fetchone()[0]`.
+    if row is None or not row[1]:
+        # Never run at all is a real state, but it is what a fresh checkout
+        # looks like, and saying "the schedule is silent" to someone who has
+        # not installed one yet is noise.
+        return []
+    raw = str(row[1]).replace(" ", "T")
+    try:
+        last = datetime.fromisoformat(raw)
+    except ValueError:
+        return []
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    gap = datetime.now(timezone.utc) - last
+    if gap < timedelta(hours=SCHEDULE_SILENCE_HOURS):
+        return []
+    hours = int(gap.total_seconds() // 3600)
+    return [
+        f"no run in {hours}h (last: {row[0]}). A scheduled run that "
+        "never starts never fails, so nothing else here would say so — check "
+        "`jester schedule status`, and that the machine was awake and not on "
+        "battery."
+    ]
+
+
 def evaluate_doctor(db):
     """v3.8 #4 / §30 #2 health checks over SQLite. Every finding here is a
     silent-degradation risk (R40/R55): stuck runs, failed batches, a growing
@@ -1514,6 +1570,7 @@ def evaluate_doctor(db):
     stale = db.execute("SELECT COUNT(*) FROM runs WHERE status='running'").fetchone()[0]
     if stale:
         findings.append(f"{stale} run(s) stuck in 'running' (crashed session?)")
+    findings += _schedule_silence(db)
     failed = db.execute(
         "SELECT COUNT(*) FROM ingest_batch WHERE status='failed'"
     ).fetchone()[0]
@@ -2260,12 +2317,14 @@ def main(argv=None):
     )
     sc.add_argument(
         "--command",
-        choices=("cycle", "ingest", "treat"),
+        choices=("cycle", "ingest", "treat", "signals"),
         default="cycle",
         help="which half to schedule. `ingest` scrapes only (no LLM); `treat` "
              "drains the queue while the quota lasts; `cycle` welds both "
-             "together as before. Each gets its own task, so scraping can run "
-             "often and cheaply while treatment waits for a quota reset.",
+             "together as before; `signals` runs the problem-signal collector "
+             "against its own database. Each gets its own task, so scraping "
+             "can run often and cheaply while treatment waits for a quota "
+             "reset.",
     )
     sc.add_argument("--db", default="data/jester.db")
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
