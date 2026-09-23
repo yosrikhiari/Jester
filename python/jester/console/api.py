@@ -93,11 +93,13 @@ _CHOICES = {
 
 
 class ConsoleAPI:
-    def __init__(self, db_path: str, config_dir: str | None = None):
+    def __init__(self, db_path: str, config_dir: str | None = None,
+                 signals_db: str | None = None):
         self.repo_root = Path(__file__).resolve().parents[3]
         self.config_dir = config_dir or str(self.repo_root / "config")
         self.db_path = db_path if db_path == ":memory:" else os.path.abspath(db_path)
         self.db = open_db(self.db_path)
+        self._signals_db_path = signals_db
 
     # ---- helpers ----------------------------------------------------------
 
@@ -274,8 +276,9 @@ class ConsoleAPI:
 
     @property
     def _signals_path(self) -> str:
-        return os.environ.get("JESTER_SIGNALS_DB") or str(
-            Path(self.db_path).parent / "signals-live.db")
+        return (self._signals_db_path
+                or os.environ.get("JESTER_SIGNALS_DB")
+                or str(Path(self.db_path).parent / "signals-live.db"))
 
     def _signals_db(self):
         from jester.signals import open_signals
@@ -312,8 +315,13 @@ class ConsoleAPI:
 
             total = db.execute(
                 f"SELECT COUNT(*) FROM {TABLE} {clause}", args).fetchone()[0]
+            # company and buyer_intent are here for the hiring records, where
+            # they are the two most useful columns on the page: the advert
+            # names the company and quotes its own engagement line. On forum
+            # records both stay "unknown" and the page renders nothing.
             cols = ("record_id, mode, community, kind, author, title, excerpt, "
                     "query, match_reason, match_confidence, audience, relevant, "
+                    "company, buyer_intent, "
                     "run_status, error, created_utc, first_seen_utc, last_seen_utc, "
                     "edited_utc, removed_utc, revisions, source_url")
             rows = [dict(r) for r in db.execute(
