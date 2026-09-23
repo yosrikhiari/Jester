@@ -1724,14 +1724,37 @@ def cmd_signals(args):
         return
 
     if action == "rules":
-        print(f"config_version {rules.config_version} · "
-              f"{len(rules.problem)} problem phrase(s), {len(rules.negative)} negative, "
-              f"{len(rules.hard_reject)} hard reject")
-        print(f"thresholds: rejected < {rules.ambiguous_at} <= ambiguous < {rules.relevant_at} <= signal")
+        # This printed a v1 rule set: flat `problem`/`negative` phrase lists
+        # and single `relevant_at`/`ambiguous_at` thresholds. None of those
+        # survived the move to families and two audiences, so the command
+        # crashed on its first line. Nothing caught it because printing the
+        # rules is the one action no test asserted on.
+        by_role = {}
+        for fam in rules.families:
+            by_role.setdefault(fam.role, []).append(fam)
+        print(f"config_version {rules.config_version} · {len(rules.families)} families · "
+              f"{len(rules.hard_reject)} hard reject · {len(rules.frame_phrases)} frame phrase(s)")
+        for role in ("buyer_required", "buyer_boost", "pain_marker", "negative"):
+            fams = by_role.get(role, [])
+            if not fams:
+                continue
+            print(f"  {role}:")
+            for fam in fams:
+                print(f"    {fam.name:<16}{fam.weight:+.2f}  {len(fam.phrases):>3} phrase(s)")
+        print(f"thresholds: buyer at {rules.buyer_at}, practitioner at "
+              f"{rules.practitioner_at}; within {rules.ambiguous_margin} below either "
+              "is kept and flagged ambiguous")
+        print(f"inherited voice: weight {rules.inherited_weight}, only for replies "
+              f"under {rules.inherited_max_chars} chars")
+        buyers = rules.communities_for("buyer")
+        content = rules.communities_for("practitioner")
         print(f"scope: {'APPROVED' if rules.approved else 'PROVISIONAL'} · "
-              f"{len(rules.communities)} communities · {len(rules.queries)} queries")
-        for c in rules.communities:
-            print(f"  - {c}")
+              f"{len(buyers)} buyer + {len(content)} content community(ies) · "
+              f"{len(rules.queries)} queries")
+        for name in buyers:
+            print(f"  buyer   {name}")
+        for name in content:
+            print(f"  content {name}")
         return
 
     if action == "scope":
