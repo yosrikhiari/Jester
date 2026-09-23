@@ -35,7 +35,10 @@ WORKDIR /app
 # `pip lock` output needs pip 25.1+, and the slim image's pip can lag, so it
 # is upgraded first rather than failing with a parse error about TOML.
 COPY python/pylock.toml /tmp/pylock.toml
-RUN pip install --no-cache-dir -q -U pip \
+# pip itself is pinned and binary-only for the same reason everything else
+# is: it is a dependency being installed from the network at build time, and
+# "latest" is not a version anyone chose. Bump it deliberately.
+RUN pip install --no-cache-dir -q --only-binary :all: "pip==26.2.1" \
     && pip install --no-cache-dir --only-binary :all: -r /tmp/pylock.toml
 
 # WHY THIS CONTAINER RUNS AS ROOT, deliberately and not by omission:
