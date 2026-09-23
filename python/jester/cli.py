@@ -1738,7 +1738,13 @@ def cmd_signals(args):
         path = sigscope.write_scope(out_dir, rules)
         status = "APPROVED" if rules.approved else "PROVISIONAL — awaiting the scope owner"
         print(f"scope: {status}")
-        print(f"communities: {len(rules.communities)} (task asks 3-5) · queries: {len(rules.queries)}")
+        # The 3-5 applies to the BUYER list, which is the decision being
+        # signed off. Counting the content sources into that total made the
+        # line read "7 (task asks 3-5)" on a scope that was inside the range.
+        buyers = rules.communities_for("buyer")
+        content = rules.communities_for("practitioner")
+        print(f"communities: {len(buyers)} buyer (asks 3-5) + {len(content)} content "
+              f"· queries: {len(rules.queries)}")
         print(f"written: {path}")
         return
 

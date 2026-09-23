@@ -51,32 +51,46 @@ scope:
   decided_on: ""
 
   communities:
-    # ---- buyer side: decision makers describing work they cannot absorb ----
-    - name: r/smallbusiness
-      serves: buyer
-      evidence: "measured — 11 archived posts; the only community in the current list whose posters are owners. Real titles: 'how should i position my small software consultancy', 'Help me scale my solo freelance business'."
-      why: owners describe manual work and capacity limits in business terms
+    # ---- buyer side ------------------------------------------------------
+    #
+    # These five are the ONLY communities that produced a buyer signal when
+    # measured: 123 posts and 1 113 comments collected live across eleven
+    # candidates. The rest produced zero and are listed under `excluded` with
+    # their counts, so the shortlist is a result rather than an opinion.
+    #
+    # Read the numbers before signing. The best community here returns roughly
+    # three buyer signals in 190 records. That is not a reason to pick a
+    # different room — every room measured the same — it is the reason the
+    # search phrases below matter more than this list does.
     - name: r/Entrepreneur
       serves: buyer
-      evidence: "proposed — not yet collected; same poster type as r/smallbusiness at ~20x the volume"
+      evidence: "measured — 13 posts + 177 comments: 3 buyer, 9 practitioner. The highest buyer count of the eleven measured."
       why: founders describing operational work before they hire for it
+    - name: r/sweatystartup
+      serves: buyer
+      evidence: "measured — 8 posts + 107 comments: 2 buyer, 3 practitioner. Service-business owners, the closest match to the offer."
+      why: owners of physical/service businesses naming back-office toil
+    - name: r/ecommerce
+      serves: buyer
+      evidence: "measured — 11 posts + 59 comments: 1 buyer, 8 practitioner. Strongest practitioner yield of any buyer-side room."
+      why: store owners hitting the ceiling of their apps and integrations
     - name: r/msp
       serves: buyer
-      evidence: "proposed — not yet collected"
-      why: managed service providers buy automation continuously and have budgets
-    - name: r/nocode
+      evidence: "measured — 15 posts + 207 comments: 1 buyer, 1 practitioner. Low rate, but the posters hold budgets."
+      why: managed service providers buy automation continuously
+    - name: r/agency
       serves: buyer
-      evidence: "proposed — not yet collected"
-      why: people who have already paid to automate and hit the ceiling of the tool; the clearest 'now needs an engineer' moment
-    - name: r/sysadmin
-      serves: buyer
-      evidence: "measured — 16 archived posts; tool-selection posts ('small IT documentation tools', 'Ticketing System with templates or something?', 'which AI tool/s can solve IT issues?') are buying-adjacent"
-      why: operational toil and tool selection, sometimes by the budget holder
+      evidence: "measured — 9 posts + 144 comments: 1 buyer, 7 practitioner. Mixed: many posters sell services rather than buy them."
+      why: agency owners describing delivery work they cannot absorb
 
-    # ---- practitioner side: content material, explicitly not leads ----
+    # ---- practitioner side: content material, explicitly not leads --------
+    - name: r/zapier
+      serves: practitioner
+      evidence: "measured — 14 posts + 68 comments: 0 buyer, 8 practitioner. People who automate and hit the tool's ceiling."
+      why: the richest 'the no-code fix stopped scaling' material, and zero leads
     - name: r/ExperiencedDevs
       serves: practitioner
-      evidence: "measured — 14 archived posts, almost all career/resume/manager questions; one usable content signal ('Implementation is basically instant now, the org around it moves at the same speed as always')"
+      evidence: "measured — 14 archived posts, almost all career/resume/manager questions; one usable content signal"
       why: delivery-org commentary for content; NOT an outreach source
     - name: r/devops
       serves: practitioner
@@ -97,6 +111,22 @@ scope:
       evidence: "measured — 23 archived posts; general-purpose, no delivery signal."
     - name: r/personalfinance
       evidence: "measured — 16 archived posts; personal money, wrong audience entirely."
+
+    # Collected live in the same calibration run as the five above, and
+    # dropped on their own numbers rather than on a hunch.
+    - name: r/sysadmin
+      evidence: "measured — 14 posts + 196 comments: 0 buyer, 0 practitioner. The largest sample of any candidate and the emptiest. Previously proposed as a buyer source on the strength of tool-selection posts; collecting it disproved that."
+    - name: r/Accounting
+      evidence: "measured — 12 posts + 25 comments: 0 buyer, 0 practitioner. Professionals discussing their profession, not firms buying software."
+    - name: r/smallbusiness
+      evidence: "measured — 8 posts + 23 comments: 0 buyer, 1 practitioner. Was the original lead candidate; the live sample did not support it."
+      keep_for: "re-test if the search phrases change — the room is right, the sample was thin"
+    - name: r/nocode
+      evidence: "measured — 11 posts + 59 comments: 0 buyer, 4 practitioner. The 'hit the tool ceiling' thesis held for content and not for buying."
+      keep_for: "content only"
+    - name: r/shopify
+      evidence: "measured — 8 posts + 48 comments: 0 buyer, 5 practitioner."
+      keep_for: "content only"
 
   # ---- the phrases. These are literal search strings, not descriptions. ----
   #

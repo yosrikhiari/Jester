@@ -333,4 +333,5 @@ def test_scope_document_follows_the_rules_file(tmp_path):
 
 def test_write_scope_puts_the_file_where_the_export_is(tmp_path, rules):
     path = sc.write_scope(tmp_path, rules, today="2026-09-22")
-    assert path.name == "scope-and-access.md" and path.read_text(encoding="utf-8").startswith("# the collector")
+    assert path.name == "scope-and-access.md"
+    assert path.read_text(encoding="utf-8").startswith("# Problem-signal collector")

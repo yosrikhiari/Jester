@@ -1,14 +1,19 @@
-# Jester Python-side dependencies (pure-Python build, jester-setup.md §37).
+# Jester Python-side dependencies (pure-Python build, jester-setup.md s37).
+#
+# ASCII only, on purpose. pip reads this file as UTF-8, and a single stray
+# byte from a Windows-1252 editor makes the whole install fail with a decode
+# error that says nothing about which line is at fault. A requirements file
+# has no need for a character outside ASCII, so it does not get one.
 PyYAML>=6.0
 qdrant-client>=1.10
 pytest>=8.0
-# ZoneInfo needs an IANA database; Windows ships none (§37.13 quota day-keys).
+
+# ZoneInfo needs an IANA database; Windows ships none (s37.13 quota day-keys).
 tzdata>=2024.1
 
-# Live Ollama backend (�37.16) - installed SDK returns pydantic responses
+# Live Ollama backend (s37.16) - the installed SDK returns pydantic responses.
 ollama>=0.4
 
 # Groq needs no package: it is an OpenAI-compatible JSON POST served over
 # urllib from the standard library (see jester/llm.py). Put GROQ_API_KEY in
 # .env at the repo root.
-
