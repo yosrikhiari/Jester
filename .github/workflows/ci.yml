@@ -34,6 +34,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: python
+      # The suite needs a deterministic, offline backend. Locally that comes
+      # from JESTER_MOCK=1 in .env — which is gitignored, so on a clean clone
+      # the pipeline tests reach for a real Ollama, get ConnectionError, defer
+      # every nugget and then fail with "nothing was archived". Sixteen tests
+      # failed that way on this job's first run, all pointing at the same
+      # missing file.
+      #
+      # Setting it here makes CI honest about what it needs. It does not fix
+      # the underlying smell: the suite's behaviour still depends on ambient
+      # environment rather than on a fixture that pins it.
+      JESTER_MOCK: "1"
     steps:
       - uses: actions/checkout@v4
 

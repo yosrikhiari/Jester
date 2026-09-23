@@ -21,6 +21,22 @@ REPO = Path(__file__).resolve().parents[2]
 SETUP_DOC = REPO / "jester-setup.md"
 CONFIG_DIRS = [REPO / "config", REPO / "config-live"]
 
+# jester-setup.md is the first line of .gitignore, so a clean clone does not
+# have it and every check in this file raised FileNotFoundError for anyone but
+# the author. That is worse than not running: it reads as a broken suite
+# rather than as a check that needs something the repo does not ship.
+#
+# Skipping says the true thing. The lint is real and worth keeping - it caught
+# ten unregistered keys - but it compares the code against a document that
+# lives outside the repo, so it can only run where that document is. Committing
+# jester-setup.md would restore it for everyone; that is a call about whether
+# the spec belongs in the repo, not one to make from inside a test.
+pytestmark = pytest.mark.skipif(
+    not SETUP_DOC.exists(),
+    reason="jester-setup.md is gitignored and absent from a clean clone; "
+           "this lint compares the code against that spec document",
+)
+
 # Rows that describe a *family* of keys in prose rather than naming each one.
 # Each maps to the prefix it legitimately covers, so the lint stays honest
 # about what the table actually documents instead of silently accepting
