@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from . import TABLE
+from . import TABLE, outcomes as signal_outcomes
 from .filters import load_rules
 from .run import RUN_TABLE, ensure_run_table
 
@@ -135,6 +135,10 @@ def gather(db: sqlite3.Connection, *, since: str = "", until: str = "",
         "single_mentions": once,
         "unnamed": ungrouped,
         "runs": runs,
+        # What actually came of the signals. Every other number in this
+        # digest is the rule set agreeing with itself; this is the only one
+        # that comes from a company answering.
+        "outcomes": signal_outcomes(db, mode=mode),
         "config_version": getattr(rules, "config_version", ""),
     }
 
@@ -263,6 +267,40 @@ def render(d: dict) -> str:
                      "anyway they were collected outside the schedule, which is "
                      "worth knowing.")
     lines.append("")
+
+    o = d.get("outcomes") or {}
+    lines += ["## What came of them", ""]
+    if not o.get("buyers"):
+        lines += ["_No buyer signals in this window._", ""]
+    elif not o.get("worked"):
+        lines += [
+            f"**{o['buyers']} buyer signal(s), none worked yet.** That is the "
+            "number worth arguing about. Everything else in this digest is the "
+            "rule set agreeing with itself — how precise the collector is "
+            "against its own criteria. Whether those criteria pick companies "
+            "that reply is untested until somebody works the list and records "
+            "what happened (`jester signals outcome`).",
+            "",
+        ]
+    else:
+        lines += ["| outcome | count |", "|---|---:|"]
+        for name, n in sorted(o["by_outcome"].items(), key=lambda kv: -kv[1]):
+            lines.append(f"| {name} | {n} |")
+        rate = o["replied_or_better"] / o["worked"] * 100 if o["worked"] else 0
+        lines += [
+            "",
+            f"**{o['worked']} of {o['buyers']} worked · "
+            f"{o['replied_or_better']} replied or better ({rate:.0f}%).**",
+            "",
+        ]
+        if o.get("unfit"):
+            lines += [
+                f"**{o['unfit']} marked unfit** — those should never have "
+                "reached outreach, and each one is a fault in the rules rather "
+                "than a company saying no. They are the most useful records "
+                "here: re-read them before changing any phrase.",
+                "",
+            ]
 
     lines += [
         "## What this does not tell you",
