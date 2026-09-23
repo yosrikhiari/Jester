@@ -32,12 +32,23 @@ from urllib.parse import urlsplit
 #: archive holds a handful of rows whose source_url is the literal string
 #: "mock" — fixture output from the earliest runs — and those are honestly
 #: unidentifiable rather than a parsing failure.
-_HTTP = ("http://", "https://")
+#: Asked of the parser, not of the string's first few characters. The prefix
+#: test this replaces parsed the URL on the very next line anyway, so it was
+#: doing the work twice and trusting the cheaper half.
+_WEB_SCHEMES = frozenset({"http", "https"})
+
+
+def _is_web_url(url: str) -> bool:
+    """True when `url` is an absolute http(s) URL with a host in it."""
+    if not url:
+        return False
+    parts = urlsplit(url)
+    return parts.scheme.lower() in _WEB_SCHEMES and bool(parts.hostname)
 
 
 def _host(url: str) -> str:
     """Lowercased host with any leading www., or "" if url is not a URL."""
-    if not url or not url.lower().startswith(_HTTP):
+    if not _is_web_url(url):
         return ""
     host = (urlsplit(url).hostname or "").lower()
     return host[4:] if host.startswith("www.") else host
@@ -185,7 +196,7 @@ def identify(db, apply: bool = False) -> Report:
             report._bump(report.unidentified, platform or "unknown",
                          "no rule for this platform")
             continue
-        if not (source_url or "").lower().startswith(_HTTP):
+        if not _is_web_url(source_url or ""):
             # Nothing to parse, and a row that never had a real origin should
             # keep saying so. The distinction below matters to whoever reads
             # the report: "mock" is not a source that failed to parse, it is
