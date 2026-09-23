@@ -7,6 +7,9 @@
 PyYAML>=6.0
 qdrant-client>=1.10
 pytest>=8.0
+# Coverage is a gate input, not a nicety: SonarCloud's quality gate requires
+# 80% on new code, and with no report uploaded it reads 0% and fails.
+pytest-cov>=5.0
 
 # ZoneInfo needs an IANA database; Windows ships none (s37.13 quota day-keys).
 tzdata>=2024.1
