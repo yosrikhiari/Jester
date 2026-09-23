@@ -77,3 +77,4 @@ def available() -> List[dict]:
 
 
 from . import hackernews  # noqa: E402,F401  (registers itself on import)
+from . import hn_hiring   # noqa: E402,F401

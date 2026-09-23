@@ -1774,7 +1774,7 @@ def cmd_signals(args):
     if action == "check":
         from jester.signals import fixtures as sigfx
         try:
-            res = sigfx.check(rules)
+            res = sigfx.check(rules, getattr(args, "cases", None) or None)
         except sigfx.FixtureError as exc:
             print(f"fixture set: {exc}")
             sys.exit(1)
@@ -2122,6 +2122,10 @@ def main(argv=None):
     sg.add_argument("--baseline", default=None,
                     help="reclassify: another rules file to compare against, "
                          "so the delta is the rules and not the truncation")
+    sg.add_argument("--cases", default=None,
+                    help="directory of labelled fixture cases for `check` "
+                         "(default: the problem-signal set). A second rule set "
+                         "needs a second set of cases, or it has no gate.")
     sg.add_argument("--apply", action="store_true",
                     help="reclassify: write the new verdicts (default: dry run)")
     sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")

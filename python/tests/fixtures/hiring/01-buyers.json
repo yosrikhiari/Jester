@@ -1,0 +1,47 @@
+{
+  "category": "relevant",
+  "why": [
+    "The four shapes a real lead takes in a hiring thread. Each is a live",
+    "advert from the September 2026 thread, trimmed but not reworded, so the",
+    "gate is graded against what companies actually write rather than what",
+    "the rules were designed to catch."
+  ],
+  "cases": [
+    {
+      "id": "buy-01-contract-with-a-rate",
+      "why": "The clearest possible lead: remote, contract, an hourly rate and a start date. If this ever stops scoring buyer the rule set is broken.",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "record": {
+        "source_id": "t1_hire01",
+        "text": "Noricum | Senior Backend Engineer, Payments, Ledger | REMOTE (2h overlap with US Pacific) | Contract to permanent | $120-160/hr | Start by 14 Sep. I'm the founder of Noricum where we build the ledger and payment rails behind a product. Python, Postgres, API integration work."
+      }
+    },
+    {
+      "id": "buy-02-fractional-hours-stated",
+      "why": "Fractional with the hours written down is the offer's exact shape - an engineer inside the client's team, not a full-time hire.",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "record": {
+        "source_id": "t1_hire02",
+        "text": "We The Flywheel | AI-Native Engineers & Operators | REMOTE (worldwide) | Contract / Part-time (10-40 hrs/wk). We're a remote-first digital product studio with deeply AI-native workflows and automation across 500+ web properties. Paid hourly."
+      }
+    },
+    {
+      "id": "buy-03-contract-or-full-time",
+      "why": "A company open to either is still a buyer: the contract door is open, which is all the offer needs.",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "record": {
+        "source_id": "t1_hire03",
+        "text": "Catalyst | Agent Builder | Remote (US ET Overlap) | Full-time / Part-time / Contract | We build LLM agents and automation for internal tools. $90-120/hr depending on experience."
+      }
+    },
+    {
+      "id": "buy-04-full-time-contractor-is-a-contractor",
+      "why": "\"Full-time contractor\" reads as full-time and is not: it is a contract engagement at full-time hours, and it pays hourly. Pinned because the words argue with each other.",
+      "expect": {"audience": "buyer", "ambiguous": false},
+      "record": {
+        "source_id": "t1_hire04",
+        "text": "Search Atlas | Product Engineer | REMOTE (anywhere, EST hours) | Full-time contractor | $23-$34 USD/hour. We're ~160 people building SEO automation tooling in Python and TypeScript."
+      }
+    }
+  ]
+}
