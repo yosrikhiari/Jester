@@ -2281,12 +2281,14 @@ async function installSchedule(body, el) {
   // A POSIX install is `ok:false` with the crontab line as its detail — that
   // is an instruction, not a failure, so it must not render as an error.
   const manual = res.action === 'manual';
-  // `manual` was computed and then thrown away: both arms of the ternary
-  // below said 'bad', so the crontab line the operator is supposed to copy
-  // was rendered in red as a failure — the exact thing the comment above
-  // says it must not be.
-  toast(res.detail || (res.ok ? 'scheduled' : 'could not schedule'),
-        res.ok ? 'ok' : (manual ? 'warn' : 'bad'));
+  // `manual` used to be computed and then thrown away — it chose between
+  // 'bad' and 'bad' — so the crontab line the operator is supposed to copy
+  // was rendered in red as a failure, which is exactly what the comment
+  // above says it must not be.
+  let tone = 'bad';
+  if (res.ok) tone = 'ok';
+  else if (manual) tone = 'warn';
+  toast(res.detail || (res.ok ? 'scheduled' : 'could not schedule'), tone);
   if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
 }
 
