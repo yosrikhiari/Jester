@@ -1,4 +1,0 @@
-upserted: 5 new, 0 seen again, 0 edited
-fixture: 5 unique, 3 relevant, 0 removed, 1 error(s)
-csv: C:\Users\mano9\AppData\Local\Temp\claude\D--project-in-this-pc\301b369f-c772-4ac6-96e5-d3b37c2dd378\scratchpad\ci-neg\out\signals-fixture.csv (5 row(s), reconciles=True)
-also written: field-map.md, schema.clickhouse.sql, manifest.json in C:\Users\mano9\AppData\Local\Temp\claude\D--project-in-this-pc\301b369f-c772-4ac6-96e5-d3b37c2dd378\scratchpad\ci-neg\out

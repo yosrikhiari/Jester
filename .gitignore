@@ -185,3 +185,7 @@ docs/superpowers/plans/2026-08-31-real-estate-intelligence.md
 # and 2026-08-23-ops-surface.md in docs/superpowers/plans/. Tracking both
 # copies guarantees they drift, and docs/ is the one the repo carries.
 /plans/
+
+# CI step artifacts (the export run logs, written into the workspace).
+run1.txt
+run2.txt
