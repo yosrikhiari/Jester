@@ -235,7 +235,7 @@ def test_export_carries_the_captured_detail(tmp_path):
 # ---- the queue-to-nugget hop ---------------------------------------------
 
 
-def test_cmd_run_carries_detail_and_thread_meta_out_of_the_queue(tmp_path):
+def test_cmd_run_carries_detail_and_thread_meta_out_of_the_queue(tmp_path, offline_config):
     """The hop that used to lose everything.
 
     `cmd_run` read three keys off each queued comment — body, fingerprint,
@@ -286,7 +286,7 @@ def test_cmd_run_carries_detail_and_thread_meta_out_of_the_queue(tmp_path):
 
     args = _NS()
     args.db = str(db_path)
-    args.config = str(Path(__file__).resolve().parents[2] / "config")
+    args.config = str(offline_config)
     args.run = "detail-run"
     args.exports = str(tmp_path / "exports")
     args.max_ideas = None
@@ -309,7 +309,7 @@ def test_cmd_run_carries_detail_and_thread_meta_out_of_the_queue(tmp_path):
     assert row["community"] == "r/selfhosted"
 
 
-def test_a_batch_without_thread_meta_still_processes(tmp_path):
+def test_a_batch_without_thread_meta_still_processes(tmp_path, offline_config):
     """Batches queued before the widened capture must keep flowing: a pipeline
     that crashed on them would refuse to drain a queue it had already filled."""
     from pathlib import Path
@@ -333,7 +333,7 @@ def test_a_batch_without_thread_meta_still_processes(tmp_path):
 
     args = _NS()
     args.db = str(db_path)
-    args.config = str(Path(__file__).resolve().parents[2] / "config")
+    args.config = str(offline_config)
     args.run = "legacy-run"
     args.exports = str(tmp_path / "exports")
     args.max_ideas = None

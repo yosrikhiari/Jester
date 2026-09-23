@@ -1,0 +1,140 @@
+# CI for Jester.
+#
+# This exists because of a bug class rather than a bug. Two defects shipped to
+# main that were invisible on the author's machine and obvious on anyone
+# else's: `data/` had to already exist, and requirements.txt carried a
+# Windows-1252 byte pip could not decode. Both were "works here" failures, and
+# a reviewer on a clean clone found them in minutes.
+#
+# So the first job is not really "run the tests". It is "be a stranger with a
+# fresh checkout": install from the lock with no cache of a previous run, then
+# run the documented command twice and check the numbers reconcile. That kills
+# the class, not the two instances.
+#
+# The Sonar job is here for a second reason. SonarCloud Automatic Analysis
+# cannot express rule-level ignores from a file, so the justifications written
+# into sonar-project.properties applied to nothing. A scanner run reads that
+# file in full. Automatic Analysis must be turned OFF in SonarCloud for this
+# job to be accepted - with both enabled, SonarCloud rejects the CI analysis.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — clean clone, lock install, suite
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: python
+      # The suite needs a deterministic, offline backend. Locally that comes
+      # from JESTER_MOCK=1 in .env — which is gitignored, so on a clean clone
+      # the pipeline tests reach for a real Ollama, get ConnectionError, defer
+      # every nugget and then fail with "nothing was archived". Sixteen tests
+      # failed that way on this job's first run, all pointing at the same
+      # missing file.
+      #
+      # Setting it here makes CI honest about what it needs. It does not fix
+      # the underlying smell: the suite's behaviour still depends on ambient
+      # environment rather than on a fixture that pins it.
+      JESTER_MOCK: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Deliberately no pip cache. A cache is a previous run's state, and
+      # previous-run state is the thing this job exists to not have.
+      - name: Install from the lock, exactly
+        run: |
+          python -m pip install --quiet --only-binary :all: "pip==26.2.1"
+          python -m pip install --only-binary :all: -r python/pylock.toml
+
+      - name: Imports resolve from a bare checkout
+        run: python -c "import yaml, qdrant_client, ollama, pytest, tzdata; print('imports ok')"
+
+      # The documented command, on a checkout nothing has ever run in. This is
+      # the exact shape of both shipped defects.
+      - name: The documented command, twice, on a fresh checkout
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/out"
+          db="$RUNNER_TEMP/s.db"
+          python -m jester.cli signals export --db "$db" --out "$out" | tee run1.txt
+          python -m jester.cli signals export --db "$db" --out "$out" | tee run2.txt
+
+          # First run ingests; second must recognise the same records rather
+          # than duplicating them. "0 new" on run two is the whole assertion.
+          grep -q "5 new, 0 seen again" run1.txt \
+            || { echo "::error::first run did not ingest the fixture set"; exit 1; }
+          grep -q "0 new, 5 seen again" run2.txt \
+            || { echo "::error::second run was not idempotent"; exit 1; }
+
+          python - "$out/manifest.json" <<'PY'
+          import json, sys
+          m = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert m["reconciles"] is True, f"manifest does not reconcile: {m}"
+          assert m["rows_in_db"] == m["rows_in_csv"], \
+              f'rows_in_db {m["rows_in_db"]} != rows_in_csv {m["rows_in_csv"]}'
+          print(f'manifest reconciles: {m["rows_in_db"]} rows in both')
+          PY
+
+      - name: Fixture gate
+        run: python -m jester.cli signals check
+
+      - name: Test suite
+        run: python -m pytest python/tests -q
+
+  go:
+    name: Go — build and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go/go.sum
+      - run: go build ./...
+      - run: go test ./...
+
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    needs: [python, go]
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scanner needs history to attribute new code and blame. A
+          # shallow clone makes every line look like it landed today.
+          fetch-depth: 0
+
+      # Skipped, not failed, until the secret exists — so adding this file
+      # does not turn the build red before SonarCloud has been switched over.
+      - name: Scan
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8.2.2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+      - name: Say why it was skipped
+        if: env.SONAR_TOKEN == ''
+        run: |
+          echo "::notice::SONAR_TOKEN is not set, so the scan was skipped."
+          echo "To enable: SonarCloud > Administration > Analysis Method >"
+          echo "turn OFF Automatic Analysis, then add SONAR_TOKEN to this"
+          echo "repository's Actions secrets."

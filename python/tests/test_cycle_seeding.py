@@ -47,10 +47,11 @@ def _cycle_args(tmp_path, config_dir, **kw):
 
 
 @pytest.fixture
-def config_dir():
-    from pathlib import Path
-
-    return Path(__file__).resolve().parents[2] / "config"
+def config_dir(offline_config):
+    # The offline copy, not the shipped one: thresholds.yaml says
+    # embedding_provider: ollama, and a cycle test must not need a model
+    # server to be installed on the machine running it.
+    return offline_config
 
 
 def _fake_ingest(queued):
