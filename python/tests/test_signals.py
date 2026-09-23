@@ -207,3 +207,31 @@ def test_every_tracked_text_file_is_utf8():
         except UnicodeDecodeError as exc:
             bad.append(f"{rel}: {exc}")
     assert bad == [], "non-UTF-8 text file(s): " + "; ".join(bad)
+
+
+def test_every_read_only_signals_action_runs(capsys):
+    """`signals rules` crashed on its first line for weeks: it printed a v1
+    rule set (flat problem/negative lists, a single relevant_at threshold) and
+    none of those attributes survived the move to families. Nothing caught it
+    because printing the rules is the one action no test asserted on. So now
+    every action that only reads is exercised, and a missing attribute is a
+    failing test rather than a traceback someone meets later.
+
+    The environment is snapshotted and restored around the call. `cli.main`
+    loads `.env` into `os.environ`, which is right for a real invocation and
+    poison for a test run: it flipped the triviality tests out of mock mode
+    several files later, where nothing pointed back here.
+    """
+    import os
+
+    from jester import cli
+
+    before = dict(os.environ)
+    try:
+        for action in ("rules", "field-map", "sources"):
+            cli.main(["signals", action])
+            out = capsys.readouterr().out
+            assert out.strip(), f"`signals {action}` printed nothing"
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
