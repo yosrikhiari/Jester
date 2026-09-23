@@ -9,6 +9,7 @@ table. The twenty-case fixture pipeline extends the same checks.
 """
 import csv
 import json
+from pathlib import Path
 
 import pytest
 
@@ -152,3 +153,57 @@ def test_excerpt_is_truncated_but_the_hash_is_of_the_whole_text(db):
     assert len(row["excerpt"]) == sig.EXCERPT_CHARS
     assert row["text_hash"] == sig.text_hash(long), \
         "an edit past the excerpt boundary still has to be detectable"
+
+
+# ---- a clean checkout has to work ------------------------------------------
+
+def test_opening_a_database_creates_its_directory(tmp_path):
+    """`data/` is gitignored, so it does not exist in a fresh clone, and
+    sqlite will not create a missing parent — it raises "unable to open
+    database file", which reads like a permissions problem and sends the
+    reader looking in the wrong place. The first person to run the documented
+    command on a clean checkout hit exactly that."""
+    nested = tmp_path / "data" / "exports" / "s.db"
+    assert not nested.parent.exists()
+    db = sig.open_signals(str(nested))
+    try:
+        assert nested.exists()
+        assert db.execute(f"SELECT COUNT(*) FROM {sig.TABLE}").fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+def test_an_in_memory_database_needs_no_directory():
+    db = sig.open_signals(":memory:")
+    try:
+        assert db.execute(f"SELECT COUNT(*) FROM {sig.TABLE}").fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+def test_every_tracked_text_file_is_utf8():
+    """pip reads requirements.txt as UTF-8, and one stray Windows-1252 byte
+    fails the whole install with a decode error that names a byte offset and
+    not a line. This caught that file; it is here so the next one cannot
+    reach a fresh clone either."""
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[2]
+    listed = subprocess.run(["git", "ls-files"], cwd=repo,
+                            capture_output=True, text=True, check=True).stdout
+    suffixes = {".py", ".md", ".txt", ".yaml", ".yml", ".json", ".sql",
+                ".html", ".css", ".js", ".go", ".toml", ".cfg", ".ini",
+                ".mod", ".sum"}
+    bad = []
+    for rel in listed.split("\n"):
+        rel = rel.strip()
+        if not rel:
+            continue
+        path = repo / rel
+        if path.suffix not in suffixes or not path.is_file():
+            continue
+        try:
+            path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            bad.append(f"{rel}: {exc}")
+    assert bad == [], "non-UTF-8 text file(s): " + "; ".join(bad)

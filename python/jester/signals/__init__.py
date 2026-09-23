@@ -199,6 +199,21 @@ class Signal:
 
 
 def open_signals(db_path: str) -> sqlite3.Connection:
+    """Open (and create) the signal database, making its directory if needed.
+
+    The directory matters more than it looks. `data/` is gitignored, so it
+    does not exist in a fresh clone, and sqlite does not create a missing
+    parent — it raises `unable to open database file`, which reads like a
+    permissions problem and sends the reader looking in the wrong place. The
+    first person to run the documented command on a clean checkout hit exactly
+    that. The export already creates its own output directory; this is the
+    same courtesy for the database beside it.
+    """
+    parent = Path(db_path).parent
+    # `:memory:` has no parent worth creating, and a bare filename resolves to
+    # `.`, which always exists — so only a real directory path gets made.
+    if db_path != ":memory:" and str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(db_path)
     db.row_factory = sqlite3.Row
     db.executescript(sqlite_ddl())

@@ -48,13 +48,16 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
 
     lines = []
     add = lines.append
-    add("# the collector — scope and access status")
+    add("# Problem-signal collector — scope and access status")
     add("")
     add(f"> **Generated {when}** from `config/signal_rules.yaml` and the collector's field map. "
         "Not typed by hand: if the rules change, this changes with them.")
+    # The unapproved branch used to append "awaiting sign-off" to a status
+    # that already said it, so the line read "PROVISIONAL — awaiting sign-off
+    # · awaiting sign-off". Only the approved branch has anything to add.
     add(f"> **Scope status: {'APPROVED' if approved else 'PROVISIONAL — awaiting sign-off'}**"
         + (f" · decided by {(r.scope or {}).get('decided_by')} on {(r.scope or {}).get('decided_on')}"
-           if approved else " · awaiting sign-off"))
+           if approved else ""))
     add("")
     add("## 1. Communities")
     add("")
@@ -153,9 +156,15 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
     add("- Provide a ClickHouse instance and credentials scoped to this collector.")
     add("- Book the data-design review.")
     add("")
-    add("**Until access exists**, the collector runs on fixtures only. There is no live code path: "
-        "`jester signals` accepts `--mode fixture` and nothing else, so a live run cannot be started "
-        "by accident and a fixture row cannot be reported as live.")
+    add("**Until access exists, there is no Reddit code path at all.** Reddit is not in the "
+        "collector's source registry, so `jester signals run --source reddit` fails with "
+        "\"no source named 'reddit'\" rather than quietly collecting something it should not. "
+        "`jester signals sources` prints every collector that does exist and the authority each "
+        "one runs on.")
+    add("")
+    add("Live collection against **approved** sources is already built and running, and every "
+        "record carries a `mode` column saying `live` or `fixture` — so a fixture row can never "
+        "be counted as a live one, whichever source it came from.")
     add("")
     add("## 7. If access is refused or late")
     add("")
