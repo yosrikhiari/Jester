@@ -1820,6 +1820,53 @@ def cmd_signals(args):
               "must not exist as code that can be called by accident.")
         return
 
+    if action in ("leads", "outcome"):
+        from jester.signals import leads as sigleads
+
+        db = sig.open_signals(args.db)
+        try:
+            if action == "outcome":
+                if not args.record:
+                    print("which record? pass --record <record_id> "
+                          "(the last column of leads.csv)")
+                    sys.exit(1)
+                try:
+                    res = sig.set_outcome(db, args.record, args.set,
+                                          note=args.note)
+                except sig.OutcomeError as exc:
+                    print(f"outcome: {exc}")
+                    sys.exit(1)
+                was = res["was"] or "untouched"
+                print(f"{res['record_id']}: {was} -> {res['now'] or 'untouched'}")
+                o = sig.outcomes(db)
+                print(f"{o['worked']} of {o['buyers']} buyer signal(s) worked · "
+                      f"{o['replied_or_better']} replied or better · "
+                      f"{o['unfit']} should not have been sent")
+                return
+
+            res = sigleads.write_csv(db, out_dir / "leads",
+                                     mode=args.only_mode or "live",
+                                     include_worked=args.include_worked)
+            o = sig.outcomes(db, mode=args.only_mode)
+            print(f"{res['written']} lead(s) written to {res['path']}")
+            if res["unreachable"]:
+                # Named rather than silently dropped: a buyer with no contact
+                # route is real evidence and a dead end for today, and the
+                # difference matters when someone asks why 35 became 24.
+                print(f"{res['unreachable']} buyer signal(s) held back — no "
+                      "contact route in the advert; they stay in the archive")
+            print(f"archive: {o['buyers']} buyer signal(s), {o['worked']} worked, "
+                  f"{o['untouched']} untouched")
+            if o["untouched"] == o["buyers"] and o["buyers"]:
+                # The thing this whole file exists to make visible.
+                print("nothing has been acted on yet, so nothing here has been "
+                      "tested against a real company. Precision measured "
+                      "against our own rules is the rules agreeing with "
+                      "themselves.")
+            return
+        finally:
+            db.close()
+
     if action in ("digest", "reclassify"):
         from jester.signals import digest as sigdigest
         from jester.signals import run as sigrun
@@ -2089,13 +2136,14 @@ def main(argv=None):
                     choices=["export", "check", "scope", "rules", "field-map",
                              "load", "queries", "evidence",
                              "run", "recover", "runs", "sources",
-                             "digest", "reclassify"],
+                             "digest", "reclassify", "leads", "outcome"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
                          "run a live collection | recover failed queries | "
                          "list runs | list sources | write the weekly digest | "
-                         "re-score the archive against the rules")
+                         "re-score the archive against the rules | "
+                         "write the handover list | record what came of a lead")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
@@ -2126,6 +2174,17 @@ def main(argv=None):
                     help="directory of labelled fixture cases for `check` "
                          "(default: the problem-signal set). A second rule set "
                          "needs a second set of cases, or it has no gate.")
+    sg.add_argument("--record", default="",
+                    help="outcome: which record_id to mark (last column of leads.csv)")
+    sg.add_argument("--set", default="", dest="set",
+                    help="outcome: contacted | replied | meeting | won | no | unfit, "
+                         "or empty to clear it")
+    sg.add_argument("--note", default="",
+                    help="outcome: one line from whoever worked it")
+    sg.add_argument("--include-worked", action="store_true",
+                    help="leads: include records someone has already marked "
+                         "(default: only untouched, so two people do not email "
+                         "the same company in the same week)")
     sg.add_argument("--apply", action="store_true",
                     help="reclassify: write the new verdicts (default: dry run)")
     sg.add_argument("--run", default="signals-fixture", help="run id stamped on the records")
