@@ -1,0 +1,212 @@
+# Hiring-advert rules — does this company want the thing we sell?
+#
+# A second rule set, not a second engine. The families, weights, roles and
+# thresholds are read by exactly the same classifier as signal_rules.yaml,
+# because the machinery was never specific to forum posts — it scores text
+# against combinations of phrases, and that is all this needs.
+#
+# WHY A SEPARATE FILE
+# -------------------
+# The other rule set asks "is this person describing work software could
+# remove?". That question is wrong here. A hiring advert is not describing a
+# problem; it is announcing a decision already taken, with a budget attached.
+# So the question becomes "does this company want the engagement we offer, for
+# the kind of work we do?" - and the evidence is the advert's own structure.
+#
+# Scoring a job post with the forum rules would reject nearly all of them
+# (an advert has no "owner voice", it has a company name) and accept the wrong
+# ones (a recruiter's boilerplate is full of pain language).
+#
+# THE TWO HALVES, same shape as the other file
+# --------------------------------------------
+#   buyer        - wants a CONTRACT-shaped engagement AND our kind of work.
+#                  This is what outreach can act on.
+#   practitioner - wants our kind of work but only as a full-time employee.
+#                  Real information about who is spending on what, and not a
+#                  lead for an offer built around fractional engineers.
+#   none         - neither, or actively disqualifying.
+#
+# MEASURED, not assumed: on the September 2026 thread, 258 adverts, 24 asking
+# for contract or part-time work, 19 of those also naming AI, automation,
+# integration or internal tooling. A regex found those numbers; this file is
+# how they get re-measured properly, and the result may be lower.
+
+config_version: 1
+
+scope:
+  status: provisional
+  decided_by: ""
+  decided_on: ""
+
+  communities:
+    - name: hn/hiring
+      serves: buyer
+      evidence: "measured - Sep 2026 thread: 258 adverts, 24 contract/part-time, 19 of those in our kind of work (7.4%). Fourteen consecutive monthly threads, 6,649 adverts, never below 379."
+      why: companies publicly stating a need, a budget and a contact route
+    - name: hn/hiring-fulltime
+      serves: practitioner
+      evidence: "the full-time majority of the same threads; who is spending on what, not a lead"
+      why: market evidence for content, explicitly not outreach
+
+  excluded:
+    - name: "Ask HN: Freelancer? Seeking freelancer?"
+      evidence: "measured - the September 2026 thread is 23 of 23 SEEKING WORK. The marketplace is entirely one-sided: freelancers advertising to freelancers."
+
+  queries:
+    - "12"
+
+  retention:
+    excerpt_chars: 600
+    keep_full_text: false
+    identities: "the company names itself in its own advert; nothing is enriched and nobody is contacted"
+    removal: "recorded, not deleted"
+
+# A buyer must clear both bars. An advert offering contract work in a field we
+# do not touch is not a lead, and neither is a perfect technical match that
+# only wants a full-time employee in an office.
+buyer_at: 0.55
+practitioner_at: 0.30
+ambiguous_margin: 0.15
+# Inheritance is meaningless here - every record is a top-level advert with no
+# parent to borrow a voice from - so it is set to zero rather than left to
+# fire on something unexpected.
+inherited_weight: 0.0
+inherited_max_chars: 1
+max_reasons: 3
+
+families:
+
+  engagement:
+    weight: 0.45
+    role: buyer_required
+    note: >
+      The shape of the deal. A buyer signal REQUIRES one of these: the offer is
+      an engineer inside the client's team, and a company that will only take a
+      full-time employee on its own payroll is not buying that, however well
+      the work matches.
+    phrases: ["contract", "contractor", "contract to permanent", "contract-to-hire",
+              "freelance", "freelancer", "part-time", "part time", "fractional",
+              # Bare "consulting"/"consultant" is out: it matched "Black Canyon
+              # Consulting", the company's NAME, and scored the advert 1.00.
+              # Only the forms that describe an arrangement survive.
+              "consulting basis", "consulting engagement", "as a consultant",
+              "consulting contract", "hourly", "per hour", "/hr", "hrs/wk",
+              "hours per week", "hours/week", "short-term", "project-based",
+              "statement of work", "b2b contract", "1099 contractor",
+              "1099 basis", "day rate"]
+
+  our_work:
+    weight: 0.35
+    role: pain_marker
+    note: >
+      The work we actually do. Named from the adverts that matched, not from
+      the service page: AI-native workflows, automation, integrations,
+      internal tooling and the data plumbing under them.
+    phrases: ["ai", "llm", "genai", "machine learning", "automation", "automate",
+              "workflow", "integration", "integrations", "api integration",
+              "internal tool", "internal tools", "internal platform",
+              "data pipeline", "etl", "scraping", "agent", "agents", "rag",
+              "back office", "backoffice", "no-code", "low-code", "zapier",
+              "n8n", "make.com", "airtable", "python", "typescript", "node",
+              "full-stack", "fullstack", "backend", "platform engineer"]
+
+  budget:
+    weight: 0.20
+    role: buyer_boost
+    note: >
+      A stated rate is the difference between a wish and a decision. It does
+      not make a buyer on its own - plenty of full-time adverts post salary
+      bands - but it raises confidence in one.
+    phrases: ["$", "usd", "eur", "gbp", "£", "€", "salary", "rate", "compensation",
+              "equity", "k-", "per year", "annually"]
+
+  urgency:
+    weight: 0.10
+    role: buyer_boost
+    note: "a start date is a decision with a clock on it"
+    phrases: ["start by", "start asap", "immediate", "immediately", "urgent",
+              "this month", "next month", "asap"]
+
+  # -- negatives -------------------------------------------------------------
+  onsite_only:
+    weight: -0.65
+    role: negative
+    note: >
+      A role that must be performed in an office in another country cannot be
+      filled by a remote engineer, whatever the engagement says. "Hybrid" is
+      included: it still requires being in the city.
+    phrases: ["onsite only", "on-site only", "on-site", "onsite", "on site",
+              "no remote", "not remote", "must be local", "in-office",
+              "in office", "in-person", "hybrid", "relocation required",
+              "must relocate", "must be based in", "based in our"]
+
+  employment_only:
+    weight: -0.40
+    role: negative
+    note: >
+      The advert rules out the engagement explicitly. Distinct from simply not
+      mentioning contract work, which `engagement` already handles by not
+      firing at all.
+    phrases: ["full-time only", "full time only", "no contractors",
+              "no contract", "no agencies", "no freelancers", "no recruiters",
+              "w2 only", "employees only", "direct hire only"]
+
+  visa_bound:
+    weight: -0.30
+    role: negative
+    note: "work authorisation in one country, which a remote engagement cannot satisfy"
+    phrases: ["visa sponsorship", "work authorization required", "us citizens only",
+              "security clearance", "must be authorized to work", "green card",
+              "eu citizens only", "citizens only"]
+
+  no_budget:
+    weight: -0.50
+    role: negative
+    note: >
+      Equity instead of money is not a client. Two adverts scored 1.00 on a
+      perfect engagement line - "Fractional / Contract | Equity-only (2-5%)"
+      and a co-founder search paying in equity - and neither has a budget to
+      spend, which is the whole point of preferring hiring adverts to forum
+      posts. A co-founder hunt is the same thing wearing a different title.
+    phrases: ["equity only", "equity-only", "equity based", "equity-based",
+              "co-founder", "cofounder", "founding partner", "sweat equity",
+              "profit share", "rev share", "revenue share", "unpaid",
+              "deferred compensation", "no cash"]
+
+  wrong_discipline:
+    weight: -0.35
+    role: negative
+    note: >
+      Roles that are not engineering work we can do. Kept narrow: these are
+      titles, not topics, so a backend role at a hardware company still counts.
+    phrases: ["sales representative", "account executive", "sdr", "recruiter",
+              "marketing manager", "community manager", "customer support",
+              "hardware engineer", "mechanical engineer", "electrical engineer",
+              "firmware", "unpaid", "volunteer", "equity only", "no salary"]
+
+# Adverts that are not adverts. A thread reply discussing the thread, or a
+# moderator note, is not a company advertising.
+hard_reject:
+  # Not weighted, because this is not a matter of degree. An equity-only role
+  # has no budget, and the entire reason for preferring hiring adverts to
+  # forum posts is that the budget is stated. A co-founder hunt is the same
+  # thing with a better title. Both scored "ambiguous buyer" at 0.50 until
+  # they were moved here - close enough to the bar to look like thin leads,
+  # which is worse than being rejected.
+  #
+  # "founding engineer" deliberately does NOT appear: that is a real paid
+  # role and one of the better leads in the sample.
+  - "equity only"
+  - "equity-only"
+  - "co-founder"
+  - "cofounder"
+  - "sweat equity"
+  - "unpaid"
+  - "please post"
+  - "reminder:"
+  - "meta:"
+  - "seeking work"
+  - "looking for work"
+  - "seeking freelancer"
+
+frame_phrases: []

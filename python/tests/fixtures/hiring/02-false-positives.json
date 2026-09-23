@@ -1,0 +1,76 @@
+{
+  "category": "irrelevant",
+  "why": [
+    "Every one of these scored buyer 1.00 on the first run against 753 real",
+    "adverts. They are pinned here as the rules that fixed them, so the fix",
+    "is a failing test rather than a comment somebody deletes."
+  ],
+  "cases": [
+    {
+      "id": "fp-01-consulting-is-the-company-name",
+      "why": "Black Canyon Consulting scored buyer 1.00 because `consulting` was in its NAME. Dropping the bare word demotes it to practitioner, which is correct: a company paying for Python and AWS work is market evidence, just not a lead.",
+      "expect": {
+        "audience": "practitioner"
+      },
+      "record": {
+        "source_id": "t1_fp01",
+        "text": "BCC | Platform Systems Engineers | Bethesda MD | Competitive compensation! Black Canyon Consulting (BCC) is hiring Platform Systems Engineers of all levels to join our team at the National Center for Biotechnology Information. Python and AWS."
+      }
+    },
+    {
+      "id": "fp-02-1099-was-just-a-number",
+      "why": "`1099` matched a figure in a full-time advert. A tax form is only a tax form next to the word contractor.",
+      "expect": {
+        "audience": "none"
+      },
+      "record": {
+        "source_id": "t1_fp02",
+        "text": "SerpApi | Junior to Senior Fullstack Engineer | Based in our Austin office | Full-time only | We serve 1099 requests per second at peak. Python, Ruby, AI features. Salary $120k-160k."
+      }
+    },
+    {
+      "id": "fp-03-onsite-in-a-city",
+      "why": "\"on-site in Bremen | Full-Time\" scored buyer 1.00 because onsite_only only carried the phrase \"on-site only\". It is now practitioner, and that is the right answer rather than a compromise: the company genuinely pays for AI workflow automation, it just will not do it as a remote contract. Market evidence, not a lead.",
+      "expect": {
+        "audience": "practitioner"
+      },
+      "record": {
+        "source_id": "t1_fp03",
+        "text": "AREO | Engineering Manager, Lead Product Engineer | Remote (EU) / on-site in Bremen, Germany | Full-Time | Equity | We build AI workflow automation for robotics. Contract negotiable for the right person."
+      }
+    },
+    {
+      "id": "fp-04-equity-only-is-not-a-client",
+      "why": "\"Fractional / Contract | Equity-only\" is a perfect engagement line with no money behind it. Preferring adverts to forum posts is pointless if the advert has no budget.",
+      "expect": {
+        "audience": "none"
+      },
+      "record": {
+        "source_id": "t1_fp04",
+        "text": "Olli Technologies | Founding Engineer & Technical Lead | REMOTE (US) | Fractional / Contract | Equity-only (2-5%). We're building an AI-native operations platform with Python and LLM agents."
+      }
+    },
+    {
+      "id": "fp-05-cofounder-hunt",
+      "why": "A co-founder search is an equity-only role wearing a different title, and it reads as a contract opening because the words overlap.",
+      "expect": {
+        "audience": "none"
+      },
+      "record": {
+        "source_id": "t1_fp05",
+        "text": "Regnitive | Technical Co-Founder | Toronto, ON, Canada | Equity | Early-stage startup building AI-powered privacy and data governance. Consulting or freelance arrangement possible while we raise."
+      }
+    },
+    {
+      "id": "fp-06-supply-side-in-the-wrong-thread",
+      "why": "The Freelancer thread is 23 of 23 people advertising themselves. If one lands in this collector it must be rejected outright, not scored.",
+      "expect": {
+        "audience": "none"
+      },
+      "record": {
+        "source_id": "t1_fp06",
+        "text": "SEEKING WORK | Remote | Python automation, API integrations, Excel and Google Sheets fixes. Fixed price agreed in writing before work starts. $80/hr or project rate."
+      }
+    }
+  ]
+}
