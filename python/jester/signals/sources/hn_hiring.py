@@ -54,11 +54,36 @@ TITLE_ONLY = "title"
 #: title is someone discussing the thread, not the thread itself.
 MIN_COMMENTS = 50
 
+#: The statuses worth waiting out. Everything else is the service saying no
+#: for a reason that a second identical request will not change.
+RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
+
+class _Retry(Exception):
+    """Internal: this attempt failed in a way that is worth trying again.
+
+    It carries the status because the last retry becomes the error a person
+    reads in the run ledger, and "exhausted its retries" without a 429 in it
+    is the difference between "we are being rate-limited" and "something is
+    broken", which are opposite next actions.
+    """
+
+    def __init__(self, message: str = "", status: str = ""):
+        super().__init__(message)
+        self.status = status
+
+
 _TITLE_RE = re.compile(r"who\s+is\s+hiring", re.I)
 #: The company's own first line, which is where it puts its name. Splitting on
 #: the pipe is the convention the thread has used for a decade: NAME | ROLE |
 #: LOCATION | ENGAGEMENT | RATE.
-_NAME_RE = re.compile(r"^\s*([^|\n]{2,60}?)\s*(?:\||$)")
+#:
+#: Greedy, and the pipe is REQUIRED. The lazy form with an optional end-anchor
+#: matched a whole line when there was no pipe at all, so "[flagged]" and a
+#: spammer's email address both came back as company names — harmless only
+#: because a second check further down looked for the pipe again. Requiring it
+#: here says what is actually meant, and lets that second check go.
+_NAME_RE = re.compile(r"^\s*([^|\n]{2,60})\|")
 #: The engagement words, quoted back rather than interpreted.
 _ENGAGEMENT_RE = re.compile(
     r"\b(contract(?:\s+to\s+permanent)?|freelance|part[- ]time|full[- ]time"
@@ -90,30 +115,52 @@ class HackerNewsHiring:
         self._last_call = 0.0
 
     # -- plumbing ----------------------------------------------------------
+    def _pace(self) -> None:
+        """Hold the self-imposed gap between requests, including on retries.
+
+        The gap is the point: the API publishes no hard limit, which is a
+        reason to be careful with it rather than a licence.
+        """
+        gap = RATE - (time.monotonic() - self._last_call)
+        if gap > 0:
+            self._sleep(gap)
+        self._last_call = time.monotonic()
+
+    def _attempt(self, req) -> dict:
+        """One request. Raises `SourceError` for anything final, and
+        `_Retry` for the transient cases worth waiting out."""
+        try:
+            with self._opener(req, timeout=self._timeout) as resp:
+                return json.loads(resp.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as exc:
+            message = f"HTTP {exc.code} from Hacker News"
+            if exc.code in RETRYABLE:
+                raise _Retry(message, str(exc.code)) from exc
+            raise SourceError(message, status=str(exc.code)) from exc
+        except urllib.error.URLError as exc:
+            raise _Retry(f"cannot reach Hacker News: {exc.reason}") from exc
+        except json.JSONDecodeError as exc:
+            # A body that is not JSON is usually an interstitial. Read as "no
+            # results" it turns a block into a quiet month nobody investigates.
+            raise SourceError(f"Hacker News returned non-JSON: {exc}") from exc
+
     def _get(self, url: str) -> dict:
+        """Fetch, paced, retrying only what is worth retrying."""
         req = urllib.request.Request(url, headers={"User-Agent": self._user_agent})
+        last = _Retry("Hacker News exhausted its retries")
         for attempt in range(RETRIES):
-            gap = RATE - (time.monotonic() - self._last_call)
-            if gap > 0:
-                self._sleep(gap)
-            self._last_call = time.monotonic()
+            self._pace()
             try:
-                with self._opener(req, timeout=self._timeout) as resp:
-                    return json.loads(resp.read().decode("utf-8", "replace"))
-            except urllib.error.HTTPError as exc:
-                if exc.code in (429, 500, 502, 503, 504) and attempt < RETRIES - 1:
-                    self._sleep(BACKOFF * (attempt + 1))
-                    continue
-                raise SourceError(f"HTTP {exc.code} from Hacker News",
-                                  status=str(exc.code)) from exc
-            except urllib.error.URLError as exc:
-                if attempt < RETRIES - 1:
-                    self._sleep(BACKOFF * (attempt + 1))
-                    continue
-                raise SourceError(f"cannot reach Hacker News: {exc.reason}") from exc
-            except json.JSONDecodeError as exc:
-                raise SourceError(f"Hacker News returned non-JSON: {exc}") from exc
-        raise SourceError("Hacker News exhausted its retries")
+                return self._attempt(req)
+            except _Retry as retry:
+                last = retry
+                if attempt == RETRIES - 1:
+                    break
+                # Retrying a 429 immediately is the behaviour that turns a
+                # rate limit into a ban.
+                self._sleep(BACKOFF * (attempt + 1))
+        raise SourceError(f"{last} (after {RETRIES} attempts)",
+                          status=last.status) from last
 
     # -- the monthly threads ------------------------------------------------
     def threads(self, limit: int = 14) -> List[dict]:
@@ -150,10 +197,14 @@ class HackerNewsHiring:
         """Every company advert from the recent monthly threads.
 
         `query` is how many months to read, so the run ledger records the
-        depth alongside the counts — "12" reads a year. The signature matches
-        the other sources so the run loop does not need to know the
-        difference.
+        depth alongside the counts — "12" reads a year.
+
+        `since_utc` is accepted and ignored, and that is deliberate rather
+        than an oversight: the run loop calls every source the same way, and
+        the window here is the thread list rather than a timestamp. Dropping
+        the parameter would make this the one source needing special handling.
         """
+        del since_utc  # accepted for the shared signature; see above
         try:
             months = int(query) if str(query).strip().isdigit() else 12
         except (TypeError, ValueError):
@@ -179,16 +230,12 @@ class HackerNewsHiring:
         if not source_id or not text:
             return None
 
-        name = ""
+        # A pipe-delimited first field is the company name by convention. No
+        # pipe means somebody replying to the thread rather than advertising
+        # in it, and guessing a name out of prose is exactly the inference
+        # this collector does not make.
         m = _NAME_RE.match(text)
-        if m:
-            candidate = m.group(1).strip()
-            # A pipe-delimited first field is the company name by convention.
-            # A long sentence is somebody replying to the thread, not
-            # advertising in it, and guessing a name out of prose is exactly
-            # the inference this collector does not do.
-            if "|" in text[:200] and len(candidate) <= 60:
-                name = candidate
+        name = m.group(1).strip() if m else ""
 
         engagement = ", ".join(sorted({
             g.lower() for g in _ENGAGEMENT_RE.findall(text)})) or "unknown"

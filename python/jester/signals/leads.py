@@ -28,16 +28,22 @@ from . import TABLE
 #: What counts as a way to reach them. Deliberately broad: an apply link, a
 #: careers page and an email address are all routes a person can follow, and
 #: which one an advert uses is not our business.
+#: Every repetition is bounded. The unbounded form took 610 ms on a 9 000
+#: character string of dots with no "@" in it — the shape a long advert full
+#: of version numbers has — because the engine tried every possible split
+#: before giving up. Bounded, the same input takes 8 ms and the same real
+#: addresses still match. 64 and 63 are the actual limits for an email local
+#: part and a DNS label, so the bounds are the standard's, not invented.
 CONTACT_RE = re.compile(
-    r"[\w.+-]+@[\w-]+\.[\w.]+"          # an address
-    r"|https?://[^\s|)\]]+"             # any link, including apply and careers
+    r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}"   # an address
+    r"|https?://[^\s|)\]]{1,300}"       # any link, including apply and careers
     r"|\bapply\b|\bcareers\b|\bemail\b|\bcontact\b|\bDM\b|\breach out\b",
     re.I)
 
 #: Pulled out of the excerpt so the reader does not have to. Addresses first
 #: because they are unambiguous; a link is the fallback.
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
-LINK_RE = re.compile(r"https?://[^\s|)\]]+")
+EMAIL_RE = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,4}")
+LINK_RE = re.compile(r"https?://[^\s|)\]]{1,300}")
 
 COLUMNS = ["outcome", "outcome_note", "company", "buyer_intent", "confidence",
            "headline", "email", "link", "source_url", "why_it_was_kept",

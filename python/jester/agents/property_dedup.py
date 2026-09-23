@@ -304,7 +304,10 @@ def structured_similarity_detailed(
         max_score += 1.0
         loc_score = location_matches / location_total
         score += loc_score
-        if loc_score == 1.0:
+        # Compare the counts, not the quotient: "every field agreed" is what
+        # is meant, and it is an integer fact. Asking a float whether it is
+        # exactly 1.0 is the same question asked in a way that can be wrong.
+        if location_matches == location_total:
             reasons.append("exact location match")
         elif loc_score > 0:
             reasons.append(f"partial location match ({location_matches}/{location_total})")

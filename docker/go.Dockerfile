@@ -8,6 +8,10 @@ COPY go/ ./
 # Static binary so it runs on a minimal base.
 RUN CGO_ENABLED=0 go build -o /out/worker ./cmd/worker
 
+# Root, deliberately: this worker and the console container write the same
+# SQLite database through a shared volume, and that shared handoff queue IS
+# the cross-process contract. Giving one of them a different uid makes the
+# other's files unwritable. See Dockerfile.python for the other half.
 FROM debian:stable-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

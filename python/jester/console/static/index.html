@@ -111,12 +111,12 @@
         </div>
         <div class="field">
           <label for="src-url">Link or handle</label>
-          <input id="src-url" required autocomplete="off"
+          <input id="src-url" aria-label="Source link" required autocomplete="off"
                  placeholder="r/ExperiencedDevs · ask · news.ycombinator.com/item?id=… · community.home-assistant.io · @fosdemtalks · youtu.be/…">
         </div>
         <div class="field">
           <label for="src-name">Name <span class="mute">(optional)</span></label>
-          <input id="src-name" autocomplete="off" placeholder="derived from the link">
+          <input id="src-name" aria-label="Source name" autocomplete="off" placeholder="derived from the link">
         </div>
         <button class="btn btn--primary" type="submit">+ add</button>
       </form>
@@ -168,7 +168,7 @@
     <div class="hero">
       <div><h1 data-eyebrow="Archive">Ideas</h1><p>Review loop — open one to verify its citations, then mark it.</p></div>
       <div class="row row-end">
-        <input id="ideas-q" placeholder="filter ideas… ( / )" style="inline-size:220px" autocomplete="off">
+        <input id="ideas-q" aria-label="Filter ideas" placeholder="filter ideas… ( / )" style="inline-size:220px" autocomplete="off">
         <div class="seg" id="ideas-filter" role="group" aria-label="Filter by status"></div>
       </div>
     </div>
@@ -207,7 +207,7 @@
         <p id="search-note" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="search-q" placeholder="describe a problem… ( / )" style="inline-size:300px" autocomplete="off">
+        <input id="search-q" aria-label="Search the archive" placeholder="describe a problem… ( / )" style="inline-size:300px" autocomplete="off">
         <button id="search-go" class="primary">search</button>
       </div>
     </div>
@@ -230,7 +230,7 @@
         <p id="clusters-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="clusters-q" placeholder="filter themes… ( / )" style="inline-size:200px" autocomplete="off">
+        <input id="clusters-q" aria-label="Filter themes" placeholder="filter themes… ( / )" style="inline-size:200px" autocomplete="off">
         <div class="seg" id="clusters-sort" role="group" aria-label="Sort themes"></div>
         <div class="seg" id="clusters-platform" role="group" aria-label="Filter by platform"></div>
         <button id="clusters-run" class="primary">⟳ regroup</button>
@@ -301,7 +301,7 @@
         <p id="nuggets-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="nuggets-q" placeholder="filter nuggets… ( / )" style="inline-size:220px" autocomplete="off">
+        <input id="nuggets-q" aria-label="Filter nuggets" placeholder="filter nuggets… ( / )" style="inline-size:220px" autocomplete="off">
         <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>
       </div>
     </div>
@@ -341,7 +341,7 @@
         <p id="signals-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="signals-q" placeholder="filter signals…" style="inline-size:220px" autocomplete="off">
+        <input id="signals-q" aria-label="Filter problem signals" placeholder="filter signals…" style="inline-size:220px" autocomplete="off">
       </div>
     </div>
 
@@ -483,7 +483,7 @@
         it decide to walk sixteen sources at 3am.</p>
       <div class="row modal-listhead">
         <label class="checkall">
-          <input type="checkbox" id="sched-select-all" checked>
+          <input type="checkbox" id="sched-select-all" aria-label="Select all sources" checked>
           <span>Select all</span>
         </label>
         <span class="pill pill--sm tone-neutral row-end" id="sched-selected-count">—</span>
@@ -497,17 +497,17 @@
       <div class="formgrid">
         <div class="field">
           <label for="sched-max-posts">Max posts</label>
-          <input id="sched-max-posts" type="number" min="1" max="500" placeholder="no ceiling">
+          <input id="sched-max-posts" aria-label="Maximum posts per tick" type="number" min="1" max="500" placeholder="no ceiling">
           <span class="hint">threads / videos / topics per tick</span>
         </div>
         <div class="field">
           <label for="sched-max-comments">Max comments</label>
-          <input id="sched-max-comments" type="number" min="1" max="100000" placeholder="no ceiling">
+          <input id="sched-max-comments" aria-label="Maximum comments per tick" type="number" min="1" max="100000" placeholder="no ceiling">
           <span class="hint">comments queued per tick</span>
         </div>
         <div class="field">
           <label for="sched-max-ideas">Max ideas</label>
-          <input id="sched-max-ideas" type="number" min="1" max="1000" placeholder="no ceiling">
+          <input id="sched-max-ideas" aria-label="Maximum ideas per tick" type="number" min="1" max="1000" placeholder="no ceiling">
           <span class="hint">new ideas synthesized per tick</span>
         </div>
       </div>
@@ -521,11 +521,11 @@
       <div class="formgrid" style="margin-block-start:var(--s-5)">
         <div class="field">
           <label for="sched-every">Every (minutes)</label>
-          <input id="sched-every" type="number" min="1" max="1439" value="30">
+          <input id="sched-every" aria-label="Run every N minutes" type="number" min="1" max="1439" value="30">
         </div>
         <div class="field">
           <label for="sched-at">…or daily at</label>
-          <input id="sched-at" type="time" value="03:00">
+          <input id="sched-at" aria-label="Daily run time" type="time" value="03:00">
         </div>
         <div class="field">
           <label>&nbsp;</label>
@@ -582,7 +582,7 @@
       <span class="mono">sources.yaml</span>.</p>
     <div class="row modal-listhead">
       <label class="checkall">
-        <input type="checkbox" id="select-all-sources" checked>
+        <input type="checkbox" id="select-all-sources" aria-label="Select all sources" checked>
         <span>Select all</span>
       </label>
       <span class="pill pill--sm tone-neutral row-end" id="selected-count">—</span>
@@ -605,11 +605,11 @@
       </div>
       <div class="field" id="goal-value-field" style="display:none">
         <label for="goal-value">Target Count</label>
-        <input type="number" id="goal-value" min="1" value="10" placeholder="e.g., 50">
+        <input type="number" id="goal-value" aria-label="Goal value" min="1" value="10" placeholder="e.g., 50">
       </div>
       <div class="field">
         <label for="run-id-input">Run ID <span class="xs">(optional)</span></label>
-        <input type="text" id="run-id-input" placeholder="auto-generated if empty">
+        <input type="text" id="run-id-input" aria-label="Run id" placeholder="auto-generated if empty">
       </div>
     </div>
   </div>
