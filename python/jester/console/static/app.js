@@ -2673,10 +2673,16 @@ function renderSignals(rows) {
     if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
     if (/ambiguous/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">ambiguous</span>');
     if (/inherited/.test(r.match_reason || '')) flags.push('<span class="pill pill--sm tone-neutral">voice inherited</span>');
+    // A hiring record names its own company and quotes its engagement line;
+    // a forum record leaves both "unknown" and shows neither.
+    const named = r.company && r.company !== 'unknown' ? esc(r.company) : '';
+    const intent = r.buyer_intent && r.buyer_intent !== 'unknown'
+      ? '<span class="pill pill--sm tone-info">' + esc(r.buyer_intent) + '</span>' : '';
     return '<tr><td><a href="' + esc(r.source_url) + '" target="_blank" rel="noopener">'
-      + (esc(what.slice(0, 110)) || '(no title)') + '</a>'
+      + (named || esc(what.slice(0, 110)) || '(no title)') + '</a>'
+      + (named ? '<div class="xs">' + esc(what.slice(0, 100)) + '</div>' : '')
       + '<div class="xs">' + esc(r.community) + ' &middot; ' + esc(r.kind)
-      + ' &middot; found by <span class="mono">' + esc(r.query) + '</span></div>'
+      + ' &middot; found by <span class="mono">' + esc(r.query) + '</span> ' + intent + '</div>'
       + (flags.length
         ? '<div class="row" style="gap:var(--s-2);margin-block-start:var(--s-2)">' + flags.join('') + '</div>'
         : '')

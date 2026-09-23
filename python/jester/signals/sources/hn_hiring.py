@@ -65,6 +65,13 @@ _ENGAGEMENT_RE = re.compile(
     r"|fractional|consult(?:ing|ant)?|intern(?:ship)?)\b", re.I)
 
 
+def _headline(text: str, limit: int = 150) -> str:
+    """The advert's first line - by convention NAME | ROLE | LOCATION |
+    ENGAGEMENT | RATE, which is the most informative 150 characters in it."""
+    head = (text or "").splitlines()[0].strip() if (text or "").strip() else ""
+    return head[:limit]
+
+
 @register
 class HackerNewsHiring:
     name = "hackernews-hiring"
@@ -193,7 +200,12 @@ class HackerNewsHiring:
             community="hn/hiring",
             kind="post",
             author=str(child.get("author") or ""),
-            title=name or thread["title"],
+            # The advert's own headline line, not the company name: `company`
+            # already carries that, and putting it in both made the console
+            # print it twice, one above the other. The headline is where the
+            # role, location and engagement live, which is what a reader
+            # actually needs under the name.
+            title=_headline(text) or thread["title"],
             text=text,
             created_utc=str(child.get("created_at") or ""),
             query=f"who-is-hiring {thread['created_at'][:7]}",

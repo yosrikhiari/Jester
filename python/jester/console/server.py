@@ -36,7 +36,8 @@ _STATIC_TYPES = {
 
 
 def _api(args):
-    return ConsoleAPI(db_path=args.db, config_dir=args.config)
+    return ConsoleAPI(db_path=args.db, config_dir=args.config,
+                      signals_db=getattr(args, "signals_db", None))
 
 
 def _static_path(url_path: str):
@@ -346,6 +347,13 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="jester-console")
     p.add_argument("--db", default=os.environ.get("JESTER_DB", "data/jester.db"))
     p.add_argument("--config", default=str(Path(__file__).resolve().parents[3] / "config"))
+    # The problem-signal archive is a separate database, and until now the
+    # only way to point at a different one was an environment variable that
+    # does not appear in --help. A flag is discoverable; the variable still
+    # works as a fallback so nothing that set it breaks.
+    p.add_argument("--signals-db", default=None,
+                   help="problem-signal archive to browse "
+                        "(default: signals-live.db beside --db)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8619)
     args = p.parse_args(argv)
