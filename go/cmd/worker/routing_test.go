@@ -189,6 +189,16 @@ func TestPostsOnlyIsNotTheDefault(t *testing.T) {
 	}
 }
 
+func TestAPostWithoutItsOwnURLLinksToTheThread(t *testing.T) {
+	// Some listings return the post without a URL. The record must still
+	// link somewhere a reviewer can open, so it falls back to the thread.
+	post := &reddit.FetchedPost{ID: "abc", Title: "[Hiring] Go developer"}
+	got := postAsRecord(post, "https://reddit.com/r/forhire/comments/abc/")
+	if len(got) != 1 || got[0].Permalink != "https://reddit.com/r/forhire/comments/abc/" {
+		t.Fatalf("want the thread URL as the permalink, got %+v", got)
+	}
+}
+
 func TestAnEmptyPostProducesNoRecord(t *testing.T) {
 	// A deleted or link-only post has nothing to classify. Storing an empty
 	// record would put a row in the archive that says nothing.
