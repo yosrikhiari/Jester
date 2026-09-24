@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="download6.png" alt="Jester" width="180">
+  <img src="docs/img/logo.png" alt="Jester" width="180">
 </p>
 
 <h1 align="center">Jester</h1>
@@ -9,13 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC382D" alt="Qdrant">
-  <img src="https://img.shields.io/badge/ClickHouse-Archive-FFCC01?logo=clickhouse&logoColor=black" alt="ClickHouse">
-  <img src="https://img.shields.io/badge/Ollama-Local_LLM-000000" alt="Ollama">
-  <img src="https://img.shields.io/badge/tests-833%20passing-brightgreen" alt="Tests">
+  <a href="https://github.com/yosrikhiari/Jester/actions/workflows/ci.yml"><img src="https://github.com/yosrikhiari/Jester/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 <p align="center">
@@ -162,7 +156,7 @@ All tuning lives in `config/`:
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-833 tests. They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+940 Python tests and 285 Go test functions (counted 2026-09-24; CI runs both on every push). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 
