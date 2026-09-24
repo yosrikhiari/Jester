@@ -26,7 +26,12 @@ def db(tmp_path):
 
 
 def _buyer(db, source_id, text, conf=0.9):
+    # source_url is set because every real record has one — the collector
+    # writes the item permalink — and it is the reader's fallback when the
+    # excerpt carries no usable contact route. A fixture without it would let
+    # a test assert on a column that is empty for the wrong reason.
     s = sig.Signal(source_id=source_id, platform="hackernews",
+                   source_url=f"https://news.ycombinator.com/item?id={source_id}",
                    community="hn/hiring", kind="post", text=text,
                    mode="live", audience="buyer", match_confidence=conf,
                    company="Acme", buyer_intent="contract")
@@ -184,3 +189,77 @@ def test_a_column_added_later_is_not_null_on_old_rows(db):
     assert nulls == 0
     assert leads.gather(db)["actionable"], \
         "a NULL outcome would silently drop every pre-existing lead"
+
+
+# ---- a route you cannot follow is worse than no route ----------------------
+
+def test_a_route_cut_off_by_the_excerpt_is_not_handed_over(db, tmp_path):
+    """The archive stores a 600-character excerpt, not the advert. A contact
+    route past that cut comes back amputated.
+
+    Seen live: a real lead's link column read `https://git`. That is not a
+    link. An empty cell tells the reader to open source_url; a broken one
+    tells them to follow something that goes nowhere, and wastes the follow.
+    """
+    from jester.signals import EXCERPT_CHARS
+
+    # The link must land exactly ON the 600-char boundary, the way the real
+    # record did. Pushing it past the cut removes it altogether, which is a
+    # different (and harmless) case.
+    tail = "https://git"
+    head = "Acme | REMOTE | Contract | see "
+    text = head + "x" * (EXCERPT_CHARS - len(head) - len(tail)) + tail
+    assert len(text) == EXCERPT_CHARS
+    _buyer(db, "1", text)
+    rows = list(csv.DictReader(open(leads.write_csv(db, tmp_path)["path"],
+                                    encoding="utf-8")))
+    assert rows, "the lead itself must still be handed over"
+    assert rows[0]["link"] == "", f"handed over a truncated link: {rows[0]['link']!r}"
+    assert rows[0]["source_url"], "source_url is what the reader falls back to"
+
+
+def test_a_link_that_ends_a_short_advert_is_still_a_route(db, tmp_path):
+    """Only a cut excerpt is distrusted. Dropping every trailing link would
+    cost more leads than the truncation does."""
+    _buyer(db, "2", "Beta | REMOTE | Contract | apply: https://beta.com/jobs")
+    rows = list(csv.DictReader(open(leads.write_csv(db, tmp_path)["path"],
+                                    encoding="utf-8")))
+    assert rows[0]["link"] == "https://beta.com/jobs"
+
+
+def test_a_truncated_address_is_not_handed_over_either(db, tmp_path):
+    """Same rule for emails, and the dangerous shape is the plausible one.
+
+    `jobs@acm` is harmless: EMAIL_RE needs a dot after the @, so a cut that
+    short is never offered as a route at all. The one that costs you is
+    `jobs@acme.co` cut from `jobs@acme.com` — it matches, it looks like an
+    address, and it bounces.
+    """
+    from jester.signals import EXCERPT_CHARS
+
+    tail = "jobs@acme.co"          # the real address ended .com
+    head = "Gamma | REMOTE | Contract | write "
+    text = head + "y" * (EXCERPT_CHARS - len(head) - len(tail)) + tail
+    assert len(text) == EXCERPT_CHARS
+    _buyer(db, "3", text)
+    rows = list(csv.DictReader(open(leads.write_csv(db, tmp_path)["path"],
+                                    encoding="utf-8")))
+    assert rows[0]["email"] == ""
+
+
+def test_a_route_lost_to_truncation_is_counted_not_swallowed(db, tmp_path):
+    """A row whose route was cut looks identical to one that never had a
+    route, and the two want different things from the reader: "open
+    source_url, the link is in the full advert" versus "there is nothing to
+    find". The count is what separates them."""
+    from jester.signals import EXCERPT_CHARS
+
+    tail = "https://grnh.se/abc123"
+    head = "Delta | REMOTE | Contract | apply "
+    cut = head + "z" * (EXCERPT_CHARS - len(head) - len(tail)) + tail
+    _buyer(db, "10", cut)
+    _buyer(db, "11", "Epsilon | REMOTE | Contract | apply https://eps.com/jobs")
+
+    res = leads.write_csv(db, tmp_path)
+    assert res["written"] == 2
+    assert res["route_cut"] == 1, "the cut route must be reported, not absorbed"

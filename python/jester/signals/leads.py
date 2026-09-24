@@ -23,7 +23,7 @@ import sqlite3
 from pathlib import Path
 from typing import List
 
-from . import TABLE
+from . import EXCERPT_CHARS, TABLE
 
 #: What counts as a way to reach them. Deliberately broad: an apply link, a
 #: careers page and an email address are all routes a person can follow, and
@@ -50,10 +50,34 @@ COLUMNS = ["outcome", "outcome_note", "company", "buyer_intent", "confidence",
            "first_seen_utc", "record_id"]
 
 
+def _complete(match, text: str) -> bool:
+    """False when the match runs to the end of a TRUNCATED excerpt.
+
+    The archive stores a 600-character excerpt, not the advert. A contact
+    route sitting past that cut comes back amputated — a real lead read
+    `https://git`, which is not a link, and this file's whole purpose is a
+    route a person can follow. An empty cell says "look at source_url"; a
+    broken one says "follow this" and wastes the follow.
+
+    Only a match touching the end of a text that WAS cut is distrusted. A
+    short advert whose last words are its apply link is complete, and
+    dropping that route would cost more leads than the truncation does.
+    """
+    if match is None:
+        return False
+    if match.end() < len(text):
+        return True                      # real text after it, so it is whole
+    return len(text) < EXCERPT_CHARS     # nothing after it, but nothing was cut
+
+
 def _route(text: str) -> tuple:
-    email = EMAIL_RE.search(text or "")
-    link = LINK_RE.search(text or "")
-    return (email.group(0) if email else "", link.group(0) if link else "")
+    text = text or ""
+    email = EMAIL_RE.search(text)
+    link = LINK_RE.search(text)
+    # Hand over nothing rather than something that does not resolve. Every row
+    # still carries source_url, which is the permalink to the full advert.
+    return (email.group(0) if _complete(email, text) else "",
+            link.group(0) if _complete(link, text) else "")
 
 
 def gather(db: sqlite3.Connection, *, mode: str = "live",
@@ -90,11 +114,20 @@ def write_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "live"
     out.mkdir(parents=True, exist_ok=True)
     path = out / "leads.csv"
 
+    dropped = 0
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(COLUMNS)
         for r in data["actionable"]:
-            email, link = _route(r.get("excerpt") or "")
+            excerpt = r.get("excerpt") or ""
+            email, link = _route(excerpt)
+            # Count what the truncation cost. A route dropped in silence looks
+            # identical to an advert that never carried one, and the two want
+            # different things from the reader: one means "open source_url,
+            # the link is in the full advert", the other means "there is no
+            # route to find".
+            if not (email or link) and CONTACT_RE.search(excerpt):
+                dropped += 1
             w.writerow([
                 r.get("outcome", ""),
                 r.get("outcome_note", ""),
@@ -114,4 +147,5 @@ def write_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "live"
     # and the thing the reader has to fill in should not be off the right edge
     # of the screen behind eleven columns they will not change.
     return {"path": str(path), "written": len(data["actionable"]),
-            "unreachable": len(data["unreachable"]), "mode": data["mode"]}
+            "unreachable": len(data["unreachable"]), "mode": data["mode"],
+            "route_cut": dropped}
