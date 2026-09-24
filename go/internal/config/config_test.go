@@ -238,3 +238,42 @@ func TestSteamDepthIsNotSmuggledThroughTheThreadKnob(t *testing.T) {
 		t.Fatalf("150 reviews is in range on its own knob: %v", err)
 	}
 }
+
+// TestCDPURLEnvironmentWinsOverTheFile pins the rule that fixed a false
+// outage: scraper.yaml is bind-mounted into the worker container and says
+// 127.0.0.1:9222, which is correct for a worker running ON the host and wrong
+// inside a container, where it is that container's own loopback. cloakserve
+// then reads as down while it is up and answering on the compose network.
+//
+// One file cannot be right for both callers, so the address comes from the
+// environment, which differs, rather than the file, which does not.
+func TestCDPURLEnvironmentWinsOverTheFile(t *testing.T) {
+	dir := writeConfigDir(t)
+
+	t.Setenv("JESTER_CDP_URL", "")
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromFile := cfg.Scraper.CDPURL
+
+	t.Setenv("JESTER_CDP_URL", "http://cloakbrowser:9222")
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scraper.CDPURL != "http://cloakbrowser:9222" {
+		t.Fatalf("env did not win: got %q, file had %q", cfg.Scraper.CDPURL, fromFile)
+	}
+
+	// Compose leaving a variable unset arrives as empty, and empty is not an
+	// address — it must fall back rather than blank the URL.
+	t.Setenv("JESTER_CDP_URL", "   ")
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scraper.CDPURL != fromFile {
+		t.Fatalf("a blank override should fall back to the file, got %q", cfg.Scraper.CDPURL)
+	}
+}

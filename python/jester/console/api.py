@@ -13,6 +13,24 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
+
+
+def _host_port(url: str, default_port: int) -> tuple:
+    """Split a service URL into (host, port) for a reachability check.
+
+    Falls back to 127.0.0.1 and `default_port` for an empty or unparseable
+    value, which is the right answer when nothing is configured: a developer
+    running everything on one machine.
+    """
+    raw = (url or "").strip() or f"127.0.0.1:{default_port}"
+    # urlsplit reads a bare "qdrant:6333" as scheme "qdrant" with path "6333"
+    # and reports no host at all, which would quietly probe localhost instead
+    # of the server someone configured. "//" makes it an authority.
+    if "//" not in raw:
+        raw = "//" + raw
+    parts = urlsplit(raw, scheme="http")
+    return (parts.hostname or "127.0.0.1", parts.port or default_port)
 
 from jester.cli import (
     _vector_for,
@@ -1370,8 +1388,14 @@ class ConsoleAPI:
     def ollama_models(self):
         """Names Ollama currently has pulled, or an empty list when it is down.
         Never fabricated: an empty list means "could not ask", not "none"."""
+        # OLLAMA_HOST, because that is what ollama.Client() reads. Probing a
+        # different address than the code under test uses is how a panel ends
+        # up confidently describing a service nobody talks to.
+        base = (os.environ.get("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+        if "://" not in base:
+            base = "http://" + base
         try:
-            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as r:
+            with urllib.request.urlopen(f"{base}/api/tags", timeout=2) as r:
                 payload = json.loads(r.read())
         except Exception:  # noqa: BLE001 - daemon down is a normal state here
             return None
@@ -1517,6 +1541,19 @@ class ConsoleAPI:
         self._infra_cache[key] = (time.monotonic(), out)
         return dict(out, cached=False)
 
+    def _cdp_url(self) -> str:
+        """Where cloakserve is, resolved exactly as the fetcher resolves it.
+
+        Reading it through the fetcher's own loader rather than re-deriving it
+        here is the point: the panel and the code it describes cannot drift
+        apart if they ask the same function.
+        """
+        try:
+            from jester.fetchers.cloak import load_scraper_config
+            return load_scraper_config(Path(self.config_dir) / "scraper.yaml").cdp_url
+        except Exception:  # noqa: BLE001 - a missing or broken file is not an outage
+            return "http://127.0.0.1:9222"
+
     def _infra_probe(self):
         def tcp(host, port, timeout=1.5):
             try:
@@ -1529,12 +1566,25 @@ class ConsoleAPI:
         ollama_up = installed is not None
         ollama_models = installed or []
 
-        cloak_up = tcp("127.0.0.1", 9222)
+        # Probe the address the app is CONFIGURED to use, not 127.0.0.1.
+        #
+        # These two were hardcoded, four lines below a comment saying a port
+        # check that does not match the configuration is a lie. Inside a
+        # container 127.0.0.1 is the container's own loopback, so both read as
+        # down while both were up and answering on the compose network —
+        # cloakserve at cloakbrowser:9222, Qdrant at qdrant:6333. The console
+        # then told the operator to start a container that had been running
+        # for forty hours, and switched off the live-ingest button, which
+        # gates on cloak_up.
+        cloak_host, cloak_port = _host_port(self._cdp_url(), 9222)
+        cloak_up = tcp(cloak_host, cloak_port)
+        qdrant_host, qdrant_port = _host_port(
+            os.environ.get("JESTER_QDRANT_URL") or "", 6333)
         go_bin = self._go_binary()
         return {
             "ok": True,
             "ollama": {"up": ollama_up, "models": ollama_models},
-            "qdrant_6333": tcp("127.0.0.1", 6333),
+            "qdrant_6333": tcp(qdrant_host, qdrant_port),
             # A port check says a container is listening, not that anything
             # talks to it. For an entire day this panel showed Qdrant green
             # while every write went to a 32-dimension local file, because

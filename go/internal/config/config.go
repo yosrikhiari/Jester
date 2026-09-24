@@ -291,6 +291,23 @@ func (s *Scraper) sanitize() {
 		}
 	}
 	s.Proxy = strings.TrimSpace(s.Proxy)
+
+	// JESTER_CDP_URL wins over the file, because the file cannot be right for
+	// both callers at once. scraper.yaml says 127.0.0.1:9222 and explains why:
+	// the container publishes on IPv4 only and Windows resolves localhost to
+	// ::1 first. That is correct for a worker running ON the host.
+	//
+	// Inside a container it is wrong in a way that looks like an outage.
+	// 127.0.0.1 there is the container's own loopback, so cloakserve appears
+	// down while it is up and answering on the compose network. The console
+	// reported exactly that, and told the operator to start a container that
+	// had been running for forty hours.
+	//
+	// The same file is bind-mounted into both, so the address has to come from
+	// the environment that differs, not the file that does not.
+	if v := strings.TrimSpace(os.Getenv("JESTER_CDP_URL")); v != "" {
+		s.CDPURL = v
+	}
 }
 
 // Validate enforces documented range bounds on every numeric threshold.

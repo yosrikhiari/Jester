@@ -27,6 +27,26 @@ _DEFAULTS = {
 }
 
 
+def _cdp_url(from_file: str) -> str:
+    """The cloakserve address, environment first.
+
+    The file cannot be right for both callers at once. scraper.yaml says
+    127.0.0.1:9222 and explains why: the container publishes on IPv4 only and
+    Windows resolves localhost to ::1 first. That is correct for a worker
+    running ON the host.
+
+    Inside a container it is wrong in a way that looks like an outage —
+    127.0.0.1 is the container's own loopback, so cloakserve reads as down
+    while it is up and answering on the compose network. The console reported
+    exactly that, and advised starting a container that had been up for forty
+    hours.
+
+    The same file is bind-mounted into both, so the address has to come from
+    the environment, which differs, rather than the file, which does not.
+    """
+    return (os.environ.get("JESTER_CDP_URL") or "").strip() or from_file
+
+
 class BlockedResponse(RuntimeError):
     """D-19 signal: the platform served a block/challenge instead of content."""
 
@@ -61,7 +81,7 @@ def load_scraper_config(path=None) -> ScraperConfig:
         path = Path(__file__).resolve().parents[3] / "config" / "scraper.yaml"
     path = Path(path)
     if not path.exists():
-        return ScraperConfig()
+        return ScraperConfig(cdp_url=_cdp_url(_DEFAULTS["cdp_url"]))
     raw = yaml.safe_load(os.path.expandvars(path.read_text(encoding="utf-8"))) or {}
     action = raw.get("blocked_response_action", _DEFAULTS["blocked_response_action"])
     if action not in ALLOWED_ACTIONS:
@@ -70,7 +90,7 @@ def load_scraper_config(path=None) -> ScraperConfig:
         )
     return ScraperConfig(
         version=str(raw.get("version", "") or ""),
-        cdp_url=raw.get("cdp_url", _DEFAULTS["cdp_url"]),
+        cdp_url=_cdp_url(raw.get("cdp_url", _DEFAULTS["cdp_url"])),
         license_key=str(raw.get("license_key", "")),
         proxy=str(raw.get("proxy", "")),
         geoip=str(raw.get("geoip", "")),
