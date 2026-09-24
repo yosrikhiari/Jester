@@ -22,5 +22,5 @@ COPY --from=build /out/worker /usr/local/bin/worker
 WORKDIR /app
 # Mock mode enqueues fixture data into the shared SQLite queue, then the
 # container stays up for `docker compose exec go-worker worker ...` re-runs.
-CMD ["sh", "-c", "worker -config /app/config -db /app/data/jester.db \
+CMD ["sh", "-c", "worker -config /app/config -db /app/data/jester-docker.db \
      -fixture /app/go/testdata/reddit_thread_1.json && tail -f /dev/null"]

@@ -67,4 +67,15 @@ RUN chmod +x /usr/local/bin/console-entrypoint.sh
 # Override with `docker compose run jester-console python -m jester.cli ...`.
 EXPOSE 8619
 ENTRYPOINT ["/usr/local/bin/console-entrypoint.sh"]
-CMD ["--host", "0.0.0.0", "--port", "8619", "--db", "/app/data/jester.db", "--config", "/app/config"]
+# jester-docker.db, NOT jester.db, and the name is the whole point.
+#
+# Vectors are namespaced by the database file's STEM (see collection_for), so
+# every database called jester.db anywhere on earth shares one Qdrant
+# collection. This stack's archive is a throwaway in its own volume, but it was
+# pointed at the host's `nuggets__jester` — 105,471 points at 768 dimensions
+# from real runs — while producing 32-dimension fake vectors. The console
+# reported "collection is 768-dim but fake produces 32", which was true.
+#
+# compose says this stack "never touches the host's". That was true of SQLite
+# and false of vectors until this line.
+CMD ["--host", "0.0.0.0", "--port", "8619", "--db", "/app/data/jester-docker.db", "--config", "/app/config"]
