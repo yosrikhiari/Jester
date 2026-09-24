@@ -11,6 +11,7 @@ import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from jester.models import Idea, Nugget
@@ -362,7 +363,27 @@ def reconcile_schema(db: sqlite3.Connection):
     return actions
 
 
-def open_db(path: str) -> sqlite3.Connection:
+def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
+    """Open the archive. `migrate=False` opens it without reshaping it.
+
+    A normal open MIGRATES: it reconciles the schema, runs BASE_SCHEMA and
+    stamps schema_version. Every one of those needs write access, and
+    `executescript` opens a write transaction even when the schema is already
+    current. A second console pointed at an archive it does not own should not
+    be doing that — two processes racing to reshape one file is a worse
+    failure than anything it would fix.
+
+    WHAT THIS DELIBERATELY IS NOT: a SQLite `mode=ro` connection. That was
+    tried first and it does not survive a LIVE database. Reading a file whose
+    other writers are active still needs write access to the DIRECTORY, for
+    lock and journal handling, so plain SELECTs intermittently died with
+    "attempt to write a readonly database" — a message that names the file and
+    blames the wrong thing. On a quiet database the same code passed, which is
+    exactly how that would have shipped.
+
+    So the connection is ordinary and the restraint is in the caller: it takes
+    read locks like any reader, and simply never writes.
+    """
     if path != ":memory:":
         parent = os.path.dirname(path)
         if parent:
@@ -381,6 +402,9 @@ def open_db(path: str) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass
     db.execute("PRAGMA busy_timeout=5000")
+    if not migrate:
+        db.row_factory = sqlite3.Row
+        return db
     for note in reconcile_schema(db):
         # Never silently: an operator must know a legacy table was set aside.
         print(f"schema: {note}", file=sys.stderr)

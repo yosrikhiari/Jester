@@ -37,7 +37,8 @@ _STATIC_TYPES = {
 
 def _api(args):
     return ConsoleAPI(db_path=args.db, config_dir=args.config,
-                      signals_db=getattr(args, "signals_db", None))
+                      signals_db=getattr(args, "signals_db", None),
+                      read_only=bool(getattr(args, "read_only", False)))
 
 
 def _static_path(url_path: str):
@@ -355,6 +356,13 @@ def main(argv=None):
     p.add_argument("--signals-db", default=None,
                    help="problem-signal archive to browse "
                         "(default: signals-live.db beside --db)")
+    # A second console pointed at somebody else's live archive. Without this
+    # it tries to migrate the database on every request and dies with "attempt
+    # to write a readonly database", and with write access it becomes another
+    # process competing for a lock this archive already loses runs to.
+    p.add_argument("--read-only", action="store_true",
+                   help="open the archive for viewing: never migrate it, "
+                        "never write to it")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8619)
     args = p.parse_args(argv)

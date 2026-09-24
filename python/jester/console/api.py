@@ -112,11 +112,17 @@ _CHOICES = {
 
 class ConsoleAPI:
     def __init__(self, db_path: str, config_dir: str | None = None,
-                 signals_db: str | None = None):
+                 signals_db: str | None = None, read_only: bool = False):
         self.repo_root = Path(__file__).resolve().parents[3]
         self.config_dir = config_dir or str(self.repo_root / "config")
         self.db_path = db_path if db_path == ":memory:" else os.path.abspath(db_path)
-        self.db = open_db(self.db_path)
+        # A viewing console does not migrate the archive it is visiting. See
+        # open_db: the normal path runs BASE_SCHEMA and stamps schema_version,
+        # and executescript opens a write transaction even when nothing needs
+        # changing. Two consoles racing to reshape one file is worse than
+        # anything that migration would fix.
+        self.read_only = read_only
+        self.db = open_db(self.db_path, migrate=not read_only)
         self._signals_db_path = signals_db
 
     # ---- helpers ----------------------------------------------------------
@@ -886,8 +892,14 @@ class ConsoleAPI:
 
         # A daemon thread does not survive a restart; a row still saying
         # "running" after one is a job nobody is working on.
-        reap_stale_jobs(self.db)
-        return {"ok": True, "jobs": recent_jobs(self.db, limit)}
+        #
+        # Reaping is maintenance, and a console visiting somebody else's live
+        # archive has no business doing maintenance on it: the jobs it would
+        # declare dead belong to a process it cannot see.
+        if not self.read_only:
+            reap_stale_jobs(self.db)
+        return {"ok": True, "jobs": recent_jobs(self.db, limit),
+                "reaped": not self.read_only}
 
     def cluster_run(self, threshold=None, min_size=None, min_nuggets=None,
                     limit=None, run_id="console-cluster"):
