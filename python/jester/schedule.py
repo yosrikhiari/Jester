@@ -291,6 +291,7 @@ TASK_FOR_COMMAND = {
     "ingest": TASK_NAME + "Scrape",
     "treat": TASK_NAME + "Treat",
     "signals": TASK_NAME + "Signals",
+    "signals-hiring": TASK_NAME + "SignalsHiring",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -306,6 +307,21 @@ COMMAND_SPEC = {
     "ingest": {"argv": ("ingest",), "config": True},
     "treat": {"argv": ("treat",), "config": True},
     "signals": {"argv": ("signals", "run"), "config": False},
+    # The forum collector and the hiring collector are two different questions
+    # and two different rule sets, so they are two schedulable commands.
+    #
+    # `signals` alone has been the only one running, and it is the one MEASURED
+    # not to find buyers: 569 rows collected over days produced 3 buyers, 0.5%.
+    # The hiring collector was written precisely because companies state a
+    # budget in "Who is hiring?" threads, and it had never been scheduled at
+    # all — 400 adverts produced 26 buyers, 24 of them correct on inspection.
+    # Same archive, same schema; `community` tells them apart.
+    "signals-hiring": {
+        "argv": ("signals", "run",
+                 "--source", "hackernews-hiring",
+                 "--rules", "config/hiring_rules.yaml"),
+        "config": False,
+    },
 }
 
 
