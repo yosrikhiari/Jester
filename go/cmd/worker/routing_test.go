@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"jester/internal/config"
+	"jester/internal/reddit"
 )
 
 func TestHackerNewsTagFromURL(t *testing.T) {
@@ -144,5 +145,69 @@ func TestStampNeverClaims1970(t *testing.T) {
 	}
 	if got := stamp(1704067200); got != "2024-01-01" {
 		t.Errorf("stamp = %q", got)
+	}
+}
+
+// TestPostsOnlyStoresTheAdvertNotTheApplicants pins the inversion that made
+// hiring rooms useless.
+//
+// In a discussion room the post asks and the comments answer, so the comments
+// are the content. A hiring room is the other way round: the post is a company
+// naming a role, and the comments are freelancers saying "sent", "interested",
+// "check my portfolio". Twelve nuggets were collected from three threads in
+// r/hiredev and r/DevsForHire and every single one was an applicant — the
+// advert was fetched every time, carried as batch metadata, and thrown away.
+func TestPostsOnlyStoresTheAdvertNotTheApplicants(t *testing.T) {
+	post := &reddit.FetchedPost{
+		ID: "abc", Title: "[Hiring] Senior DevOps, remote, $90/hr",
+		Body: "We need help with our Terraform estate.", Author: "acme",
+		URL:  "https://reddit.com/r/devopsjobs/comments/abc/",
+	}
+	got := postAsRecord(post, "https://reddit.com/r/devopsjobs/comments/abc/")
+	if len(got) != 1 {
+		t.Fatalf("want exactly the advert, got %d record(s)", len(got))
+	}
+	if !strings.Contains(got[0].Body, "[Hiring] Senior DevOps") {
+		t.Fatalf("the title carries the role and rate and must be kept: %q", got[0].Body)
+	}
+	if !strings.Contains(got[0].Body, "Terraform") {
+		t.Fatalf("the body carries the detail and must be kept: %q", got[0].Body)
+	}
+}
+
+func TestPostsOnlyIsNotTheDefault(t *testing.T) {
+	// Every other room is a discussion room, where the comments ARE the
+	// content. Flipping this globally would gut the archive.
+	var s config.Source
+	if s.WantsPostsOnly() {
+		t.Fatal("posts_only must be opt-in per source")
+	}
+	yes := true
+	s.PostsOnly = &yes
+	if !s.WantsPostsOnly() {
+		t.Fatal("an opted-in source must report it")
+	}
+}
+
+func TestAnEmptyPostProducesNoRecord(t *testing.T) {
+	// A deleted or link-only post has nothing to classify. Storing an empty
+	// record would put a row in the archive that says nothing.
+	if got := postAsRecord(nil, "u"); got != nil {
+		t.Fatalf("nil post must produce nothing, got %d", len(got))
+	}
+	if got := postAsRecord(&reddit.FetchedPost{ID: "x"}, "u"); len(got) != 0 {
+		t.Fatalf("a post with no title or body must produce nothing, got %d", len(got))
+	}
+}
+
+func TestMinCommentsFallsBackToTheGlobalFloor(t *testing.T) {
+	var s config.Source
+	if got := s.MinCommentsOr(8); got != 8 {
+		t.Fatalf("unset must inherit the global floor, got %d", got)
+	}
+	zero := 0
+	s.MinComments = &zero
+	if got := s.MinCommentsOr(8); got != 0 {
+		t.Fatalf("0 is a real value, not 'unset': got %d", got)
 	}
 }
