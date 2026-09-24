@@ -61,6 +61,17 @@ services:
     environment:
       JESTER_MOCK: "1"
       JESTER_QDRANT_URL: http://qdrant:6333
+      # Service names, not 127.0.0.1. The repo's config/scraper.yaml is
+      # bind-mounted in here and says 127.0.0.1:9222, which is correct for a
+      # worker running ON the host and wrong inside a container, where it is
+      # this container's own loopback. cloakserve then reads as down while it
+      # is up and answering on this network, and the console switches off the
+      # live-ingest button that gates on it.
+      #
+      # OLLAMA_HOST is the variable ollama.Client() itself reads, so the
+      # health panel and the code it describes cannot disagree.
+      JESTER_CDP_URL: http://cloakbrowser:9222
+      OLLAMA_HOST: http://ollama:11434
     env_file:
       - .env
     ports:
@@ -86,6 +97,18 @@ services:
       - jester_docker_data:/app/data
     environment:
       JESTER_MOCK: "1"
+      JESTER_QDRANT_URL: http://qdrant:6333
+      # Service names, not 127.0.0.1. The repo's config/scraper.yaml is
+      # bind-mounted in here and says 127.0.0.1:9222, which is correct for a
+      # worker running ON the host and wrong inside a container, where it is
+      # this container's own loopback. cloakserve then reads as down while it
+      # is up and answering on this network, and the console switches off the
+      # live-ingest button that gates on it.
+      #
+      # OLLAMA_HOST is the variable ollama.Client() itself reads, so the
+      # health panel and the code it describes cannot disagree.
+      JESTER_CDP_URL: http://cloakbrowser:9222
+      OLLAMA_HOST: http://ollama:11434
     env_file:
       - .env
     depends_on:
