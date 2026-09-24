@@ -17,13 +17,10 @@
 # file in full. Automatic Analysis must be turned OFF in SonarCloud for this
 # job to be accepted - with both enabled, SonarCloud rejects the CI analysis.
 #
-# UNTIL THAT SWITCH HAPPENS, every commit carries a red X that is not from
-# this workflow: SonarCloud's own "SonarCloud Code Analysis" check, failing on
-# "B Security Rating on New Code". The eleven findings behind it are all MINOR
-# and all argued for in sonar-project.properties - httptest URLs in Go tests,
-# two images that need root, two prints of a localhost address - and that file
-# is exactly what autoscan cannot read. The switch is the fix; there is no
-# code change that clears them honestly.
+# The findings argued for in sonar-project.properties (httptest URLs in Go
+# tests, two images that need root, two prints of a localhost address) are
+# exactly what autoscan could not read; with the CI scanner they apply, and
+# the "SonarCloud Code Analysis" check is green.
 
 name: CI
 

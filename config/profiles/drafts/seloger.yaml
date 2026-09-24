@@ -7,7 +7,8 @@
 # empty. siteprofile.Validate now rejects that shape rather than letting it run.
 #
 # THE data_path IS ALSO UNVERIFIED. It is the first of seven candidates in
-# test_seloger.py, a script that rewrites this file in a loop and fires the
+# test_seloger.py (a one-off script, removed from the repo root 2026-09-24 -
+# see git history), which rewrote this file in a loop and fired the
 # live worker at seloger.com to see which one sticks. Nothing in the repo
 # records that any of them did. (That script is also why this file has no
 # header comment and is in alphabetical order - it was written back by
