@@ -1936,6 +1936,15 @@ def cmd_signals(args):
                 # difference matters when someone asks why 35 became 24.
                 print(f"{res['unreachable']} buyer signal(s) held back — no "
                       "contact route in the advert; they stay in the archive")
+            if res.get("route_cut"):
+                # The archive stores a 600-character excerpt, not the advert.
+                # A route sitting on that boundary cannot be told apart from
+                # one that was cut, so it is not handed over — a link that
+                # goes nowhere costs a follow and teaches the reader to
+                # distrust the file. Said out loud, because the row still
+                # looks routeless and the reason is not in it.
+                print(f"{res['route_cut']} lead(s) had a contact route the "
+                      "600-char excerpt cut; open their source_url for it")
             print(f"archive: {o['buyers']} buyer signal(s), {o['worked']} worked, "
                   f"{o['untouched']} untouched")
             if o["untouched"] == o["buyers"] and o["buyers"]:
