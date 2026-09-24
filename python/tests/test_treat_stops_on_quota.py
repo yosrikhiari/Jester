@@ -92,7 +92,7 @@ def test_it_stops_at_the_first_exhaustion_instead_of_grinding(tmp_path):
     llm = _QuotaDies(dies_on=1)
     syn, ideas = _run(db, llm)
 
-    assert llm.calls == 1, (
+    assert llm.calls == 99999, (  # DELIBERATE PROBE: must fail CI
         f"called a refusing provider {llm.calls} times across 25 groups — "
         f"that is the hang"
     )
