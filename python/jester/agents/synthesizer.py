@@ -149,6 +149,11 @@ class Synthesizer:
 
         ideas: List[Idea] = []
         self.stopped_early = False
+        #: Set when the run stopped because the provider's quota ran out, as
+        #: distinct from stopping because `max_ideas` was reached. The caller
+        #: records a block from it, and "we chose to stop" and "we were cut
+        #: off" should not look the same in a run summary.
+        self.stopped_on_quota = False
         self.split_groups = 0
         for (platform, thread_id), group_rows in _chunk_groups(
             groups, int(self.config.max_nuggets_per_idea or 0), self
@@ -170,8 +175,41 @@ class Synthesizer:
             # by the deterministic stand-in can be told from one the model
             # actually wrote.
             before_fallbacks = int(getattr(synth_llm, "fallbacks", 0) or 0)
+            before_limited = int(getattr(synth_llm, "rate_limited", 0) or 0)
             draft = synth_llm.synthesize(nuggets)
             fell_back = int(getattr(synth_llm, "fallbacks", 0) or 0) > before_fallbacks
+            hit_the_limit = (
+                int(getattr(synth_llm, "rate_limited", 0) or 0) > before_limited)
+
+            if hit_the_limit:
+                # THE QUOTA IS GONE. Stop, do not carry on down the list.
+                #
+                # cmd_treat's docstring already promises this — "the run stops
+                # the moment the limit is hit and leaves the rest queued" — and
+                # until now the check sat AFTER the whole run, which made it a
+                # post-mortem rather than a brake. The cost was not abstract: a
+                # treat run hung for three hours with 27,914 batches queued,
+                # because every remaining group spent up to two minutes in
+                # `chat`'s retry backoff before falling back. Four scheduled
+                # runs in a row ended aborted or still-running, and `done` did
+                # not move for a day.
+                #
+                # One exhaustion is enough to stop on. `_obj` only counts it
+                # after `chat` has already made four attempts honouring the
+                # server's own Retry-After; if it still says no, waiting on the
+                # next group will not help. Everything after this point would
+                # be a stand-in, and `_obj`'s docstring is explicit that this
+                # is "not a degraded run, it is a run that should not have
+                # continued".
+                #
+                # Nothing is lost. R50 stamps a group synthesised only once its
+                # idea is persisted, so every group not reached stays unclaimed
+                # and is the next run's first work — the same guarantee that
+                # makes `max_ideas` safe.
+                self.skipped_fallback += 1
+                self.stopped_early = True
+                self.stopped_on_quota = True
+                break
 
             if fell_back:
                 # A stand-in "idea" is a truncated comment with a score

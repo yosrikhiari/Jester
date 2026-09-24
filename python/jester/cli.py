@@ -213,6 +213,26 @@ def _may_seed_fixtures(args) -> bool:
     return bool(getattr(args, "seed_fixtures", True))
 
 
+def stopped_early_line(synthesizer, max_ideas):
+    """What to say when the synthesis loop stopped before the pool ran out.
+
+    Two different stops share `stopped_early` and they must not share a
+    sentence. Reaching a goal is the operator's own instruction; being cut off
+    by a quota is the provider refusing, and only one of them is worth doing
+    something about.
+
+    The first version of the quota brake did share the sentence, and printed
+    "stopped at the None-idea goal" on a run with no goal set — wrong and
+    unreadable at once. It was only caught by running it against a live
+    exhausted quota, which is not a thing to rely on.
+    """
+    if getattr(synthesizer, "stopped_on_quota", False):
+        return ("stopped: the provider's quota ran out mid-run; "
+                "unclustered nuggets stay queued for the next run")
+    return (f"stopped at the {max_ideas}-idea goal; "
+            f"unclustered nuggets stay queued for the next run")
+
+
 def cmd_run(args):
     cfg = load_config(args.config)
     db = open_db(args.db)
@@ -531,10 +551,14 @@ def cmd_run(args):
     if synthesizer.stopped_early:
         # No silent caps: without this line "synthesized 3 idea(s)" reads as
         # "the archive had only 3 to give" on a run that stopped at a goal.
-        print(
-            f"stopped at the {args.max_ideas}-idea goal; "
-            f"unclustered nuggets stay queued for the next run"
-        )
+        #
+        # Two different stops share this flag and they must not share a
+        # sentence. Reaching a goal is the operator's own instruction; being
+        # cut off by a quota is the provider refusing, and only one of them
+        # is worth doing something about. The first version of the quota
+        # brake printed "stopped at the None-idea goal", which is both wrong
+        # and unreadable.
+        print(stopped_early_line(synthesizer, getattr(args, "max_ideas", None)))
     if synthesizer.skipped_fallback:
         # "0 ideas because the model was rate-limited" and "0 ideas because
         # nothing qualified" are different nights, and only one of them is
