@@ -267,3 +267,67 @@ def test_the_signals_cron_line_matches_the_same_shape():
                               command="signals")
     assert "jester.cli signals run" in line
     assert "--config" not in line
+
+
+# --- the hiring collector is schedulable ------------------------------------
+
+def test_every_schedulable_command_knows_how_to_run():
+    """A command with a task name but no argv would install a task that runs
+    nothing. The two tables are separate and must agree."""
+    from jester.schedule import COMMAND_SPEC, TASK_FOR_COMMAND
+
+    assert set(TASK_FOR_COMMAND) == set(COMMAND_SPEC), (
+        f"registries disagree: {set(TASK_FOR_COMMAND) ^ set(COMMAND_SPEC)}"
+    )
+
+
+def test_the_cli_offers_exactly_what_is_schedulable(capsys):
+    """`signals-hiring` could exist, be registered, be approved and still never
+    run, because the CLI's --command choices were a hand-written tuple that did
+    not include it. Deriving them from the registry is what stops that.
+
+    Asked of the real parser: an invalid choice makes argparse print the list
+    it WOULD accept, which is the thing under test.
+    """
+    import os
+    import pytest as _pytest
+    from jester import cli
+    from jester.schedule import TASK_FOR_COMMAND
+
+    # cli.main() calls load_env_once(), which reads the repo's .env into
+    # os.environ and leaves it there. That flipped four later tests out of
+    # mock mode the first time this file grew a main() call — they passed
+    # alone and failed in the suite, which is the worst way to find out.
+    before = os.environ.copy()
+    try:
+        with _pytest.raises(SystemExit):
+            cli.main(["schedule", "--command", "no-such-command"])
+        offered = capsys.readouterr().err
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+
+    for command in TASK_FOR_COMMAND:
+        assert command in offered, (
+            f"{command!r} is schedulable but the CLI will not accept it"
+        )
+
+
+def test_each_command_gets_its_own_task_name():
+    """Two commands sharing a task name would have the second overwrite the
+    first's schedule, silently."""
+    from jester.schedule import TASK_FOR_COMMAND
+
+    names = list(TASK_FOR_COMMAND.values())
+    assert len(names) == len(set(names)), f"duplicate task names: {names}"
+
+
+def test_the_hiring_collector_carries_its_own_rules():
+    """It asks a different question from the forum collector. Running it
+    against signal_rules.yaml would score adverts with rules written for
+    people describing problems."""
+    from jester.schedule import command_argv
+
+    argv = command_argv("signals-hiring")
+    assert "--source" in argv and "hackernews-hiring" in argv
+    assert "--rules" in argv and "config/hiring_rules.yaml" in argv

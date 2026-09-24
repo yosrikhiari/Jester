@@ -2404,14 +2404,19 @@ def main(argv=None):
     )
     sc.add_argument(
         "--command",
-        choices=("cycle", "ingest", "treat", "signals"),
+        # Taken from the schedule module rather than repeated here: a command
+        # that is schedulable in one place and unknown in the other is how
+        # `signals-hiring` could exist, be registered, be approved, and still
+        # never run.
+        choices=tuple(_schedule.TASK_FOR_COMMAND),
         default="cycle",
         help="which half to schedule. `ingest` scrapes only (no LLM); `treat` "
              "drains the queue while the quota lasts; `cycle` welds both "
              "together as before; `signals` runs the problem-signal collector "
-             "against its own database. Each gets its own task, so scraping "
-             "can run often and cheaply while treatment waits for a quota "
-             "reset.",
+             "against its own database, and `signals-hiring` runs the hiring "
+             "collector, which asks a different question with its own rules. "
+             "Each gets its own task, so scraping can run often and cheaply "
+             "while treatment waits for a quota reset.",
     )
     sc.add_argument("--db", default="data/jester.db")
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
