@@ -25,6 +25,17 @@ from pathlib import Path
 from . import EXCERPT_CHARS, FIELDS, field_map_markdown
 from .filters import Rules, load_rules
 
+
+def _live_sources():
+    """Every registered collector, read from the registry.
+
+    Imported here rather than at module scope because the registry imports the
+    collectors, and a document generator should not be the reason a network
+    client gets imported when the rules alone were wanted.
+    """
+    from .sources import available
+    return sorted(available(), key=lambda s: s["name"])
+
 #: Pre-named alternatives, so choosing one is a confirmation and not a week
 #: of drift. Each already has a working adapter in this repo.
 REPLACEMENT_SOURCES = [
@@ -58,6 +69,35 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
     add(f"> **Scope status: {'APPROVED' if approved else 'PROVISIONAL — awaiting sign-off'}**"
         + (f" · decided by {(r.scope or {}).get('decided_by')} on {(r.scope or {}).get('decided_on')}"
            if approved else ""))
+    add("")
+    # WHAT RUNS, before what is proposed.
+    #
+    # This document exists to answer "scope, fields and access status", and it
+    # answered two of the three. Every community below is a Reddit room that
+    # is PROPOSED and awaiting sign-off, and section 6 says plainly there is
+    # no Reddit code path — so a reader reasonably concluded that nothing was
+    # collecting. Two collectors were running daily the whole time.
+    #
+    # Generated from the source registry, not typed, for the same reason as
+    # the rest of the file: a hand-written list of what runs is a list that
+    # stops being true.
+    add("## 0. What is collecting today")
+    add("")
+    add("Sections 1 and 2 are the PROPOSED scope and need a decision. This "
+        "section is what the collectors actually read right now, and it needs "
+        "no decision from anyone — every source below runs on a public keyless "
+        "API, so none of it waits on the access question in section 6.")
+    add("")
+    add("| collector | platform | authority it runs on |")
+    add("|---|---|---|")
+    for s in _live_sources():
+        add(f"| `{s['name']}` | {s['platform']} | {s['access']} |")
+    add("")
+    add("They ask different questions and carry different rule sets. One reads "
+        "forum discussion for people describing a problem; the other reads "
+        "hiring adverts, where a company states what it will pay for. Measured "
+        "on the archive, the second finds buyers at roughly ten times the rate "
+        "of the first, which is why both are scheduled rather than one.")
     add("")
     add("## 1. Communities")
     add("")

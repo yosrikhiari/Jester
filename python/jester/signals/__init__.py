@@ -45,10 +45,10 @@ from typing import Iterable, List, Optional
 FIELDS = [
     ("record_id", "TEXT", "String", "our key: <platform>:<source_id>"),
     ("mode", "TEXT", "LowCardinality(String)", "live | fixture — never inferred, always stored"),
-    ("platform", "TEXT", "LowCardinality(String)", "reddit (one collector, one platform for now)"),
-    ("source_id", "TEXT", "String", "the platform's own id (t3_… post, t1_… comment)"),
+    ("platform", "TEXT", "LowCardinality(String)", "hackernews — the source the collectors actually read"),
+    ("source_id", "TEXT", "String", "the platform's own id (Hacker News item number)"),
     ("source_url", "TEXT", "String", "permalink; the evidence link that travels with the signal"),
-    ("community", "TEXT", "LowCardinality(String)", "r/<name> — the community it was posted in"),
+    ("community", "TEXT", "LowCardinality(String)", "hn/comment | hn/ask | hn/show | hn/story | hn/hiring"),
     ("kind", "TEXT", "LowCardinality(String)", "post | comment"),
     ("author", "TEXT", "String", "handle as published; never enriched, never contacted"),
     ("title", "TEXT", "String", "post title, empty for a comment"),
@@ -61,7 +61,7 @@ FIELDS = [
      "buyer (outreach can act on it) | practitioner (content material) | none"),
     ("relevant", "INTEGER", "UInt8", "1 kept as a problem signal, 0 collected and rejected"),
     ("company", "TEXT", "LowCardinality(String)", "always 'unknown' unless the source states it"),
-    ("buyer_intent", "TEXT", "LowCardinality(String)", "always 'unknown' — a post is not a purchase"),
+    ("buyer_intent", "TEXT", "LowCardinality(String)", "'unknown' for a post; a hiring advert's own engagement words"),
     # Nullable: a record can exist without one. A fetch that failed has no post
     # date, and that row still has to be stored and counted.
     ("created_utc", "TEXT", "Nullable(DateTime64(3))", "when the author posted it"),

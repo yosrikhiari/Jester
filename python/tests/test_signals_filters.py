@@ -335,3 +335,46 @@ def test_write_scope_puts_the_file_where_the_export_is(tmp_path, rules):
     path = sc.write_scope(tmp_path, rules, today="2026-09-22")
     assert path.name == "scope-and-access.md"
     assert path.read_text(encoding="utf-8").startswith("# Problem-signal collector")
+
+
+# --- the scope document must describe the collector that exists -------------
+
+def test_the_scope_document_says_what_is_actually_collecting():
+    """It exists to answer "scope, fields and access status" and answered two
+    of the three.
+
+    Every community in section 1 is a Reddit room that is PROPOSED and awaiting
+    sign-off, and section 6 says plainly there is no Reddit code path — so a
+    reader reasonably concluded nothing was collecting. Two collectors were
+    running daily the whole time.
+    """
+    from jester.signals.scope import scope_markdown
+    from jester.signals.sources import available
+
+    doc = scope_markdown()
+    for src in available():
+        assert src["name"] in doc, (
+            f"{src['name']} collects but the scope document never names it"
+        )
+
+
+def test_the_live_section_comes_before_the_proposed_one():
+    """A reader who stops after the first table should have read what runs,
+    not what someone hopes to run."""
+    from jester.signals.scope import scope_markdown
+
+    doc = scope_markdown()
+    assert doc.index("## 0. What is collecting today") < doc.index("## 1. Communities")
+
+
+def test_the_field_map_describes_the_platform_it_actually_stores():
+    """The map said `platform` was "reddit (one collector, one platform for
+    now)" while every stored row said hackernews, and `community` promised
+    `r/<name>` against values like `hn/hiring`. The map is a deliverable and
+    the thing a reviewer opens first."""
+    from jester.signals import field_map_markdown
+
+    m = field_map_markdown()
+    assert "hackernews" in m
+    assert "r/<name>" not in m, "the field map still promises Reddit communities"
+    assert "t3_" not in m, "the field map still promises Reddit id prefixes"
