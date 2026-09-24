@@ -159,7 +159,7 @@ duplicates.csv
 # review.cjs only parses jester-design-system.html, which is ignored above —
 # committing it would ship a script with nothing to read.
 review.cjs
-.claude/settings.local.json
+/.claude/
 
 # ── Windows stray-device artifacts ────────────────────────────────
 # `cmd ... 2>nul` run under a shell with no NUL device (Git Bash, MSYS)
@@ -170,9 +170,7 @@ nul
 NUL
 
 # ── Editor / IDE local state ──────────────────────────────────────
-# `.claude/launch.json` is deliberately NOT ignored: it is shared project
-# config (how to launch the console), the same role .vscode/launch.json
-# plays. Only per-machine state below.
+# Per-tool agent config (.claude/) stays local.
 .idea/
 .vscode/
 !.vscode/extensions.json
