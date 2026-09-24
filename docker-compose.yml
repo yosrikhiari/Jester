@@ -71,7 +71,18 @@ services:
       # OLLAMA_HOST is the variable ollama.Client() itself reads, so the
       # health panel and the code it describes cannot disagree.
       JESTER_CDP_URL: http://cloakbrowser:9222
-      OLLAMA_HOST: http://ollama:11434
+      # The host's Ollama, not the compose one. The compose `ollama` service
+      # sits behind the `live` profile and is usually not running, while the
+      # machine itself has Ollama up with the models already pulled
+      # (nomic-embed-text and friends). Probing a service that is not there
+      # reported "Ollama down" on a machine where Ollama was answering.
+      #
+      # host.docker.internal needs the extra_hosts line below: it does not
+      # resolve inside these containers on its own, which is why the first
+      # attempt at this still could not reach it.
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     ports:
@@ -108,7 +119,18 @@ services:
       # OLLAMA_HOST is the variable ollama.Client() itself reads, so the
       # health panel and the code it describes cannot disagree.
       JESTER_CDP_URL: http://cloakbrowser:9222
-      OLLAMA_HOST: http://ollama:11434
+      # The host's Ollama, not the compose one. The compose `ollama` service
+      # sits behind the `live` profile and is usually not running, while the
+      # machine itself has Ollama up with the models already pulled
+      # (nomic-embed-text and friends). Probing a service that is not there
+      # reported "Ollama down" on a machine where Ollama was answering.
+      #
+      # host.docker.internal needs the extra_hosts line below: it does not
+      # resolve inside these containers on its own, which is why the first
+      # attempt at this still could not reach it.
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     depends_on:
