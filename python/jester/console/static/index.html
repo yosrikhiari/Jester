@@ -291,6 +291,45 @@
     <div id="queue-detail"></div>
   </section>
 
+  <!-- ── posts ────────────────────────────────────────────────────── -->
+  <section data-page="posts" hidden>
+    <div class="hero">
+      <div>
+        <h1 data-eyebrow="Archive">Posts</h1>
+        <p>One row per post, newest first. Open one to see what the source
+          said about it and read the comments we actually hold. The archive
+          stores a row per comment; this is the same data with the post put
+          back at the centre.</p>
+        <p id="posts-count" class="xs"></p>
+      </div>
+      <div class="row row-end">
+        <input id="posts-q" aria-label="Filter posts" placeholder="filter posts…" style="inline-size:220px" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="card card--flush" id="posts-list">
+      <div class="card-head">
+        <h3>Posts</h3><span class="xs" id="posts-shown"></span>
+        <div class="pager row-end" id="posts-pager"></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>post</th><th>where</th><th>comments held</th><th>posted</th>
+          </tr></thead>
+          <tbody id="posts-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="post-detail" hidden>
+      <button class="btn btn--sm" id="posts-back">&lsaquo; all posts</button>
+      <div class="card" id="post-head"></div>
+      <div class="card" id="post-metrics"></div>
+      <div class="card card--flush" id="post-comments"></div>
+    </div>
+  </section>
+
   <!-- ── nuggets ──────────────────────────────────────────────────── -->
   <section data-page="nuggets" hidden>
     <div class="hero">

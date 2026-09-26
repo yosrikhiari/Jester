@@ -116,14 +116,42 @@ class ConsoleAPI:
         self.repo_root = Path(__file__).resolve().parents[3]
         self.config_dir = config_dir or str(self.repo_root / "config")
         self.db_path = db_path if db_path == ":memory:" else os.path.abspath(db_path)
-        # A viewing console does not migrate the archive it is visiting. See
-        # open_db: the normal path runs BASE_SCHEMA and stamps schema_version,
-        # and executescript opens a write transaction even when nothing needs
-        # changing. Two consoles racing to reshape one file is worse than
-        # anything that migration would fix.
+        # A console does not migrate the archive it is visiting -- no console,
+        # not just a --read-only one. See open_db: the normal path runs
+        # BASE_SCHEMA and stamps schema_version, and executescript opens a
+        # write transaction even when nothing needs changing.
+        #
+        # This object is built per request, so gating that on --read-only meant
+        # the default console opened a write transaction for every API call. A
+        # page load makes a dozen. While the pipeline was running -- the exact
+        # moment the dashboard is worth looking at -- each one raced `cycle`
+        # for the write lock and lost, and /api/overview returned 500
+        # "database is locked".
+        #
+        # A brand-new file is the one case that does need writing: with no
+        # tables at all every route answers "no such table: runs". So the rule
+        # is narrower than "never write" -- CREATE a schema that is absent,
+        # never MIGRATE one that is already there. An archive a pipeline is
+        # writing to is in the second case by definition, which is exactly the
+        # 500, and an empty file nobody has opened yet cannot be locked.
         self.read_only = read_only
-        self.db = open_db(self.db_path, migrate=not read_only)
+        self.db = open_db(self.db_path, migrate=False)
+        if not read_only and not self._has_schema():
+            self.db.close()
+            self.db = open_db(self.db_path, migrate=True)
         self._signals_db_path = signals_db
+
+    def _has_schema(self) -> bool:
+        """Has anyone ever built this archive?
+
+        One cheap read against sqlite_master. `runs` is the table every route
+        reaches for first, so its absence is what an unbuilt file looks like
+        from the outside.
+        """
+        row = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='runs'"
+        ).fetchone()
+        return row is not None
 
     # ---- helpers ----------------------------------------------------------
 
@@ -157,11 +185,44 @@ class ConsoleAPI:
         return paths
 
     def _counts(self):
-        q = lambda sql: self.db.execute(sql).fetchone()[0]  # noqa: E731
+        """Seven counts, each of which may lose a race with the writer.
+
+        These are ordinary reads, but a read still waits on a writer holding
+        the database, and busy_timeout is five seconds. The ingest worker
+        commits large transactions against an 800MB archive, so a scan like
+        pending_batches can genuinely exceed that -- and when it raised, the
+        whole overview returned 500 and the dashboard went blank.
+
+        Blank is the worst answer available. Six counts the operator can read
+        plus one that says "busy" is strictly better than seeing nothing, and
+        the one that is missing is itself the signal: the pipeline is working
+        hard enough to hold the lock. null, not 0 -- a zero here would be a
+        lie about an empty archive.
+        """
+        def q(sql):
+            try:
+                return self.db.execute(sql).fetchone()[0]
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) and "busy" not in str(exc):
+                    raise
+                return None
         return {
             "nuggets": q("SELECT COUNT(*) FROM nuggets"),
             "ideas": q("SELECT COUNT(*) FROM ideas"),
-            "pending_batches": q("SELECT COUNT(*) FROM ingest_batch WHERE status='pending'"),
+            # kind='comment' ONLY, matching store.pending_batches — which is
+            # what actually claims work. A listing is already structured and
+            # deliberately never reaches the extractor, so a listing row stays
+            # at status='pending' for the life of the archive by design.
+            #
+            # Counting them made the dashboard report a crisis that did not
+            # exist: 31,593 "pending", of which 31,582 were real-estate
+            # listings nothing is waiting on and 11 were comments. The comment
+            # pipeline was keeping up the whole time.
+            "pending_batches": q("SELECT COUNT(*) FROM ingest_batch "
+                                 "WHERE status='pending' "
+                                 "AND (kind = 'comment' OR kind IS NULL)"),
+            "pending_listings": q("SELECT COUNT(*) FROM ingest_batch "
+                                  "WHERE status='pending' AND kind='listing'"),
             "failed_batches": q("SELECT COUNT(*) FROM ingest_batch WHERE status='failed'"),
             "reembed_backlog": q("SELECT COUNT(*) FROM nuggets WHERE needs_reembed=1"),
             "unprocessed": q("SELECT COUNT(*) FROM nuggets WHERE synthesized_at IS NULL"),
@@ -471,6 +532,9 @@ class ConsoleAPI:
         ("idx_nuggets_category", "nuggets(category)"),
         ("idx_nuggets_trivial", "nuggets(trivial)"),
         ("idx_nuggets_unsynth", "nuggets(synthesized_at)"),
+        # Grouping the archive by post needs this; without it the posts
+        # list scans 110,000 rows to produce 7,000.
+        ("idx_nuggets_thread", "nuggets(thread_id)"),
     )
     _indexed: set = set()
 
@@ -492,6 +556,139 @@ class ConsoleAPI:
         "unclustered": "synthesized_at IS NULL",
         "flagged": "(trivial = 1 OR needs_reembed = 1)",
     }
+
+    # ---- posts ------------------------------------------------------------
+    #
+    # The archive stores one row per COMMENT, and copies the post onto every
+    # one of them: post_title, post_url, post_author, post_score,
+    # post_upvote_ratio, post_comment_count, post_views, all repeated. On the
+    # live archive that is 109,981 rows standing for 7,123 posts -- 15.4
+    # comments each -- and post_title alone occupies 5.5 MB where 383 KB would
+    # do.
+    #
+    # That is a storage detail. The user-facing cost is worse: the Nuggets
+    # page is a flat list 1,100 pages long in which two replies to the same
+    # thread appear as unrelated rows, and there is no way to read a
+    # discussion as a discussion. A post is the thing a person recognises; a
+    # comment only means anything next to the post it answers.
+    #
+    # These two endpoints put the post back at the centre without changing how
+    # anything is stored: group by thread_id for the list, and fetch one
+    # thread's comments for the detail. Reshaping the tables can come later
+    # and is a migration; this is a view, and it can land today.
+
+    def posts_page(self, offset=0, limit=50, platform="", community="", q=""):
+        """One page of POSTS, newest first, with the comments we hold counted.
+
+        Ordered by the post's own date, not by when we happened to collect it,
+        so the list reads the way the source reads.
+        """
+        self._ensure_nugget_indexes()
+        offset, limit = max(0, int(offset or 0)), max(1, min(int(limit or 50), 200))
+        where, args = ["thread_id IS NOT NULL", "thread_id != ''"], []
+        if platform:
+            where.append("platform = ?"); args.append(platform)
+        if community:
+            where.append("COALESCE(community,'') = ?"); args.append(community)
+        q = (q or "").strip()
+        if q:
+            where.append("(COALESCE(post_title,'') LIKE ? OR COALESCE(community,'') LIKE ?)")
+            args += [f"%{q}%"] * 2
+        clause = " WHERE " + " AND ".join(where)
+
+        total = self.db.execute(
+            f"SELECT COUNT(*) FROM (SELECT thread_id FROM nuggets{clause} "
+            f"GROUP BY thread_id)", args).fetchone()[0]
+
+        rows = self.db.execute(
+            # MAX() over the repeated post_* columns: they are identical
+            # across a thread's rows by construction, and MAX picks the one
+            # non-null value when an older row predates the widened capture.
+            f"""SELECT thread_id,
+                       MAX(COALESCE(post_title,''))         AS title,
+                       MAX(COALESCE(post_url,''))           AS url,
+                       MAX(COALESCE(post_author,''))        AS author,
+                       MAX(COALESCE(post_score,0))          AS score,
+                       MAX(COALESCE(post_comment_count,0))  AS advertised,
+                       MAX(COALESCE(community,''))          AS community,
+                       MAX(COALESCE(platform,''))           AS platform,
+                       MAX(COALESCE(post_created_utc,''))   AS created,
+                       COUNT(*)                             AS held,
+                       SUM(CASE WHEN trivial=1 THEN 1 ELSE 0 END) AS trivial
+                FROM nuggets{clause}
+                GROUP BY thread_id
+                ORDER BY created DESC, thread_id DESC
+                LIMIT ? OFFSET ?""", args + [limit, offset]).fetchall()
+
+        posts = []
+        for r in rows:
+            d = self._rowdict(r)
+            # "5 of 40" is the honest shape: the listing advertises a comment
+            # count, and we hold whatever survived the fetch and the
+            # prefilter. Showing only our own number would imply we have the
+            # thread when we may have a tenth of it.
+            d["advertised"] = d["advertised"] or None
+            posts.append(d)
+        return {"ok": True, "total": total, "offset": offset,
+                "limit": limit, "posts": posts}
+
+    def post(self, thread_id):
+        """One post: its own metrics, and the comments we hold for it.
+
+        Two lists rather than one blob, because they answer different
+        questions. The metrics say whether the thread is worth reading at all;
+        the comments are the reading.
+        """
+        rows = self.db.execute(
+            "SELECT * FROM nuggets WHERE thread_id = ? "
+            "ORDER BY COALESCE(created_utc,''), id", (str(thread_id),)
+        ).fetchall()
+        if not rows:
+            return {"ok": False, "error": f"no post {thread_id!r} in the archive"}
+
+        first = self._rowdict(rows[0])
+        held = len(rows)
+        advertised = max((r["post_comment_count"] or 0) for r in rows) or None
+        metrics = {
+            "thread_id": str(thread_id),
+            "title": first.get("post_title") or "",
+            "url": first.get("post_url") or first.get("source_url") or "",
+            "author": first.get("post_author") or "",
+            "community": first.get("community") or "",
+            "platform": first.get("platform") or "",
+            "created_utc": first.get("post_created_utc") or "",
+            "score": first.get("post_score"),
+            "upvote_ratio": first.get("post_upvote_ratio"),
+            "views": first.get("post_views"),
+            "comments_advertised": advertised,
+            "comments_held": held,
+            # Said out loud because it is the number that decides whether a
+            # conclusion drawn from this thread is safe. A thread advertising
+            # 200 comments where we hold 6 is a sample, not a thread.
+            # 4 places, not 3. Thin coverage is exactly where the number
+            # matters, and 3 places rounds 1-of-400 (0.0025) to 0.003 --
+            # blurring the difference between "we sampled this" and "we have
+            # it". None when the source published no count: an absent number
+            # is not a claim of full coverage.
+            "coverage": (round(held / advertised, 4)
+                         if advertised else None),
+            "trivial_held": sum(1 for r in rows if r["trivial"]),
+        }
+        comments = [{
+            "unique_key": r["unique_key"],
+            "insight": r["extracted_insight"],
+            "raw_text": r["raw_text"],
+            "category": r["category"],
+            "author": r["author"],
+            "created_utc": r["created_utc"],
+            "upvotes": r["upvotes"],
+            "depth": r["depth"],
+            "url": r["comment_url"] or r["source_url"],
+            "trivial": bool(r["trivial"]),
+            "extractor_model": r["extractor_model"],
+            "synthesized": r["synthesized_at"] is not None,
+        } for r in rows]
+        return {"ok": True, "metrics": metrics, "comments": comments}
 
     def nuggets_page(self, offset=0, limit=100, platform="", community="", category="",
                      flag="", q=""):

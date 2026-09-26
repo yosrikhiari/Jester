@@ -241,6 +241,7 @@ const PAGES = [
   { group: 'Pipeline', id: 'runs', label: 'Runs', icon: '▷', load: loadRuns, count: () => COUNTS.runs },
   { group: 'Pipeline', id: 'queue', label: 'Queue', icon: '⧗', load: loadQueue, count: () => COUNTS.pending },
   { group: 'Archive', id: 'ideas', label: 'Ideas', icon: '✦', load: loadIdeas, count: () => COUNTS.ideas },
+  { group: 'Archive', id: 'posts', label: 'Posts', icon: '▤', load: loadPosts, count: () => COUNTS.posts },
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
@@ -1705,6 +1706,140 @@ function pagerHTML(offset, size, total, key) {
     <span>page ${page} of ${pages}</span>
     <button class="btn btn--ghost btn--sm" data-page-${key}="${offset + size}" ${offset + size >= total ? 'disabled' : ''}>›</button>`;
 }
+/* ── posts ─────────────────────────────────────────────────────────────
+ * The archive stores one row per COMMENT and copies the post onto every one
+ * of them. On the live archive that is 109,981 rows standing for 7,123 posts.
+ * The Nuggets page shows those rows flat: 1,100 pages in which two replies to
+ * the same thread appear as unrelated entries, with no way to read a
+ * discussion as a discussion.
+ *
+ * This view does not change the storage. It groups by thread and puts the
+ * post first, because a post is the thing a person recognises and a comment
+ * only means something next to the post it answers.
+ */
+const POST_PAGE = 50;
+const POSTS = { offset: 0, q: '', total: 0, open: null };
+
+async function loadPosts() {
+  if (POSTS.open) return renderPostDetail();
+  const qs = new URLSearchParams({ offset: POSTS.offset, limit: POST_PAGE, q: POSTS.q });
+  const res = await api('/api/posts?' + qs.toString());
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  POSTS.total = res.total || 0;
+  COUNTS.posts = POSTS.total;
+  renderNav();
+  $('#post-detail').hidden = true;
+  $('#posts-list').hidden = false;
+
+  $('#posts-count').textContent =
+    `${POSTS.total.toLocaleString()} post(s) — the same archive as Nuggets, grouped`;
+  $('#posts-shown').textContent = res.posts.length
+    ? `${(POSTS.offset + 1).toLocaleString()}–${(POSTS.offset + res.posts.length).toLocaleString()} of ${POSTS.total.toLocaleString()}`
+    : 'nothing matches';
+  $('#posts-pager').innerHTML = pagerHTML(POSTS.offset, POST_PAGE, POSTS.total, 'post');
+
+  $('#posts-body').innerHTML = res.posts.map(p => {
+    // "5 of 40" rather than "5": the listing advertises a count and we hold
+    // what survived the fetch and the prefilter. Showing only our own number
+    // would imply we have the thread when we may have a tenth of it.
+    const cov = p.advertised
+      ? `${p.held} <span class="xs">of ${p.advertised}</span>`
+      : `${p.held}`;
+    const thin = p.advertised && p.held / p.advertised < 0.5;
+    return `<tr data-post="${esc(p.thread_id)}" style="cursor:pointer">
+      <td><strong>${esc(p.title || '(untitled post)')}</strong>
+        ${p.trivial ? `<div class="xs">${p.trivial} of ${p.held} flagged trivial</div>` : ''}</td>
+      <td>${esc(p.community || p.platform || '—')}
+        ${p.author ? `<div class="xs">${esc(p.author)}</div>` : ''}</td>
+      <td class="num">${cov}
+        ${thin ? '<div class="xs">partial</div>' : ''}</td>
+      <td class="xs">${esc((p.created || '').slice(0, 10) || '—')}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="4">No posts match.</td></tr>`;
+}
+
+async function openPost(threadId) {
+  const res = await api('/api/post/' + encodeURIComponent(threadId));
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  POSTS.open = res;
+  renderPostDetail();
+}
+
+function renderPostDetail() {
+  const { metrics: m, comments } = POSTS.open;
+  $('#posts-list').hidden = true;
+  $('#post-detail').hidden = false;
+
+  $('#post-head').innerHTML = `
+    <h3>${esc(m.title || '(untitled post)')}</h3>
+    <p class="xs">${esc(m.community || m.platform || '')}${m.author ? ' · ' + esc(m.author) : ''}
+      ${m.created_utc ? ' · ' + esc(when(m.created_utc)) : ''}</p>
+    ${m.url ? `<p><a href="${esc(m.url)}" target="_blank" rel="noopener">open the original ↗</a></p>` : ''}`;
+
+  // Metrics and comments are deliberately separate. The metrics say whether
+  // the thread is worth reading; the comments are the reading.
+  // .kpi is the console's existing tile: <b> the number, <span> the label,
+  // .kpi-sub the note. Reusing it rather than inventing a class keeps this
+  // page looking like the rest of the console instead of merely near it.
+  const stat = (label, value, note, alert) => `
+    <div class="kpi${alert ? ' kpi--alert' : ''}">
+      <b class="num">${value === null || value === undefined ? '—' : esc(String(value))}</b>
+      <span>${esc(label)}</span>
+      ${note ? `<span class="kpi-sub">${esc(note)}</span>` : ''}
+    </div>`;
+  const covPct = m.coverage === null || m.coverage === undefined
+    ? null : Math.round(m.coverage * 100) + '%';
+  $('#post-metrics').innerHTML = `
+    <div class="card-head"><h3>What the source said</h3></div>
+    <div class="grid">
+      ${stat('score', m.score)}
+      ${stat('upvote ratio', m.upvote_ratio)}
+      ${stat('views', m.views)}
+      ${stat('comments on the post', m.comments_advertised)}
+      ${stat('comments we hold', m.comments_held)}
+      ${stat('coverage', covPct,
+             covPct && m.coverage < 0.5 ? 'a sample, not the thread' : '',
+             covPct && m.coverage < 0.5)}
+      ${stat('flagged trivial', m.trivial_held, '', m.trivial_held > 0)}
+    </div>`;
+
+  $('#post-comments').innerHTML = `
+    <div class="card-head">
+      <h3>Comments</h3>
+      <span class="xs">${comments.length} held${m.comments_advertised
+        ? ` of ${m.comments_advertised} on the post` : ''}</span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>insight</th><th>who</th><th>category</th><th>flags</th></tr></thead>
+        <tbody>${comments.map(c => `
+          <tr>
+            <td>${esc(c.insight || c.raw_text || '')}
+              ${c.url ? `<div class="xs"><a href="${esc(c.url)}" target="_blank" rel="noopener">source ↗</a></div>` : ''}</td>
+            <td class="xs">${esc(c.author || '—')}${c.upvotes ? `<div class="xs">▲ ${esc(String(c.upvotes))}</div>` : ''}</td>
+            <td class="xs">${esc(c.category || '—')}</td>
+            <td class="xs">${c.trivial ? '<span class="pill pill--sm">trivial</span> ' : ''}${
+              c.extractor_model && c.extractor_model !== 'fake-llm'
+                ? '' : '<span class="pill pill--sm">stub extraction</span>'}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+$('#posts-q').addEventListener('input', e => {
+  POSTS.q = e.target.value.trim();
+  POSTS.offset = 0;
+  POSTS.open = null;
+  loadPosts();
+});
+$('#posts-back').addEventListener('click', () => { POSTS.open = null; loadPosts(); });
+$('[data-page="posts"]').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-post]');
+  if (row) { openPost(row.dataset.post); return; }
+  const pg = e.target.closest('button[data-page-post]');
+  if (pg) { POSTS.offset = Number(pg.dataset.pagePost); loadPosts(); }
+});
+
 async function loadNuggets() {
   const qs = new URLSearchParams({ offset: NUG.offset, limit: NUGGET_PAGE, platform: NUG.platform,
     community: NUG.community, category: NUG.category, flag: NUG.flag, q: NUG.q });

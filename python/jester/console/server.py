@@ -10,7 +10,7 @@ import os
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from jester.console.api import ConsoleAPI
 from jester.env import load_env_once
@@ -159,6 +159,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/signals/runs":
             self._json(api.signal_runs(limit=parse_qs(query).get("limit", [25])[0]))
+            return
+        if path == "/api/posts":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.posts_page(offset=g("offset", 0), limit=g("limit", 50),
+                                      platform=g("platform"), community=g("community"),
+                                      q=g("q")))
+            return
+        if path.startswith("/api/post/"):
+            thread = path[len("/api/post/"):]
+            if not thread:
+                self._json({"ok": False, "error": "no thread id"}, 400)
+                return
+            res = api.post(unquote(thread))
+            self._json(res, 200 if res.get("ok") else 404)
             return
         if path == "/api/nuggets/page":
             qs = parse_qs(query)
