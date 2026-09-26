@@ -97,6 +97,50 @@ scope:
       evidence: "measured — 14 archived posts: CI questions, tool choices, CV reviews"
       why: practitioner pain for content
 
+  # Rooms PROPOSED for the access decision. Deliberately NOT in `communities`:
+  # the task says the scope owner chooses 3-5, and a shortlist that grows
+  # itself is not a shortlist. These are a shopping list, and the decision is
+  # somebody else's.
+  #
+  # WHY THEY EXIST. Every room in `communities` is a PROBLEM-DISCUSSION room:
+  # people describing work they dislike. They yielded almost no buyers, and
+  # that was read as "Reddit does not carry buyers". It tested the wrong
+  # hypothesis. The same split is measured on Hacker News: hn/comment, which
+  # is discussion, returns 0.4% buyers; hn/hiring, which is companies posting
+  # adverts, returns 6.0%. Identical classifier, identical archive, an order
+  # of magnitude apart. The difference is not the platform — it is whether the
+  # poster is describing a problem or announcing a budget. Reddit's hiring
+  # rooms are the untested half.
+  #
+  # EVERY LINE IS UNVERIFIED. Written from general knowledge, not from the
+  # archive and not from the sites: Reddit is closed both to the collector (no
+  # approved access, so no code path exists) and to this repo's browser.
+  # Nobody has confirmed these rooms exist, permit adverts, or carry volume.
+  #
+  # The benchmark is already running and costs nothing: hn/hiring at 6.0%. If
+  # paid Reddit access cannot beat a free keyless API, do not buy it.
+  candidates:
+    - name: r/forhire
+      serves: buyer
+      evidence: "UNVERIFIED — never measured. Must beat hn/hiring's 6.0% to justify paid access."
+      why: "[HIRING] and [FOR HIRE] posts; the closest Reddit analogue to a Who-is-hiring thread"
+    - name: r/devopsjobs
+      serves: buyer
+      evidence: "UNVERIFIED — never measured; volume unknown and may be far too thin to matter."
+      why: "devops and cloud roles specifically, which is the work the offer covers"
+    - name: r/jobbit
+      serves: buyer
+      evidence: "UNVERIFIED — never measured."
+      why: "technology job postings, often contract and remote"
+    - name: r/remotejs
+      serves: buyer
+      evidence: "UNVERIFIED — never measured."
+      why: "remote engineering roles; remote-first posters are likelier to accept contract shapes"
+    - name: r/hiring
+      serves: buyer
+      evidence: "UNVERIFIED — never measured, and the broadest of the five, so the noisiest."
+      why: "general hiring room; the rules would have to separate engineering from everything else"
+
   # Communities measured and NOT recommended, with the reason, so the decision
   # is auditable rather than a silent omission.
   excluded:

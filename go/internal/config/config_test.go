@@ -277,3 +277,35 @@ func TestCDPURLEnvironmentWinsOverTheFile(t *testing.T) {
 		t.Fatalf("a blank override should fall back to the file, got %q", cfg.Scraper.CDPURL)
 	}
 }
+
+// Depth is a per-source override for the same reason min_comments is: one
+// global number cannot serve a discussion room and a hiring room at once.
+// Measured before this existed: at the Reddit default of 3, r/forhire -- one
+// of the busiest hiring rooms on the site -- produced six adverts in three
+// days, because an hour later the newest three are the same three.
+func TestDepthOrPrefersTheSourceOverThePlatform(t *testing.T) {
+	d := 25
+	if got := (Source{Depth: &d}).DepthOr(3); got != 25 {
+		t.Errorf("source depth must win over the platform floor; got %d", got)
+	}
+}
+
+func TestDepthOrFallsBackWhenUnset(t *testing.T) {
+	// The overwhelming majority of sources set nothing and must keep the
+	// platform's own number.
+	if got := (Source{}).DepthOr(3); got != 3 {
+		t.Errorf("unset depth must fall back; got %d", got)
+	}
+}
+
+func TestDepthOrIgnoresZeroAndNegative(t *testing.T) {
+	// Unlike min_comments, 0 is NOT meaningful here: a depth of zero would
+	// mean "fetch nothing from this source", which is what `enabled: false`
+	// is for. Treating it as unset keeps a typo from silently muting a room.
+	for _, n := range []int{0, -1} {
+		v := n
+		if got := (Source{Depth: &v}).DepthOr(3); got != 3 {
+			t.Errorf("depth %d must fall back, got %d", n, got)
+		}
+	}
+}

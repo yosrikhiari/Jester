@@ -7,10 +7,11 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, unquote
 
 from jester.console.api import ConsoleAPI
 from jester.env import load_env_once
@@ -33,6 +34,12 @@ _STATIC_TYPES = {
     # internet, so the typeface ships with it rather than loading from a CDN.
     ".woff2": "font/woff2",
 }
+
+
+#: What a thread id may contain. See the /api/post/ route for why this is
+#: a whitelist rather than an escape: the id reaches a response body, so
+#: the safe move is to refuse anything unexpected, not to sanitise it.
+_THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 
 
 def _api(args):
@@ -159,6 +166,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/signals/runs":
             self._json(api.signal_runs(limit=parse_qs(query).get("limit", [25])[0]))
+            return
+        if path == "/api/posts":
+            qs = parse_qs(query)
+            g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
+            self._json(api.posts_page(offset=g("offset", 0), limit=g("limit", 50),
+                                      platform=g("platform"), community=g("community"),
+                                      q=g("q")))
+            return
+        if path.startswith("/api/post/"):
+            thread = unquote(path[len("/api/post/"):])
+            # Validated at the boundary, and NEVER echoed back. Whatever
+            # arrives here came from the URL, and the 404 used to quote it --
+            # a taint flow straight from the request line into the response
+            # body. Content-Type: application/json makes that hard to exploit
+            # rather than impossible, and "hard to exploit" is not the bar.
+            #
+            # The pattern is measured, not guessed: all 4,000 distinct
+            # thread_ids sampled from the live archive match it, and the
+            # longest is 11 characters. A request outside it cannot be for a
+            # post that exists, so it is refused without being repeated.
+            if not _THREAD_ID_RE.fullmatch(thread):
+                self._json({"ok": False, "error": "bad thread id"}, 400)
+                return
+            res = api.post(thread)
+            self._json(res, 200 if res.get("ok") else 404)
             return
         if path == "/api/nuggets/page":
             qs = parse_qs(query)

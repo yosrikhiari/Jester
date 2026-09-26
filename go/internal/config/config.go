@@ -39,10 +39,72 @@ type Source struct {
 	URL      string `yaml:"url"`
 	Enabled  *bool  `yaml:"enabled"`
 	Notes    string `yaml:"notes"`
+	// MinComments overrides thresholds.min_comments_per_thread for this source
+	// alone. A pointer because 0 is a meaningful value and "unset" has to be
+	// distinguishable from "collect threads with no replies".
+	//
+	// It exists because one global floor cannot serve two kinds of room. The
+	// floor is 8, which is right for a discussion room: a thread nobody
+	// answered is one person talking. It is exactly wrong for a hiring room,
+	// where the post IS the content and comments are applicants replying. Every
+	// room in r/forhire, r/BigDataJobs and r/MachineLearningJobs was discarded
+	// as "too quiet" while carrying the adverts we went there for.
+	MinComments *int `yaml:"min_comments"`
+	// PostsOnly stores the POST as the record and skips the replies.
+	//
+	// In a discussion room the post asks a question and the comments answer
+	// it, so the comments are the content. A hiring room inverts that
+	// completely: the post is a company naming a role and a budget, and the
+	// comments are freelancers saying "sent", "interested", "check my
+	// portfolio". Collecting the replies there gathers your competition and
+	// discards the buyer.
+	//
+	// Measured before this existed: twelve nuggets from three threads in
+	// r/hiredev and r/DevsForHire, every single one an applicant, not one the
+	// advert. The advert was fetched every time — it travels as batch
+	// metadata — and then thrown away.
+	PostsOnly *bool `yaml:"posts_only"`
+	// Depth overrides thresholds.max_threads_per_platform for this source
+	// alone: how many threads one run takes from its listing.
+	//
+	// The global Reddit depth is 3, and thresholds.yaml explains why -- Reddit
+	// is the one platform where more depth is a real risk to the identity.
+	// That reasoning is about THREADS: each one is a separate navigation into
+	// a comment page, and thirty of those in a row is what looks like a bot.
+	//
+	// A posts_only room does not do that. The advert arrives as listing
+	// metadata, so depth there buys adverts without buying navigations, and
+	// the global floor is simply the wrong instrument for it. Measured: at
+	// depth 3, r/forhire -- one of the busiest hiring rooms on the site --
+	// yielded six adverts in three days, because an hour later the newest
+	// three are the same three and dedup correctly rejects them. The cap was
+	// the room's whole output, not the room.
+	Depth *int `yaml:"depth"`
 }
 
 // IsEnabled reports whether the source should be fetched this run.
 func (s Source) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
+
+// WantsPostsOnly reports whether the post is the record and replies are noise.
+func (s Source) WantsPostsOnly() bool { return s.PostsOnly != nil && *s.PostsOnly }
+
+// MinCommentsOr returns this source's comment floor, falling back to the
+// global threshold when the source does not set one.
+func (s Source) MinCommentsOr(fallback int) int {
+	if s.MinComments != nil {
+		return *s.MinComments
+	}
+	return fallback
+}
+
+// DepthOr returns this source's thread depth, falling back to the
+// per-platform threshold when the source does not set one.
+func (s Source) DepthOr(fallback int) int {
+	if s.Depth != nil && *s.Depth > 0 {
+		return *s.Depth
+	}
+	return fallback
+}
 
 // ResolvedKind returns Kind, falling back to a URL-shape guess for legacy
 // entries that predate the field. Mirrors python/jester/sources.py.

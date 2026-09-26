@@ -246,7 +246,24 @@ def cmd_run(args):
     critic_llm = select_critic_llm(cfg.thresholds)
 
     # R25: reap orphaned 'running' rows from crashed sessions, then take the lock.
-    reap_running(db)
+    #
+    # WITH an age, because this used to be bare `reap_running(db)` and that
+    # treats every 'running' row as a corpse. reap_running's own docstring
+    # warns about exactly this: "the tick that is still working looks exactly
+    # like a corpse to the tick that just started". `cycle` already passes an
+    # age; this call site never did.
+    #
+    # It is not hypothetical. Three schedules overlap on this machine --
+    # JesterNightly (cycle), JesterNightlyScrape and JesterNightlyTreat -- and
+    # all three have been observed in the Running state at the same moment. A
+    # treat tick firing mid-cycle marked the live cycle 'aborted' and stamped
+    # it "the process died without closing this run", about a process that was
+    # alive and working. 26 of 264 runs in the live archive carry that
+    # epitaph, and the cycle it killed then blocked the next tick, because a
+    # row still saying 'running' makes the following tick stand down.
+    #
+    # Same 60-minute default as `cycle`, so the two agree on what dead means.
+    reap_running(db, older_than_minutes=getattr(args, "stale_after", 60) or 60)
     origin = os.environ.get("JESTER_ORIGIN", "manual")
     try:
         start_run(
@@ -308,6 +325,36 @@ def cmd_run(args):
                 "no pending batches — the fetch queued nothing new, so there "
                 "is nothing to process (see the ingest output above)"
             )
+
+    # A run takes a BOUNDED bite of the queue. Whole batches only, so a batch
+    # is never half-extracted; the rest stay pending for the next tick.
+    #
+    # This is the difference between a slow extractor and a stopped pipeline.
+    # While extraction was the stub it returned instantly, so claiming every
+    # pending batch cost nothing and run duration was effectively zero. A real
+    # local model costs ~15s for a short comment and ~29s for a long one, and
+    # that turns "claim everything" into a run measured in hours.
+    #
+    # Observed the night this landed, on the live archive:
+    #
+    #   22:09  claims 503 comments  ->  still running 8 hours later
+    #   06:09  the next tick reaps it as dead and claims the same 503
+    #   07:12  that run is 63 minutes old, already past the reap window
+    #
+    # Nothing ever completed. Each oversized run was killed by a later tick,
+    # which started its own oversized run, which was killed in turn. The work
+    # was not slow, it was discarded -- a livelock, and every model call in
+    # those eight hours was thrown away.
+    #
+    # Bounding the bite is what makes the reap window mean something: a run
+    # that finishes well inside it can be assumed dead when it does not.
+    budget = _comment_budget(args)
+    kept, taken = bounded_bite(rows, budget)
+    if len(kept) < len(rows):
+        print(f"taking {len(kept)} of {len(rows)} pending batch(es) "
+              f"(~{taken} comments, budget {budget}); the rest stay "
+              f"queued for the next run")
+    rows = kept
 
     # M1.3/R35: pre-filter before extraction; per-heuristic funnel recorded.
     raw_meta, raw_comments = [], []
@@ -847,13 +894,130 @@ def _record_run_crash(args, exc) -> None:
         pass
 
 
+#: How deep the queue may get before collection stands down. 40,000 is not a
+#: round number picked for comfort: the live queue sat at 31,197 while growing
+#: ~1,000/day, so this leaves room for normal fluctuation and trips within a
+#: week or two if the imbalance is real rather than a bad afternoon. It is a
+#: dial, not a law -- `--queue-ceiling 0` turns it off entirely.
+QUEUE_CEILING = 40_000
+
+
+def _pending_batches(db_path):
+    """How many batches are waiting, or None if that cannot be read.
+
+    None, not 0, when the archive is unreadable or has no queue table yet: a
+    failure to measure must never read as "the queue is empty, collect away".
+    """
+    try:
+        db = open_db(db_path, migrate=False)
+    except Exception:
+        return None
+    try:
+        # kind='comment' ONLY, matching store.pending_batches. A listing is
+        # already structured and deliberately never reaches the extractor, so
+        # a listing row sits at status='pending' for the life of the archive
+        # by design, not as backlog.
+        #
+        # Counting them was wrong in a way that looked convincing: the live
+        # archive shows 31,593 pending, of which 31,582 are real-estate
+        # listings and 11 are comments. The comment pipeline is keeping up
+        # comfortably. A ceiling measured against the raw total would have
+        # stood down collection for Reddit and Hacker News because of a
+        # property-portal backlog that nothing is waiting on.
+        return db.execute(
+            "SELECT COUNT(*) FROM ingest_batch WHERE status='pending' "
+            "AND (kind = 'comment' OR kind IS NULL)"
+        ).fetchone()[0]
+    except Exception:
+        return None
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+#: Comments one run may take. Sized against the reaper, not against appetite.
+#:
+#: A treat run must finish comfortably inside `--stale-after` (60 minutes), or
+#: a later tick reaps it mid-flight and every model call it made is lost. At
+#: the measured local rate -- ~15s for a short comment, ~29s for a long one --
+#: 120 comments is roughly 30-55 minutes of extraction, which leaves room for
+#: synthesis and for a machine that is busy with something else.
+#:
+#: Raise it only alongside --stale-after. The two numbers are a pair: the cap
+#: is a promise about how long a run takes, and the window is how long the
+#: next tick waits before calling it dead.
+COMMENT_BUDGET = 120
+
+
+def bounded_bite(rows, budget: int):
+    """The first `budget` comments' worth of batches, and the count taken.
+
+    Whole batches only. Half-extracting a batch would leave it neither done
+    nor safely re-runnable, and the comments already paid for would be
+    extracted twice.
+
+    A module-level function rather than a few lines inside cmd_run because
+    this is the rule that stops a run outliving its reap window, and a rule
+    that matters is a rule worth testing directly. The first version of this
+    test re-implemented the loop and agreed with itself.
+    """
+    if budget <= 0:
+        return list(rows), 0
+    kept, taken = [], 0
+    for r in rows:
+        if taken >= budget:
+            break
+        kept.append(r)
+        try:
+            taken += len(json.loads(r["comments"] or "[]") or [])
+        except (TypeError, ValueError):
+            pass  # unreadable: counted as zero, and skipped again downstream
+    return kept, taken
+
+
+def _comment_budget(args) -> int:
+    """Comments this run may claim. 0 disables the cap entirely."""
+    n = getattr(args, "max_comments", None)
+    return COMMENT_BUDGET if n is None else int(n)
+
+
 def cmd_ingest(args):
     """Fetch the curated sources with the Go worker and queue what they yield.
 
     The half of the loop the CLI never had. `jester run` processes the queue;
     without this there was no command-line way to fill it, so the scheduled
     nightly job fetched nothing, every night, and reported success.
+
+    BACKPRESSURE. Collection stops when the queue is already too deep. Without
+    it the two halves have no relationship at all: the scraper cannot tell that
+    nothing downstream is keeping up, so it keeps filling a queue that is
+    already losing ground.
+
+    Little's Law is blunt about where that ends. Queue length is arrival rate
+    times wait, so when arrivals outrun processing the wait grows without
+    limit -- there is no rate at which it recovers, because there is no such
+    rate. Measured on the live archive: 2,223 pages arriving a day against
+    1,234 processed, a queue at 31,197 and climbing by about a thousand a day
+    since the collection rate went up.
+
+    An unbounded queue does not absorb that. It postpones it, and then the
+    whole thing arrives at once. A bounded one turns the same condition into
+    something the operator can see on the day it starts.
     """
+    ceiling = getattr(args, "queue_ceiling", None)
+    ceiling = QUEUE_CEILING if ceiling is None else int(ceiling)
+    pending = _pending_batches(args.db) if ceiling > 0 else None
+    if pending is not None and pending >= ceiling:
+        # Not an error. A full queue means the scraper is doing its job and
+        # the other half is not keeping up, which is information.
+        print(f"queue at {pending:,} (ceiling {ceiling:,}) — not "
+              f"collecting. The archive already holds more than the pipeline "
+              f"can process; fetching more would only make the backlog older. "
+              f"Drain it with `jester treat`, or raise the ceiling with "
+              f"--queue-ceiling if this is deliberate.")
+        return
     res = worker_ingest(
         args.config,
         args.db,
@@ -1901,6 +2065,66 @@ def cmd_signals(args):
               "must not exist as code that can be called by accident.")
         return
 
+    if action == "from-archive":
+        # The bridge between the two pipelines, which until now did not meet.
+        #
+        #   sources.yaml  -> Go worker -> nuggets        no audience column
+        #   signal_rules  -> collector -> problem_signal buyer/practitioner
+        #
+        # The Reddit hiring rooms were added to sources.yaml, so the worker
+        # collects them -- into the pipeline that never asks whether a post is
+        # a buyer. That is why adding the rooms moved no buyer count.
+        #
+        # This collects NOTHING. It reads rows already on disk, scores them
+        # with the rules that already exist, and writes the verdicts where the
+        # leads file can see them. The scope document gates Reddit COLLECTION
+        # on written commercial access; reading what is already stored is not
+        # collection, and this command must never become collection.
+        from jester.signals import from_archive as fa
+        from jester.signals import leads as sigleads
+
+        # `signals` has no --config; the rules flag already defaults to a
+        # repo-relative path, so the room list follows the same convention.
+        slugs = fa.hiring_slugs("config/sources.yaml")
+        nuggets = open_db(args.archive, migrate=False)
+        db = sig.open_signals(args.db)
+        try:
+            run_id = f"archive-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+            res = fa.score_archive(nuggets, db, slugs=slugs,
+                                   rules_path=args.rules
+                                   or "config/hiring_rules.yaml",
+                                   run_id=run_id)
+            by = res["by_audience"]
+            print(f"{res['seen']} stored record(s) from {len(slugs)} hiring "
+                  f"room(s) · buyer {by.get('buyer', 0)} · practitioner "
+                  f"{by.get('practitioner', 0)} · kept {res['kept']}")
+            rej = res.get("rejected") or {}
+            if rej:
+                # The headline number means nothing without this line: these
+                # rooms carry more developers touting for work than clients.
+                bits = []
+                if rej.get("seller"):
+                    bits.append(f"{rej['seller']} seller advert(s) "
+                                "([For Hire] — the author is selling)")
+                if rej.get("question"):
+                    bits.append(f"{rej['question']} question(s) "
+                                "(a vacancy is not posed as a question)")
+                if rej.get("not_an_advert"):
+                    bits.append(f"{rej['not_an_advert']} not adverts "
+                                "([Discussion] and similar)")
+                print("discarded before scoring: " + ", ".join(bits))
+            if res["seen"] == 0:
+                # An empty read and an empty verdict are different results and
+                # only one of them is a reason to look at the rules.
+                print("nothing stored from those rooms yet — the worker has "
+                      "not fetched them, so there is nothing to score")
+            res2 = sigleads.write_csv(db, out_dir / "leads", mode="live")
+            print(f"{res2['written']} lead(s) written to {res2['path']}")
+        finally:
+            nuggets.close()
+            db.close()
+        return
+
     if action in ("leads", "outcome"):
         from jester.signals import leads as sigleads
 
@@ -1966,7 +2190,9 @@ def cmd_signals(args):
             if action == "reclassify":
                 baseline = sigf.load_rules(args.baseline) if args.baseline else None
                 res = sigrun.reclassify(db, rules, baseline=baseline,
-                                        mode=args.only_mode, dry_run=not args.apply)
+                                        mode=args.only_mode,
+                                        community=args.community or "",
+                                        dry_run=not args.apply)
                 print(f"{res['records']} record(s) re-scored against rule set "
                       f"v{res['config_version']}")
                 if not res["comparable"]:
@@ -2226,7 +2452,8 @@ def main(argv=None):
                     choices=["export", "check", "scope", "rules", "field-map",
                              "load", "queries", "evidence",
                              "run", "recover", "runs", "sources",
-                             "digest", "reclassify", "leads", "outcome"],
+                             "digest", "reclassify", "leads", "outcome",
+                             "from-archive"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
@@ -2257,6 +2484,16 @@ def main(argv=None):
                     help="digest window start (ISO); default: seven days back")
     sg.add_argument("--digest-until", default="",
                     help="digest window end (ISO); default: now")
+    # from-archive reads the NUGGETS database -- what the Go worker collects --
+    # while --db stays the signals archive it writes verdicts into. Two
+    # databases, two flags; collapsing them onto one would mean scoring an
+    # archive into itself.
+    # Scope a reclassify to one community. The archive mixes rule sets, so
+    # "re-score everything" is the wrong default for a targeted fix.
+    sg.add_argument("--community", default=None,
+                    help="reclassify: limit to one community (e.g. hn/hiring)")
+    sg.add_argument("--archive", default="data/jester.db",
+                    help="nuggets database to score (from-archive)")
     sg.add_argument("--baseline", default=None,
                     help="reclassify: another rules file to compare against, "
                          "so the delta is the rules and not the truncation")
@@ -2318,6 +2555,13 @@ def main(argv=None):
             type=int,
             default=None,
             help="stop once this many threads/videos/topics are fetched",
+        )
+        parser.add_argument(
+            "--queue-ceiling",
+            type=int,
+            default=None,
+            help="skip collection when this many batches are already pending "
+                 "(0 = no ceiling; default %d)" % QUEUE_CEILING,
         )
         parser.add_argument(
             "--mock",
@@ -2520,6 +2764,17 @@ def main(argv=None):
     tr.add_argument("--run", default=None, help="run id (default: treat-<UTC>)")
     tr.add_argument("--exports", default=None)
     tr.add_argument("--max-ideas", dest="max_ideas", type=int, default=None)
+    tr.add_argument(
+        "--max-comments", dest="max_comments", type=int, default=None,
+        help="comments this run may claim (0 = no cap; default %d). Sized so "
+             "a run finishes inside --stale-after; raise the two together."
+             % COMMENT_BUDGET,
+    )
+    tr.add_argument(
+        "--stale-after", dest="stale_after", type=int, default=60,
+        help="minutes before a 'running' row is treated as a corpse "
+             "(default 60)",
+    )
     tr.add_argument(
         "--force",
         action="store_true",

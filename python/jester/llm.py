@@ -171,9 +171,24 @@ class OllamaLLM:
         '"insight": "<one-sentence distilled insight>"}.'
     )
 
-    def __init__(self, model: str = "claude-sonnet-4-6", client=None):
+    #: Seconds before one comment is abandoned. There was no timeout at all,
+    #: which did not matter while the extractor was the stub: it returned
+    #: instantly and never touched the network. With a real local model the
+    #: shape changes completely -- measured on this machine, a 500-char comment
+    #: takes ~15s and a 3,000-char one ~29s, and nothing bounds the tail. One
+    #: pathological comment then holds the whole run open forever, and a run
+    #: that never ends is worse than a comment that never gets extracted: the
+    #: next scheduled tick stands down behind it, so the pipeline stops.
+    #:
+    #: 180s is six times the measured worst case, so it fires on a stall
+    #: rather than on a slow-but-working generation.
+    TIMEOUT_S = 180.0
+
+    def __init__(self, model: str = "claude-sonnet-4-6", client=None,
+                 timeout: float = TIMEOUT_S):
         self._model = model
         self._client = client
+        self._timeout = timeout
 
     @property
     def name(self):
@@ -182,7 +197,7 @@ class OllamaLLM:
     def _ensure_client(self):
         if self._client is None:
             from ollama import Client  # lazy import: mock mode needs no package
-            self._client = Client()
+            self._client = Client(timeout=self._timeout)
         return self._client
 
     def _complete(self, system: str, user: str) -> str:
@@ -197,7 +212,23 @@ class OllamaLLM:
 
     def extract(self, comment_body: str) -> NuggetDraft:
         body = comment_body or ""
-        obj = _parse_json_object(self._complete(self.EXTRACT_SYSTEM, body))
+        try:
+            raw = self._complete(self.EXTRACT_SYSTEM, body)
+        # Broad on purpose: transport error, timeout, model not pulled --
+        # from the run's point of view these are one situation, no answer
+        # for this comment.
+        except Exception:  # noqa: BLE001
+            # Deliberately the same answer as unparseable output below: hand
+            # back the stand-in. That is not a silent downgrade, because the
+            # stand-in stamps itself `fake-llm`, and cmd_run refuses to archive
+            # a fake-stamped nugget when a real extractor was configured -- it
+            # counts the batch as degraded and leaves it queued for the next
+            # run. So a timeout costs one comment's place in this run and
+            # nothing in the archive, which is the whole point of having the
+            # guard. Raising here would instead end the run and lose every
+            # extraction done before it.
+            return FakeLLM().extract(body)
+        obj = _parse_json_object(raw)
         if obj is not None:
             insight = str(obj.get("insight") or body.strip()[:200])
             category = obj.get("category")

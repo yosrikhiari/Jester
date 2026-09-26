@@ -188,6 +188,32 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
         "paid agreement. Confirm the current terms and pricing with Reddit when applying; they have "
         "changed more than once since 2023.")
     add("")
+    cands = (r.scope or {}).get("candidates", [])
+    if cands:
+        # A shopping list for this decision, kept out of section 1 on purpose:
+        # the task says the scope owner chooses 3-5 communities, and a
+        # shortlist that grows itself is not a shortlist.
+        add("**If access is bought, these are the rooms to point it at — and none "
+            "of them has been checked by anyone.**")
+        add("")
+        add("Every room in section 1 is a problem-DISCUSSION room, and those "
+            "yielded almost no buyers. That was read as \"Reddit does not carry "
+            "buyers\", but it tested the wrong hypothesis. The same split is "
+            "measured on Hacker News: discussion returns 0.4% buyers, hiring "
+            "adverts return 6.0% — same classifier, same archive, an order of "
+            "magnitude apart. Reddit's hiring rooms are the untested half.")
+        add("")
+        add("| room | why | status |")
+        add("|---|---|---|")
+        for c in cands:
+            add(f"| `{c.get('name')}` | {c.get('why','')} | {c.get('evidence','')} |")
+        add("")
+        add("They are written from general knowledge, not measured and not even "
+            "browsed: Reddit is closed to the collector and to this repo. **The "
+            "benchmark they have to beat is already running and costs nothing** "
+            "— `hn/hiring` at 6.0% on a keyless public API. If paid access "
+            "cannot beat free, the answer is not to buy it.")
+        add("")
     add("**Open decisions**, none of which this repository can make for you:")
     add("")
     add("- Choose the communities and queries (sections 1–2).")

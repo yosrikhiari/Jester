@@ -378,3 +378,34 @@ def test_the_field_map_describes_the_platform_it_actually_stores():
     assert "hackernews" in m
     assert "r/<name>" not in m, "the field map still promises Reddit communities"
     assert "t3_" not in m, "the field map still promises Reddit id prefixes"
+
+
+def test_candidate_rooms_do_not_join_the_chosen_shortlist():
+    """The task says the scope owner chooses 3-5 communities. A shortlist that
+    grows itself is not a shortlist, and the first version of this change put
+    five proposals straight into `communities` — the 3-5 assertion above
+    caught it."""
+    from jester.signals.filters import load_rules
+
+    r = load_rules()
+    assert 3 <= len(r.communities_for("buyer")) <= 5
+    names = {c["name"] for c in (r.scope or {}).get("candidates", [])}
+    assert names, "the candidates list should not be silently empty"
+    assert not (names & set(r.communities_for("buyer"))), \
+        "a candidate leaked into the chosen communities"
+
+
+def test_every_candidate_is_marked_unverified():
+    """They were written from general knowledge — Reddit is closed to both the
+    collector and this repo's browser. A candidate that reads as measured is
+    an assumption wearing a recommendation's clothes."""
+    from jester.signals.filters import load_rules
+    from jester.signals.scope import scope_markdown
+
+    r = load_rules()
+    for c in (r.scope or {}).get("candidates", []):
+        assert "UNVERIFIED" in (c.get("evidence") or ""), c["name"]
+
+    doc = scope_markdown()
+    for c in (r.scope or {}).get("candidates", []):
+        assert c["name"] in doc, f"{c['name']} is proposed but absent from the document"

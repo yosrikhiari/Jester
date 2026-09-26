@@ -142,7 +142,23 @@ embedding_provider: ollama
 embedding_model: nomic-embed-text
 synthesizer_provider: groq
 critic_provider: groq
-extractor_provider: fake
+# ollama, not fake. `fake` does not call a model at all: it copies the first
+# 200 characters of the comment and calls that the insight, then picks one of
+# two categories by looking for eight words. 95,138 of the 109,000 nuggets in
+# the live archive carry the `fake-llm` stamp, and in a 500-row sample 438 of
+# them are an exact 200-character prefix of the comment they came from. The
+# step the whole archive depends on was doing nothing.
+#
+# Measured on real comments before switching, same four inputs:
+#   fake   "commitments on this label (including the support period) will be
+#           legally enforceable in contract and"      <- cut mid-sentence
+#   qwen3  "Legal enforceability of IoT device regulations is a major hurdle
+#           due to fragmented U.S. laws"              <- an actual insight
+#
+# Cost is local time, not money: ~16s per comment on this machine. phi4-mini
+# runs it in ~12s with comparable output, so `models.extractor` is the knob if
+# throughput matters more than nuance.
+extractor_provider: ollama
 models:
   extractor: qwen3:8b
   archivist: phi4-mini:3.8b

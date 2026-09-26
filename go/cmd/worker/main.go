@@ -443,9 +443,15 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "reddit" && kind == "subreddit":
 		listing := strings.TrimRight(src.URL, "/") + "/new/"
-		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, perSource)
-		threads, err := reddit.ListThreads(ctx, listing, delay, perSource,
-			cfg.Scraper.Warmups(), int(cfg.Thresholds.MinCommentsPerThread))
+		// Per-source depth, falling back to the platform threshold. A hiring
+		// room wants the newest twenty-five adverts; a discussion room still
+		// wants three threads. `bg` remains the run-wide ceiling above this,
+		// so raising one room cannot run away with the whole budget.
+		depth := src.DepthOr(perSource)
+		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, depth)
+		threads, err := reddit.ListThreads(ctx, listing, delay, depth,
+			cfg.Scraper.Warmups(),
+			src.MinCommentsOr(int(cfg.Thresholds.MinCommentsPerThread)))
 		if err != nil {
 			return 0, err
 		}
@@ -475,6 +481,11 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			if err != nil {
 				fmt.Printf("[live]   thread %s skipped: %v\n", t.URL, err)
 				continue
+			}
+			// A hiring room's post is the advert and its replies are
+			// applicants. Storing the replies collects the competition.
+			if src.WantsPostsOnly() {
+				comments = postAsRecord(post, t.URL)
 			}
 			n := enqueueComments(st, runID, "reddit", t.URL, threadID, comments, post, pp, maxPerThread)
 			bg.add(n)
@@ -900,6 +911,46 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 // in full and was then mostly discarded downstream. Capping here keeps the
 // queue honest about how much work is actually pending, and stops one busy
 // thread from crowding out every other source in a night's run.
+// postAsRecord turns the thread's own post into the single record for it.
+//
+// The advert was always fetched — it rides along as batch metadata — and was
+// always discarded, because only comments become records. For a hiring room
+// that is exactly backwards: twelve nuggets were collected from three threads
+// in r/hiredev and r/DevsForHire and every one was a freelancer replying,
+// while the company that posted the role was thrown away each time.
+//
+// Title and body are joined because a Reddit advert routinely puts the role
+// and the rate in the title and the detail in the body, and either alone
+// reads as half an advert.
+func postAsRecord(post *reddit.FetchedPost, threadURL string) []reddit.FetchedComment {
+	if post == nil {
+		return nil
+	}
+	body := strings.TrimSpace(post.Title)
+	if b := strings.TrimSpace(post.Body); b != "" {
+		if body != "" {
+			body += "\n\n"
+		}
+		body += b
+	}
+	if body == "" {
+		return nil
+	}
+	url := post.URL
+	if url == "" {
+		url = threadURL
+	}
+	return []reddit.FetchedComment{{
+		ID:         post.ID,
+		Body:       body,
+		Author:     post.Author,
+		AuthorURL:  post.AuthorURL,
+		CreatedAt:  post.CreatedAt,
+		CreatedRaw: post.CreatedRaw,
+		Permalink:  url,
+	}}
+}
+
 func enqueueComments(st *store.Store, runID, platform, source, threadID string,
 	comments []reddit.FetchedComment, post *reddit.FetchedPost,
 	pp prefilter.Params, maxPerThread int) int {

@@ -228,7 +228,7 @@ def recover(db: sqlite3.Connection, *, source_name: str = "hackernews", rules=No
 
 
 def reclassify(db: sqlite3.Connection, rules=None, *, baseline=None, mode: str = "",
-               dry_run: bool = True) -> dict:
+               community: str = "", dry_run: bool = True) -> dict:
     """Re-score every stored record and report what moved.
 
     This is how a rule change is argued for rather than asserted. W8 asks for
@@ -254,7 +254,19 @@ def reclassify(db: sqlite3.Connection, rules=None, *, baseline=None, mode: str =
     said on a date; overwriting it should cost a second command.
     """
     rules = rules or load_rules()
-    where, args = ("WHERE mode = ?", (mode,)) if mode else ("", ())
+    # `community` exists because one archive holds rows scored under TWO rule
+    # sets: hn/hiring and the Reddit rooms are scored with hiring_rules.yaml,
+    # hn/comment and hn/ask with signal_rules.yaml. Without a scope, correcting
+    # a hiring rule meant re-scoring 528 forum rows against rules written for
+    # job adverts and overwriting verdicts that were never wrong. A tool whose
+    # only setting is "everything" cannot fix half an archive.
+    clauses, args = [], []
+    if mode:
+        clauses.append("mode = ?"); args.append(mode)
+    if community:
+        clauses.append("community = ?"); args.append(community)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    args = tuple(args)
     rows = db.execute(
         f"SELECT record_id, kind, title, excerpt, audience, relevant, match_confidence "
         f"FROM {TABLE} {where}", args).fetchall()
