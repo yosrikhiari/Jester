@@ -107,3 +107,32 @@ def test_an_advert_offering_relocation_can_still_be_a_buyer():
               "internal tooling and data pipelines. We are willing to "
               "relocate the right candidate. Start ASAP. Apply: jobs@acme.com")
     assert classify(advert, RULES).audience == "buyer"
+
+
+# ---- the structural gate, as one decision ----------------------------------
+
+def test_not_an_advert_names_why():
+    """Extracted from score_archive so the scoring loop reads as one decision
+    rather than four. Returning the REASON rather than a bool is what lets
+    the run report "13 sellers, 14 questions" instead of a single opaque
+    discard count."""
+    from jester.signals.from_archive import not_an_advert
+
+    assert not_an_advert("[FOR HIRE] I'm a dev, $20/hr") == "seller"
+    assert not_an_advert("[Discussion] - devops engineer") == "not_an_advert"
+    assert not_an_advert("Micro1, Mercor and Ethos?") == "question"
+
+
+def test_a_real_advert_passes_the_gate():
+    """"" means "this might be a client" -- the classifier then decides."""
+    from jester.signals.from_archive import not_an_advert
+
+    assert not_an_advert(CLIENT) == ""
+
+
+def test_a_hiring_tag_survives_a_question_mark():
+    """The tag is the stronger statement about which side of the deal the
+    author is on, so it outranks the shape of the title."""
+    from jester.signals.from_archive import not_an_advert
+
+    assert not_an_advert("[Hiring] Senior Go dev, remote, contract?") == ""

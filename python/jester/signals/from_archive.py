@@ -114,6 +114,30 @@ def _records(db: sqlite3.Connection, slugs: set[str]) -> Iterable[tuple]:
                 yield src, row["thread_id"], item, body
 
 
+def not_an_advert(body: str) -> str:
+    """Why this post cannot be a client advert, or "" if it might be.
+
+    Split out of score_archive so the scoring loop reads as one decision
+    rather than four. Both rules here are STRUCTURAL, which is what makes
+    them worth applying before the classifier: neither depends on guessing
+    which words a job-seeker happens to choose.
+    """
+    tag = leading_tag(body)
+    if tag in SELLER_TAGS:
+        return "seller"
+    if tag in NOT_AN_ADVERT:
+        return "not_an_advert"
+    # A vacancy is never posed as a question. "Micro1, Mercor and Ethos?"
+    # scored 1.00 buyer -- a CANDIDATE asking whether the interview platforms
+    # he had been through were legitimate. It named the work and quoted
+    # "$30-100/hr", so every feature the scorer looks at said buyer. A tagged
+    # [Hiring] post keeps its exemption, since that tag is the stronger
+    # statement about which side of the deal the author is on.
+    if tag != "hiring" and _first_line(body).endswith("?"):
+        return "question"
+    return ""
+
+
 def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection,
                   *, slugs: set[str], rules_path: str, run_id: str) -> dict:
     """Classify collected records and upsert the ones worth keeping.
@@ -130,25 +154,12 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
 
     for src, thread_id, item, body in _records(nuggets_db, slugs):
         seen += 1
-        # The tag decides before the prose gets a vote. Counted, not dropped
-        # in silence: "12 buyers" and "12 buyers after discarding 13 sellers"
-        # describe very different archives, and the second one is the truth.
-        tag = leading_tag(body)
-        if tag in SELLER_TAGS:
-            rejected["seller"] = rejected.get("seller", 0) + 1
-            continue
-        if tag in NOT_AN_ADVERT:
-            rejected["not_an_advert"] = rejected.get("not_an_advert", 0) + 1
-            continue
-        # A vacancy is never posed as a question. "Micro1, Mercor and Ethos?"
-        # scored 1.00 buyer -- a CANDIDATE asking whether the interview
-        # platforms he had been through were legitimate. It named the work and
-        # quoted "$30-100/hr", so every feature the scorer looks at said
-        # buyer. Structural, like the tag: it does not depend on guessing
-        # which words a job-seeker happens to use. A tagged [Hiring] post
-        # keeps its exemption, since that tag is the stronger statement.
-        if tag != "hiring" and _first_line(body).endswith("?"):
-            rejected["question"] = rejected.get("question", 0) + 1
+        # The structure decides before the prose gets a vote. Counted, not
+        # dropped in silence: "12 buyers" and "12 buyers after discarding 13
+        # sellers" describe very different archives, and the second is true.
+        wrong_shape = not_an_advert(body)
+        if wrong_shape:
+            rejected[wrong_shape] = rejected.get(wrong_shape, 0) + 1
             continue
         verdict = classify(body, rules)
         by_audience[verdict.audience] = by_audience.get(verdict.audience, 0) + 1

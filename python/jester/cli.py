@@ -349,21 +349,12 @@ def cmd_run(args):
     # Bounding the bite is what makes the reap window mean something: a run
     # that finishes well inside it can be assumed dead when it does not.
     budget = _comment_budget(args)
-    if budget > 0:
-        kept, taken = [], 0
-        for r in rows:
-            if taken >= budget:
-                break
-            kept.append(r)
-            try:
-                taken += len(json.loads(r["comments"] or "[]") or [])
-            except (TypeError, ValueError):
-                pass  # unreadable: counted as zero, skipped again below
-        if len(kept) < len(rows):
-            print(f"taking {len(kept)} of {len(rows)} pending batch(es) "
-                  f"(~{taken} comments, budget {budget}); the rest stay "
-                  f"queued for the next run")
-        rows = kept
+    kept, taken = bounded_bite(rows, budget)
+    if len(kept) < len(rows):
+        print(f"taking {len(kept)} of {len(rows)} pending batch(es) "
+              f"(~{taken} comments, budget {budget}); the rest stay "
+              f"queued for the next run")
+    rows = kept
 
     # M1.3/R35: pre-filter before extraction; per-heuristic funnel recorded.
     raw_meta, raw_comments = [], []
@@ -958,6 +949,32 @@ def _pending_batches(db_path):
 #: is a promise about how long a run takes, and the window is how long the
 #: next tick waits before calling it dead.
 COMMENT_BUDGET = 120
+
+
+def bounded_bite(rows, budget: int):
+    """The first `budget` comments' worth of batches, and the count taken.
+
+    Whole batches only. Half-extracting a batch would leave it neither done
+    nor safely re-runnable, and the comments already paid for would be
+    extracted twice.
+
+    A module-level function rather than a few lines inside cmd_run because
+    this is the rule that stops a run outliving its reap window, and a rule
+    that matters is a rule worth testing directly. The first version of this
+    test re-implemented the loop and agreed with itself.
+    """
+    if budget <= 0:
+        return list(rows), 0
+    kept, taken = [], 0
+    for r in rows:
+        if taken >= budget:
+            break
+        kept.append(r)
+        try:
+            taken += len(json.loads(r["comments"] or "[]") or [])
+        except (TypeError, ValueError):
+            pass  # unreadable: counted as zero, and skipped again downstream
+    return kept, taken
 
 
 def _comment_budget(args) -> int:

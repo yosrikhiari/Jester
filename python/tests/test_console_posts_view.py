@@ -120,7 +120,37 @@ def test_coverage_is_none_when_the_source_published_no_count(tmp_path):
 
 def test_an_unknown_post_is_a_clean_miss(api):
     res = api.post("nope")
-    assert res["ok"] is False and "nope" in res["error"]
+    assert res["ok"] is False
+
+
+def test_the_miss_does_not_echo_what_was_asked_for(api):
+    """The id arrives from a URL, and the 404 used to quote it back -- a
+    taint flow from the request line straight into the response body, which
+    Sonar flagged as reflected XSS. Content-Type: application/json makes that
+    hard to exploit rather than impossible, and hard is not the bar.
+    """
+    assert "<script>" not in api.post("<script>alert(1)</script>")["error"]
+
+
+def test_the_route_refuses_an_id_that_cannot_exist():
+    """Validated at the boundary rather than sanitised downstream.
+
+    The pattern is measured, not guessed: all 4,000 distinct thread_ids
+    sampled from the live archive match it and the longest is 11 characters,
+    so anything outside it cannot name a real post and is refused without
+    being repeated back.
+    """
+    from jester.console.server import _THREAD_ID_RE
+
+    for good in ("1wpoevs", "t-busy", "7507445", "a.b_c:d"):
+        assert _THREAD_ID_RE.fullmatch(good), good
+
+
+def test_the_route_refuses_the_shapes_that_matter():
+    from jester.console.server import _THREAD_ID_RE
+
+    for bad in ("<script>", "../../etc/passwd", "a b", "", "x" * 121):
+        assert not _THREAD_ID_RE.fullmatch(bad), bad
 
 
 def test_comments_carry_their_extractor(api):

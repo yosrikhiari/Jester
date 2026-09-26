@@ -22,7 +22,7 @@ dead. Raise one without the other and the livelock comes back.
 import json
 import types
 
-from jester.cli import COMMENT_BUDGET, _comment_budget
+from jester.cli import COMMENT_BUDGET, _comment_budget, bounded_bite
 
 
 def _args(**kw):
@@ -37,15 +37,10 @@ def _batches(sizes):
     return [{"comments": json.dumps([{"body": "x"}] * n)} for n in sizes]
 
 
-def _take(rows, budget):
-    """The trim in cmd_run: whole batches only, stop once the budget is met."""
-    kept, taken = [], 0
-    for r in rows:
-        if taken >= budget:
-            break
-        kept.append(r)
-        taken += len(json.loads(r["comments"]))
-    return kept, taken
+# The REAL function, not a copy of it. The first version of this file
+# re-implemented the loop here and then asserted against its own
+# re-implementation, which would have passed no matter what cmd_run shipped.
+_take = bounded_bite
 
 
 # ---- the budget itself -----------------------------------------------------
@@ -97,7 +92,8 @@ def test_a_small_queue_is_taken_whole():
     live comment queue was 11 when this landed."""
     rows = _batches([3, 4, 2])
     kept, taken = _take(rows, 120)
-    assert len(kept) == 3 and taken == 9
+    assert len(kept) == 3
+    assert taken == 9
 
 
 def test_the_remainder_is_left_not_dropped():
@@ -106,3 +102,18 @@ def test_the_remainder_is_left_not_dropped():
     rows = _batches([100, 100, 100])
     kept, _ = _take(rows, 120)
     assert len(rows) - len(kept) == 1, "the untouched batch must remain"
+
+
+def test_an_unreadable_batch_does_not_stop_the_bite():
+    """A malformed payload counts as zero comments and is skipped downstream.
+    Treating it as fatal would let one bad row starve a whole run."""
+    rows = [{"comments": "not json"}, {"comments": json.dumps([{"b": 1}] * 3)}]
+    kept, taken = bounded_bite(rows, 120)
+    assert len(kept) == 2
+    assert taken == 3
+
+
+def test_zero_budget_takes_everything():
+    rows = _batches([40, 40, 40])
+    kept, taken = bounded_bite(rows, 0)
+    assert len(kept) == 3

@@ -214,7 +214,10 @@ class OllamaLLM:
         body = comment_body or ""
         try:
             raw = self._complete(self.EXTRACT_SYSTEM, body)
-        except Exception:  # noqa: BLE001 - transport, timeout, model not pulled
+        # Broad on purpose: transport error, timeout, model not pulled --
+        # from the run's point of view these are one situation, no answer
+        # for this comment.
+        except Exception:  # noqa: BLE001
             # Deliberately the same answer as unparseable output below: hand
             # back the stand-in. That is not a silent downgrade, because the
             # stand-in stamps itself `fake-llm`, and cmd_run refuses to archive

@@ -644,7 +644,10 @@ class ConsoleAPI:
             "ORDER BY COALESCE(created_utc,''), id", (str(thread_id),)
         ).fetchall()
         if not rows:
-            return {"ok": False, "error": f"no post {thread_id!r} in the archive"}
+            # No {thread_id!r} here. The id came from a URL, and quoting
+            # it back puts request text into a response body for no
+            # benefit -- the caller already knows what it asked for.
+            return {"ok": False, "error": "no such post in the archive"}
 
         first = self._rowdict(rows[0])
         held = len(rows)
