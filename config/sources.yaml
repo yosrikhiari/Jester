@@ -202,6 +202,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: webdev
   kind: subreddit
@@ -215,6 +219,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: devsforhire
   kind: subreddit
@@ -223,6 +231,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: hirewebdev
   kind: subreddit
@@ -231,6 +243,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: forhire
   kind: subreddit
@@ -239,6 +255,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: jobbit
   kind: subreddit
@@ -247,6 +267,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: remotejs
   kind: subreddit
@@ -260,6 +284,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: hiring
   kind: subreddit
@@ -273,6 +301,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: remotejobs
   kind: subreddit
@@ -281,6 +313,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: pythonjobs
   kind: subreddit
@@ -289,6 +325,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: bigdatajobs
   kind: subreddit
@@ -297,6 +337,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: jobopenings
   kind: subreddit
@@ -305,6 +349,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: machinelearningjobs
   kind: subreddit
@@ -313,6 +361,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: datasciencejobs
   kind: subreddit
@@ -321,6 +373,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: aijobs
   kind: subreddit
@@ -329,6 +385,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: mljobs
   kind: subreddit
@@ -337,6 +397,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: cloudjobs
   kind: subreddit
@@ -345,6 +409,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: srejobs
   kind: subreddit
@@ -353,6 +421,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: kubernetesjobs
   kind: subreddit
@@ -361,6 +433,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: dataengineeringjobs
   kind: subreddit
@@ -369,6 +445,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: devjobs
   kind: subreddit
@@ -377,6 +457,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: remotedevjobs
   kind: subreddit
@@ -385,6 +469,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: remoteprogrammerjobs
   kind: subreddit
@@ -393,6 +481,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: programmerjobs
   kind: subreddit
@@ -401,6 +493,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: developerjobs
   kind: subreddit
@@ -409,6 +505,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: developershires
   kind: subreddit
@@ -417,6 +517,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: webdeveloperjobs
   kind: subreddit
@@ -425,6 +529,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: remotework
   kind: subreddit
@@ -433,6 +541,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: hiringcafe
   kind: subreddit
@@ -441,6 +553,10 @@ sources:
   # The advert is the post; the replies are applicants.
   posts_only: true
   min_comments: 0
+  # Depth 25, not the Reddit default of 3. The advert arrives as listing
+  # metadata here, so depth buys adverts without buying comment-page
+  # navigations -- the cost the global floor of 3 exists to control.
+  depth: 25
 - platform: reddit
   name: datascience
   kind: subreddit

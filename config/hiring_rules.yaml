@@ -162,6 +162,46 @@ families:
               "in office", "in-person", "hybrid", "relocation required",
               "must relocate", "must be based in", "based in our"]
 
+  seller_voice:
+    weight: -0.65
+    role: negative
+    note: >
+      The author is the one being hired. In Reddit's hiring rooms these read
+      almost exactly like a client advert - named work, a stated rate, first
+      person - and the only difference is which side of the deal the "I" is
+      on. One scored 1.00 as a buyer:
+
+        "Eight years building embedded ML, finally putting myself out there
+         ... I'm now looking for edge AI and TinyML contract roles, remote."
+
+      Every phrase here describes the author's OWN availability. A company
+      advertising a vacancy has no reason to write any of them, which is what
+      keeps this from catching real adverts: a client says "we are looking
+      for a developer", never "I am looking for work".
+
+      Deliberately NOT here: bare "looking for", which is exactly what a
+      client writes; and "years of experience", which adverts demand of
+      candidates all the time.
+    phrases: ["putting myself out there", "open to work", "open to opportunities",
+              "open to new opportunities", "available for hire",
+              "available for work", "i'm available", "i am available",
+              "hire me", "my resume", "my cv", "my portfolio",
+              "looking for work", "looking for a job", "looking for a role",
+              "looking for roles", "looking for contract roles",
+              "looking for contract work", "looking for freelance work",
+              "looking for remote work", "looking for my next",
+              "seeking contract roles", "seeking a role", "seeking roles",
+              "seeking opportunities", "i'm looking for edge",
+              "portfolio:", "resume:", "cv:",
+              # HN's "Who wants to be hired?" template, which arrives in the
+              # same collector as "Who is hiring?" and reads as a buyer
+              # because it names the work, the stack and a location. Three of
+              # 153 hn/hiring buyers were candidates filling this in.
+              # Weighted rather than hard-rejected: an advert that offers to
+              # relocate the right candidate is a real advert, and should be
+              # able to survive on the rest of its evidence.
+              "willing to relocate", "remote: yes", "technologies:"]
+
   employment_only:
     weight: -0.40
     role: negative

@@ -443,8 +443,13 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "reddit" && kind == "subreddit":
 		listing := strings.TrimRight(src.URL, "/") + "/new/"
-		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, perSource)
-		threads, err := reddit.ListThreads(ctx, listing, delay, perSource,
+		// Per-source depth, falling back to the platform threshold. A hiring
+		// room wants the newest twenty-five adverts; a discussion room still
+		// wants three threads. `bg` remains the run-wide ceiling above this,
+		// so raising one room cannot run away with the whole budget.
+		depth := src.DepthOr(perSource)
+		fmt.Printf("[live] reddit listing %s (up to %d thread(s))\n", listing, depth)
+		threads, err := reddit.ListThreads(ctx, listing, delay, depth,
 			cfg.Scraper.Warmups(),
 			src.MinCommentsOr(int(cfg.Thresholds.MinCommentsPerThread)))
 		if err != nil {

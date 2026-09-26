@@ -80,6 +80,28 @@ def _route(text: str) -> tuple:
             link.group(0) if _complete(link, text) else "")
 
 
+#: Platforms where the permalink IS the contact route, because that is how the
+#: site works. A Hacker News advert names an email or an apply link because the
+#: company expects to be written to off-platform. A subreddit advert says "DM
+#: me" and means it: replying to the post is the mechanism, and there is no
+#: address to find because none was ever meant to exist.
+#:
+#: Without this a real buyer — "[Hiring] Senior Full-Stack Engineer
+#: ($100-$180/hr)" — was held back as unreachable while sitting one click from
+#: a reply box.
+REPLY_IS_THE_ROUTE = frozenset({"reddit", "lemmy"})
+
+
+def _reachable(row) -> bool:
+    """Whether somebody can act on this row today."""
+    if str(row.get("platform") or "") in REPLY_IS_THE_ROUTE:
+        # Only if we actually kept the permalink. Without it there is nothing
+        # to open, and claiming a route we cannot name is the failure this
+        # whole file exists to avoid.
+        return bool(str(row.get("source_url") or "").strip())
+    return bool(CONTACT_RE.search(row.get("excerpt") or ""))
+
+
 def gather(db: sqlite3.Connection, *, mode: str = "live",
            include_worked: bool = False) -> dict:
     """The actionable buyer records, ranked, plus what was held back and why."""
@@ -101,7 +123,7 @@ def gather(db: sqlite3.Connection, *, mode: str = "live",
 
     actionable, unreachable = [], []
     for r in rows:
-        (actionable if CONTACT_RE.search(r.get("excerpt") or "") else unreachable).append(r)
+        (actionable if _reachable(r) else unreachable).append(r)
     return {"actionable": actionable, "unreachable": unreachable,
             "mode": mode or "all"}
 

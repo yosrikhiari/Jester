@@ -64,6 +64,22 @@ type Source struct {
 	// advert. The advert was fetched every time — it travels as batch
 	// metadata — and then thrown away.
 	PostsOnly *bool `yaml:"posts_only"`
+	// Depth overrides thresholds.max_threads_per_platform for this source
+	// alone: how many threads one run takes from its listing.
+	//
+	// The global Reddit depth is 3, and thresholds.yaml explains why -- Reddit
+	// is the one platform where more depth is a real risk to the identity.
+	// That reasoning is about THREADS: each one is a separate navigation into
+	// a comment page, and thirty of those in a row is what looks like a bot.
+	//
+	// A posts_only room does not do that. The advert arrives as listing
+	// metadata, so depth there buys adverts without buying navigations, and
+	// the global floor is simply the wrong instrument for it. Measured: at
+	// depth 3, r/forhire -- one of the busiest hiring rooms on the site --
+	// yielded six adverts in three days, because an hour later the newest
+	// three are the same three and dedup correctly rejects them. The cap was
+	// the room's whole output, not the room.
+	Depth *int `yaml:"depth"`
 }
 
 // IsEnabled reports whether the source should be fetched this run.
@@ -77,6 +93,15 @@ func (s Source) WantsPostsOnly() bool { return s.PostsOnly != nil && *s.PostsOnl
 func (s Source) MinCommentsOr(fallback int) int {
 	if s.MinComments != nil {
 		return *s.MinComments
+	}
+	return fallback
+}
+
+// DepthOr returns this source's thread depth, falling back to the
+// per-platform threshold when the source does not set one.
+func (s Source) DepthOr(fallback int) int {
+	if s.Depth != nil && *s.Depth > 0 {
+		return *s.Depth
 	}
 	return fallback
 }

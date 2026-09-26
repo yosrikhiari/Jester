@@ -292,6 +292,7 @@ TASK_FOR_COMMAND = {
     "treat": TASK_NAME + "Treat",
     "signals": TASK_NAME + "Signals",
     "signals-hiring": TASK_NAME + "SignalsHiring",
+    "leads-reddit": TASK_NAME + "LeadsReddit",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -307,6 +308,21 @@ COMMAND_SPEC = {
     "ingest": {"argv": ("ingest",), "config": True},
     "treat": {"argv": ("treat",), "config": True},
     "signals": {"argv": ("signals", "run"), "config": False},
+    # Turn the Reddit hiring adverts the worker has ALREADY collected into
+    # leads. Two pipelines existed and never met: the worker writes those rooms
+    # into `nuggets`, which has no audience column, so adding the subreddits
+    # moved no buyer count and it looked like they had produced nothing.
+    #
+    # This task collects nothing -- it scores rows already on disk. That is
+    # deliberate and must stay true: the scope document gates Reddit
+    # COLLECTION on written commercial access, and reading a stored row is not
+    # collection. Scheduling it is safe for the same reason.
+    "leads-reddit": {
+        "argv": ("signals", "from-archive",
+                 "--rules", "config/hiring_rules.yaml",
+                 "--archive", "data/jester.db"),
+        "config": False,
+    },
     # The forum collector and the hiring collector are two different questions
     # and two different rule sets, so they are two schedulable commands.
     #
@@ -317,9 +333,20 @@ COMMAND_SPEC = {
     # all — 400 adverts produced 26 buyers, 24 of them correct on inspection.
     # Same archive, same schema; `community` tells them apart.
     "signals-hiring": {
+        # --query 2 --limit 1000, because the defaults were the whole problem.
+        # `--limit` defaults to 100 and `--query` to 12 months, so the daily run
+        # read the first 100 adverts of a year's worth of threads and stopped.
+        # One month's thread alone carries 400-600. Collecting 3,000 in one
+        # pass took the archive from 6 buyers to 154 — the rate was always
+        # ~5%, we were just sampling a twentieth of the material.
+        #
+        # Two months daily: new adverts land in the current thread, and the
+        # previous one is still being added to. Anything older is already in
+        # the archive and dedupes on sight.
         "argv": ("signals", "run",
                  "--source", "hackernews-hiring",
-                 "--rules", "config/hiring_rules.yaml"),
+                 "--rules", "config/hiring_rules.yaml",
+                 "--query", "2", "--limit", "1000"),
         "config": False,
     },
 }

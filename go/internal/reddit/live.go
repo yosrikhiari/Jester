@@ -267,16 +267,41 @@ func ListThreads(ctx context.Context, listingURL string, delay time.Duration,
 	}
 	// A cold fingerprint burns its first navigation on the challenge; one more
 	// clears it. Re-read the listing rather than reporting an empty feed.
-	if len(permalinks) == 0 && Challenged(ctx) {
-		if WarmUp(ctx, listingURL, delay, warmup) {
-			if err := chromedp.Run(ctx,
-				waitPresent(`shreddit-post[permalink]`),
-				chromedp.ActionFunc(func(actx context.Context) error {
-					return evalInto(actx, PERMALINKS_JS, &permalinks)
-				}),
-			); err != nil {
-				return nil, fmt.Errorf("re-read listing after warm-up: %w", err)
-			}
+	//
+	// The gate used to be `len(permalinks) == 0 && Challenged(ctx)`, and that
+	// second half is why thirteen of twenty-nine hiring rooms had never been
+	// fetched. A session that has JUST cleared the challenge answers with a
+	// real page -- title "Reddit - The heart of the internet", no challenge
+	// token in the URL -- that has not hydrated its posts yet. Challenged()
+	// correctly says false, so no warm-up ran, no re-read happened, and the
+	// room was reported as empty and skipped. Measured on r/DevJobs through
+	// renderprobe: navigation 1 returns "Prove your humanity", navigations 2,
+	// 3 and 4 each return the same 11 posts. The room was never empty.
+	//
+	// So an empty listing alone earns the retry. The cost of being wrong is
+	// one extra navigation against a room that really has no posts.
+	//
+	// HONEST LIMIT: this did NOT recover the thirteen rooms it was written
+	// for. They return a logged-out shell -- nav chrome, "Sign Up / Log In",
+	// r/<name> in the header, no posts, no og: metadata, no subscriber count
+	// -- which is Reddit gating anonymous access to those communities rather
+	// than a hydration race. The fix stands on its own (a warm-but-unhydrated
+	// page was being reported as an empty room) and is kept for that, not
+	// because it solved the coverage problem.
+	//
+	// WarmUp's verdict is deliberately ignored. It reports whether the page
+	// is still an interstitial, which is not the question here -- the page
+	// may be perfectly clean and still have nothing rendered on it. Only the
+	// re-read can answer that, so the re-read always happens.
+	if len(permalinks) == 0 {
+		WarmUp(ctx, listingURL, delay, warmup)
+		if err := chromedp.Run(ctx,
+			waitPresent(`shreddit-post[permalink]`),
+			chromedp.ActionFunc(func(actx context.Context) error {
+				return evalInto(actx, PERMALINKS_JS, &permalinks)
+			}),
+		); err != nil {
+			return nil, fmt.Errorf("re-read listing after warm-up: %w", err)
 		}
 	}
 	out := make([]Thread, 0, limit)
