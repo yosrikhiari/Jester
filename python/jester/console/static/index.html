@@ -231,13 +231,24 @@
       </div>
       <div class="row row-end">
         <input id="clusters-q" aria-label="Filter themes" placeholder="filter themes… ( / )" style="inline-size:200px" autocomplete="off">
-        <div class="seg" id="clusters-sort" role="group" aria-label="Sort themes"></div>
         <div class="seg" id="clusters-platform" role="group" aria-label="Filter by platform"></div>
         <button id="clusters-run" class="primary">⟳ regroup</button>
       </div>
     </div>
     <div id="clusters-warn"></div>
-    <div id="clusters-body" class="grid3"></div>
+    <!-- One fixed-size workspace: the list scrolls on its own, the detail
+         header never moves, the evidence scrolls inside its area, and the
+         idea box is pinned at one height for every state. -->
+    <div class="cws" id="clusters-ws">
+      <aside class="cws-list" aria-label="Themes">
+        <div class="cws-list-head">
+          <span class="xs">sort</span>
+          <div class="seg" id="clusters-sort" role="group" aria-label="Sort themes"></div>
+        </div>
+        <div class="cws-rows" id="clusters-body" role="listbox" aria-label="Themes"></div>
+      </aside>
+      <section class="cws-detail" id="cluster-detail" aria-live="polite"></section>
+    </div>
   </section>
 
   <!-- ── queue ────────────────────────────────────────────────────── -->
@@ -325,7 +336,6 @@
     <div id="post-detail" hidden>
       <button class="btn btn--sm" id="posts-back">&lsaquo; all posts</button>
       <div class="card" id="post-head"></div>
-      <div class="card" id="post-metrics"></div>
       <div class="card card--flush" id="post-comments"></div>
     </div>
   </section>
@@ -385,6 +395,28 @@
     </div>
 
     <div class="kpis kpis--4" id="signals-tiles"></div>
+
+    <div class="card scraper" style="margin-block-start:var(--s-5)">
+      <div class="scraper-top">
+        <div>
+          <h3>Jobs scraper</h3>
+          <p class="xs">Reads the last two months of Hacker News “Who is hiring?” threads and scores each advert
+            with the hiring rules. If that adds nothing new (the threads only change once a month), it moves on to
+            contract listings on the job boards Himalayas, Remotive and Jobicy, in that order, until one does.
+            Every run also scores the Reddit hiring rooms the worker has already collected (no requests to Reddit).
+            New buyers land in the records below.</p>
+          <p class="xs mono" id="scraper-cmd"></p>
+        </div>
+        <button class="btn btn--primary" id="scraper-run">▶ run now</button>
+      </div>
+      <div class="scraper-sched">
+        <span class="scraper-label">schedule</span>
+        <div class="seg" id="scraper-mode" role="group" aria-label="How often the scraper runs"></div>
+        <input type="time" id="scraper-at" aria-label="Time of the daily run" value="09:30">
+        <button class="btn btn--sm" id="scraper-save" disabled>save schedule</button>
+      </div>
+      <p class="xs scraper-state" id="scraper-state"></p>
+    </div>
 
     <div class="card card--flush" style="margin-block-start:var(--s-5)">
       <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
