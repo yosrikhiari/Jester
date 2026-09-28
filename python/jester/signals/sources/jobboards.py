@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -62,7 +63,24 @@ MARKETPLACES = ("lemon.io", "a.team", "toptal", "turing", "andela", "braintrust"
                 # Staffing consultancies placing contractors with THEIR clients:
                 # supply side again. Three "buyers" on 2026-09-28. By full name,
                 # so GoPro the camera company is not caught with it.
-                "gopro consultancy")
+                "gopro consultancy",
+                # Job platforms posting other employers' roles under their own
+                # name: 13 "buyers" on 2026-09-28. Named, because the words in
+                # their names ("jobs", "careers") are also how a company names
+                # its own hiring page.
+                "jobs for humanity", "thehivecareers")
+
+#: Recruiters and staffing firms, known by what they call themselves. The
+#: deep Himalayas pass on 2026-09-28 stored 1,126 new "buyers"; 50 were
+#: XKTalent's, and Source Code Staffing, Boardroom Appointments and a dozen
+#: "... Talent" firms followed. Each is placing a person with a client it
+#: does not name: the buyer is that client, and the advert cannot reach it.
+#: A pattern, not a list, because there are thousands of them. Matched on the
+#: company field only. Deliberately NOT here: "careers", "jobs" and
+#: "workforce" -- "Acme Careers" is Acme hiring for itself, and Workforce.com
+#: sells HR software. The adverts' own wording ("Our client is ...") is
+#: caught by the hiring rules' hard_reject, for every source.
+_STAFFING_NAME = re.compile(r"(staffing|recruit\w*|talent|headhunt\w*|appointments)\b")
 
 #: The engagement types worth storing when a board states the type itself.
 #: A full-time listing is not a lead for fractional engineering, and long
@@ -87,6 +105,10 @@ def _is_gig_task(role: str) -> bool:
 def _is_marketplace(company: str) -> bool:
     c = (company or "").strip().lower()
     return any(c == m or c.startswith(m + " ") or c.startswith(m + ",") for m in MARKETPLACES)
+
+
+def _is_staffing_firm(company: str) -> bool:
+    return bool(_STAFFING_NAME.search((company or "").lower()))
 
 
 def _contract_shaped(kind: str) -> bool:
@@ -164,7 +186,8 @@ class _JobBoard:
         company, role, location = (html.unescape(v or "").strip()
                                    for v in (company, role, location))
         if (not source_id or not (role or description)
-                or _is_marketplace(company) or _is_gig_task(role)):
+                or _is_marketplace(company) or _is_staffing_firm(company)
+                or _is_gig_task(role)):
             return None
         headline = " | ".join(p for p in (company, role, location, engagement, rate) if p)
         body = _plain(description or "")
