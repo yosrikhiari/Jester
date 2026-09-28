@@ -289,5 +289,20 @@ hard_reject:
   - "seeking work"
   - "looking for work"
   - "seeking freelancer"
+  # A recruiter placing someone with a client it does not name. The buyer is
+  # that client, and the advert cannot reach it - supply side, like the
+  # marketplaces, wearing an agency's name. 46 of the 1,409 live buyers on
+  # 2026-09-28 said so in these words ("About the Client: Our client is ...").
+  # Singular on purpose: the word boundary keeps "our clients" out, and "for
+  # our clients" is an agency describing its own delivery work - a possible
+  # white-label buyer, not a recruiter.
+  - "our client is"
+  - "our client, a"
+  - "our client, an"
+  - "on behalf of our client"
+  - "on behalf of a client"
+  - "client of ours"
+  - "for our client"
+  - "join our client"
 
 frame_phrases: []

@@ -72,6 +72,25 @@ def test_himalayas_asks_for_contract_work_and_keeps_only_tech(rules):
     assert s.audience == "buyer"
 
 
+def test_a_short_page_mid_results_does_not_end_the_search():
+    """Page 1 of "engineer" came back with 4 of 20 jobs and totalCount 2258;
+    stopping there read 100 listings across 16 terms."""
+    opener = FakeOpener(
+        {"jobs": [_himalayas_job(guid="https://h/jobs/a")], "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/b")] * 20, "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/c")], "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/never")], "totalCount": 45})
+    sigs = list(_src("himalayas", opener).search("engineer", limit=1000))
+    assert len(opener.urls) == 3, "page 3 covers 41-60, past the total of 45"
+    assert {s.source_id for s in sigs} == {"himalayas:a", "himalayas:b", "himalayas:c"}
+
+
+def test_the_limit_bounds_requests_even_when_pages_are_short():
+    opener = FakeOpener(*[{"jobs": [_himalayas_job()], "totalCount": 9999}] * 10)
+    list(_src("himalayas", opener).search("engineer", limit=60))
+    assert len(opener.urls) == 3
+
+
 def test_marketplaces_are_not_buyers():
     """lemon.io and A.Team scored 1.00 buyers in the dry run. They recruit
     freelancers for their own clients: supply side, not a lead."""
@@ -94,6 +113,8 @@ def test_a_company_merely_mentioning_a_marketplace_is_kept():
     assert not jb._is_marketplace("Turingan Labs")
     assert jb._is_marketplace("Toptal")
     assert jb._is_marketplace("lemon.io")
+    assert jb._is_marketplace("goPro Consultancy Group ltd.")
+    assert not jb._is_marketplace("GoPro"), "the camera company is a different company"
 
 
 def test_remotive_keeps_contract_shaped_tech_listings_in_one_request():
@@ -191,3 +212,51 @@ def test_salary_ranges_read_the_way_a_person_writes_them(lo, hi, currency, perio
 def test_a_bad_timestamp_is_left_empty():
     assert jb._iso_from_epoch("not a time") == ""
     assert jb._iso_from_epoch(0).startswith("1970-01-01")
+
+
+# ---- recruiters and staffing firms (2026-09-28) ------------------------------
+
+@pytest.mark.parametrize("company", [
+    "XKTalent Inc. - Rimutee", "Source Code Staffing", "Boardroom Appointments",
+    "Friday Recruitment", "LURECRUITER", "Mackin Talent", "Jobs for Humanity",
+    "TheHiveCareers"])
+def test_recruiters_and_staffing_firms_are_not_buyers(company):
+    """The deep pass stored 1,126 new buyers; 143 were agencies placing
+    someone with a client they do not name."""
+    opener = FakeOpener({"jobs": [_himalayas_job(companyName=company)]})
+    assert list(_src("himalayas", opener).search("developer", limit=10)) == []
+
+
+@pytest.mark.parametrize("company", ["Acme Careers", "Workforce.com", "TalentLMS",
+                                     "Steve Jobs Foundation", "Lightcast"])
+def test_a_company_hiring_for_itself_is_kept(company):
+    """"careers" and "jobs" name a company's own hiring page; TalentLMS sells
+    software. Only the agency words are caught."""
+    opener = FakeOpener({"jobs": [_himalayas_job(companyName=company)]})
+    assert [s.company for s in _src("himalayas", opener).search("developer", limit=10)] == [company]
+
+
+@pytest.mark.parametrize("text", [
+    "About the Client: Our client is a fast-growing fintech.",
+    "On behalf of our client - a global bank - we are looking for a C# developer.",
+    "Remote 1099 contractor for a client of ours.",
+    "Paradigm is seeking a QA engineer to support our client, a legal services provider.",
+])
+def test_an_advert_for_an_unnamed_client_is_rejected_whatever_the_source(rules, text):
+    from jester.signals.filters import classify
+    advert = f"Senior Python Developer | Remote | Contract | $80/hr. {text} Python, APIs."
+    verdict = classify(advert, rules)
+    assert verdict.audience == "none"
+    assert verdict.reason.startswith("hard reject: contains"), verdict.reason
+
+
+@pytest.mark.parametrize("text", [
+    "We build digital products for our clients across Europe.",
+    "Our clients are mid-size retailers; you will own their integrations.",
+])
+def test_an_agency_describing_its_own_client_work_stays_a_buyer(rules, text):
+    """Plural on purpose: "for our clients" is an agency delivering its own
+    projects -- a possible white-label buyer, not a recruiter."""
+    from jester.signals.filters import classify
+    advert = f"Senior Python Developer | Remote | Contract | $80/hr. {text} Python, APIs."
+    assert classify(advert, rules).audience == "buyer"

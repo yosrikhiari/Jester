@@ -52,6 +52,7 @@ def fake_collect(monkeypatch):
 
     def collect(db, *, source_name="hackernews", **kw):
         calls.append(source_name)
+        collect.queries[source_name] = kw.get("queries")
         row = {"run_id": f"r-{source_name}", "source": source_name, "mode": "live",
                "kind": kw.get("kind", "scheduled"), "started_utc": "t", "finished_utc": "t",
                "since": "7d", "queries": "[]", "collected": 3, "new": 0, "seen_again": 3,
@@ -62,7 +63,7 @@ def fake_collect(monkeypatch):
         return row
 
     monkeypatch.setattr(sigrun, "collect", collect)
-    collect.calls, collect.results = calls, results
+    collect.calls, collect.results, collect.queries = calls, results, {}
     return collect
 
 
@@ -114,3 +115,17 @@ def test_a_failed_run_exits_non_zero(tmp_path, fake_collect):
     assert exc.value.code == 1
     # A failure is not "nothing new": the chain stops at the first source.
     assert fake_collect.calls == ["hackernews-hiring"]
+
+
+def test_a_board_run_directly_searches_its_own_terms(tmp_path, fake_collect):
+    """It used to search the hiring rules' queries ("12", twelve months to
+    Hacker News), which is a meaningless keyword to a job board."""
+    cli.main(["signals", "run", "--db", str(tmp_path / "signals.db"),
+              "--source", "himalayas", "--rules", "config/hiring_rules.yaml"])
+    assert fake_collect.queries["himalayas"] == ["developer", "engineer", "automation", "data"]
+
+
+def test_explicit_queries_still_win(tmp_path, fake_collect):
+    cli.main(["signals", "run", "--db", str(tmp_path / "signals.db"),
+              "--source", "himalayas", "--rules", "config/hiring_rules.yaml", "--query", "golang"])
+    assert fake_collect.queries["himalayas"] == ["golang"]
