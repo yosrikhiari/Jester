@@ -49,7 +49,7 @@ def test_field_map_is_printable_for_the_milestone(tmp_path):
     md = sig.field_map_markdown()
     assert md.startswith("| field |") and md.count("\n") >= len(sig.FIELDS)
     # The pipe inside a meaning is escaped so the table still renders.
-    assert "`mode`" in md and r"live \| fixture" in md
+    assert "`mode`" in md and r"live \| synthetic" in md
 
 
 # ---- mode: a fixture row can never be counted as live ----------------------
@@ -57,17 +57,19 @@ def test_field_map_is_printable_for_the_milestone(tmp_path):
 def test_every_synthetic_record_is_labeled_fixture():
     rows = sig.synthetic_signals()
     assert len(rows) == 5, "the milestone asks for five, not a round number"
-    assert {r.mode for r in rows} == {"fixture"}
-    assert all(r.row()["mode"] == "fixture" for r in rows)
+    assert {r.mode for r in rows} == {"synthetic"}, \
+        "YU-01 asks for the records to be labelled synthetic, in those words"
+    assert all(r.row()["mode"] == "synthetic" for r in rows)
 
 
 def test_counts_are_grouped_by_mode_not_asserted(db):
     sig.upsert(db, sig.synthetic_signals())
     sig.upsert(db, [_one(source_id="t3_live", mode="live", relevant=1)])
     c = sig.counts(db)
-    assert c["fixture"]["unique_collected"] == 5
+    assert c["synthetic"]["unique_collected"] == 5
     assert c["live"]["unique_collected"] == 1
-    assert c["fixture"]["relevant"] == 3 and c["fixture"]["errors"] == 1
+    assert c["synthetic"]["relevant"] == 3
+    assert c["synthetic"]["errors"] == 1
 
 
 def test_unknown_stays_unknown(db):
@@ -124,14 +126,15 @@ def test_a_removal_is_recorded_not_deleted(db):
 
 def test_export_reconciles_with_the_table(db, tmp_path):
     sig.upsert(db, sig.synthetic_signals())
-    manifest = sig.export_csv(db, tmp_path, mode="fixture")
+    manifest = sig.export_csv(db, tmp_path, mode="synthetic")
     assert manifest["rows_in_db"] == manifest["rows_in_csv"] == 5
     assert manifest["reconciles"] is True
-    with (tmp_path / "signals-fixture.csv").open(encoding="utf-8") as fh:
+    with (tmp_path / "signals-synthetic.csv").open(encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
-    assert len(rows) == 5 and {r["mode"] for r in rows} == {"fixture"}
+    assert len(rows) == 5
+    assert {r["mode"] for r in rows} == {"synthetic"}
     saved = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
-    assert saved["counts_by_mode"]["fixture"]["relevant"] == 3
+    assert saved["counts_by_mode"]["synthetic"]["relevant"] == 3
     assert (tmp_path / "field-map.md").exists()
     assert (tmp_path / "schema.clickhouse.sql").exists()
 
@@ -235,3 +238,20 @@ def test_every_read_only_signals_action_runs(capsys):
     finally:
         os.environ.clear()
         os.environ.update(before)
+
+
+def test_rows_labelled_fixture_by_an_older_build_read_as_synthetic(tmp_path):
+    """The mode label was renamed. A database written before the rename must
+    not show a third, stale mode next to `live` and `synthetic`."""
+    import sqlite3
+
+    path = str(tmp_path / "old.db")
+    db = sig.open_signals(path)
+    sig.upsert(db, sig.synthetic_signals())
+    db.execute(f"UPDATE {sig.TABLE} SET mode='fixture'")  # as an old build wrote it
+    db.commit()
+    db.close()
+
+    db = sig.open_signals(path)
+    assert set(sig.counts(db)) == {"synthetic"}
+    assert db.execute(f"SELECT COUNT(*) FROM {sig.TABLE} WHERE mode='fixture'").fetchone()[0] == 0

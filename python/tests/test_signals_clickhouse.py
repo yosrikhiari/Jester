@@ -196,7 +196,7 @@ def test_reconcile_counts_with_final_and_separates_duplicates_from_unmerged(db):
         # Insertion order is the matching order: the narrower patterns first,
         # or the bare count would answer for all four.
         "uniqExact": "5\n",
-        "GROUP BY mode": '{"mode":"fixture","n":"5","relevant":"3","buyer":"2",'
+        "GROUP BY mode": '{"mode":"synthetic","n":"5","relevant":"3","buyer":"2",'
                          '"practitioner":"1","removed":"0","errors":"1"}\n',
         "count() FROM problem_signal FINAL": "5\n",
         "count() FROM problem_signal": "9\n",
@@ -306,9 +306,9 @@ def test_an_unknown_mode_is_refused_rather_than_interpolated(db):
     """SQLite parameterises `mode`; ClickHouse's HTTP interface takes one
     statement and no bind list, so the value goes into the SQL text. It is
     checked against the two values the column can hold instead of trusted."""
-    with pytest.raises(ch.ClickHouseError, match="not one of live, fixture"):
+    with pytest.raises(ch.ClickHouseError, match="not one of live, synthetic"):
         ch.load(db, ch.Client(opener=FakeServer()), mode="x' OR 1=1--")
-    with pytest.raises(ch.ClickHouseError, match="not one of live, fixture"):
+    with pytest.raises(ch.ClickHouseError, match="not one of live, synthetic"):
         ch.reconcile(db, ch.Client(opener=FakeServer()), mode="anything")
 
 

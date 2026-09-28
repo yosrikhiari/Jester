@@ -11,7 +11,7 @@ reconcile between the database and the CSV.
 
 Three rules are structural here rather than left to discipline:
 
-* **Mode is a column.** Every record says `live` or `fixture`. A fixture row
+* **Mode is a column.** Every record says `live` or `synthetic`. A synthetic row
   can never be counted as a live one, because the count is grouped by the
   column (`counts()`), not asserted in a report.
 * **Unknown stays unknown.** `company` and `buyer_intent` exist and are always
@@ -44,7 +44,7 @@ from typing import Iterable, List, Optional
 #: which run saw it.
 FIELDS = [
     ("record_id", "TEXT", "String", "our key: <platform>:<source_id>"),
-    ("mode", "TEXT", "LowCardinality(String)", "live | fixture — never inferred, always stored"),
+    ("mode", "TEXT", "LowCardinality(String)", "live | synthetic — never inferred, always stored"),
     ("platform", "TEXT", "LowCardinality(String)", "hackernews — the source the collectors actually read"),
     ("source_id", "TEXT", "String", "the platform's own id (Hacker News item number)"),
     ("source_url", "TEXT", "String", "permalink; the evidence link that travels with the signal"),
@@ -142,7 +142,7 @@ def field_map_markdown() -> str:
     """The field map as a table, printed from the code rather than typed into
     a document that can go stale."""
     head = "| field | sqlite | clickhouse | meaning |\n|---|---|---|---|\n"
-    # A meaning like "live | fixture" would break the table. The pipe is part
+    # A meaning like "live | synthetic" would break the table. The pipe is part
     # of what the field says, so escape it rather than reword the field map.
     cell = lambda s: s.replace("|", "\\|")  # noqa: E731
     return head + "".join(
@@ -178,7 +178,7 @@ class Signal:
     #: test and a content feed — and they are not the same posts.
     audience: str = "none"
     created_utc: str = ""
-    mode: str = "fixture"
+    mode: str = "synthetic"
     run_id: str = ""
     run_status: str = "ok"
     error: str = ""
@@ -248,8 +248,25 @@ def open_signals(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(sqlite_ddl())
     _catch_up_columns(db)
+    _relabel_synthetic(db)
     db.commit()
     return db
+
+
+#: What hand-written records are called in the `mode` column. It was
+#: "fixture"; the task card asks for them to be labelled synthetic, and a
+#: reader of the CSV should not need to know that "fixture" is test jargon.
+SYNTHETIC = "synthetic"
+_OLD_SYNTHETIC = "fixture"
+
+
+def _relabel_synthetic(db: sqlite3.Connection) -> int:
+    """Rows written before the rename said `fixture`; they say `synthetic`
+    now. Same records, same ids -- only the label changes, so a database made
+    by an older build reads the same as one made today."""
+    cur = db.execute(f"UPDATE {TABLE} SET mode = ? WHERE mode = ?",
+                     (SYNTHETIC, _OLD_SYNTHETIC))
+    return cur.rowcount
 
 
 def _catch_up_columns(db: sqlite3.Connection) -> List[str]:
@@ -483,7 +500,7 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
 # ---------------------------------------------------------------------------
 # Synthetic fixtures
 # ---------------------------------------------------------------------------
-# Five records, every one labeled `fixture`, covering the case types the
+# Five records, every one labeled `synthetic`, covering the case types the
 # pipeline has to handle: a clear signal, a near-miss that is kept with low
 # confidence, an irrelevant post that is collected and rejected, a post that
 # gets edited between runs, and one whose fetch failed. They are written by
@@ -589,7 +606,7 @@ def synthetic_signals(run_id: str = "signals-fixture", rules=None) -> List[Signa
     for case in FIXTURE_CASES:
         c = Signal(**asdict(case["signal"]))
         c.run_id = run_id
-        c.mode = "fixture"
+        c.mode = SYNTHETIC
         apply_to(c, rules)
         out.append(c)
     return out
@@ -645,7 +662,7 @@ def run_fixture_export(db_path: str, out_dir: str | Path, *, run_id: str = "sign
 
     db = open_signals(db_path)
     stats = upsert(db, synthetic_signals(run_id, rules), seen_at=seen_at)
-    manifest = export_csv(db, out_dir, mode="fixture")
+    manifest = export_csv(db, out_dir, mode=SYNTHETIC)
     manifest["upsert"] = stats
     manifest["crossposts"] = crossposts(db)
     return manifest

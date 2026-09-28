@@ -115,7 +115,7 @@ def _check_replay(case: dict, rules, db_path: str) -> dict:
             stats.append({"removed": 1})
             continue
         s = Signal(source_id=rid, community="r/synthetic", query="fixture",
-                   text=step["text"], mode="fixture", run_id="fixture-replay")
+                   text=step["text"], mode="synthetic", run_id="fixture-replay")
         stats.append(upsert(db, [s], seen_at=step["seen_at"]))
 
     row = db.execute(

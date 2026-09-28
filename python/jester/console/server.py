@@ -140,6 +140,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/clusters": api.clusters,
             "/api/jobs": api.jobs,
             "/api/running": api.running,
+            "/api/signals/scraper": api.jobs_scraper,
         }
         if path in routes:
             self._json(routes[path]())
@@ -305,6 +306,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/cluster/idea": lambda: api.cluster_generate_idea(
                 int(body.get("cluster_id") or 0)
             ),
+            # The same draft as a background job, so the page can show its
+            # stages instead of a dead button for half a minute.
+            "/api/cluster/idea/start": lambda: api.cluster_generate_idea_async(
+                body.get("cluster_id")),
             # The explicit act that puts a draft into the archive.
             "/api/cluster/idea/save": lambda: api.cluster_save_idea(
                 int(body.get("draft_id") or 0)
@@ -325,11 +330,16 @@ class Handler(BaseHTTPRequestHandler):
                 options=body.get("options")),
             "/api/schedule/remove": api.schedule_remove,
             "/api/schedule/run": api.schedule_run_now,
+            # The jobs scraper: run it now, or set/pause its own schedule.
+            "/api/signals/scraper/run": api.jobs_scraper_run,
+            "/api/signals/scraper/schedule": lambda: api.jobs_scraper_schedule(
+                enabled=body.get("enabled", True),
+                every=body.get("every"), at=body.get("at")),
             "/api/sources/add": lambda: api.add_source(
                 url=body.get("url", ""),
                 platform=body.get("platform", "auto"),
                 name=body.get("name") or None,
-                enabled=body.get("enabled", True) is not False,
+                enabled=body.get("enabled", True),
                 notes=body.get("notes", ""),
             ),
             "/api/sources/update": lambda: api.update_source(

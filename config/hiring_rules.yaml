@@ -47,6 +47,25 @@ scope:
       serves: practitioner
       evidence: "the full-time majority of the same threads; who is spending on what, not a lead"
       why: market evidence for content, explicitly not outreach
+    # The job boards, walked in order when the HN threads add nothing new.
+    # Only contract-shaped listings are collected (the board states the type),
+    # and talent marketplaces are dropped at the source -- see jobboards.py.
+    - name: himalayas/contract
+      serves: buyer
+      evidence: "measured 2026-09-27 - 1,243 live Contractor listings for 'developer'; dry run on 60 'engineer' listings: 9 in tech categories, 6 scored buyer"
+      why: companies advertising contract engineering work, with the engagement type as a field
+    - name: remotive/jobs
+      serves: buyer
+      evidence: "measured 2026-09-27 - 18 software listings, 7 contract/freelance; 1 kept after dropping marketplaces"
+      why: small but clean; one request a run under a four-a-day allowance
+    - name: jobicy/jobs
+      serves: buyer
+      evidence: "measured 2026-09-27 - 100 engineering listings, 6 contract (3 of them Mozilla); full-time dropped at source"
+      why: commercial use permitted in writing
+    - name: reddit hiring rooms (29, via the worker's archive)
+      serves: buyer
+      evidence: "scored from nuggets already collected - 165 kept, 27 buyers as of 2026-09-26; [For Hire] sellers discarded before scoring"
+      why: collected by the Go worker, never by this collector; scoring a stored row is not collection
 
   excluded:
     - name: "Ask HN: Freelancer? Seeking freelancer?"

@@ -248,7 +248,8 @@ const PAGES = [
   // Its own group: this is a task deliverable with its own database, its
   // own rules and its own reviewer, not another view of Jester's archive.
   { group: 'the collector', id: 'signals', label: 'Problem signals', icon: '◎',
-    load: loadSignals, count: () => COUNTS.signals },
+    // Both, awaited: the topbar refresh waits on a page's load.
+    load: () => Promise.all([loadSignals(), loadScraper()]), count: () => COUNTS.signals },
   { group: 'Setup', id: 'sources', label: 'Sources', icon: '⌁', load: loadSources, count: () => COUNTS.sources },
   { group: 'Setup', id: 'config', label: 'Config', icon: '⚙', load: loadConfig },
   { group: 'Setup', id: 'schedule', label: 'Schedule', icon: '◷', load: loadSchedule },
@@ -1180,10 +1181,95 @@ $('[data-page="search"]').addEventListener('click', e => {
 });
 
 // ── clusters ──────────────────────────────────────────────────────────────
+// A workspace, not a grid: the theme list on the left, the selected theme on
+// the right, and one idea box pinned under its evidence. Nothing expands in
+// place, and nothing resizes with its content (see .cws in app.css).
 let CLUSTERS = [];
-let CLUSTER_SORT = 'size';
+let CLUSTER_SORT = 'comments';
 let CLUSTER_PLATFORM = '';
-const CLUSTER_SORTS = { size: (a, b) => (b.n_nuggets || 0) - (a.n_nuggets || 0), coherence: (a, b) => (b.coherence || 0) - (a.coherence || 0), ideas: (a, b) => (b.n_ideas || 0) - (a.n_ideas || 0) };
+let CLUSTER_FAKE = false;     // last pass ran on hash vectors
+let CL_SEL = null;            // selected theme id
+const CL_DETAIL = {};         // id -> full detail once fetched
+let CL_VIEW = 'evidence';     // evidence | all | brief
+const CL_IDX = {};            // id -> which of its drafts the box shows
+const CL_DRAFTING = {};       // id -> { jobId, progress, t0 } while a draft is being written
+let CL_DISCARDED = null;      // id whose draft was just discarded (one-line note)
+
+// Strip trailing punctuation without a regex: `/[.,;:!?]+$/` backtracks on a
+// long run of punctuation that is not at the very end.
+function trimTrailing(s, chars) {
+  let end = s.length;
+  while (end > 0 && chars.includes(s[end - 1])) end--;
+  return s.slice(0, end);
+}
+function plural(n, one, many = one + 's') { return n === 1 ? one : many; }
+// The first line of an error: the message. The rest is a traceback nobody
+// wants in a toast but which is on the job row for whoever needs it.
+const firstLine = s => String(s || '').split(String.fromCodePoint(10))[0];
+
+// The label is the clustering pass's top terms, which repeat and carry
+// punctuation: "pseudocode · code · complex · code." Said once, cleanly.
+function clusterWords(c) {
+  return [...new Set(String(c.label || '').split('·')
+    .map(w => trimTrailing(w.trim(), '.,;:!?').toLowerCase()).filter(Boolean))];
+}
+const clusterTitle = c => clusterWords(c).join(' · ') || 'unnamed theme';
+
+// Three numbers (threads, authors, coherence) answer one question: is this a
+// pattern, or one conversation? Say the answer, keep the numbers on hover.
+function clusterBreadth(c) {
+  if (c.single_thread) return { rank: 0, tone: 'tone-warn', label: '⚠ one conversation', why: 'every excerpt is from a single thread' };
+  if ((c.n_threads || 0) >= 4) return { rank: 2, tone: 'tone-ok', label: 'recurring', why: `${c.n_threads} separate threads` };
+  return { rank: 1, tone: 'tone-neutral', label: 'a few threads', why: `${c.n_threads || 0} threads` };
+}
+const breadthPill = c => { const b = clusterBreadth(c);
+  return `<span class="pill ${b.tone}" title="${esc(b.why)} · coherence ${Number(c.coherence || 0).toFixed(2)}">${b.label}</span>`; };
+
+const CLUSTER_SORTS = {
+  comments: (a, b) => (b.n_nuggets || 0) - (a.n_nuggets || 0),
+  breadth: (a, b) => clusterBreadth(b).rank - clusterBreadth(a).rank || (b.n_threads || 0) - (a.n_threads || 0)
+    || (b.n_nuggets || 0) - (a.n_nuggets || 0),
+  idea: (a, b) => (b.idea_best ?? -1) - (a.idea_best ?? -1) || (b.n_nuggets || 0) - (a.n_nuggets || 0),
+};
+
+// What a theme's row says about its ideas, without fetching the detail.
+function clusterIdeaTag(c) {
+  if (CL_DRAFTING[c.id]) return '<span class="pill tone-warn">drafting…</span>';
+  const best = c.idea_best == null ? '' : ' ' + Number(c.idea_best).toFixed(1);
+  if (c.n_ideas_saved > 0) return `<span class="pill tone-ok">✓ idea${best}</span>`;
+  if (c.n_ideas > 0) return `<span class="pill tone-accent">draft${best}</span>`;
+  return '';
+}
+
+// Excerpts are cut from longer comments, so they start mid-sentence ("it. I
+// fought...") and carry the commenter's "> " quote marks. Start at the first
+// full sentence, end at the last, drop the markup.
+function cleanExcerpt(text) {
+  let t = String(text || '').replace(/^\s*>\s*/, '').replace(/\s>\s*/g, ' — ').trim();
+  const lead = /^[a-z][^.!?]{0,40}[.!?]\s+(?=[A-Z])/.exec(t);
+  if (lead) t = t.slice(lead[0].length);
+  if (t && !/[.!?"”)]$/.test(t)) {
+    // Back to the last whole word. lastIndexOf, not `/\s+\S*$/`, which
+    // backtracks badly on a long text with no space near the end.
+    const cut = Math.max(t.lastIndexOf(' '), t.lastIndexOf('\n'));
+    t = (cut > 0 ? t.slice(0, cut) : t).trimEnd() + '…';
+  }
+  return t;
+}
+
+function excerptHTML(m) {
+  const sim = Number(m.similarity || 0);
+  const title = m.post_title ? '“' + String(m.post_title).slice(0, 60) + '”' : '';
+  const where = [m.author || 'someone', PLATFORM_LABEL[m.platform] || m.platform || '', title]
+    .filter(Boolean).join(' · ');
+  const fill = Math.max(0, Math.min(1, (sim - 0.6) / 0.4)) * 100;
+  const link = m.source_url
+    ? '<a href="' + esc(m.source_url) + '" target="_blank" rel="noopener noreferrer">source ↗</a>' : '';
+  return `<div class="cws-quote"><p>${esc(cleanExcerpt(m.chunk_text || m.extracted_insight))}</p>
+    <div class="cws-src"><span>${esc(where)}</span>
+      <span class="cws-sim" title="similarity ${sim.toFixed(2)}"><i style="inline-size:${fill}%"></i></span>${link}</div></div>`;
+}
+
 function renderClusterControls() {
   $('#clusters-sort').innerHTML = Object.keys(CLUSTER_SORTS).map(k =>
     `<button data-csort="${k}" aria-pressed="${CLUSTER_SORT === k}">${k}</button>`).join('');
@@ -1194,67 +1280,16 @@ function renderClusterControls() {
 }
 $('#clusters-sort').addEventListener('click', e => { const b = e.target.closest('[data-csort]'); if (!b) return; CLUSTER_SORT = b.dataset.csort; renderClusterControls(); renderClusters(); });
 $('#clusters-platform').addEventListener('click', e => { const b = e.target.closest('[data-cplat]'); if (!b) return; CLUSTER_PLATFORM = b.dataset.cplat; renderClusterControls(); renderClusters(); });
-let CLUSTER_OPEN = null;      // id of the expanded theme
-let CLUSTER_DETAIL = {};      // id -> full detail once fetched
-let CLUSTER_FAKE = false;     // last pass ran on hash vectors
 
-function clusterQuality(c) {
-  // The numbers that decide whether a theme means anything, said plainly.
-  // n_authors is the strongest of them: five chunks from one prolific
-  // commenter cluster beautifully and signify nothing.
-  const bits = [];
-  bits.push(`${c.n_nuggets} nugget${c.n_nuggets === 1 ? '' : 's'}`);
-  if (c.n_authors > 0) bits.push(`${c.n_authors} author${c.n_authors === 1 ? '' : 's'}`);
-  else if (c.authors_unknown > 0) bits.push('authors not captured');
-  if (c.n_threads > 0) bits.push(`${c.n_threads} thread${c.n_threads === 1 ? '' : 's'}`);
-  bits.push(`coherence ${Number(c.coherence || 0).toFixed(2)}`);
-  return bits.join(' · ');
-}
-
-function clusterFlags(c) {
-  const out = [];
-  // A theme confined to one thread is exactly what the old thread-grouping
-  // already found — worth saying, because it is not new information.
-  if (c.single_thread) out.push('<span class="chip chip--warn">one thread</span>');
-  if (c.single_author) out.push('<span class="chip chip--warn">one author</span>');
-  if ((c.embedding_model || '').startsWith('fake'))
-    out.push('<span class="chip chip--bad">hash vectors — not meaningful</span>');
-  if (c.n_ideas > 0) out.push(`<span class="chip">${c.n_ideas} draft idea(s)</span>`);
-  return out.join('');
-}
-
-function renderClusterIdea(i) {
-  const saved = i.promoted_idea_id
-    ? `<span class="chip">saved as idea #${i.promoted_idea_id}</span>` : '';
-  const scores = [
-    ['demand', i.demand_signal], ['feasibility', i.feasibility],
-    // competition stays null when the critic did not verify it (R29) — shown
-    // as "unchecked", never as a zero.
-    ['competition', i.competition === null || i.competition === undefined ? null : i.competition],
-    ['overall', i.overall],
-  ].map(([k, v]) => `${k} ${v === null ? '—' : Number(v).toFixed(1)}`).join(' · ');
-  return `<div class="card" style="margin-block-start:var(--jester-s-4)">
-    <div class="row row-between">
-      <strong>${esc(i.title || 'untitled')}</strong>
-      <div class="chiprow">${saved}</div>
-    </div>
-    <p class="xs">${esc(scores)}${i.synthesis_model ? ' · ' + esc(i.synthesis_model) : ''}</p>
-    <p>${esc(i.problem_statement || '')}</p>
-    <p>${esc(i.proposed_solution || '')}</p>
-    ${i.promoted_idea_id ? '' : `<div class="row">
-      <button data-save-idea="${i.id}" class="primary">✓ save to Ideas</button>
-      <button data-discard-idea="${i.id}">discard</button>
-    </div>`}
-  </div>`;
+function visibleClusters() {
+  const q = ($('#clusters-q').value || '').trim().toLowerCase();
+  return CLUSTERS.filter(c => (!q || `${c.label || ''} ${c.problem_statement || ''}`.toLowerCase().includes(q))
+    && (!CLUSTER_PLATFORM || (c.platforms || []).includes(CLUSTER_PLATFORM)))
+    .sort(CLUSTER_SORTS[CLUSTER_SORT] || CLUSTER_SORTS.comments);
 }
 
 function renderClusters() {
-  const q = ($('#clusters-q').value || '').trim().toLowerCase();
-  const rows = CLUSTERS.filter(c => (!q ||
-    `${c.label || ''} ${c.problem_statement || ''}`.toLowerCase().includes(q))
-    && (!CLUSTER_PLATFORM || (c.platforms || []).includes(CLUSTER_PLATFORM)))
-    .sort(CLUSTER_SORTS[CLUSTER_SORT] || CLUSTER_SORTS.size);
-
+  const rows = visibleClusters();
   const warn = $('#clusters-warn');
   if (warn) {
     warn.innerHTML = CLUSTER_FAKE
@@ -1266,38 +1301,15 @@ function renderClusters() {
       : '';
   }
 
-  $('#clusters-body').innerHTML = rows.length ? rows.map(c => {
-    const open = CLUSTER_OPEN === c.id;
-    const detail = CLUSTER_DETAIL[c.id];
-    return `<div class="card${open ? ' card--wide' : ''}">
-      <div class="row row-between">
-        <div>
-          <h3 style="margin:0">${esc(c.label || 'unnamed theme')}</h3>
-          <p class="xs">${esc(clusterQuality(c))}</p>
-        </div>
-        <div class="chiprow">${clusterFlags(c)}</div>
-      </div>
-      <p>${esc(c.problem_statement || '')}</p>
-      <div class="chiprow">${(c.platforms || [])
-        .map(p => `<span class="chip">${esc(p)}</span>`).join('')}</div>
-      <div class="row">
-        <button data-open-cluster="${c.id}">${open ? '▾ hide' : '▸ show'} ${c.size} chunk(s)</button>
-        <button data-gen-idea="${c.id}" class="primary">✦ generate idea</button>
-      </div>
-      ${open && detail ? `
-        <div class="stack" style="margin-block-start:var(--jester-s-4)">
-          ${(detail.members || []).map(m => `<div class="card card--flush" style="padding:var(--jester-s-3)">
-            <p class="xs">${esc(m.author || 'unknown author')} · ${esc(m.platform || '')}
-              · similarity ${Number(m.similarity || 0).toFixed(2)}
-              ${m.source_url ? `· <a href="${esc(m.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</p>
-            <p>${esc(m.chunk_text || '')}</p>
-          </div>`).join('')}
-          ${(detail.ideas || []).map(renderClusterIdea).join('')}
-        </div>` : ''}
-    </div>`;
-  }).join('') : `<div class="empty">${esc(CLUSTERS.length
-    ? 'No theme matches that filter.'
-    : 'No themes yet — press “regroup” to cluster the archive.')}</div>`;
+  const rowHTML = c => `
+    <button class="cws-row" data-cl-sel="${c.id}" aria-current="${CL_SEL === c.id}">
+      <b>${esc(clusterTitle(c))}</b>
+      <span class="cws-tags"><span>${c.n_nuggets} ${plural(c.n_nuggets, 'comment')}</span>${breadthPill(c)}${clusterIdeaTag(c)}</span>
+    </button>`;
+  const emptyText = CLUSTERS.length ? 'No theme matches that filter.'
+    : 'No themes yet — press “regroup” to cluster the archive.';
+  $('#clusters-body').innerHTML = rows.length ? rows.map(rowHTML).join('')
+    : '<div class="cws-empty">' + esc(emptyText) + '</div>';
 
   const note = $('#clusters-count');
   if (note) {
@@ -1305,6 +1317,184 @@ function renderClusters() {
     if (rows.length !== CLUSTERS.length) parts.push(`${CLUSTERS.length} total`);
     note.textContent = parts.join(' · ');
   }
+  renderClusterDetail();
+}
+
+function scoreRowsHTML(i) {
+  return [['demand', i.demand_signal], ['feasibility', i.feasibility], ['competition', i.competition]]
+    .map(([k, v]) => {
+      // competition stays null when the critic did not verify it (R29) —
+      // shown as "unchecked", never as a zero.
+      const has = v !== null && v !== undefined;
+      const width = has ? Number(v) * 10 : 0;
+      const shown = has ? Number(v).toFixed(1) : '—';
+      return `<div class="cws-score"><span>${k}</span><span class="bar"><i style="inline-size:${width}%"></i></span><b>${shown}</b></div>`;
+    }).join('');
+}
+
+const DRAFT_STEPS = [['reading', 'Reading the theme’s comments'], ['drafting', 'Drafting the problem and the solution'],
+                     ['scoring', 'Scoring demand, feasibility and competition'], ['saving', 'Saving the draft']];
+const overallText = i => (i.overall == null ? '—' : Number(i.overall).toFixed(1));
+const ideaPill = i => (i.promoted_idea_id
+  ? '<span class="pill tone-ok">✓ saved as idea #' + i.promoted_idea_id + '</span>'
+  : '<span class="pill tone-accent">draft idea</span>');
+// Save / discard, or "open in Ideas" once it has been saved.
+const ideaDecisionHTML = i => (i.promoted_idea_id
+  ? '<button class="btn btn--sm" data-cl-open-ideas>open in Ideas ↗</button>'
+  : '<button class="btn btn--sm" data-cl-discard="' + i.id + '">discard</button>'
+    + '<button class="btn btn--sm btn--primary" data-cl-save="' + i.id + '">save to Ideas</button>');
+function currentIdea(c, d) {
+  const ideas = d?.ideas || [];
+  return ideas[Math.min(CL_IDX[c.id] || 0, ideas.length - 1)];
+}
+
+function draftStepHTML(label, k, at) {
+  let state = '';
+  let mark = String(k + 1);
+  if (k < at) { state = 'done'; mark = '✓'; }
+  if (k === at) { state = 'now'; mark = '●'; }
+  return `<div class="cws-step ${state}"><i>${mark}</i>${label}${k === at ? '…' : ''}</div>`;
+}
+
+function draftingBoxHTML(run) {
+  const at = Math.max(0, DRAFT_STEPS.findIndex(([k]) => String(run.progress || '').startsWith(k)));
+  const secs = Math.max(0, Math.round((Date.now() - run.t0) / 1000));
+  const clock = Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
+  return `<div class="cws-box is-drafting">
+    <div class="cws-box-top"><b>Drafting an idea from this theme…</b><span class="xs num">${clock}</span></div>
+    <div style="margin-block-start:var(--s-4)">${DRAFT_STEPS.map(([, label], k) => draftStepHTML(label, k, at)).join('')}</div>
+    <div class="cws-progress"><i style="inline-size:${(at + 1) * 25}%"></i></div>
+    <p class="xs" style="margin-block-start:var(--s-3)">Usually about 30 seconds. You can open other themes meanwhile.</p></div>`;
+}
+
+function ideaSummaryBoxHTML(c, ideas) {
+  const idx = Math.min(CL_IDX[c.id] || 0, ideas.length - 1);
+  const i = ideas[idx];
+  const cycle = ideas.length > 1
+    ? '<span class="xs">' + (idx + 1) + ' of ' + ideas.length + '</span>'
+      + '<button class="btn btn--ghost btn--sm" data-cl-idx="' + ((idx + 1) % ideas.length)
+      + '" title="another draft of this theme">⇄</button>'
+    : '';
+  return `<div class="cws-box is-idea">
+    <div class="cws-box-top">${ideaPill(i)}<b title="${esc(i.title || '')}">${esc(i.title || 'untitled')}</b><span class="cws-overall">${overallText(i)}</span></div>
+    <p class="cws-clamp">${esc(i.problem_statement || '')}</p>
+    ${scoreRowsHTML(i)}
+    <div class="cws-actions"><button class="btn btn--ghost btn--sm" data-cl-view="brief">read the full brief →</button>${cycle}<span style="flex:1"></span>${ideaDecisionHTML(i)}</div></div>`;
+}
+
+function emptyIdeaBoxHTML(c) {
+  const note = CL_DISCARDED === c.id
+    ? '<p class="xs" style="margin-block-end:var(--s-4)">Draft discarded. The theme and its comments are untouched.</p>' : '';
+  return `<div class="cws-box">${note}
+    <div class="row" style="flex-wrap:nowrap;gap:var(--s-6)">
+      <div style="flex:1"><b>No idea drafted yet</b>
+        <p class="xs" style="margin-block-start:4px">Reads this theme’s comments and drafts a problem, a solution and three scores. About 30 seconds. Nothing reaches the Ideas page until you save it.</p></div>
+      <button class="btn btn--primary" data-cl-draft="${c.id}">✦ draft idea</button>
+    </div></div>`;
+}
+
+// The idea box (fixed height). Where "draft idea" is pressed, where the
+// stages show while it is written, and where the result lands.
+function ideaBoxHTML(c, d) {
+  if (CL_DRAFTING[c.id]) return draftingBoxHTML(CL_DRAFTING[c.id]);
+  const ideas = d?.ideas || [];
+  return ideas.length ? ideaSummaryBoxHTML(c, ideas) : emptyIdeaBoxHTML(c);
+}
+
+// The comments a draft was built from, each once, in the theme's order.
+function supportingExcerpts(i, d) {
+  const keys = new Set(i.supporting_nuggets || []);
+  const seen = new Set();
+  return (d.members || []).filter(m => keys.has(m.nugget_key) && !seen.has(m.nugget_key) && seen.add(m.nugget_key));
+}
+
+function fullBriefHTML(c, d) {
+  const i = currentIdea(c, d);
+  if (!i) { CL_VIEW = 'evidence'; return ''; }
+  const n = new Set(i.supporting_nuggets || []).size;
+  const sup = supportingExcerpts(i, d);
+  const meta = [i.synthesis_model, i.created_at && when(i.created_at)].filter(Boolean).map(esc).join(' · ');
+  const quotes = sup.slice(0, 3).map(excerptHTML).join('')
+    || '<p class="xs">The comments it was built from are no longer in this theme.</p>';
+  return `<div class="cws-body cws-brief">
+    <button class="cws-link" data-cl-view="evidence">← back to the evidence</button>
+    <div class="row" style="margin-block-start:var(--s-5)">${ideaPill(i)}<span class="xs">${meta}</span></div>
+    <h3>${esc(i.title || 'untitled')}</h3>
+    <div class="cws-sect">the problem</div><p>${esc(i.problem_statement || '')}</p>
+    <div class="cws-sect">what to build</div><p>${esc(i.proposed_solution || '')}</p>
+    <div class="cws-brief-scores"><div>${scoreRowsHTML(i)}</div>
+      <div style="text-align:center"><div class="xs">overall</div><div class="cws-overall" style="font-size:32px">${overallText(i)}</div></div></div>
+    <div class="cws-sect">built from ${n} ${plural(n, 'comment')}${sup.length > 3 ? ' · the first 3' : ''}</div>
+    ${quotes}
+    <div class="row" style="margin-block-start:var(--s-5)"><span style="flex:1"></span>${ideaDecisionHTML(i)}</div></div>`;
+}
+
+function clusterHeadHTML(c) {
+  const flags = [
+    c.single_author ? '<span class="pill tone-warn">one author</span>' : '',
+    (c.embedding_model || '').startsWith('fake') ? '<span class="pill tone-failed">hash vectors — not meaningful</span>' : '',
+  ].join('');
+  const who = c.n_authors > 0 ? c.n_authors + ' people' : 'authors not recorded';
+  const where = (c.platforms || []).map(p => PLATFORM_LABEL[p] || p).join(', ');
+  const facts = [c.n_nuggets + ' comments', who, where, clusterBreadth(c).why].filter(Boolean).map(esc).join(' · ');
+  return `<div class="cws-head"><h2 title="${esc(clusterTitle(c))}">${esc(clusterTitle(c))}</h2>
+    <div class="cws-meta">${breadthPill(c)}${flags}<span>${facts}</span></div></div>`;
+}
+
+// Grouped by the conversation each excerpt came from, which makes "one
+// conversation" something you can see rather than a claim.
+function allExcerptsHTML(c, members) {
+  const groups = new Map();
+  for (const m of members) {
+    const k = m.post_title || m.community || 'untitled thread';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(m);
+  }
+  const groupHTML = ([k, ms]) => '<div class="cws-group"><div class="cws-group-head">' + esc(k)
+    + ' <span class="pill tone-neutral">' + ms.length + '</span></div>' + ms.map(excerptHTML).join('') + '</div>';
+  return `<button class="cws-link" data-cl-view="evidence">← the strongest three</button>
+    <p class="xs" style="margin:var(--s-3) 0 var(--s-6)">${members.length} excerpts from ${c.n_nuggets} comments, in ${groups.size} ${plural(groups.size, 'conversation')}</p>
+    ${[...groups.entries()].map(groupHTML).join('')}`;
+}
+
+function topExcerptsHTML(members) {
+  const top = members.slice(0, 3).map(excerptHTML).join('') || '<p class="xs">No excerpts stored for this theme.</p>';
+  const more = members.length > 3
+    ? '<button class="cws-link" data-cl-view="all">read all ' + members.length + ' excerpts, grouped by conversation →</button>' : '';
+  return '<div class="cws-sect">what people said</div>' + top + more;
+}
+
+function renderClusterDetail() {
+  const host = $('#cluster-detail');
+  if (!host) return;
+  const c = CLUSTERS.find(x => x.id === CL_SEL);
+  if (!c) {
+    host.innerHTML = '<div class="cws-empty">' + (CLUSTERS.length ? 'Pick a theme on the left.' : '') + '</div>';
+    return;
+  }
+  const d = CL_DETAIL[c.id];
+  const head = clusterHeadHTML(c);
+  if (!d) { host.innerHTML = head + '<div class="cws-body"><p class="xs">Loading…</p></div>'; return; }
+  if (CL_VIEW === 'brief' && (d.ideas || []).length && !CL_DRAFTING[c.id]) {
+    host.innerHTML = head + fullBriefHTML(c, d);
+    return;
+  }
+  const members = d.members || [];
+  const body = CL_VIEW === 'all' ? allExcerptsHTML(c, members) : topExcerptsHTML(members);
+  host.innerHTML = head + '<div class="cws-body">' + body + '</div>' + ideaBoxHTML(c, d);
+}
+
+async function selectCluster(id, { refresh = false } = {}) {
+  if (CL_SEL !== id) { CL_VIEW = 'evidence'; CL_DISCARDED = null; }
+  CL_SEL = id;
+  renderClusters();
+  const row = $(`#clusters-body [data-cl-sel="${id}"]`);
+  if (row) row.scrollIntoView({ block: 'nearest' });
+  if (CL_DETAIL[id] && !refresh) return;
+  const res = await api(`/api/cluster/${id}`);
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  CL_DETAIL[id] = res.cluster;
+  if (CL_SEL === id) renderClusterDetail();
 }
 
 async function loadClusters() {
@@ -1315,16 +1505,55 @@ async function loadClusters() {
   COUNTS.clusters = res.total ?? CLUSTERS.length;
   renderNav();
   renderClusterControls();
+  if (!CLUSTERS.some(c => c.id === CL_SEL)) CL_SEL = null;
   renderClusters();
+  const first = CL_SEL ?? visibleClusters()[0]?.id;
+  if (first != null) selectCluster(first);
+  resumeDrafts();
 }
 
-async function openCluster(id) {
-  if (CLUSTER_OPEN === id) { CLUSTER_OPEN = null; renderClusters(); return; }
-  const res = await api(`/api/cluster/${id}`);
-  if (res.ok === false) { toast(res.error, 'bad'); return; }
-  CLUSTER_DETAIL[id] = res.cluster;
-  CLUSTER_OPEN = id;
+// A draft started before a reload is still running on the server; its job
+// kind names the theme, so the page picks the progress back up.
+async function resumeDrafts() {
+  const res = await api('/api/jobs');
+  for (const j of (res.jobs || [])) {
+    const m = /^cluster-idea:(\d+)$/.exec(j.kind || '');
+    if (m && j.status === 'running' && !CL_DRAFTING[Number(m[1])]) {
+      followDraft(Number(m[1]), j.id, new Date(String(j.started_at).replace(' ', 'T') + 'Z').getTime());
+    }
+  }
+}
+
+async function onDraftDone(cid, j) {
+  CL_IDX[cid] = 0;                       // newest draft first
+  if (CL_SEL === cid) CL_VIEW = 'evidence';
+  toast('idea drafted: ' + (j.result?.idea?.title || 'ready to review'), 'ok');
+  await selectCluster(CL_SEL ?? cid, { refresh: CL_SEL === cid });
+  if (CL_SEL !== cid) delete CL_DETAIL[cid];
+  await loadClusters();
+}
+
+async function followDraft(cid, jobId, t0 = Date.now()) {
+  CL_DRAFTING[cid] = { jobId, progress: '', t0: Number.isNaN(t0) ? Date.now() : t0 };
   renderClusters();
+  try {
+    // 5 minutes: the synthesizer and critic calls run ~30s together; a draft
+    // still going after that is stuck, and the job row keeps the reason.
+    for (let n = 0; n < 150; n++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const res = await api(`/api/job/${jobId}`);
+      if (res.ok === false) { toast(res.error, 'bad'); return; }
+      const j = res.job;
+      CL_DRAFTING[cid].progress = j.progress || '';
+      if (j.status === 'done') { delete CL_DRAFTING[cid]; await onDraftDone(cid, j); return; }
+      if (j.status === 'error') { toast('drafting failed: ' + firstLine(j.error), 'bad'); return; }
+      if (CL_SEL === cid) renderClusterDetail();
+    }
+    toast('the draft is still running — it will show here when it finishes', 'warn');
+  } finally {
+    delete CL_DRAFTING[cid];
+    renderClusters();
+  }
 }
 
 $('#clusters-q').addEventListener('input', renderClusters);
@@ -1383,44 +1612,71 @@ $('#clusters-run').addEventListener('click', async () => {
   });
 });
 
-$('#clusters-body').addEventListener('click', async e => {
-  const open = e.target.closest('button[data-open-cluster]');
-  if (open) { await openCluster(Number(open.dataset.openCluster)); return; }
-
-  const gen = e.target.closest('button[data-gen-idea]');
-  if (gen) {
-    const id = Number(gen.dataset.genIdea);
-    gen.disabled = true; gen.textContent = '… thinking';
-    const res = await api('/api/cluster/idea', { cluster_id: id });
-    gen.disabled = false; gen.textContent = '✦ generate idea';
-    if (res.ok === false) { toast(res.error, 'bad'); return; }
-    toast(res.detail || 'draft created', 'ok');
-    CLUSTER_OPEN = null;            // force a refetch so the draft shows
-    await openCluster(id);
-    await loadClusters();
+async function startDraft(el) {
+  const cid = Number(el.dataset.clDraft);
+  el.disabled = true;
+  CL_DISCARDED = null;
+  const res = await api('/api/cluster/idea/start', { cluster_id: cid });
+  if (res.ok === false) {
+    el.disabled = false;
+    toast(res.detail ? res.error + ' — ' + res.detail : res.error, 'bad');
     return;
   }
+  followDraft(cid, res.job_id);
+}
 
-  const save = e.target.closest('button[data-save-idea]');
-  if (save) {
-    const res = await api('/api/cluster/idea/save', { draft_id: Number(save.dataset.saveIdea) });
-    if (res.ok === false) { toast(res.error, 'bad'); return; }
-    toast(`saved as idea #${res.idea_id}`, 'ok');
-    const id = CLUSTER_OPEN; CLUSTER_OPEN = null;
-    if (id) await openCluster(id);
-    await loadClusters();
-    return;
-  }
+async function saveDraft(el) {
+  el.disabled = true;
+  const res = await api('/api/cluster/idea/save', { draft_id: Number(el.dataset.clSave) });
+  if (res.ok === false) { el.disabled = false; toast(res.error, 'bad'); return; }
+  toast(`saved as idea #${res.idea_id} — it is on the Ideas page now`, 'ok');
+  await selectCluster(CL_SEL, { refresh: true });
+  await loadClusters();
+}
 
-  const drop = e.target.closest('button[data-discard-idea]');
-  if (drop) {
-    const res = await api('/api/cluster/idea/discard', { draft_id: Number(drop.dataset.discardIdea) });
-    if (res.ok === false) { toast(res.error, 'bad'); return; }
-    toast('draft discarded');
-    const id = CLUSTER_OPEN; CLUSTER_OPEN = null;
-    if (id) await openCluster(id);
-    await loadClusters();
+async function discardDraft(el) {
+  el.disabled = true;
+  const res = await api('/api/cluster/idea/discard', { draft_id: Number(el.dataset.clDiscard) });
+  if (res.ok === false) { el.disabled = false; toast(res.error, 'bad'); return; }
+  toast('draft discarded');
+  CL_VIEW = 'evidence';
+  CL_IDX[CL_SEL] = 0;
+  await selectCluster(CL_SEL, { refresh: true });
+  if (!(CL_DETAIL[CL_SEL].ideas || []).length) CL_DISCARDED = CL_SEL;
+  renderClusterDetail();
+  await loadClusters();
+}
+
+// One named action per kind of button; the listener only finds which was hit.
+const CLUSTER_ACTIONS = [
+  ['[data-cl-sel]', el => selectCluster(Number(el.dataset.clSel))],
+  ['[data-cl-view]', el => {
+    CL_VIEW = el.dataset.clView;
+    renderClusterDetail();
+    $('#cluster-detail .cws-body')?.scrollTo(0, 0);
+  }],
+  ['[data-cl-idx]', el => { CL_IDX[CL_SEL] = Number(el.dataset.clIdx); renderClusterDetail(); }],
+  ['[data-cl-open-ideas]', () => go('ideas')],
+  ['[data-cl-draft]', startDraft],
+  ['[data-cl-save]', saveDraft],
+  ['[data-cl-discard]', discardDraft],
+];
+$('#clusters-ws').addEventListener('click', e => {
+  for (const [selector, act] of CLUSTER_ACTIONS) {
+    const el = e.target.closest(selector);
+    if (el) { act(el); return; }
   }
+});
+
+// ↑ / ↓ move through the list while the page is open and nothing is being typed.
+document.addEventListener('keydown', e => {
+  if (CURRENT !== 'clusters' || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+  if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+  const rows = visibleClusters();
+  if (!rows.length) return;
+  const at = rows.findIndex(c => c.id === CL_SEL);
+  const next = rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+  if (next && next.id !== CL_SEL) { e.preventDefault(); selectCluster(next.id); }
 });
 
 // ── queue ───────────────────────────────────────────────────────────────
@@ -1718,7 +1974,10 @@ function pagerHTML(offset, size, total, key) {
  * only means something next to the post it answers.
  */
 const POST_PAGE = 50;
-const POSTS = { offset: 0, q: '', total: 0, open: null };
+// view/sort/shown belong to the open post: which comments, in what order, and
+// how many before "show all". Reset each time a post is opened.
+const POSTS = { offset: 0, q: '', total: 0, open: null, view: 'signal', sort: 'top', shown: 0 };
+const POST_SHOWN = 20;
 
 async function loadPosts() {
   if (POSTS.open) return renderPostDetail();
@@ -1762,68 +2021,175 @@ async function openPost(threadId) {
   const res = await api('/api/post/' + encodeURIComponent(threadId));
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   POSTS.open = res;
+  // Open on the signal unless there is none -- an empty first tab reads as
+  // "this post has no comments" when it has only trivial ones.
+  POSTS.view = res.comments.some(c => !c.trivial) ? 'signal' : 'all';
+  POSTS.sort = 'top';
+  POSTS.shown = POST_SHOWN;
   renderPostDetail();
 }
+
+// A comment the real extractor never touched: its "insight" is the raw text.
+const isStubExtraction = c => !c.extractor_model || c.extractor_model === 'fake-llm';
+const byUpvotes = list => [...list].sort((a, b) => (b.upvotes ?? -Infinity) - (a.upvotes ?? -Infinity));
+
+// "+12m" -- how long after the post a comment was written. Relative to the
+// post, not to now: it is the shape of the conversation that matters here.
+function afterPost(postStamp, stamp) {
+  const t = s => new Date(String(s).replace(' ', 'T') + (/[Zz+]/.test(s) ? '' : 'Z')).getTime();
+  if (!postStamp || !stamp) return '';
+  const s = (t(stamp) - t(postStamp)) / 1000;
+  if (!Number.isFinite(s) || s < 0) return '';
+  if (s < 3600) return `+${Math.max(1, Math.round(s / 60))}m`;
+  if (s < 86400) return `+${Math.round(s / 3600)}h`;
+  return `+${Math.round(s / 86400)}d`;
+}
+
+const pct100 = v => Math.round(v * 100);
+
+// What the source said, as one line. A number the source never published is
+// named once, quietly, rather than given a tile that says "—".
+function postChipsHTML(m) {
+  const chips = [];
+  if (m.score != null) chips.push('<span class="chip"><b class="num">▲ ' + esc(Number(m.score).toLocaleString()) + '</b></span>');
+  if (m.upvote_ratio != null) chips.push('<span class="chip"><span class="num">' + pct100(m.upvote_ratio) + '%</span> upvoted</span>');
+  if (m.views != null) chips.push('<span class="chip"><span class="num">' + esc(Number(m.views).toLocaleString()) + '</span> views</span>');
+  const missing = [m.score == null && 'score', m.upvote_ratio == null && 'upvote ratio',
+                   m.views == null && 'views'].filter(Boolean);
+  if (missing.length) chips.push('<span class="chip chip--quiet">not reported: ' + esc(missing.join(', ')) + '</span>');
+  if (m.url) chips.push('<a class="chip chip--link" href="' + esc(m.url) + '" target="_blank" rel="noopener">open the original ↗</a>');
+  return chips.join('');
+}
+
+function coverageChipHTML(m) {
+  if (m.coverage == null) return '';
+  if (m.coverage < 0.5) {
+    return '<span class="chip chip--warn"><span class="num">' + pct100(m.coverage) + '%</span> held: a sample, not the thread</span>';
+  }
+  return '<span class="chip"><span class="num">' + Math.min(100, pct100(m.coverage)) + '%</span> held</span>';
+}
+
+// Held, advertised, trivial and coverage are one fact: how much of the thread
+// we have, and how much of that is noise. One bar says it. The advertised
+// count can lag the comments we hold, so the bar's whole is whichever is
+// larger -- never a negative "not fetched".
+function postCoverHTML(m, nSignal, nTrivial, held) {
+  const adv = m.comments_advertised;
+  const whole = Math.max(adv || 0, held);
+  const notFetched = whole - held;
+  const w = n => (n / whole) * 100 + '%';
+  const label = adv
+    ? 'what we hold of the ' + adv.toLocaleString() + ' ' + plural(adv, 'comment') + ' on the post'
+    : 'the ' + held.toLocaleString() + ' ' + plural(held, 'comment') + ' we hold · the source published no count';
+  const aria = nSignal + ' signal, ' + nTrivial + ' trivial' + (notFetched ? ', ' + notFetched + ' not fetched' : '');
+  const missingBar = notFetched ? '<i class="m-missing" style="inline-size:' + w(notFetched) + '"></i>' : '';
+  const missingKey = notFetched
+    ? '<span><i class="m-missing"></i><span class="num">' + notFetched + '</span> never fetched</span>' : '';
+  return `<div class="post-cover">
+      <div class="post-cover-head"><span>${label}</span>${coverageChipHTML(m)}</div>
+      <div class="meter meter--post" role="img" aria-label="${aria}">
+        <i class="m-signal" style="inline-size:${w(nSignal)}"></i>
+        <i class="m-trivial" style="inline-size:${w(nTrivial)}"></i>${missingBar}
+      </div>
+      <div class="meter-legend">
+        <span><i class="m-signal"></i><span class="num">${nSignal}</span> signal</span>
+        <span><i class="m-trivial"></i><span class="num">${nTrivial}</span> flagged trivial</span>${missingKey}
+      </div>
+    </div>`;
+}
+
+// Stub extraction is a fact about the post's comments, said once -- not a
+// pill repeated on every row.
+function stubNoteHTML(comments) {
+  const stubs = comments.filter(isStubExtraction).length;
+  if (!stubs) return '';
+  const held = comments.length;
+  let which = stubs + ' of ' + held;
+  if (stubs === held) which = held === 1 ? 'the only' : 'all ' + held;
+  return `<div class="post-note"><div class="banner"><span aria-hidden="true">⚠</span>
+    <span style="flex:1"><b>Stub extraction on ${which} ${plural(held, 'comment')}</b>
+    The fake stand-in extractor (<code>fake-llm</code>) produced these, so the text shown is the raw comment, not an extracted insight.</span></div></div>`;
+}
+
+// The trivial flag is a heuristic and it misfires: a thread's most upvoted
+// comment can be flagged. Hiding those without a word would hide the loudest
+// voices, so say when trivial comments outrank all the signal.
+function trivialGuardHTML(signal, trivial) {
+  if (POSTS.view !== 'signal' || !signal.length) return '';
+  const topSignal = Math.max(...signal.map(c => c.upvotes ?? -Infinity));
+  const outrank = byUpvotes(trivial.filter(c => (c.upvotes ?? -Infinity) > topSignal));
+  const n = outrank.length;
+  if (!n) return '';
+  const votes = outrank.slice(0, 3).map(c => '▲' + c.upvotes).join(', ') + (n > 3 ? ', …' : '');
+  return `<div class="post-guard"><span aria-hidden="true">⚑</span>
+    <span>${n} ${plural(n, 'comment')} flagged trivial ${plural(n, 'has', 'have')} more upvotes than any signal comment (${votes}).</span>
+    <button class="btn btn--sm btn--ghost" data-post-view="trivial">check them</button></div>`;
+}
+
+function postCommentHTML(c, postCreated) {
+  const after = afterPost(postCreated, c.created_utc);
+  const tags = [
+    '<span>' + esc(c.author || '—') + '</span>',
+    after ? '<span class="num">' + after + '</span>' : '',
+    c.category ? '<span class="pill pill--sm">' + esc(c.category.replaceAll('_', ' ')) + '</span>' : '',
+    c.depth ? '<span class="pill pill--sm">↳ reply</span>' : '',
+    c.trivial ? '<span class="pill pill--sm">trivial</span>' : '',
+    c.url ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener">source ↗</a>' : '',
+  ].join('');
+  const votes = c.upvotes == null ? '—' : esc(String(c.upvotes));
+  return `<li class="pcom${c.trivial ? ' pcom--trivial' : ''}">
+      <span class="pcom-vote"><span aria-hidden="true">▲</span><b class="num">${votes}</b></span>
+      <div><p>${esc(c.insight || c.raw_text || '')}</p><div class="pcom-meta">${tags}</div></div>
+    </li>`;
+}
+
+// The API returns comments oldest first.
+function postCommentsOrdered(pools) {
+  const pool = pools[POSTS.view] || pools.all;
+  if (POSTS.sort === 'top') return byUpvotes(pool);
+  if (POSTS.sort === 'newest') return [...pool].reverse();
+  return pool;
+}
+
+const segButtons = (attr, cur, opts) => opts.map(([v, label]) =>
+  `<button ${attr}="${v}" aria-pressed="${cur === v}">${label}</button>`).join('');
 
 function renderPostDetail() {
   const { metrics: m, comments } = POSTS.open;
   $('#posts-list').hidden = true;
   $('#post-detail').hidden = false;
 
+  const signal = comments.filter(c => !c.trivial);
+  const trivial = comments.filter(c => c.trivial);
+  const held = comments.length;
+  const byline = [m.community || m.platform, m.author, m.created_utc && when(m.created_utc)]
+    .filter(Boolean).map(esc).join(' · ');
   $('#post-head').innerHTML = `
-    <h3>${esc(m.title || '(untitled post)')}</h3>
-    <p class="xs">${esc(m.community || m.platform || '')}${m.author ? ' · ' + esc(m.author) : ''}
-      ${m.created_utc ? ' · ' + esc(when(m.created_utc)) : ''}</p>
-    ${m.url ? `<p><a href="${esc(m.url)}" target="_blank" rel="noopener">open the original ↗</a></p>` : ''}`;
+    <h2 class="post-title">${esc(m.title || '(untitled post)')}</h2>
+    <p class="xs">${byline}</p>
+    <div class="chiprow post-chips">${postChipsHTML(m)}</div>
+    ${postCoverHTML(m, signal.length, trivial.length, held)}`;
 
-  // Metrics and comments are deliberately separate. The metrics say whether
-  // the thread is worth reading; the comments are the reading.
-  // .kpi is the console's existing tile: <b> the number, <span> the label,
-  // .kpi-sub the note. Reusing it rather than inventing a class keeps this
-  // page looking like the rest of the console instead of merely near it.
-  const stat = (label, value, note, alert) => `
-    <div class="kpi${alert ? ' kpi--alert' : ''}">
-      <b class="num">${value === null || value === undefined ? '—' : esc(String(value))}</b>
-      <span>${esc(label)}</span>
-      ${note ? `<span class="kpi-sub">${esc(note)}</span>` : ''}
-    </div>`;
-  const covPct = m.coverage === null || m.coverage === undefined
-    ? null : Math.round(m.coverage * 100) + '%';
-  $('#post-metrics').innerHTML = `
-    <div class="card-head"><h3>What the source said</h3></div>
-    <div class="grid">
-      ${stat('score', m.score)}
-      ${stat('upvote ratio', m.upvote_ratio)}
-      ${stat('views', m.views)}
-      ${stat('comments on the post', m.comments_advertised)}
-      ${stat('comments we hold', m.comments_held)}
-      ${stat('coverage', covPct,
-             covPct && m.coverage < 0.5 ? 'a sample, not the thread' : '',
-             covPct && m.coverage < 0.5)}
-      ${stat('flagged trivial', m.trivial_held, '', m.trivial_held > 0)}
-    </div>`;
-
+  const list = postCommentsOrdered({ signal, trivial, all: comments });
+  // A "show all" that reveals one or two more rows is a click for nothing.
+  const shown = list.length - POSTS.shown <= 5 ? list : list.slice(0, POSTS.shown);
+  const feed = shown.length
+    ? '<ul class="pfeed">' + shown.map(c => postCommentHTML(c, m.created_utc)).join('') + '</ul>'
+    : '<div class="empty">No ' + POSTS.view + ' comments on this post.</div>';
+  const more = list.length > shown.length
+    ? '<div class="post-more"><button class="btn btn--sm" data-post-more>show all ' + list.length + '</button>'
+      + '<span class="xs">showing ' + shown.length + ' of ' + list.length + '</span></div>'
+    : '';
+  const views = [['signal', 'Signal', signal.length], ['trivial', 'Trivial', trivial.length], ['all', 'All', held]]
+    .map(([v, label, n]) => [v, label + ' <span class="num">' + n + '</span>']);
+  const sorts = [['top', 'top'], ['oldest', 'oldest'], ['newest', 'newest']];
   $('#post-comments').innerHTML = `
+    ${stubNoteHTML(comments)}
     <div class="card-head">
-      <h3>Comments</h3>
-      <span class="xs">${comments.length} held${m.comments_advertised
-        ? ` of ${m.comments_advertised} on the post` : ''}</span>
+      <div class="seg" role="group" aria-label="Which comments">${segButtons('data-post-view', POSTS.view, views)}</div>
+      <div class="seg row-end" role="group" aria-label="Sort comments">${segButtons('data-post-sort', POSTS.sort, sorts)}</div>
     </div>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>insight</th><th>who</th><th>category</th><th>flags</th></tr></thead>
-        <tbody>${comments.map(c => `
-          <tr>
-            <td>${esc(c.insight || c.raw_text || '')}
-              ${c.url ? `<div class="xs"><a href="${esc(c.url)}" target="_blank" rel="noopener">source ↗</a></div>` : ''}</td>
-            <td class="xs">${esc(c.author || '—')}${c.upvotes ? `<div class="xs">▲ ${esc(String(c.upvotes))}</div>` : ''}</td>
-            <td class="xs">${esc(c.category || '—')}</td>
-            <td class="xs">${c.trivial ? '<span class="pill pill--sm">trivial</span> ' : ''}${
-              c.extractor_model && c.extractor_model !== 'fake-llm'
-                ? '' : '<span class="pill pill--sm">stub extraction</span>'}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
+    ${trivialGuardHTML(signal, trivial)}${feed}${more}`;
 }
 
 $('#posts-q').addEventListener('input', e => {
@@ -1834,6 +2200,11 @@ $('#posts-q').addEventListener('input', e => {
 });
 $('#posts-back').addEventListener('click', () => { POSTS.open = null; loadPosts(); });
 $('[data-page="posts"]').addEventListener('click', e => {
+  const view = e.target.closest('[data-post-view]');
+  if (view) { POSTS.view = view.dataset.postView; POSTS.shown = POST_SHOWN; renderPostDetail(); return; }
+  const sort = e.target.closest('[data-post-sort]');
+  if (sort) { POSTS.sort = sort.dataset.postSort; renderPostDetail(); return; }
+  if (e.target.closest('[data-post-more]')) { POSTS.shown = Infinity; renderPostDetail(); return; }
   const row = e.target.closest('tr[data-post]');
   if (row) { openPost(row.dataset.post); return; }
   const pg = e.target.closest('button[data-page-post]');
@@ -2719,7 +3090,7 @@ applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark'
  * A page of its own, reading a database of its own. The nugget archive and
  * the problem-signal archive answer to different people: one is Jester's, the
  * other is a task deliverable whose every row has to declare whether it is
- * live or fixture. Showing them in one table would make that distinction a
+ * live or synthetic. Showing them in one table would make that distinction a
  * column nobody reads.
  *
  * What this page is for is narrow, and the layout says so: the counts, then
@@ -2766,12 +3137,12 @@ function renderSignalActive() {
 }
 
 function renderSignalTiles(counts) {
-  /* Split by mode, never summed. A fixture row counted as a live one is the
+  /* Split by mode, never summed. A synthetic row counted as a live one is the
    * first item on this task's fail list, so the tiles never add them up. */
   const modes = Object.keys(counts || {});
   if (!modes.length) { $('#signals-tiles').innerHTML = ''; return; }
   const live = counts.live || { unique_collected: 0, buyer: 0, practitioner: 0, errors: 0 };
-  const fixture = counts.fixture;
+  const synthetic = counts.synthetic;
   const tiles = [
     ['collected (live)', live.unique_collected, 'unique records, deduplicated'],
     ['buyer signals', live.buyer, 'what outreach can act on'],
@@ -2782,9 +3153,9 @@ function renderSignalTiles(counts) {
     '<div class="kpi' + (t[0] === 'failed fetches' && t[1] ? ' kpi--alert' : '') + '">'
     + '<span>' + esc(t[0]) + '</span><b class="num">' + Number(t[1] || 0).toLocaleString() + '</b>'
     + '<div class="kpi-sub">' + esc(t[2]) + '</div></div>').join('')
-    + (fixture
-      ? '<div class="kpi"><span>fixture rows</span><b class="num">'
-        + Number(fixture.unique_collected).toLocaleString()
+    + (synthetic
+      ? '<div class="kpi"><span>synthetic rows</span><b class="num">'
+        + Number(synthetic.unique_collected).toLocaleString()
         + '</b><div class="kpi-sub">never counted as live</div></div>'
       : '');
 }
@@ -2925,6 +3296,194 @@ async function loadSignals() {
   COUNTS.signals = (live.buyer || 0) || null;
   renderNav();
 }
+
+// ── the jobs scraper: run now, or on a schedule ─────────────────────────
+// `data` is what the host scheduler has registered; `pick` is what the form
+// says. They differ until "save schedule" is pressed, and the button is only
+// live while they do.
+const SCRAPER = { data: null, pick: { mode: 'off', at: '09:30' }, following: null };
+const SCRAPER_MODES = [['off', 'off'], ['daily', 'daily'], ['720', 'every 12h'], ['360', 'every 6h']];
+
+// schtasks reports "daily at 9:30:00 AM"; the form wants "09:30".
+function scraperTime(cadence) {
+  const m = /(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]M)?/i.exec(cadence || '');
+  if (!m) return null;
+  let h = Number(m[1]);
+  if (m[3]) h = (h % 12) + (/pm/i.test(m[3]) ? 12 : 0);
+  return String(h).padStart(2, '0') + ':' + m[2];
+}
+
+function scraperRegistered(d) {
+  if (!d?.installed) return { mode: 'off', at: '09:30' };
+  const at = scraperTime(d.cadence) || '09:30';
+  if (!d.enabled) return { mode: 'off', at };
+  if (d.interval_minutes && d.every_presets.includes(d.interval_minutes)) {
+    return { mode: String(d.interval_minutes), at };
+  }
+  return { mode: 'daily', at };
+}
+
+// schtasks says "11/30/1999 12:00:00 AM" for a task that has never run.
+const scraperNever = s => !s || /N\/A|never|1999/i.test(s);
+const scraperUnsaved = (pick, reg) => pick.mode !== reg.mode || (pick.mode === 'daily' && pick.at !== reg.at);
+
+// What is registered right now, in words -- including the case the old
+// status could not express: a task that exists and is switched off.
+function scraperStateWords(d, reg) {
+  if (!d.windows) return 'Scheduling from here needs Windows Task Scheduler; run now works anywhere.';
+  if (!d.installed) return '<b>Not scheduled.</b>';
+  if (!d.enabled) {
+    const was = d.interval_minutes && d.interval_minutes < 1440
+      ? 'every ' + d.interval_minutes / 60 + ' hours' : 'daily at ' + reg.at;
+    return '<b>Paused.</b> Registered ' + esc(was) + ', switched off.';
+  }
+  const cadence = reg.mode === 'daily' ? 'daily at ' + reg.at : 'every ' + Number(reg.mode) / 60 + ' hours';
+  const next = d.next_run && !scraperNever(d.next_run) ? ' Next run ' + esc(d.next_run) + '.' : '';
+  return '<b>Scheduled ' + esc(cadence) + '.</b>' + next;
+}
+
+function scraperLastRunWords(d) {
+  if (!d.installed || scraperNever(d.last_run)) return '';
+  const ok = String(d.last_result).trim() === '0';
+  const exit = ok ? 'exit 0' : '<span class="bad">exit ' + esc(d.last_result) + '</span>';
+  return 'Last scheduled run ' + esc(d.last_run) + ' · ' + exit + '.';
+}
+
+function renderScraper() {
+  const d = SCRAPER.data;
+  if (!d) return;
+  const reg = scraperRegistered(d);
+  const pick = SCRAPER.pick;
+  $('#scraper-cmd').textContent = d.command;
+  $('#scraper-mode').innerHTML = SCRAPER_MODES.map(([v, label]) =>
+    `<button type="button" data-scraper-mode="${v}" aria-pressed="${pick.mode === v}">${label}</button>`).join('');
+  const at = $('#scraper-at');
+  at.hidden = pick.mode !== 'daily';
+  if (at.value !== pick.at) at.value = pick.at;
+  const changed = scraperUnsaved(pick, reg);
+  $('#scraper-save').disabled = !changed || !d.windows;
+  $('#scraper-state').innerHTML = [
+    scraperStateWords(d, reg),
+    scraperLastRunWords(d),
+    d.running ? '<b>The scheduled run is in progress.</b>' : '',
+    changed && d.windows ? '<span class="pending">Unsaved: press save schedule.</span>' : '',
+  ].filter(Boolean).join(' ');
+  if (!SCRAPER.following) {
+    const run = $('#scraper-run');
+    run.disabled = !!d.running;
+    run.textContent = d.running ? '⟳ scheduled run in progress' : '▶ run now';
+  }
+}
+
+async function loadScraper() {
+  const d = await api('/api/signals/scraper');
+  if (d.ok === false) { toast(d.error, 'bad'); return; }
+  // Only reset the form from the registration when there is nothing unsaved
+  // in it -- a refresh must not throw away a half-made choice.
+  const unsaved = SCRAPER.data && scraperUnsaved(SCRAPER.pick, scraperRegistered(SCRAPER.data));
+  SCRAPER.data = d;
+  if (!unsaved) SCRAPER.pick = scraperRegistered(d);
+  renderScraper();
+  if (d.job && SCRAPER.following !== d.job.id) followScraper(d.job.id, d.job.started_at);
+}
+
+/* "hackernews-hiring 0 new → hackernews 41 new, 2 buyer" out of the CLI's
+ * per-run blocks: `run <id> (kind) · <source> · since …`, then the counts. */
+function scraperSummary(lines) {
+  const runs = [];
+  for (const l of lines) {
+    if (l.startsWith('run ')) runs.push({ source: (l.split(' · ')[1] || '').trim() });
+    const cur = runs.at(-1);
+    if (!cur) continue;
+    const m = /new (\d+)/.exec(l);
+    if (l.includes('collected') && m) cur.new = Number(m[1]);
+    const b = /^buyer (\d+)/.exec(l);
+    if (b) cur.buyer = Number(b[1]);
+  }
+  if (!runs.length) return 'finished';
+  const say = r => r.source + ' ' + (r.new ?? '?') + ' new' + (r.buyer ? ', ' + r.buyer + ' buyer' : '');
+  // The Reddit step always runs; it is not one of the fallbacks.
+  const reddit = runs.filter(r => r.source === 'reddit-archive');
+  const chain = runs.filter(r => r.source !== 'reddit-archive');
+  return [chain.map(say).join(' — fell back to '),
+          ...reddit.map(r => 'Reddit rooms ' + (r.new ?? '?') + ' new')].filter(Boolean).join(' · ');
+}
+
+/** Poll the console's run to the end; the button shows how long it has taken. */
+async function followScraper(jobId, startedAt) {
+  SCRAPER.following = jobId;
+  const run = $('#scraper-run');
+  run.disabled = true;
+  const t0 = startedAt ? new Date(String(startedAt).replace(' ', 'T') + 'Z').getTime() : Date.now();
+  const clock = () => {
+    const s = Math.max(0, Math.round((Date.now() - (Number.isNaN(t0) ? Date.now() : t0)) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  try {
+    // 30 minutes: the subprocess's own timeout. A tab left open longer than
+    // that is watching a job the console has already given up on.
+    for (let i = 0; i < 900; i++) {
+      run.textContent = `⟳ collecting · ${clock()}`;
+      await new Promise(r => setTimeout(r, 2000));
+      const res = await api(`/api/job/${jobId}`);
+      if (res.ok === false) { toast(res.error, 'bad'); return; }
+      const j = res.job;
+      if (j.status === 'done') {
+        toast('jobs scraper: ' + scraperSummary(j.result?.output || []));
+        loadSignals();
+        return;
+      }
+      if (j.status === 'error') {
+        toast('jobs scraper failed: ' + firstLine(j.error), 'bad');
+        loadSignals();
+        return;
+      }
+    }
+    toast('jobs scraper still running — the Runs table will show it when it finishes', 'warn');
+  } finally {
+    SCRAPER.following = null;
+    run.disabled = false;
+    run.textContent = '▶ run now';
+    renderScraper();
+  }
+}
+
+$('#scraper-run').addEventListener('click', async () => {
+  const run = $('#scraper-run');
+  run.disabled = true;
+  const res = await api('/api/signals/scraper/run', {});
+  if (res.ok === false) {
+    run.disabled = false;
+    toast(res.detail ? `${res.error} — ${res.detail}` : res.error, 'bad');
+    return;
+  }
+  toast('jobs scraper started — it takes a minute or two');
+  followScraper(res.job_id);
+});
+
+$('#scraper-mode').addEventListener('click', e => {
+  const b = e.target.closest('[data-scraper-mode]');
+  if (!b) return;
+  SCRAPER.pick.mode = b.dataset.scraperMode;
+  renderScraper();
+});
+$('#scraper-at').addEventListener('input', e => {
+  if (e.target.value) { SCRAPER.pick.at = e.target.value; renderScraper(); }
+});
+function scraperScheduleBody({ mode, at }) {
+  if (mode === 'off') return { enabled: false };
+  if (mode === 'daily') return { enabled: true, at };
+  return { enabled: true, every: Number(mode) };
+}
+$('#scraper-save').addEventListener('click', async () => {
+  const res = await busy($('#scraper-save'),
+    () => api('/api/signals/scraper/schedule', scraperScheduleBody(SCRAPER.pick)));
+  if (res.ok === false) { toast(res.error || res.detail || 'could not save the schedule', 'bad'); return; }
+  toast(res.detail || 'schedule saved');
+  SCRAPER.data = res.scraper;
+  SCRAPER.pick = scraperRegistered(res.scraper);
+  renderScraper();
+});
 
 $('#sfacets-toggle').onclick = () => { SFACETS_OPEN = !SFACETS_OPEN; applySignalFacetsOpen(); };
 $('#signals-facets').addEventListener('click', e => {

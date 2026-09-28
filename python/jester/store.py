@@ -727,7 +727,12 @@ def list_clusters(db: sqlite3.Connection) -> List[sqlite3.Row]:
     db.row_factory = sqlite3.Row
     return db.execute(
         "SELECT c.*, "
-        "(SELECT COUNT(*) FROM cluster_ideas ci WHERE ci.cluster_id = c.id) AS n_ideas "
+        "(SELECT COUNT(*) FROM cluster_ideas ci WHERE ci.cluster_id = c.id) AS n_ideas, "
+        # What the theme list tags a row with ("draft 7.3" / "idea 7.3")
+        # without fetching every theme's detail.
+        "(SELECT MAX(ci.overall) FROM cluster_ideas ci WHERE ci.cluster_id = c.id) AS idea_best, "
+        "(SELECT COUNT(*) FROM cluster_ideas ci WHERE ci.cluster_id = c.id "
+        " AND ci.promoted_idea_id IS NOT NULL) AS n_ideas_saved "
         "FROM clusters c ORDER BY c.n_nuggets DESC, c.id ASC"
     ).fetchall()
 

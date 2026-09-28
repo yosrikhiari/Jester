@@ -1,6 +1,6 @@
--- What did we collect, split live vs fixture?
+-- What did we collect, split live vs synthetic?
 --
--- Grouped by the column, never asserted in a report: a fixture row cannot be
+-- Grouped by the column, never asserted in a report: a synthetic row cannot be
 -- counted as a live one because the mode travels with the row. This is the
 -- table the daily update quotes.
 SELECT

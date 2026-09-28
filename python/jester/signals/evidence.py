@@ -7,7 +7,7 @@ reviewer actually has, in this order:
 
 1. Do the two stores agree? (one table, pass or fail)
 2. Did a repeat import create duplicates? (one number, must be zero)
-3. What is in the archive, split live from fixture?
+3. What is in the archive, split live from synthetic?
 4. What failed, and is anything failing silently?
 5. Where do I check a claim myself? (the saved SQL, the CSV, the field map)
 
@@ -169,7 +169,7 @@ def _readme(summary: dict, queries: list[dict], client: Client) -> str:
         "",
         "## 2. What is in the archive",
         "",
-        "Split by mode, because a fixture row must never be read as a live one. "
+        "Split by mode, because a synthetic row must never be read as a live one. "
         "`mode` is a column on every record, so this is a `GROUP BY`, not a promise.",
         "",
         _table(by_name["02-counts-by-mode"]["rows"]),
@@ -256,7 +256,7 @@ def _readme(summary: dict, queries: list[dict], client: Client) -> str:
         "or an intent to buy, and there is no code path that infers one.",
         "* **No identities are resolved.** Handles are stored as published. "
         "Nothing is enriched, matched against a contact database, or messaged.",
-        "* **Fixture rows are not results.** Where `mode = 'fixture'` the record "
+        "* **Synthetic rows are not results.** Where `mode = 'synthetic'` the record "
         "was written by hand to exercise the pipeline. It has never been near "
         "Reddit.",
         "",

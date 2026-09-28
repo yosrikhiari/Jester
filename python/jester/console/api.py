@@ -9,6 +9,7 @@ import re
 import socket
 import sqlite3
 import subprocess
+import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -458,6 +459,161 @@ class ConsoleAPI:
                     "sources": available()}
         finally:
             db.close()
+
+    # ── the jobs scraper ──────────────────────────────────────────────────
+    #
+    # "Who is hiring?" threads on Hacker News, scored by the hiring rules. It
+    # is the `signals-hiring` schedulable command, so the button, the schedule
+    # and the CLI all run the same argv (schedule.COMMAND_SPEC) -- a console
+    # button that ran a slightly different command than the 09:30 task would
+    # make the two impossible to compare in the run ledger.
+
+    JOBS_SCRAPER_COMMAND = "signals-hiring"
+    #: How often it may repeat, besides daily-at-a-time. The adverts land in one
+    #: thread a month; anything tighter than six hours re-reads the same page
+    #: and dedupes it away, at the cost of someone else's API.
+    JOBS_SCRAPER_EVERY = (360, 720)
+
+    def _jobs_scraper_task(self) -> str:
+        return _schedule.TASK_FOR_COMMAND[self.JOBS_SCRAPER_COMMAND]
+
+    def jobs_scraper(self):
+        """Is the scraper scheduled, is it running, and what did it last say."""
+        from jester.jobs import recent_jobs
+
+        st = _schedule.status(self._jobs_scraper_task())
+        # The console's own run, if one is in flight: a reload mid-run must
+        # pick the progress back up rather than offer the button again.
+        active = next((j for j in recent_jobs(self.db, limit=20)
+                       if j["kind"] == self.JOBS_SCRAPER_COMMAND and j["status"] == "running"),
+                      None)
+        log = _schedule.log_path(self.JOBS_SCRAPER_COMMAND)
+        try:
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+        except OSError:
+            tail = []
+        return {
+            "ok": True,
+            "task": self._jobs_scraper_task(),
+            "windows": _schedule.is_windows(),
+            "installed": st.get("installed", False),
+            "enabled": st.get("installed", False) and st.get("enabled", True),
+            "running": st.get("running", False),
+            "cadence": st.get("cadence", ""),
+            "interval_minutes": st.get("interval_minutes"),
+            "next_run": st.get("next_run", ""),
+            "last_run": st.get("last_run", ""),
+            "last_result": st.get("last_result", ""),
+            "job": active,
+            "every_presets": list(self.JOBS_SCRAPER_EVERY),
+            "command": "jester " + " ".join(_schedule.command_argv(self.JOBS_SCRAPER_COMMAND)),
+            "log_tail": tail,
+        }
+
+    def jobs_scraper_run(self):
+        """Run the scraper now, in the background, exactly as the task would."""
+        from jester.jobs import start_job
+
+        if _schedule.status(self._jobs_scraper_task()).get("running"):
+            # Two collectors writing one SQLite file at once is the shape that
+            # corrupted the main archive in August.
+            return {"ok": False, "error": "the scheduled run is in progress",
+                    "detail": "wait for it to finish; its rows land in the same ledger"}
+
+        # --archive last, so it overrides the spec's repo-relative default: the
+        # Reddit rooms are scored from the archive THIS console is reading,
+        # which is not data/jester.db in the Docker stack.
+        argv = [sys.executable, "-u", "-m", "jester.cli",
+                *_schedule.command_argv(self.JOBS_SCRAPER_COMMAND), "--db", self._signals_path,
+                "--archive", self.db_path]
+        env = {**os.environ,
+               "PYTHONPATH": os.pathsep.join(filter(None, [
+                   str(self.repo_root / "python"), os.environ.get("PYTHONPATH")])),
+               "JESTER_ORIGIN": "manual"}
+        log = _schedule.log_path(self.JOBS_SCRAPER_COMMAND)
+        root = self.repo_root
+
+        def append_log(text):
+            # Same file the scheduled task writes, so one log tells the whole
+            # story. Best effort: a scheduled run holding it open must not
+            # fail a run that otherwise worked.
+            try:
+                # data/ is gitignored, so a fresh clone has no folder for it.
+                log.parent.mkdir(parents=True, exist_ok=True)
+                with log.open("a", encoding="utf-8") as fh:
+                    fh.write(text)
+            except OSError:
+                pass
+
+        def work(progress):
+            progress("reading Hacker News “Who is hiring?” threads")
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            append_log(f"[{stamp}] jester {self.JOBS_SCRAPER_COMMAND} starting (console)\n")
+            # Relative paths in the argv (config/hiring_rules.yaml) are
+            # repo-relative, as they are for the launcher, which cds there.
+            p = subprocess.run(argv, cwd=root, env=env, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=1800)
+            out = (p.stdout or "") + (p.stderr or "")
+            append_log(out + ("" if out.endswith("\n") else "\n")
+                       + f"[{datetime.now():%Y-%m-%d %H:%M:%S}] jester "
+                         f"{self.JOBS_SCRAPER_COMMAND} exited {p.returncode} (console)\n")
+            lines = [ln for ln in out.splitlines() if ln.strip()]
+            if p.returncode != 0:
+                raise RuntimeError(lines[-1] if lines else f"exited {p.returncode}")
+            progress(lines[1] if len(lines) > 1 else "finished")
+            # Two runs when the fallback fires, six lines or so each.
+            return {"exit": p.returncode, "output": lines[-16:]}
+
+        return start_job(self.db_path, self.JOBS_SCRAPER_COMMAND, work)
+
+    def jobs_scraper_schedule(self, enabled=True, every=None, at=None):
+        """Turn the scraper's schedule on (at a cadence) or off.
+
+        Off disables the task rather than deleting it, so the cadence someone
+        chose survives a pause -- the way the tasks have been paused before.
+        """
+        task = self._jobs_scraper_task()
+        if not _schedule.is_windows():
+            return {"ok": False, "error": "scheduling from the console needs "
+                    "Windows Task Scheduler on this host",
+                    "detail": "use `jester schedule install --command signals-hiring`"}
+        # The console posts JSON false for "off"; anything else means on.
+        if enabled is False:
+            if not _schedule.status(task).get("installed"):
+                return {"ok": True, "detail": "not scheduled", "scraper": self.jobs_scraper()}
+            return self._scraper_result(_schedule.set_enabled(task, False))
+
+        kw, error = self._scraper_cadence(every, at)
+        if error:
+            return {"ok": False, "error": error}
+        # Re-registering rewrites the launcher and recreates the task enabled,
+        # which is also what turns a paused task back on.
+        return self._scraper_result(_schedule.install(
+            db=self._signals_path, config=self.config_dir,
+            task_name=task, command=self.JOBS_SCRAPER_COMMAND, **kw))
+
+    def _scraper_result(self, res: dict) -> dict:
+        return {"ok": res["ok"], "error": None if res["ok"] else res["detail"],
+                "detail": res["detail"], "scraper": self.jobs_scraper()}
+
+    def _scraper_cadence(self, every, at):
+        """`every` (minutes, one of the presets) or `at` (HH:MM) as install()
+        keyword arguments, or the reason they are refused."""
+        if every not in (None, ""):
+            try:
+                minutes = int(every)
+            except (TypeError, ValueError):
+                return None, f"interval {every!r} is not a whole number"
+            if minutes not in self.JOBS_SCRAPER_EVERY:
+                return None, "interval must be one of " + ", ".join(
+                    f"{m // 60}h" for m in self.JOBS_SCRAPER_EVERY)
+            return {"every": minutes}, None
+        when = str(at or "09:30").strip()
+        m = re.match(r"^(\d{1,2}):(\d{2})$", when)
+        if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+            return None, f"time {when!r} is not HH:MM"
+        return {"at": f"{int(m.group(1)):02d}:{m.group(2)}"}, None
 
     IDEA_SORTS = {"overall", "created_at", "demand_signal", "feasibility", "competition", "id", "title", "status"}
 
@@ -1042,6 +1198,13 @@ class ConsoleAPI:
         d["ideas"] = [
             self._rowdict(i) for i in list_cluster_ideas(self.db, cluster_id)
         ]
+        # A list, not the stored JSON string: the brief shows the comments an
+        # idea was built from, and the page matches them against `members`.
+        for i in d["ideas"]:
+            try:
+                i["supporting_nuggets"] = json.loads(i.get("supporting_nuggets") or "[]")
+            except (TypeError, ValueError):
+                i["supporting_nuggets"] = []
         return {"ok": True, "cluster": d}
 
     def cluster_run_async(self, threshold=None, min_size=None, min_nuggets=None,
@@ -1141,13 +1304,42 @@ class ConsoleAPI:
         except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
             return {"ok": False, "error": f"clustering failed: {exc}"}
 
-    def cluster_generate_idea(self, cluster_id: int):
+    def cluster_generate_idea_async(self, cluster_id: int):
+        """Draft an idea in the background, reporting each stage as it goes.
+
+        The synchronous call holds one request for ~30 seconds behind a button
+        that says nothing. As a job, the page can say which stage it is on,
+        survives a reload mid-draft (the kind names the theme), and lets the
+        operator open other themes meanwhile.
+        """
+        from jester.jobs import start_job
+
+        cid = int(cluster_id or 0)
+        if get_cluster(self.db, cid) is None:
+            return {"ok": False, "error": f"no cluster {cid}"}
+
+        def work(progress):
+            # Own connection, built in the thread: see cluster_run_async.
+            worker_api = ConsoleAPI(self.db_path, self.config_dir)
+            out = worker_api.cluster_generate_idea(cid, progress=progress)
+            if out.get("ok") is False:
+                raise RuntimeError(out.get("error") or "drafting failed")
+            return out
+
+        return start_job(self.db_path, f"cluster-idea:{cid}", work)
+
+    def cluster_generate_idea(self, cluster_id: int, progress=None):
         """Draft an idea FROM one theme.
 
         Deliberately writes to `cluster_ideas`, not `ideas`. Drafts are cheap
         and most get discarded; letting them into the archive directly would
         turn it into a scratchpad. Promotion is a separate, explicit act.
+
+        `progress`, when given, is told each stage by name. The page maps
+        these to its step list, so the wording is part of the contract:
+        reading / drafting / scoring / saving.
         """
+        say = progress or (lambda _msg: None)
         from jester.agents.critic import Critic
         from jester.agents.synthesizer import row_to_nugget
         from jester.llm import (
@@ -1176,8 +1368,10 @@ class ConsoleAPI:
         if not rows:
             return {"ok": False, "error": "the cluster's nuggets are gone from the archive"}
         nuggets = [row_to_nugget(r) for r in rows]
+        say(f"reading the theme's {len(nuggets)} comments")
 
         synth = select_synthesizer_llm(self._cfg().thresholds)
+        say("drafting the problem and the solution")
         draft = synth.synthesize(nuggets)
         idea = Idea(
             title=draft.title,
@@ -1190,9 +1384,11 @@ class ConsoleAPI:
         # Critic.score persists ONLY when idea.id is set. A draft has none, so
         # this scores in memory and nothing reaches the ideas archive — which
         # is the whole point of the draft/promote split.
+        say("scoring demand, feasibility and competition")
         critic = Critic(self.db, self._cfg().thresholds)
         idea = critic.score(idea, select_critic_llm(self._cfg().thresholds))
 
+        say("saving the draft")
         draft_id = insert_cluster_idea(self.db, cluster_id, idea)
         return {
             "ok": True,

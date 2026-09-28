@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from datetime import datetime, timezone
 from typing import Iterable
 
 from . import Signal, upsert
@@ -191,10 +192,42 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
         ))
         kept += 1
 
-    if batch:
-        upsert(signals_db, batch)
-    return {"seen": seen, "kept": kept, "by_audience": by_audience,
+    new = upsert(signals_db, batch)["new"] if batch else 0
+    return {"seen": seen, "kept": kept, "new": new, "by_audience": by_audience,
             "rejected": rejected}
+
+
+def score_and_record(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection,
+                     *, slugs: set[str], rules_path: str, kind: str = "scheduled") -> dict:
+    """`score_archive`, plus a row in the run ledger.
+
+    The jobs scraper runs this after its collectors, and the Runs table is
+    where anyone checks what a run did. A step that changes the archive
+    without a ledger row is the "silent" the run module exists to prevent.
+    Still collects nothing: the row says so in its note.
+    """
+    from .run import _now, _save_run, ensure_run_table
+
+    ensure_run_table(signals_db)
+    started = _now()
+    run_id = f"reddit-archive-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    res = score_archive(nuggets_db, signals_db, slugs=slugs,
+                        rules_path=rules_path, run_id=run_id)
+    by = res["by_audience"]
+    rej = sum((res.get("rejected") or {}).values())
+    row = {
+        "run_id": run_id, "source": "reddit-archive", "mode": "live", "kind": kind,
+        "started_utc": started, "finished_utc": _now(), "since": "",
+        "queries": json.dumps(sorted(slugs)), "collected": res["seen"],
+        "new": res["new"], "seen_again": max(0, res["kept"] - res["new"]),
+        "edited": 0, "relevant": res["kept"], "buyer": by.get("buyer", 0),
+        "practitioner": by.get("practitioner", 0), "errors": 0, "status": "ok",
+        "note": (f"scored what the worker already collected from {len(slugs)} "
+                 f"Reddit room(s); no requests to Reddit"
+                 + (f"; {rej} seller/question post(s) discarded" if rej else "")),
+    }
+    _save_run(signals_db, row)
+    return row
 
 
 def hiring_slugs(sources_path: str = "config/sources.yaml") -> set[str]:
