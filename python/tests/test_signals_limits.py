@@ -25,16 +25,16 @@ JOB = {"guid": "https://himalayas.app/companies/acme/jobs/python-dev",
 
 
 class Opener:
-    """Answers one listing per request; a query named in `limited` gets 429."""
+    """Answers one listing per request; a query named in `limited` gets `code`."""
 
-    def __init__(self, limited=(), retry_after="120", total=1):
+    def __init__(self, limited=(), retry_after="120", total=1, code=429):
         self.limited, self.retry_after, self.urls = set(limited), retry_after, []
-        self.total = total
+        self.total, self.code = total, code
 
     def __call__(self, req, timeout=None):
         self.urls.append(req.full_url)
         if any(f"q={q}&" in req.full_url for q in self.limited):
-            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests",
+            raise urllib.error.HTTPError(req.full_url, self.code, "Slow down",
                                          {"Retry-After": self.retry_after}, None)
         return io.BytesIO(json.dumps({"jobs": [JOB], "totalCount": self.total}).encode())
 
@@ -99,9 +99,14 @@ def test_a_spent_budget_sits_out_until_midnight_utc(db):
 def test_only_rate_limits_and_budgets_are_limits():
     assert limits.is_limit(SourceError("x", status="429"))
     assert limits.is_limit(SourceError("x", status="budget"))
+    # "Temporarily unable": how Himalayas answered after a 78-minute read.
+    assert limits.is_limit(SourceError("x", status="503"))
     # A block page or a 403 may mean we are locked out: a failure, not a limit.
     assert not limits.is_limit(SourceError("x", status="403"))
     assert not limits.is_limit(SourceError("non-JSON"))
+    # A broken server or gateway is a failure the ledger should show as one.
+    for status in ("500", "502", "504"):
+        assert not limits.is_limit(SourceError("x", status=status))
 
 
 @pytest.mark.parametrize("value, seconds", [("120", 120.0), ("", 0.0), (None, 0.0),
@@ -141,6 +146,16 @@ def test_a_429_carries_the_wait_it_asked_for():
         list(board.search("engineer", limit=20))
     assert exc.value.status == "429" and exc.value.retry_after == 300.0
     assert board.requests == 3, "the retries are requests too"
+
+
+def test_an_overloaded_board_sits_out_for_as_long_as_it_asks(db, rules):
+    opener = Opener(limited=["engineer"], retry_after="600", code=503)
+    row = sigrun.collect(db, source=_board(opener), rules=rules,
+                         queries=["engineer", "developer"], limit_per_query=20)
+    assert row["status"] == "limited"
+    assert not any("q=developer" in u for u in opener.urls), "no request after the 503s"
+    assert "HTTP 503" in row["note"]
+    assert limits.blocked(db, _board(Opener())).startswith("cooling down")
 
 
 # ---- one run ---------------------------------------------------------------

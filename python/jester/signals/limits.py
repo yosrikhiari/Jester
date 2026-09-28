@@ -11,7 +11,11 @@ Two limits, both kept per source in `signal_source_state`:
 
 * **a cool-down** -- set when a source rate-limits us: its `Retry-After`, or
   an hour. Until it ends the chain skips the source without a single request,
-  because retrying a 429 early is how a rate limit becomes a ban.
+  because retrying a 429 early is how a rate limit becomes a ban. A 503 that
+  outlasts every retry counts too: it is "temporarily unable, come back
+  later" by definition, and it is how Himalayas answered on 2026-09-28 after
+  a 78-minute read -- every term's first page, one after another. Without
+  this the nightly chain would have asked it again the same evening.
 * **a daily budget** -- our own ceiling on requests, set per board as
   `daily_budget` (none of the boards publishes a number; Himalayas says its
   data refreshes daily, so polling it harder buys nothing). Spent, the source
@@ -19,6 +23,8 @@ Two limits, both kept per source in `signal_source_state`:
 
 What is NOT a limit: a block page, a non-JSON body, a 401/403. Those mean we
 may be locked out, and switching past them would hide it -- they stay failures.
+Nor are 500, 502 and 504: a broken server or gateway, which the ledger should
+show as a failure rather than as the source pacing us.
 
 Only whole sources rotate. Nothing here rotates addresses, keys or accounts to
 get around one source's limit; the limit is the source's answer, and the
@@ -47,6 +53,7 @@ DEFAULT_COOLDOWN = timedelta(hours=1)
 
 #: `SourceError.status` values that mean "you have asked enough", not "broken".
 RATE_LIMITED = "429"
+OVERLOADED = "503"
 BUDGET_SPENT = "budget"
 
 
@@ -64,7 +71,9 @@ def ensure_state_table(db: sqlite3.Connection) -> None:
 
 
 def is_limit(exc) -> bool:
-    return getattr(exc, "status", "") in (RATE_LIMITED, BUDGET_SPENT)
+    # Every source raises SourceError only once its retries are spent, so a
+    # 503 here has already outlasted the backoff.
+    return getattr(exc, "status", "") in (RATE_LIMITED, OVERLOADED, BUDGET_SPENT)
 
 
 def _state(db: sqlite3.Connection, source: str) -> dict:

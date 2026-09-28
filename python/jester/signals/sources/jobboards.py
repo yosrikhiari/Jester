@@ -179,7 +179,7 @@ class _JobBoard:
                     return json.loads(resp.read().decode("utf-8", "replace"))
             except urllib.error.HTTPError as exc:
                 last, status = f"HTTP {exc.code} from {self.name}", str(exc.code)
-                if exc.code == 429:
+                if exc.code in (429, 503):   # both may say when to come back
                     retry_after = retry_after_seconds(
                         exc.headers.get("Retry-After") if exc.headers else "")
                 if exc.code not in RETRYABLE:
