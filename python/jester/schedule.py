@@ -343,10 +343,23 @@ COMMAND_SPEC = {
         # Two months daily: new adverts land in the current thread, and the
         # previous one is still being added to. Anything older is already in
         # the archive and dedupes on sight.
+        #
+        # --fallback, because two months of threads are exhausted a day after
+        # they are read: between the 1st of one month and the next, every run
+        # re-read the same ~490 adverts and stored none. The job boards post
+        # daily and can be asked for contract work specifically; they are
+        # walked in order until one adds something, each run noting why in the
+        # ledger. Himalayas first: by far the largest contract pool measured.
+        #
+        # --also-reddit-archive scores the Reddit hiring rooms the Go worker
+        # has already stored -- the leads-reddit step, folded in so one run
+        # covers every hiring source. It makes no requests to Reddit.
         "argv": ("signals", "run",
                  "--source", "hackernews-hiring",
                  "--rules", "config/hiring_rules.yaml",
-                 "--query", "2", "--limit", "1000"),
+                 "--query", "2", "--limit", "1000",
+                 "--fallback", "himalayas,remotive,jobicy",
+                 "--also-reddit-archive", "--archive", "data/jester.db"),
         "config": False,
     },
 }
@@ -465,10 +478,18 @@ def status(task_name: str = TASK_NAME) -> dict:
             return {"installed": False, "scheduler": "schtasks", "detail": ""}
         detail = p.stdout.strip()
         fields = parse_query_fields(detail)
+        # Registered is not the same as live. A task switched off in Task
+        # Scheduler (or by `set_enabled`) still answers /query, so reading
+        # "installed" alone reported a paused job as a working schedule.
+        state = (fields.get("scheduled task state") or "").strip().lower()
         return {
             "installed": True,
+            "enabled": state != "disabled",
+            "running": (fields.get("status") or "").strip().lower() == "running",
             "scheduler": "schtasks",
             "next_run": fields.get("next run time", ""),
+            "last_run": fields.get("last run time", ""),
+            "last_result": fields.get("last result", ""),
             "cadence": _cadence_from(fields),
             "interval_minutes": interval_minutes(fields),
             "detail": detail,
@@ -801,6 +822,27 @@ def remove(task_name: str = TASK_NAME) -> dict:
             "detail": (p.stderr or p.stdout).strip(),
         }
     return {"ok": True, "action": "delete", "detail": f"{task_name} removed"}
+
+
+def set_enabled(task_name: str, enabled: bool) -> dict:
+    """Switch a registered task on or off without unregistering it.
+
+    Off is a pause, not a delete: the cadence and the launcher stay exactly as
+    they were, so switching it back on restores the schedule someone chose
+    rather than a default. Windows only -- cron has no disabled state, and
+    commenting lines in and out of a user's crontab is how schedules get lost.
+    """
+    if not is_windows():
+        return {"ok": False, "action": "manual",
+                "detail": "pausing a task needs Windows Task Scheduler; "
+                          "on this host use `jester schedule remove`"}
+    p = _run(["schtasks", "/change", "/tn", task_name,
+              "/enable" if enabled else "/disable"])
+    if p.returncode != 0:
+        return {"ok": False, "action": "change",
+                "detail": (p.stderr or p.stdout).strip()}
+    return {"ok": True, "action": "change",
+            "detail": f"{task_name} {'enabled' if enabled else 'disabled'}"}
 
 
 def run_now(task_name: str = TASK_NAME) -> dict:

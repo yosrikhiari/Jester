@@ -271,7 +271,7 @@ def test_counts_separate_buyer_from_practitioner(tmp_path, rules):
     """Adding them together would inflate the only number anyone reads."""
     db = sig.open_signals(str(tmp_path / "c.db"))
     sig.upsert(db, sig.synthetic_signals(rules=rules))
-    c = sig.counts(db)["fixture"]
+    c = sig.counts(db)["synthetic"]
     assert c["buyer"] == 2 and c["practitioner"] == 1
     assert c["relevant"] == c["buyer"] + c["practitioner"]
 

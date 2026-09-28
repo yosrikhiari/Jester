@@ -2250,28 +2250,56 @@ def cmd_signals(args):
                 return
 
             source = sigsrc.get_source(args.source)
-            fn = sigrun.collect if action == "run" else sigrun.recover
             kwargs = dict(source_name=args.source, rules=rules, since=args.since,
                           limit_per_query=args.limit, mode="live", source=source)
             if action == "run":
                 kwargs["queries"] = args.query or None
-            row = fn(db, **kwargs)
+                # Every run was filed "scheduled", including ones typed at a
+                # prompt or started from the console, so the ledger could not
+                # answer the question its column exists for: did the schedule
+                # fire? The launcher sets JESTER_ORIGIN=scheduled; anything
+                # else is somebody pressing a button.
+                kwargs["kind"] = os.environ.get("JESTER_ORIGIN", "manual")
+                fallback = [f.strip() for f in (getattr(args, "fallback", "") or "").split(",")
+                            if f.strip()]
+                for name in fallback:
+                    sigsrc.get_source(name)  # an unknown name fails before any fetch
+                # Same rules for the fallbacks: they are job boards, the same
+                # kind of record as the first source, asking the same question.
+                rows = sigrun.collect_or_fall_back(db, fallback=fallback, **kwargs)
+                if getattr(args, "also_reddit_archive", False):
+                    # The Reddit hiring rooms, scored from what the worker
+                    # already stored. Every run, not only as a fallback: it
+                    # makes no requests, and whatever the worker fetched since
+                    # the last run is only a lead once it has been scored.
+                    from jester.signals import from_archive as fa
+                    nuggets = open_db(args.archive, migrate=False)
+                    try:
+                        rows.append(fa.score_and_record(
+                            nuggets, db, slugs=fa.hiring_slugs("config/sources.yaml"),
+                            rules_path=args.rules or "config/hiring_rules.yaml",
+                            kind=kwargs["kind"]))
+                    finally:
+                        nuggets.close()
+            else:
+                rows = [sigrun.recover(db, **kwargs)]
 
-            print(f"run {row['run_id']} ({row['kind']}) · {row['source']} · since {row['since']}")
-            print(f"queries: {len(json.loads(row['queries']))} · "
-                  f"collected {row['collected']} · new {row['new']} · "
-                  f"seen again {row['seen_again']} · edited {row['edited']}")
-            print(f"buyer {row['buyer']} · practitioner {row['practitioner']} · "
-                  f"relevant {row['relevant']} · errors {row['errors']}")
-            if row["note"]:
-                print(row["note"])
-            # A run that collected nothing is a valid run. Saying so out loud
-            # stops the next person reading an empty day as a broken collector.
-            if row["collected"] == 0:
-                print("zero results — a valid run; every query was read and "
-                      "returned nothing")
-            print(f"status: {row['status']}")
-            if row["status"] == "failed":
+            for row in rows:
+                print(f"run {row['run_id']} ({row['kind']}) · {row['source']} · since {row['since']}")
+                print(f"queries: {len(json.loads(row['queries']))} · "
+                      f"collected {row['collected']} · new {row['new']} · "
+                      f"seen again {row['seen_again']} · edited {row['edited']}")
+                print(f"buyer {row['buyer']} · practitioner {row['practitioner']} · "
+                      f"relevant {row['relevant']} · errors {row['errors']}")
+                if row["note"]:
+                    print(row["note"])
+                # A run that collected nothing is a valid run. Saying so out loud
+                # stops the next person reading an empty day as a broken collector.
+                if row["collected"] == 0:
+                    print("zero results — a valid run; every query was read and "
+                          "returned nothing")
+                print(f"status: {row['status']}")
+            if any(row["status"] == "failed" for row in rows):
                 sys.exit(1)
             return
         except sigsrc.SourceError as exc:
@@ -2354,8 +2382,8 @@ def cmd_signals(args):
         finally:
             db.close()
 
-    if args.mode != "fixture":
-        print("only --mode fixture exists today: live collection needs approved "
+    if args.mode != "synthetic":
+        print("only --mode synthetic exists today: live collection needs approved "
               "Reddit API access, which is somebody else's decision. "
               "Nothing here fakes a live run.")
         sys.exit(1)
@@ -2470,7 +2498,7 @@ def main(argv=None):
     # `run` action against a named approved source, and it labels its rows
     # live — a fixture row must never be countable as a live one, so the two
     # do not share a code path.
-    sg.add_argument("--mode", default="fixture", choices=["fixture"],
+    sg.add_argument("--mode", default="synthetic", choices=["synthetic"],
                     help="fixture only, for `export`; live collection is `signals run`")
     sg.add_argument("--source", default="hackernews",
                     help="which approved collector `run`/`recover` uses")
@@ -2480,6 +2508,12 @@ def main(argv=None):
                     help="override the configured phrases; repeatable")
     sg.add_argument("--limit", type=int, default=100,
                     help="max records per query (also the row limit for `runs`)")
+    sg.add_argument("--fallback", default="",
+                    help="run: comma-separated collectors to try in order, with "
+                         "the same rules, while each adds nothing new")
+    sg.add_argument("--also-reddit-archive", action="store_true",
+                    help="run: afterwards, score the Reddit hiring rooms the worker "
+                         "already stored in --archive (no requests to Reddit)")
     sg.add_argument("--digest-since", default="",
                     help="digest window start (ISO); default: seven days back")
     sg.add_argument("--digest-until", default="",
@@ -2518,7 +2552,7 @@ def main(argv=None):
     # Separate from --mode, which says what this command may collect. This one
     # narrows what is loaded or exported, and defaults to everything: leaving
     # rows out of an archive is how a count stops reconciling.
-    sg.add_argument("--only-mode", default="", choices=["", "live", "fixture"],
+    sg.add_argument("--only-mode", default="", choices=["", "live", "synthetic"],
                     help="load/export only rows of this mode (default: all)")
     sg.set_defaults(func=cmd_signals)
 

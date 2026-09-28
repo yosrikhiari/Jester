@@ -210,7 +210,7 @@ def to_clickhouse_row(row) -> dict:
 #: ClickHouse side cannot (the HTTP interface takes one statement, not a
 #: statement and a bind list), so the value is checked against this instead of
 #: being interpolated on trust.
-MODES = ("live", "fixture")
+MODES = ("live", "synthetic")
 
 
 def _checked_mode(mode: str) -> str:

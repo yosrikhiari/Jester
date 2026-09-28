@@ -227,6 +227,58 @@ def recover(db: sqlite3.Connection, *, source_name: str = "hackernews", rules=No
     return row
 
 
+def collect_or_fall_back(db: sqlite3.Connection, *, fallback=(),
+                         fallback_rules=None, fallback_limit: int = 100,
+                         **kwargs) -> List[dict]:
+    """Collect from one source; while nothing new comes back, try the next.
+
+    Written for the hiring collector, which reads one monthly thread: between
+    the 1st of one month and the next it has nothing new to say, so a daily
+    run -- or a button pressed three times -- re-reads the same ~490 adverts
+    and stores none of them. `fallback` names other sources of the same kind
+    (job boards), walked in order until one adds something.
+
+    The fallbacks are scored with the SAME rules as the first source unless
+    told otherwise: they are the same kind of record (a job advert) asking the
+    same question. Each is searched with its own `default_queries` -- the
+    hiring rules' "12" means twelve months to Hacker News and is a meaningless
+    keyword to a job board.
+
+    Only a clean zero moves on. A FAILED first run is not "nothing new", it is
+    "could not look", and quietly running something else would bury it. A
+    failed fallback is recorded and the walk continues: the failure is its own
+    row in the ledger, and the next board may well be up.
+
+    Returns every run row, first to last. Each notes why it happened, in the
+    ledger itself rather than only in a log.
+    """
+    if isinstance(fallback, str):
+        fallback = [f.strip() for f in fallback.split(",") if f.strip()]
+    rows = [collect(db, **kwargs)]
+    if rows[0]["status"] == "failed":
+        return rows
+
+    for name in fallback:
+        prev = rows[-1]
+        if prev["new"]:
+            break
+        prev["note"] = "; ".join(filter(None, [prev.get("note"),
+                                               f"nothing new; fell back to {name}"]))
+        _save_run(db, prev)
+        source = get_source(name)
+        row = collect(db, source_name=name, source=source,
+                      rules=fallback_rules or kwargs.get("rules"),
+                      queries=list(getattr(source, "default_queries", ()) or ()) or None,
+                      since=kwargs.get("since", "7d"), limit_per_query=fallback_limit,
+                      mode=kwargs.get("mode", "live"),
+                      kind=kwargs.get("kind", "scheduled"),
+                      seen_at=kwargs.get("seen_at"))
+        row["note"] = f"fallback: {rows[0]['source']} had nothing new"
+        _save_run(db, row)
+        rows.append(row)
+    return rows
+
+
 def reclassify(db: sqlite3.Connection, rules=None, *, baseline=None, mode: str = "",
                community: str = "", dry_run: bool = True) -> dict:
     """Re-score every stored record and report what moved.
