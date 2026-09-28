@@ -229,23 +229,33 @@ class Himalayas(_JobBoard):
 
     def search(self, query: str, *, since_utc: str = "", limit: int = 100) -> Iterator[Signal]:
         del since_utc  # the API has no date filter; dedupe does the work
-        seen, page = 0, 1
-        while seen < limit:
-            jobs = self._page(query, page)
-            # `limit` counts listings READ, not kept: it bounds the requests.
-            for job in jobs[: limit - seen]:
+        page = 1
+        # `limit` counts listing SLOTS asked for (page x 20), not kept: it
+        # bounds the requests even when pages come back short.
+        while (page - 1) * self.PAGE < limit:
+            body = self._page(query, page)
+            jobs = body.get("jobs") or []
+            for job in jobs:
                 sig = self._keep(job, query)
                 if sig is not None:
                     yield sig
-            seen += len(jobs)
-            if len(jobs) < self.PAGE:
-                return   # a short (or empty) page is the last one
+            if not jobs or self._last_page(body, page, len(jobs)):
+                return
             page += 1
 
-    def _page(self, query: str, page: int) -> list:
+    def _last_page(self, body: dict, page: int, got: int) -> bool:
+        """Himalayas returns SHORT pages mid-results (4 of 20 on page 1 of
+        "engineer", totalCount 2258), so a short page is not the end when the
+        total says otherwise. Without a total, a short page is the last."""
+        total = body.get("totalCount")
+        if isinstance(total, int):
+            return page * self.PAGE >= total
+        return got < self.PAGE
+
+    def _page(self, query: str, page: int) -> dict:
         q = urllib.parse.urlencode({"q": query, "employment_type": "Contractor",
                                     "sort": "recent", "page": page})
-        return self._get(f"{self.SEARCH_URL}?{q}").get("jobs") or []
+        return self._get(f"{self.SEARCH_URL}?{q}")
 
     def _keep(self, job: dict, query: str) -> Signal | None:
         if not set(job.get("parentCategories") or []) & self.TECH:

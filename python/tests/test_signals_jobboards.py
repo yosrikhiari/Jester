@@ -72,6 +72,25 @@ def test_himalayas_asks_for_contract_work_and_keeps_only_tech(rules):
     assert s.audience == "buyer"
 
 
+def test_a_short_page_mid_results_does_not_end_the_search():
+    """Page 1 of "engineer" came back with 4 of 20 jobs and totalCount 2258;
+    stopping there read 100 listings across 16 terms."""
+    opener = FakeOpener(
+        {"jobs": [_himalayas_job(guid="https://h/jobs/a")], "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/b")] * 20, "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/c")], "totalCount": 45},
+        {"jobs": [_himalayas_job(guid="https://h/jobs/never")], "totalCount": 45})
+    sigs = list(_src("himalayas", opener).search("engineer", limit=1000))
+    assert len(opener.urls) == 3, "page 3 covers 41-60, past the total of 45"
+    assert {s.source_id for s in sigs} == {"himalayas:a", "himalayas:b", "himalayas:c"}
+
+
+def test_the_limit_bounds_requests_even_when_pages_are_short():
+    opener = FakeOpener(*[{"jobs": [_himalayas_job()], "totalCount": 9999}] * 10)
+    list(_src("himalayas", opener).search("engineer", limit=60))
+    assert len(opener.urls) == 3
+
+
 def test_marketplaces_are_not_buyers():
     """lemon.io and A.Team scored 1.00 buyers in the dry run. They recruit
     freelancers for their own clients: supply side, not a lead."""
