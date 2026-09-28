@@ -94,6 +94,8 @@ def test_a_company_merely_mentioning_a_marketplace_is_kept():
     assert not jb._is_marketplace("Turingan Labs")
     assert jb._is_marketplace("Toptal")
     assert jb._is_marketplace("lemon.io")
+    assert jb._is_marketplace("goPro Consultancy Group ltd.")
+    assert not jb._is_marketplace("GoPro"), "the camera company is a different company"
 
 
 def test_remotive_keeps_contract_shaped_tech_listings_in_one_request():

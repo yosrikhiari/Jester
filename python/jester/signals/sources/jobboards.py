@@ -58,7 +58,11 @@ MARKETPLACES = ("lemon.io", "a.team", "toptal", "turing", "andela", "braintrust"
                 # freelancers they then resell (Welo Global's "Ads Quality
                 # Rater" roles scored as thin buyers in the second dry run).
                 "welo global", "appen", "telus digital", "lionbridge", "remotasks",
-                "toloka")
+                "toloka",
+                # Staffing consultancies placing contractors with THEIR clients:
+                # supply side again. Three "buyers" on 2026-09-28. By full name,
+                # so GoPro the camera company is not caught with it.
+                "gopro consultancy")
 
 #: The engagement types worth storing when a board states the type itself.
 #: A full-time listing is not a lead for fractional engineering, and long

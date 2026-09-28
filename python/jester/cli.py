@@ -2266,7 +2266,12 @@ def cmd_signals(args):
             kwargs = dict(source_name=args.source, rules=rules, since=args.since,
                           limit_per_query=args.limit, mode="live", source=source)
             if action == "run":
-                kwargs["queries"] = args.query or None
+                # A job board searches its own terms. Without this, running a
+                # board directly searched the hiring rules' `queries` ("12" --
+                # twelve months, to Hacker News), which means nothing to it.
+                kwargs["queries"] = (args.query
+                                     or list(getattr(source, "default_queries", ()) or ())
+                                     or None)
                 # Every run was filed "scheduled", including ones typed at a
                 # prompt or started from the console, so the ledger could not
                 # answer the question its column exists for: did the schedule
