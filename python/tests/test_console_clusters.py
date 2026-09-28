@@ -50,7 +50,7 @@ def _draft(overall=7.0):
                 synthesis_model="test-model")
 
 
-@pytest.fixture()
+@pytest.fixture
 def env(tmp_path):
     path = str(tmp_path / "c.db")
     db = open_db(path)
@@ -63,12 +63,16 @@ def test_the_list_says_whether_a_theme_has_a_draft_or_a_saved_idea(env):
     api = ConsoleAPI(path, str(REPO_CONFIG))
 
     row = api.clusters()["clusters"][0]
-    assert row["n_ideas"] == 0 and row["idea_best"] is None and row["n_ideas_saved"] == 0
+    assert row["n_ideas"] == 0
+    assert row["idea_best"] is None
+    assert row["n_ideas_saved"] == 0
 
     first = insert_cluster_idea(db, cid, _draft(6.5))
     insert_cluster_idea(db, cid, _draft(7.25))
     row = api.clusters()["clusters"][0]
-    assert row["n_ideas"] == 2 and row["idea_best"] == 7.25 and row["n_ideas_saved"] == 0
+    assert row["n_ideas"] == 2
+    assert row["idea_best"] == 7.25
+    assert row["n_ideas_saved"] == 0
 
     promote_cluster_idea(db, first)
     assert api.clusters()["clusters"][0]["n_ideas_saved"] == 1
@@ -112,7 +116,8 @@ def test_drafting_runs_as_a_job_named_after_its_theme(env, monkeypatch):
 
     monkeypatch.setattr(ConsoleAPI, "cluster_generate_idea", fake_generate)
     res = ConsoleAPI(path, str(REPO_CONFIG)).cluster_generate_idea_async(cid)
-    assert res["ok"] is True and res["kind"] == f"cluster-idea:{cid}"
+    assert res["ok"] is True
+    assert res["kind"] == f"cluster-idea:{cid}"
     job = _wait(path, res["job_id"])
     assert job["status"] == "done", job.get("error")
     assert job["result"]["idea"]["title"] == "Backup Sentinel"
@@ -127,10 +132,12 @@ def test_a_failed_draft_is_a_failed_job_not_a_done_one(env, monkeypatch):
                         {"ok": False, "error": "the synthesizer quota is spent"})
     res = ConsoleAPI(path, str(REPO_CONFIG)).cluster_generate_idea_async(cid)
     job = _wait(path, res["job_id"])
-    assert job["status"] == "error" and "quota" in job["error"]
+    assert job["status"] == "error"
+    assert "quota" in job["error"]
 
 
 def test_drafting_an_unknown_theme_is_refused_before_any_job(env):
     path, db, cid = env
     res = ConsoleAPI(path, str(REPO_CONFIG)).cluster_generate_idea_async(cid + 999)
-    assert res["ok"] is False and "no cluster" in res["error"]
+    assert res["ok"] is False
+    assert "no cluster" in res["error"]

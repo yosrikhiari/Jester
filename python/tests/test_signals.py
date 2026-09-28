@@ -68,7 +68,8 @@ def test_counts_are_grouped_by_mode_not_asserted(db):
     c = sig.counts(db)
     assert c["synthetic"]["unique_collected"] == 5
     assert c["live"]["unique_collected"] == 1
-    assert c["synthetic"]["relevant"] == 3 and c["synthetic"]["errors"] == 1
+    assert c["synthetic"]["relevant"] == 3
+    assert c["synthetic"]["errors"] == 1
 
 
 def test_unknown_stays_unknown(db):
@@ -130,7 +131,8 @@ def test_export_reconciles_with_the_table(db, tmp_path):
     assert manifest["reconciles"] is True
     with (tmp_path / "signals-synthetic.csv").open(encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
-    assert len(rows) == 5 and {r["mode"] for r in rows} == {"synthetic"}
+    assert len(rows) == 5
+    assert {r["mode"] for r in rows} == {"synthetic"}
     saved = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert saved["counts_by_mode"]["synthetic"]["relevant"] == 3
     assert (tmp_path / "field-map.md").exists()

@@ -468,14 +468,14 @@ class ConsoleAPI:
     # button that ran a slightly different command than the 09:30 task would
     # make the two impossible to compare in the run ledger.
 
-    JOBS_SCRAPER = "signals-hiring"
+    JOBS_SCRAPER_COMMAND = "signals-hiring"
     #: How often it may repeat, besides daily-at-a-time. The adverts land in one
     #: thread a month; anything tighter than six hours re-reads the same page
     #: and dedupes it away, at the cost of someone else's API.
     JOBS_SCRAPER_EVERY = (360, 720)
 
     def _jobs_scraper_task(self) -> str:
-        return _schedule.TASK_FOR_COMMAND[self.JOBS_SCRAPER]
+        return _schedule.TASK_FOR_COMMAND[self.JOBS_SCRAPER_COMMAND]
 
     def jobs_scraper(self):
         """Is the scraper scheduled, is it running, and what did it last say."""
@@ -485,9 +485,9 @@ class ConsoleAPI:
         # The console's own run, if one is in flight: a reload mid-run must
         # pick the progress back up rather than offer the button again.
         active = next((j for j in recent_jobs(self.db, limit=20)
-                       if j["kind"] == self.JOBS_SCRAPER and j["status"] == "running"),
+                       if j["kind"] == self.JOBS_SCRAPER_COMMAND and j["status"] == "running"),
                       None)
-        log = _schedule.log_path(self.JOBS_SCRAPER)
+        log = _schedule.log_path(self.JOBS_SCRAPER_COMMAND)
         try:
             tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
         except OSError:
@@ -506,7 +506,7 @@ class ConsoleAPI:
             "last_result": st.get("last_result", ""),
             "job": active,
             "every_presets": list(self.JOBS_SCRAPER_EVERY),
-            "command": "jester " + " ".join(_schedule.command_argv(self.JOBS_SCRAPER)),
+            "command": "jester " + " ".join(_schedule.command_argv(self.JOBS_SCRAPER_COMMAND)),
             "log_tail": tail,
         }
 
@@ -524,13 +524,13 @@ class ConsoleAPI:
         # Reddit rooms are scored from the archive THIS console is reading,
         # which is not data/jester.db in the Docker stack.
         argv = [sys.executable, "-u", "-m", "jester.cli",
-                *_schedule.command_argv(self.JOBS_SCRAPER), "--db", self._signals_path,
+                *_schedule.command_argv(self.JOBS_SCRAPER_COMMAND), "--db", self._signals_path,
                 "--archive", self.db_path]
         env = {**os.environ,
                "PYTHONPATH": os.pathsep.join(filter(None, [
                    str(self.repo_root / "python"), os.environ.get("PYTHONPATH")])),
                "JESTER_ORIGIN": "manual"}
-        log = _schedule.log_path(self.JOBS_SCRAPER)
+        log = _schedule.log_path(self.JOBS_SCRAPER_COMMAND)
         root = self.repo_root
 
         def append_log(text):
@@ -538,6 +538,8 @@ class ConsoleAPI:
             # story. Best effort: a scheduled run holding it open must not
             # fail a run that otherwise worked.
             try:
+                # data/ is gitignored, so a fresh clone has no folder for it.
+                log.parent.mkdir(parents=True, exist_ok=True)
                 with log.open("a", encoding="utf-8") as fh:
                     fh.write(text)
             except OSError:
@@ -546,7 +548,7 @@ class ConsoleAPI:
         def work(progress):
             progress("reading Hacker News “Who is hiring?” threads")
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            append_log(f"[{stamp}] jester {self.JOBS_SCRAPER} starting (console)\n")
+            append_log(f"[{stamp}] jester {self.JOBS_SCRAPER_COMMAND} starting (console)\n")
             # Relative paths in the argv (config/hiring_rules.yaml) are
             # repo-relative, as they are for the launcher, which cds there.
             p = subprocess.run(argv, cwd=root, env=env, capture_output=True,
@@ -555,7 +557,7 @@ class ConsoleAPI:
             out = (p.stdout or "") + (p.stderr or "")
             append_log(out + ("" if out.endswith("\n") else "\n")
                        + f"[{datetime.now():%Y-%m-%d %H:%M:%S}] jester "
-                         f"{self.JOBS_SCRAPER} exited {p.returncode} (console)\n")
+                         f"{self.JOBS_SCRAPER_COMMAND} exited {p.returncode} (console)\n")
             lines = [ln for ln in out.splitlines() if ln.strip()]
             if p.returncode != 0:
                 raise RuntimeError(lines[-1] if lines else f"exited {p.returncode}")
@@ -563,7 +565,7 @@ class ConsoleAPI:
             # Two runs when the fallback fires, six lines or so each.
             return {"exit": p.returncode, "output": lines[-16:]}
 
-        return start_job(self.db_path, self.JOBS_SCRAPER, work)
+        return start_job(self.db_path, self.JOBS_SCRAPER_COMMAND, work)
 
     def jobs_scraper_schedule(self, enabled=True, every=None, at=None):
         """Turn the scraper's schedule on (at a cadence) or off.
@@ -576,37 +578,44 @@ class ConsoleAPI:
             return {"ok": False, "error": "scheduling from the console needs "
                     "Windows Task Scheduler on this host",
                     "detail": "use `jester schedule install --command signals-hiring`"}
-        if not enabled:
+        # The console posts JSON false for "off"; anything else means on.
+        if enabled is False:
             if not _schedule.status(task).get("installed"):
                 return {"ok": True, "detail": "not scheduled", "scraper": self.jobs_scraper()}
-            res = _schedule.set_enabled(task, False)
-            return {"ok": res["ok"], "error": None if res["ok"] else res["detail"],
-                    "detail": res["detail"], "scraper": self.jobs_scraper()}
+            return self._scraper_result(_schedule.set_enabled(task, False))
 
-        kw = {}
+        kw, error = self._scraper_cadence(every, at)
+        if error:
+            return {"ok": False, "error": error}
+        # Re-registering rewrites the launcher and recreates the task enabled,
+        # which is also what turns a paused task back on.
+        return self._scraper_result(_schedule.install(
+            db=self._signals_path, config=self.config_dir,
+            task_name=task, command=self.JOBS_SCRAPER_COMMAND, **kw))
+
+    def _scraper_result(self, res: dict) -> dict:
+        return {"ok": res["ok"], "error": None if res["ok"] else res["detail"],
+                "detail": res["detail"], "scraper": self.jobs_scraper()}
+
+    def _scraper_cadence(self, every, at):
+        """`every` (minutes, one of the presets) or `at` (HH:MM) as install()
+        keyword arguments, or the reason they are refused."""
         if every not in (None, ""):
             try:
                 minutes = int(every)
             except (TypeError, ValueError):
-                return {"ok": False, "error": f"interval {every!r} is not a whole number"}
+                return None, f"interval {every!r} is not a whole number"
             if minutes not in self.JOBS_SCRAPER_EVERY:
-                return {"ok": False, "error": "interval must be one of "
-                        + ", ".join(f"{m // 60}h" for m in self.JOBS_SCRAPER_EVERY)}
-            kw["every"] = minutes
-        else:
-            when = str(at or "09:30").strip()
-            m = re.match(r"^(\d{1,2}):(\d{2})$", when)
-            if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-                return {"ok": False, "error": f"time {when!r} is not HH:MM"}
-            kw["at"] = f"{int(m.group(1)):02d}:{m.group(2)}"
-        # Re-registering rewrites the launcher and recreates the task enabled,
-        # which is also what turns a paused task back on.
-        res = _schedule.install(db=self._signals_path, config=self.config_dir,
-                                task_name=task, command=self.JOBS_SCRAPER, **kw)
-        return {"ok": res["ok"], "error": None if res["ok"] else res["detail"],
-                "detail": res["detail"], "scraper": self.jobs_scraper()}
+                return None, "interval must be one of " + ", ".join(
+                    f"{m // 60}h" for m in self.JOBS_SCRAPER_EVERY)
+            return {"every": minutes}, None
+        when = str(at or "09:30").strip()
+        m = re.match(r"^(\d{1,2}):(\d{2})$", when)
+        if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+            return None, f"time {when!r} is not HH:MM"
+        return {"at": f"{int(m.group(1)):02d}:{m.group(2)}"}, None
 
-    IDEA_SORTS ={"overall", "created_at", "demand_signal", "feasibility", "competition", "id", "title", "status"}
+    IDEA_SORTS = {"overall", "created_at", "demand_signal", "feasibility", "competition", "id", "title", "status"}
 
     def ideas(self, status="", q="", sort="overall", dir="desc", offset=0, limit=0):
         """Ideas, filtered and sorted server-side, one page at a time.
@@ -1305,7 +1314,7 @@ class ConsoleAPI:
         """
         from jester.jobs import start_job
 
-        cid = int(cluster_id)
+        cid = int(cluster_id or 0)
         if get_cluster(self.db, cid) is None:
             return {"ok": False, "error": f"no cluster {cid}"}
 

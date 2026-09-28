@@ -34,18 +34,21 @@ class FakeRun:
     def __init__(self, query_out="", query_rc=0):
         self.calls = []
         self.query_out, self.query_rc = query_out, query_rc
+        self.change_rc = 0
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         if "/query" in cmd:
             return subprocess.CompletedProcess(cmd, self.query_rc, self.query_out, "")
+        if "/change" in cmd and self.change_rc:
+            return subprocess.CompletedProcess(cmd, self.change_rc, "", "ERROR: Access is denied.")
         return subprocess.CompletedProcess(cmd, 0, "SUCCESS", "")
 
     def made(self, verb):
         return [c for c in self.calls if verb in c]
 
 
-@pytest.fixture()
+@pytest.fixture
 def host(tmp_path, monkeypatch):
     monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
     monkeypatch.setattr(schedule, "is_windows", lambda: True)
@@ -54,7 +57,7 @@ def host(tmp_path, monkeypatch):
     return fake
 
 
-@pytest.fixture()
+@pytest.fixture
 def api(tmp_path):
     return ConsoleAPI(db_path=str(tmp_path / "console.db"), config_dir=str(REPO_CONFIG))
 
@@ -66,7 +69,8 @@ def test_status_tells_a_paused_task_from_a_live_one(host):
     assert st["installed"] is True
     assert st["enabled"] is False
     assert st["running"] is False
-    assert st["last_run"] == "9/25/2026 9:30:01 AM" and st["last_result"] == "0"
+    assert st["last_run"] == "9/25/2026 9:30:01 AM"
+    assert st["last_result"] == "0"
 
 
 def test_set_enabled_pauses_without_unregistering(host):
@@ -80,7 +84,8 @@ def test_set_enabled_pauses_without_unregistering(host):
 def test_scraper_status_reports_the_hiring_task(host, api):
     d = api.jobs_scraper()
     assert d["task"] == "JesterNightlySignalsHiring"
-    assert d["installed"] is True and d["enabled"] is False
+    assert d["installed"] is True
+    assert d["enabled"] is False
     assert d["command"].startswith("jester signals run --source hackernews-hiring")
     assert d["job"] is None
 
@@ -88,7 +93,8 @@ def test_scraper_status_reports_the_hiring_task(host, api):
 def test_turning_it_off_disables_the_task(host, api):
     res = api.jobs_scraper_schedule(enabled=False)
     assert res["ok"] is True
-    assert host.made("/disable") and not host.made("/create")
+    assert host.made("/disable")
+    assert not host.made("/create")
 
 
 def test_daily_registers_the_same_command_the_button_runs(host, api):
@@ -122,7 +128,8 @@ def test_intervals_outside_the_presets_are_refused(host, api, every):
 @pytest.mark.parametrize("at", ["25:00", "9h30", "12:75"])
 def test_bad_times_are_refused(host, api, at):
     res = api.jobs_scraper_schedule(enabled=True, at=at)
-    assert res["ok"] is False and "HH:MM" in res["error"]
+    assert res["ok"] is False
+    assert "HH:MM" in res["error"]
     assert not host.made("/create")
 
 
@@ -133,10 +140,82 @@ def test_run_now_refuses_while_the_scheduled_run_is_going(host, api):
         "Status:                               Disabled",
         "Status:                               Running")
     res = api.jobs_scraper_run()
-    assert res["ok"] is False and "in progress" in res["error"]
+    assert res["ok"] is False
+    assert "in progress" in res["error"]
 
 
 def test_scheduling_is_windows_only_here(monkeypatch, api):
     monkeypatch.setattr(schedule, "is_windows", lambda: False)
     res = api.jobs_scraper_schedule(enabled=True, at="09:30")
-    assert res["ok"] is False and "signals-hiring" in res["detail"]
+    assert res["ok"] is False
+    assert "signals-hiring" in res["detail"]
+
+
+def _wait_for_job(path, job_id, timeout=10.0):
+    import time
+    from jester.jobs import get_job
+    from jester.store import open_db
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        db = open_db(path)
+        try:
+            job = get_job(db, job_id)
+        finally:
+            db.close()
+        if job and job["status"] in ("done", "error"):
+            return job
+        time.sleep(0.05)
+    raise AssertionError("the scraper job never finished")
+
+
+def _fake_cli(monkeypatch, returncode, stdout):
+    """Stand in for the `jester signals run` subprocess; keep the argv it got."""
+    from jester.console import api as api_mod
+    seen = {}
+
+    def run(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw.get("env", {})
+        return subprocess.CompletedProcess(argv, returncode, stdout, "")
+
+    monkeypatch.setattr(api_mod.subprocess, "run", run)
+    return seen
+
+
+def test_run_now_runs_the_scheduled_argv_as_a_manual_job(host, api, monkeypatch, tmp_path):
+    seen = _fake_cli(monkeypatch, 0,
+                     "run r1 (manual) · hackernews-hiring · since 7d\n"
+                     "queries: 1 · collected 489 · new 0 · seen again 489 · edited 0\n"
+                     "status: ok\n")
+    res = api.jobs_scraper_run()
+    assert res["ok"] is True
+    job = _wait_for_job(api.db_path, res["job_id"])
+    assert job["status"] == "done", job.get("error")
+    assert job["result"]["exit"] == 0
+    # The same command the task runs, the console's own archive, a manual origin.
+    assert "--fallback" in seen["argv"]
+    assert seen["argv"][-2:] == ["--archive", api.db_path]
+    assert seen["env"]["JESTER_ORIGIN"] == "manual"
+    log = schedule.log_path("signals-hiring").read_text(encoding="utf-8")
+    assert "starting (console)" in log
+    assert "exited 0 (console)" in log
+
+
+def test_a_failed_scraper_run_is_a_failed_job(host, api, monkeypatch):
+    _fake_cli(monkeypatch, 1, "source: HTTP 503 from Hacker News\n")
+    res = api.jobs_scraper_run()
+    job = _wait_for_job(api.db_path, res["job_id"])
+    assert job["status"] == "error"
+    assert "503" in job["error"]
+
+
+def test_pausing_needs_a_windows_scheduler(monkeypatch):
+    monkeypatch.setattr(schedule, "is_windows", lambda: False)
+    res = schedule.set_enabled("JesterNightlySignalsHiring", False)
+    assert res["ok"] is False
+    assert "Task Scheduler" in res["detail"]
+
+
+def test_a_refused_pause_is_reported(host):
+    host.change_rc = 1
+    res = schedule.set_enabled("JesterNightlySignalsHiring", True)
+    assert res["ok"] is False

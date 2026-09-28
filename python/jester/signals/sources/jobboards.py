@@ -197,9 +197,10 @@ def _money(lo, hi, currency="", period="") -> str:
     lo, hi = num(lo), num(hi)
     if not lo and not hi:
         return ""
-    if lo and hi and lo == hi:
-        hi = 0
-    span = f"{lo:,}" if lo and not hi else f"{hi:,}" if hi and not lo else f"{lo:,}-{hi:,}"
+    if lo and hi and lo != hi:
+        span = f"{lo:,}-{hi:,}"
+    else:
+        span = f"{lo or hi:,}"   # one figure, or the same figure twice
     return " ".join(p for p in (currency or "", span, f"/{period}" if period else "") if p).strip()
 
 
@@ -215,7 +216,7 @@ class Himalayas(_JobBoard):
     pace = 2.0
     rate = "2.0s between requests, 3 backoff retries; data refreshes daily"
     default_queries = ("developer", "engineer", "automation", "data")
-    SEARCH = "https://himalayas.app/jobs/api/search"
+    SEARCH_URL = "https://himalayas.app/jobs/api/search"
     PAGE = 20  # the API's own maximum
     #: Himalayas' own top-level categories that are our kind of work. Keyword
     #: search alone matched "Content Developers" for a university; its category
@@ -226,24 +227,26 @@ class Himalayas(_JobBoard):
         del since_utc  # the API has no date filter; dedupe does the work
         seen, page = 0, 1
         while seen < limit:
-            q = urllib.parse.urlencode({"q": query, "employment_type": "Contractor",
-                                        "sort": "recent", "page": page})
-            body = self._get(f"{self.SEARCH}?{q}")
-            jobs = body.get("jobs") or []
-            if not jobs:
-                return
-            for job in jobs:
-                seen += 1
-                if not (set(job.get("parentCategories") or []) & self.TECH):
-                    continue
-                sig = self._to_signal(job, query)
+            jobs = self._page(query, page)
+            # `limit` counts listings READ, not kept: it bounds the requests.
+            for job in jobs[: limit - seen]:
+                sig = self._keep(job, query)
                 if sig is not None:
                     yield sig
-                if seen >= limit:
-                    return
+            seen += len(jobs)
             if len(jobs) < self.PAGE:
-                return
+                return   # a short (or empty) page is the last one
             page += 1
+
+    def _page(self, query: str, page: int) -> list:
+        q = urllib.parse.urlencode({"q": query, "employment_type": "Contractor",
+                                    "sort": "recent", "page": page})
+        return self._get(f"{self.SEARCH_URL}?{q}").get("jobs") or []
+
+    def _keep(self, job: dict, query: str) -> Signal | None:
+        if not set(job.get("parentCategories") or []) & self.TECH:
+            return None
+        return self._to_signal(job, query)
 
     def _to_signal(self, job: dict, query: str) -> Signal | None:
         where = ", ".join(job.get("locationRestrictions") or []) or "Remote"
@@ -282,7 +285,9 @@ class Remotive(_JobBoard):
                       "Data Analysis", "Product"})
 
     def search(self, query: str, *, since_utc: str = "", limit: int = 100) -> Iterator[Signal]:
-        del since_utc
+        # One request for the whole board: there is nothing to search by, so
+        # the shared signature's query and window are both unused here.
+        del query, since_utc
         body = self._get(self.API)
         seen = 0
         for job in body.get("jobs") or []:

@@ -11,7 +11,7 @@ import urllib.error
 import pytest
 
 from jester.signals.filters import load_rules, apply_to
-from jester.signals.sources import available, get_source
+from jester.signals.sources import SourceError, available, get_source
 from jester.signals.sources import jobboards as jb
 
 
@@ -49,8 +49,10 @@ def _himalayas_job(**kw):
 def test_the_boards_are_registered_with_their_paperwork():
     by_name = {s["name"]: s for s in available()}
     for name in ("himalayas", "remotive", "jobicy"):
-        assert by_name[name]["access"] and by_name[name]["terms_url"].startswith("https://")
-        assert isinstance(by_name[name]["rate"], str) and by_name[name]["rate"]
+        assert by_name[name]["access"]
+        assert by_name[name]["terms_url"].startswith("https://")
+        assert isinstance(by_name[name]["rate"], str)
+        assert by_name[name]["rate"]
 
 
 def test_himalayas_asks_for_contract_work_and_keeps_only_tech(rules):
@@ -64,7 +66,8 @@ def test_himalayas_asks_for_contract_work_and_keeps_only_tech(rules):
     assert [s.company for s in sigs] == ["Acme"], "the education 'developer' is dropped"
     s = sigs[0]
     assert s.title.startswith("Acme | Senior Python Developer | Remote (Germany) | Contractor")
-    assert s.source_url.endswith("/python-dev") and s.community == "himalayas/contract"
+    assert s.source_url.endswith("/python-dev")
+    assert s.community == "himalayas/contract"
     apply_to(s, rules)
     assert s.audience == "buyer"
 
@@ -89,7 +92,8 @@ def test_gig_tasks_are_not_engineering_work():
 
 def test_a_company_merely_mentioning_a_marketplace_is_kept():
     assert not jb._is_marketplace("Turingan Labs")
-    assert jb._is_marketplace("Toptal") and jb._is_marketplace("lemon.io")
+    assert jb._is_marketplace("Toptal")
+    assert jb._is_marketplace("lemon.io")
 
 
 def test_remotive_keeps_contract_shaped_tech_listings_in_one_request():
@@ -128,6 +132,62 @@ def test_jobicy_drops_full_time_whatever_the_description_says():
 
 def test_a_refusal_is_a_source_error_not_an_empty_board():
     err = urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
-    with pytest.raises(Exception) as exc:
-        list(_src("remotive", FakeOpener(error=err)).search("all"))
-    assert "403" in str(exc.value)
+    listings = _src("remotive", FakeOpener(error=err)).search("all")
+    with pytest.raises(SourceError, match="403"):
+        next(listings)
+
+
+class FlakyOpener(FakeOpener):
+    """Fails with the given errors first, then answers."""
+
+    def __init__(self, errors, body):
+        super().__init__(body)
+        self.errors = list(errors)
+
+    def __call__(self, req, timeout=None):
+        if self.errors:
+            self.urls.append(req.full_url)
+            raise self.errors.pop(0)
+        return super().__call__(req, timeout)
+
+
+def test_a_503_is_waited_out_and_retried():
+    busy = urllib.error.HTTPError("u", 503, "Busy", {}, None)
+    opener = FlakyOpener([busy], {"jobs": [_himalayas_job()]})
+    sigs = list(_src("himalayas", opener).search("developer", limit=5))
+    assert len(opener.urls) == 2, "one failure, one retry"
+    assert [s.company for s in sigs] == ["Acme"]
+
+
+def test_an_unreachable_board_fails_after_its_retries():
+    down = urllib.error.URLError("connection refused")
+    opener = FlakyOpener([down, down, down], {})
+    listings = _src("jobicy", opener).search("engineering")
+    with pytest.raises(SourceError, match="after 3 attempts"):
+        next(listings)
+
+
+def test_a_block_page_is_an_error_not_an_empty_board():
+    class HTMLOpener(FakeOpener):
+        def __call__(self, req, timeout=None):
+            return io.BytesIO(b"<html>Access denied</html>")
+
+    listings = _src("remotive", HTMLOpener()).search("all")
+    with pytest.raises(SourceError, match="non-JSON"):
+        next(listings)
+
+
+@pytest.mark.parametrize("lo, hi, currency, period, want", [
+    (60, 90, "EUR", "hour", "EUR 60-90 /hour"),
+    (5, 5, "USD", "hourly", "USD 5 /hourly"),       # the same figure twice, once
+    ("80000", None, "", "", "80,000"),
+    (None, None, "USD", "year", ""),
+    ("n/a", 0, "", "", ""),
+])
+def test_salary_ranges_read_the_way_a_person_writes_them(lo, hi, currency, period, want):
+    assert jb._money(lo, hi, currency, period) == want
+
+
+def test_a_bad_timestamp_is_left_empty():
+    assert jb._iso_from_epoch("not a time") == ""
+    assert jb._iso_from_epoch(0).startswith("1970-01-01")

@@ -11,7 +11,7 @@ import pytest
 from jester.signals import run as sigrun
 
 
-@pytest.fixture()
+@pytest.fixture
 def db():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -19,7 +19,7 @@ def db():
     return conn
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_collect(monkeypatch):
     """Stand-in for `collect`: returns a canned row per source and records calls."""
     calls, results = [], {}
@@ -61,7 +61,8 @@ def test_something_new_does_not_fall_back(db, fake_collect):
     fake_collect.results["hackernews-hiring"] = {"new": 3}
     rows = sigrun.collect_or_fall_back(db, source_name="hackernews-hiring",
                                        fallback="hackernews")
-    assert len(rows) == 1 and len(fake_collect.calls) == 1
+    assert len(rows) == 1
+    assert len(fake_collect.calls) == 1
     assert _notes(db)["hackernews-hiring"] == ""
 
 
@@ -71,7 +72,8 @@ def test_a_failed_run_is_not_nothing_new(db, fake_collect):
     fake_collect.results["hackernews-hiring"] = {"status": "failed", "errors": 1}
     rows = sigrun.collect_or_fall_back(db, source_name="hackernews-hiring",
                                        fallback="hackernews")
-    assert len(rows) == 1 and rows[0]["status"] == "failed"
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
 
 
 def test_no_fallback_named_means_one_run(db, fake_collect):
