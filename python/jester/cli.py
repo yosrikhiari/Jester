@@ -2095,9 +2095,10 @@ def cmd_signals(args):
                                    or "config/hiring_rules.yaml",
                                    run_id=run_id)
             by = res["by_audience"]
-            print(f"{res['seen']} stored record(s) from {len(slugs)} hiring "
+            print(f"{res['seen']} stored post(s) from {len(slugs)} hiring "
                   f"room(s) · buyer {by.get('buyer', 0)} · practitioner "
-                  f"{by.get('practitioner', 0)} · kept {res['kept']}")
+                  f"{by.get('practitioner', 0)} · kept {res['kept']}"
+                  + (f" · {res['repeats']} repeat copies skipped" if res.get("repeats") else ""))
             rej = res.get("rejected") or {}
             if rej:
                 # The headline number means nothing without this line: these
@@ -2109,6 +2110,12 @@ def cmd_signals(args):
                 if rej.get("question"):
                     bits.append(f"{rej['question']} question(s) "
                                 "(a vacancy is not posed as a question)")
+                if rej.get("gig"):
+                    bits.append(f"{rej['gig']} data-task gig(s) (paid per task, "
+                                "AI training, rating)")
+                if rej.get("not_engineering"):
+                    bits.append(f"{rej['not_engineering']} post(s) naming no "
+                                "engineering work")
                 if rej.get("not_an_advert"):
                     bits.append(f"{rej['not_an_advert']} not adverts "
                                 "([Discussion] and similar)")
@@ -2151,7 +2158,8 @@ def cmd_signals(args):
 
             res = sigleads.write_csv(db, out_dir / "leads",
                                      mode=args.only_mode or "live",
-                                     include_worked=args.include_worked)
+                                     include_worked=args.include_worked,
+                                     max_age_days=args.max_age_days)
             o = sig.outcomes(db, mode=args.only_mode)
             print(f"{res['written']} lead(s) written to {res['path']}")
             if res["unreachable"]:
@@ -2160,6 +2168,11 @@ def cmd_signals(args):
                 # difference matters when someone asks why 35 became 24.
                 print(f"{res['unreachable']} buyer signal(s) held back — no "
                       "contact route in the advert; they stay in the archive")
+            if res.get("too_old"):
+                # Old adverts are real signals and a poor use of a message:
+                # the role is most likely filled. Kept in the archive.
+                print(f"{res['too_old']} buyer signal(s) left out as older than "
+                      f"{res['max_age_days']} days (--max-age-days 0 keeps them)")
             if res.get("route_cut"):
                 # The archive stores a 600-character excerpt, not the advert.
                 # A route sitting on that boundary cannot be told apart from
@@ -2542,6 +2555,9 @@ def main(argv=None):
                          "or empty to clear it")
     sg.add_argument("--note", default="",
                     help="outcome: one line from whoever worked it")
+    sg.add_argument("--max-age-days", type=int, default=60,
+                    help="leads: leave out adverts posted more than this many days "
+                         "ago (0 = keep all). Undated posts are kept.")
     sg.add_argument("--include-worked", action="store_true",
                     help="leads: include records someone has already marked "
                          "(default: only untouched, so two people do not email "

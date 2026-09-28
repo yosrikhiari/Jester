@@ -59,7 +59,7 @@ def _run(archive, tmp_path, extra=()):
 def test_it_scores_the_archive_into_the_signals_database(archive, tmp_path, capsys):
     _run(archive, tmp_path)
     out = capsys.readouterr().out
-    assert "stored record(s)" in out
+    assert "stored post(s)" in out
 
     db = sqlite3.connect(str(tmp_path / "signals.db"))
     rows = db.execute("SELECT audience FROM problem_signal").fetchall()

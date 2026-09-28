@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import re
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
 
@@ -102,8 +103,26 @@ def _reachable(row) -> bool:
     return bool(CONTACT_RE.search(row.get("excerpt") or ""))
 
 
+#: How old an advert may be and still be handed over. 122 of 140 rows in the
+#: file on 2026-09-28 were hiring adverts from December to July -- roles most
+#: likely filled -- so the file was mostly history. Counted, not hidden.
+MAX_AGE_DAYS = 60
+
+
+def too_old(row, max_age_days: int, now: datetime | None = None) -> bool:
+    """True when the post is older than the window. A post with no date is
+    kept: its age is unknown, not old."""
+    if not max_age_days:
+        return False
+    created = str(row.get("created_utc") or "")[:10]
+    if not created:
+        return False
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
+    return created < cutoff
+
+
 def gather(db: sqlite3.Connection, *, mode: str = "live",
-           include_worked: bool = False) -> dict:
+           include_worked: bool = False, max_age_days: int = MAX_AGE_DAYS) -> dict:
     """The actionable buyer records, ranked, plus what was held back and why."""
     # COALESCE throughout: an archive migrated before these columns carried
     # a default holds NULL where a fresh one holds ''. The query should not
@@ -121,17 +140,20 @@ def gather(db: sqlite3.Connection, *, mode: str = "live",
         f"SELECT * FROM {TABLE} WHERE {' AND '.join(where)} "
         "ORDER BY match_confidence DESC, first_seen_utc DESC", args).fetchall()]
 
-    actionable, unreachable = [], []
+    actionable, unreachable, old = [], [], []
     for r in rows:
+        if too_old(r, max_age_days):
+            old.append(r)
+            continue
         (actionable if _reachable(r) else unreachable).append(r)
-    return {"actionable": actionable, "unreachable": unreachable,
-            "mode": mode or "all"}
+    return {"actionable": actionable, "unreachable": unreachable, "too_old": old,
+            "mode": mode or "all", "max_age_days": max_age_days}
 
 
 def write_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "live",
-              include_worked: bool = False) -> dict:
+              include_worked: bool = False, max_age_days: int = MAX_AGE_DAYS) -> dict:
     """Write the handover file and report what went into it."""
-    data = gather(db, mode=mode, include_worked=include_worked)
+    data = gather(db, mode=mode, include_worked=include_worked, max_age_days=max_age_days)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / "leads.csv"
@@ -170,4 +192,5 @@ def write_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "live"
     # of the screen behind eleven columns they will not change.
     return {"path": str(path), "written": len(data["actionable"]),
             "unreachable": len(data["unreachable"]), "mode": data["mode"],
-            "route_cut": dropped}
+            "route_cut": dropped, "too_old": len(data["too_old"]),
+            "max_age_days": data["max_age_days"]}
