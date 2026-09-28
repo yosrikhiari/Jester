@@ -34,10 +34,13 @@ class SourceError(RuntimeError):
     can store it as a counted error record rather than dropping it — "silent
     failure must never be silent."""
 
-    def __init__(self, message: str, *, query: str = "", status: str = ""):
+    def __init__(self, message: str, *, query: str = "", status: str = "",
+                 retry_after: float = 0.0):
         super().__init__(message)
         self.query = query
         self.status = status
+        #: Seconds the source asked us to wait (its `Retry-After`), or 0.
+        self.retry_after = retry_after
 
 
 class Source(Protocol):
@@ -72,7 +75,8 @@ def available() -> List[dict]:
     """Every source and its paperwork — what `jester signals sources` prints,
     and what the scope document quotes."""
     return [{"name": c.name, "platform": c.platform, "access": c.access,
-             "terms_url": c.terms_url, "rate": getattr(c, "rate", "")}
+             "terms_url": c.terms_url, "rate": getattr(c, "rate", ""),
+             "daily_budget": getattr(c, "daily_budget", 0) or 0}
             for c in sorted(_REGISTRY.values(), key=lambda c: c.name)]
 
 

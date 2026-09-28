@@ -3169,7 +3169,9 @@ function renderSignalRuns(runs, sources) {
     body.innerHTML = '<tr><td colspan="8" class="empty">No run recorded yet.' + hint + '</td></tr>';
     return;
   }
-  const tone = { ok: 'tone-ok', partial: 'tone-warn', failed: 'tone-bad' };
+  // limited: the board asked for less and the chain moved on; skipped: it
+  // was still sitting out, so it was not asked at all.
+  const tone = { ok: 'tone-ok', partial: 'tone-warn', limited: 'tone-warn', skipped: 'tone-neutral', failed: 'tone-bad' };
   body.innerHTML = runs.map(r =>
     '<tr><td class="mono xs">' + esc((r.started_utc || '').slice(0, 19).replace('T', ' ')) + '</td>'
     + '<td>' + esc(r.kind) + '</td><td class="mono xs">' + esc(r.source) + '</td>'

@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 from typing import Iterator, List
 
 from .. import Signal
+from ..limits import BUDGET_SPENT, retry_after_seconds
 from . import SourceError, register
 from .hackernews import BACKOFF, RETRIES, _plain
 
@@ -134,6 +135,9 @@ class _JobBoard:
     #: a query (keywords, a category, an industry). The hiring rules' "12"
     #: means "twelve months" to Hacker News and nothing to a job board.
     default_queries: tuple = ()
+    #: Requests a day, retries included; 0 means no ceiling. Read by
+    #: `signals.limits`, which keeps the day's count across runs.
+    daily_budget = 0
 
     def __init__(self, opener=None, sleep=time.sleep, timeout: int = 30,
                  user_agent: str = USER_AGENT):
@@ -142,6 +146,10 @@ class _JobBoard:
         self._timeout = timeout
         self._user_agent = user_agent
         self._last_call = 0.0
+        #: Requests made by this instance, and how many it may make (None:
+        #: no cap). `collect` sets the cap from what is left of today's budget.
+        self.requests = 0
+        self.budget = None
 
     #: What `jester signals sources` prints. A plain string, because
     #: `available()` reads it off the class, not an instance.
@@ -159,13 +167,21 @@ class _JobBoard:
                                                    "Accept": "application/json"})
         last = ""
         status = ""
+        retry_after = 0.0
         for attempt in range(RETRIES):
+            if self.budget is not None and self.requests >= self.budget:
+                raise SourceError(f"{self.name}: daily request budget spent",
+                                  status=BUDGET_SPENT)
             self._wait_turn()
+            self.requests += 1
             try:
                 with self._opener(req, timeout=self._timeout) as resp:
                     return json.loads(resp.read().decode("utf-8", "replace"))
             except urllib.error.HTTPError as exc:
                 last, status = f"HTTP {exc.code} from {self.name}", str(exc.code)
+                if exc.code in (429, 503):   # both may say when to come back
+                    retry_after = retry_after_seconds(
+                        exc.headers.get("Retry-After") if exc.headers else "")
                 if exc.code not in RETRYABLE:
                     raise SourceError(last, status=status) from exc
             except urllib.error.URLError as exc:
@@ -176,7 +192,8 @@ class _JobBoard:
                 raise SourceError(f"{self.name} returned non-JSON: {exc}") from exc
             if attempt < RETRIES - 1:
                 self._sleep(BACKOFF * (attempt + 1))
-        raise SourceError(f"{last} (after {RETRIES} attempts)", status=status)
+        raise SourceError(f"{last} (after {RETRIES} attempts)", status=status,
+                          retry_after=retry_after)
 
     def _advert(self, *, source_id: str, url: str, company: str, role: str,
                 location: str, engagement: str, rate: str, description: str,
@@ -243,6 +260,9 @@ class Himalayas(_JobBoard):
     pace = 2.0
     rate = "2.0s between requests, 3 backoff retries; data refreshes daily"
     default_queries = ("developer", "engineer", "automation", "data")
+    #: Our ceiling, not theirs (none is published): a 16-term pass read to
+    #: the end of every result set is ~400 pages, and the data changes daily.
+    daily_budget = 600
     SEARCH_URL = "https://himalayas.app/jobs/api/search"
     PAGE = 20  # the API's own maximum
     #: Himalayas' own top-level categories that are our kind of work. Keyword
@@ -317,6 +337,7 @@ class Remotive(_JobBoard):
     #: ONE request for the whole board, filtered here. A call per category
     #: would spend the four-a-day allowance in a single run.
     default_queries = ("all",)
+    daily_budget = 4   # theirs: "at most 4 calls a day"
     API = "https://remotive.com/api/remote-jobs"
     TECH = frozenset({"Software Development", "Data", "DevOps / Sysadmin", "QA",
                       "Data Analysis", "Product"})
@@ -368,6 +389,9 @@ class Jobicy(_JobBoard):
     pace = 2.0
     rate = "2.0s between requests; asks: automated checks at most hourly"
     default_queries = ("engineering", "data-science")
+    #: Theirs is "checks at most hourly": 24 checks of the two default
+    #: industries, with room for a retry each.
+    daily_budget = 96
     API = "https://jobicy.com/api/v2/remote-jobs"
 
     def search(self, query: str, *, since_utc: str = "", limit: int = 100) -> Iterator[Signal]:

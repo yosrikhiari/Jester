@@ -2054,7 +2054,11 @@ def cmd_signals(args):
             print(f"  {s['name']} ({s['platform']})")
             print(f"    access: {s['access']}")
             print(f"    terms:  {s['terms_url']}")
-            print(f"    pace:   {s['rate']}\n")
+            print(f"    pace:   {s['rate']}")
+            if s["daily_budget"]:
+                print(f"    budget: {s['daily_budget']} requests a day; spent, it sits "
+                      "out and the chain moves on")
+            print()
         # Named rather than left as an absence. A missing collector that is
         # missing on purpose is a decision; a missing collector nobody
         # mentions is an oversight someone will 'fix'.
@@ -2313,7 +2317,7 @@ def cmd_signals(args):
                     print(row["note"])
                 # A run that collected nothing is a valid run. Saying so out loud
                 # stops the next person reading an empty day as a broken collector.
-                if row["collected"] == 0:
+                if row["collected"] == 0 and row["status"] not in ("skipped", "limited"):
                     print("zero results — a valid run; every query was read and "
                           "returned nothing")
                 print(f"status: {row['status']}")

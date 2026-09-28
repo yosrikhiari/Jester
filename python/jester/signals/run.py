@@ -28,7 +28,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
-from . import FIELD_NAMES, Signal, TABLE, upsert
+from . import FIELD_NAMES, Signal, TABLE, limits, upsert
 from .filters import apply_to, load_rules
 from .sources import SourceError, get_source
 
@@ -127,8 +127,12 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
     started = _now()
     signals: List[Signal] = []
     failed_queries: List[str] = []
+    # What is left of the source's daily budget becomes this instance's cap.
+    if hasattr(source, "budget"):
+        source.budget = limits.budget_left(db, source)
+    limit_hit = None
 
-    for query in queries:
+    for i, query in enumerate(queries):
         try:
             for signal in source.search(query, since_utc=since, limit=limit_per_query):
                 signal.run_id = run_id
@@ -141,6 +145,22 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         except SourceError as exc:
             failed_queries.append(query)
             signals.append(_failure_record(source, query, str(exc), run_id, mode))
+            if limits.is_limit(exc):
+                # Asked to stop, so stop: every query not yet read is filed
+                # as failed too, which is what lets the recovery pass read
+                # them once the cool-down is over.
+                limit_hit = exc
+                for rest in queries[i + 1:]:
+                    failed_queries.append(rest)
+                    signals.append(_failure_record(
+                        source, rest, f"not asked: {exc}", run_id, mode))
+                break
+
+    limits.record_requests(db, source.name, getattr(source, "requests", 0))
+    note = ""
+    if limit_hit is not None:
+        until = limits.mark_limited(db, source.name, limit_hit)
+        note = f"limit reached: {limit_hit}; sits out until {until}"
 
     counts = upsert(db, signals, seen_at=seen_at)
     row = {
@@ -162,9 +182,12 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         "errors": len(failed_queries),
         # A run that collected nothing is a valid run, so "ok" is decided by
         # whether every query was READ, not by whether anything came back.
-        "status": ("ok" if not failed_queries
+        # "limited" is its own word: the source is up and asked for less,
+        # which is neither a failure nor a finished read.
+        "status": ("limited" if limit_hit is not None
+                   else "ok" if not failed_queries
                    else ("partial" if len(signals) > len(failed_queries) else "failed")),
-        "note": "",
+        "note": note,
     }
     _save_run(db, row)
     # Not a column: the recovery pass needs to know WHICH queries failed on
@@ -244,39 +267,94 @@ def collect_or_fall_back(db: sqlite3.Connection, *, fallback=(),
     hiring rules' "12" means twelve months to Hacker News and is a meaningless
     keyword to a job board.
 
-    Only a clean zero moves on. A FAILED first run is not "nothing new", it is
-    "could not look", and quietly running something else would bury it. A
-    failed fallback is recorded and the walk continues: the failure is its own
-    row in the ledger, and the next board may well be up.
+    It is also the orchestrator for the sources' limits (`signals.limits`).
+    The chain moves on for three reasons, and the ledger names which:
 
-    Returns every run row, first to last. Each notes why it happened, in the
-    ledger itself rather than only in a log.
+    * **nothing new** -- a clean zero;
+    * **limit reached** -- the source rate-limited us or spent its daily
+      budget mid-run. What it did read is kept; the rest waits for recovery;
+    * **sitting out** -- the source is still cooling down, or its budget is
+      spent, so it is skipped before a single request and gets a "skipped"
+      row saying until when.
+
+    A FAILED first run is not "nothing new", it is "could not look", and
+    quietly running something else would bury it -- a block page or a 403 is
+    a failure, not a limit. A failed fallback is recorded and the walk
+    continues: the failure is its own row, and the next board may well be up.
+
+    Returns every run row, first to last.
     """
     if isinstance(fallback, str):
         fallback = [f.strip() for f in fallback.split(",") if f.strip()]
-    rows = [collect(db, **kwargs)]
-    if rows[0]["status"] == "failed":
-        return rows
+    first = kwargs.get("source") or get_source(kwargs.get("source_name", "hackernews"))
+    chain = [first] + [get_source(name) for name in fallback]
+    rows: List[dict] = []
+    why_first = ""   # why the chain left the first source, for the fallbacks' notes
 
-    for name in fallback:
-        prev = rows[-1]
-        if prev["new"]:
-            break
-        prev["note"] = "; ".join(filter(None, [prev.get("note"),
-                                               f"nothing new; fell back to {name}"]))
-        _save_run(db, prev)
-        source = get_source(name)
-        row = collect(db, source_name=name, source=source,
-                      rules=fallback_rules or kwargs.get("rules"),
-                      queries=list(getattr(source, "default_queries", ()) or ()) or None,
-                      since=kwargs.get("since", "7d"), limit_per_query=fallback_limit,
-                      mode=kwargs.get("mode", "live"),
-                      kind=kwargs.get("kind", "scheduled"),
-                      seen_at=kwargs.get("seen_at"))
-        row["note"] = f"fallback: {rows[0]['source']} had nothing new"
-        _save_run(db, row)
+    for i, source in enumerate(chain):
+        if rows:
+            prev = rows[-1]
+            why = _why_moved(prev, first=(i == 1))
+            if not why:
+                break
+            why_first = why_first or why
+            prev["note"] = "; ".join(filter(None, [prev.get("note"),
+                                                   f"{why}; fell back to {source.name}"]))
+            _save_run(db, prev)
+
+        sitting_out = limits.blocked(db, source)
+        if sitting_out:
+            rows.append(_skipped(db, source, sitting_out, kwargs))
+            continue
+        if i == 0:
+            row = collect(db, **{**kwargs, "source": source})
+        else:
+            row = collect(db, source_name=source.name, source=source,
+                          rules=fallback_rules or kwargs.get("rules"),
+                          queries=list(getattr(source, "default_queries", ()) or ()) or None,
+                          since=kwargs.get("since", "7d"), limit_per_query=fallback_limit,
+                          mode=kwargs.get("mode", "live"),
+                          kind=kwargs.get("kind", "scheduled"),
+                          seen_at=kwargs.get("seen_at"))
+            row["note"] = "; ".join(filter(None, [
+                f"fallback: {rows[0]['source']} {_BECAUSE[why_first]}", row.get("note")]))
+            _save_run(db, row)
         rows.append(row)
     return rows
+
+
+_BECAUSE = {"sitting out": "was sitting out", "limit reached": "hit its limit",
+            "could not look": "could not be read", "nothing new": "had nothing new"}
+
+
+def _why_moved(row: dict, *, first: bool) -> str:
+    """Why the chain goes past `row`'s source, or "" when it stops there.
+
+    A limit moves on even when the source added something: it stopped
+    reading part-way, so the next board is the rest of today's look.
+    """
+    if row["status"] == "skipped":
+        return "sitting out"
+    if row["status"] == "limited":
+        return "limit reached"
+    if row["status"] == "failed":
+        # The first source failing stops the chain; a fallback failing does not.
+        return "" if first else "could not look"
+    return "" if row["new"] else "nothing new"
+
+
+def _skipped(db: sqlite3.Connection, source, reason: str, kwargs: dict) -> dict:
+    """A ledger row for a source the chain did not ask, and why."""
+    now = _now()
+    row = {"run_id": f"signals-{source.name}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}",
+           "source": source.name, "mode": kwargs.get("mode", "live"),
+           "kind": kwargs.get("kind", "scheduled"), "started_utc": now,
+           "finished_utc": now, "since": kwargs.get("since", "7d"), "queries": "[]",
+           "collected": 0, "new": 0, "seen_again": 0, "edited": 0, "relevant": 0,
+           "buyer": 0, "practitioner": 0, "errors": 0, "status": "skipped",
+           "note": f"not asked: {reason}"}
+    _save_run(db, row)
+    return row
 
 
 def reclassify(db: sqlite3.Connection, rules=None, *, baseline=None, mode: str = "",
