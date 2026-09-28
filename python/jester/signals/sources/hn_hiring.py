@@ -84,6 +84,38 @@ _TITLE_RE = re.compile(r"who\s+is\s+hiring", re.I)
 #: because a second check further down looked for the pipe again. Requiring it
 #: here says what is actually meant, and lets that second check go.
 _NAME_RE = re.compile(r"^\s*([^|\n]{2,60})\|")
+#: A first field that is a ROLE, not a name. Some adverts lead with the job:
+#: "Senior Python Backend Engineer | REMOTE (EMEA/APAC) | ..." (posted six
+#: months running) and "HIRING: Frontend Developer (Contract) | ...". Taking
+#: that as the company put a job title in the company column of the leads.
+_ROLE_RE = re.compile(
+    r"^\s*(hiring\b|we'?re hiring)|\b(engineer|developer|designer|manager|architect|scientist"
+    r"|analyst|founding|full[- ]?stack|back[- ]?end|front[- ]?end|intern|recruiter)s?\b", re.I)
+
+
+_HIRING_PREFIX_RE = re.compile(r"^\s*(we'?re\s+)?hiring\s*[:\-–]\s*", re.I)
+_DASH_RE = re.compile(r"\s+[-–]\s+")
+#: A name that ends like a company is one, whatever role word it starts with.
+_CORP_RE = re.compile(r"\b(technologies|technology|inc|llc|ltd|labs|gmbh|corp|corporation"
+                      r"|company|group|systems|holdings)\.?$", re.I)
+
+
+def company_from_headline(text: str) -> str:
+    """The company name the advert opens with, or "" when it opens with a role.
+
+    Read, never inferred: an advert that does not name itself first gets no
+    company rather than a guess from further along the line.
+    """
+    m = _NAME_RE.match(text or "")
+    name = _HIRING_PREFIX_RE.sub("", m.group(1)).strip() if m else ""   # "Hiring: MouseMux"
+    left = _DASH_RE.split(name, maxsplit=1)[0].strip()
+    if left != name and left and not _ROLE_RE.search(left):
+        return left                        # "forus - founding security engineer"
+    if _CORP_RE.search(name):
+        return name                        # "Architect Financial Technologies"
+    return "" if _ROLE_RE.search(name) else name
+
+
 #: The engagement words, quoted back rather than interpreted.
 _ENGAGEMENT_RE = re.compile(
     r"\b(contract(?:\s+to\s+permanent)?|freelance|part[- ]time|full[- ]time"
@@ -234,8 +266,7 @@ class HackerNewsHiring:
         # pipe means somebody replying to the thread rather than advertising
         # in it, and guessing a name out of prose is exactly the inference
         # this collector does not make.
-        m = _NAME_RE.match(text)
-        name = m.group(1).strip() if m else ""
+        name = company_from_headline(text)
 
         engagement = ", ".join(sorted({
             g.lower() for g in _ENGAGEMENT_RE.findall(text)})) or "unknown"

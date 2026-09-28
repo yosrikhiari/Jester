@@ -27,6 +27,7 @@ from the real site. What changes is only which archive holds the verdict.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -136,7 +137,71 @@ def not_an_advert(body: str) -> str:
     # statement about which side of the deal the author is on.
     if tag != "hiring" and _first_line(body).endswith("?"):
         return "question"
+    return gig_or_not_engineering(body)
+
+
+#: Data-task and AI-training gigs posted as [Hiring]: marketplaces paying per
+#: task for raters, recorders and "generalist experts". Measured 2026-09-28:
+#: 9 of the 18 unique Reddit posts scored as buyers were these, or roles with
+#: no engineering in them at all (medical writers, health-service managers).
+_GIG_RE = re.compile(
+    r"per ?task|role-?play|contributor|annotat|data (label|collection)|generalist"
+    r"|ai (freelance|trainer|tutor)|\brater\b|transcri|voice record|audit specialist",
+    re.I)
+#: Engineering work named in the headline. A buyer here is someone paying for
+#: an engineer; a headline that names none is not that, however much of the
+#: body mentions AI.
+_ENGINEERING_RE = re.compile(
+    r"engineer|developer|\bdev\b|software|full-?stack|front-?end|back-?end|python|javascript"
+    r"|typescript|react|node|\bapp\b|\bweb\b|mobile|\bqa\b|\btest|devops|\bsre\b|data scien"
+    r"|\bml\b|machine learning|automation|integration|scrap|technical|tech partner|\bcto\b"
+    r"|programmer|coder|wordpress|shopify|\bapi\b|website|web ?site|landing page|\bmvp\b"
+    r"|\bsaas\b|\bbot\b|dashboard|database",
+    re.I)
+
+
+def gig_or_not_engineering(body: str) -> str:
+    """"gig" or "not_engineering" when the headline rules the post out, else ""."""
+    head = _first_line(body)
+    if _GIG_RE.search(head):
+        return "gig"
+    if not _ENGINEERING_RE.search(head):
+        return "not_engineering"
     return ""
+
+
+def post_fields(item: dict, source: str) -> dict:
+    """The post's own id, author, link and date.
+
+    The worker stores them under `detail`, not at the top of the item. Reading
+    the top level found nothing, so every record fell back to an id built from
+    a running counter -- which changes as new batches arrive, so the same post
+    was stored again on every run (415 Reddit rows on 2026-09-28, 286 of them
+    copies) and every record lacked its post date.
+    """
+    detail = item.get("detail")
+    d = detail if isinstance(detail, dict) else {}
+
+    def pick(key):
+        return str(d.get(key) or item.get(key) or "").strip()
+
+    return {"id": pick("id"), "author": pick("author"),
+            "url": pick("permalink") or source, "created": pick("created_at")}
+
+
+def stable_id(item: dict, thread_id, body: str) -> str:
+    """The post's own id, or one derived from its text -- never a counter.
+
+    A counter depends on the order batches are read, so it is a different id
+    every run. The fallbacks here depend only on the post itself.
+    """
+    fields = post_fields(item, "")
+    if fields["id"]:
+        return fields["id"]
+    fp = str(item.get("fingerprint") or "").strip()
+    if fp:
+        return f"{thread_id}:fp-{fp}"
+    return f"{thread_id}:h-{hashlib.sha1(body.encode('utf-8')).hexdigest()[:16]}"
 
 
 def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection,
@@ -148,12 +213,20 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
     them is a reason to look at the rules.
     """
     rules = load_rules(rules_path)
-    seen = kept = 0
+    seen = kept = repeats = 0
     by_audience: dict[str, int] = {}
     rejected: dict[str, int] = {}
     batch: list[Signal] = []
+    done: set[str] = set()
 
     for src, thread_id, item, body in _records(nuggets_db, slugs):
+        # The worker re-reads a room every hour, so one post sits in many
+        # batches. Score it once; the newest batch comes first.
+        source_id = stable_id(item, thread_id, body)
+        if source_id in done:
+            repeats += 1
+            continue
+        done.add(source_id)
         seen += 1
         # The structure decides before the prose gets a vote. Counted, not
         # dropped in silence: "12 buyers" and "12 buyers after discarding 13
@@ -166,17 +239,17 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
         by_audience[verdict.audience] = by_audience.get(verdict.audience, 0) + 1
         if verdict.audience == "none":
             continue
-        source_id = str(item.get("id") or "").strip() or f"{thread_id}:{seen}"
+        post = post_fields(item, src)
         batch.append(Signal(
             source_id=source_id,
             platform="reddit",
-            source_url=str(item.get("permalink") or src),
+            source_url=post["url"],
             community=_community(src),
             kind="post",
-            author=str(item.get("author") or ""),
+            author=post["author"],
             title=body.splitlines()[0][:150] if body else "",
             text=body,
-            created_utc=str(item.get("created_at") or ""),
+            created_utc=post["created"],
             query=f"archive:{_community(src)}",
             mode="live",
             run_id=run_id,
@@ -194,7 +267,7 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
 
     new = upsert(signals_db, batch)["new"] if batch else 0
     return {"seen": seen, "kept": kept, "new": new, "by_audience": by_audience,
-            "rejected": rejected}
+            "rejected": rejected, "repeats": repeats}
 
 
 def score_and_record(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection,
