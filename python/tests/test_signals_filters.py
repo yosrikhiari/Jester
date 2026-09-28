@@ -395,17 +395,84 @@ def test_candidate_rooms_do_not_join_the_chosen_shortlist():
         "a candidate leaked into the chosen communities"
 
 
-def test_every_candidate_is_marked_unverified():
-    """They were written from general knowledge — Reddit is closed to both the
-    collector and this repo's browser. A candidate that reads as measured is
-    an assumption wearing a recommendation's clothes."""
+def test_every_candidate_says_how_it_was_measured():
+    """They were first written from general knowledge and marked UNVERIFIED.
+    The worker's archive has since measured them; each line must say which
+    it is, so an assumption cannot read as a recommendation."""
     from jester.signals.filters import load_rules
     from jester.signals.scope import scope_markdown
 
     r = load_rules()
     for c in (r.scope or {}).get("candidates", []):
-        assert "UNVERIFIED" in (c.get("evidence") or ""), c["name"]
+        evidence = c.get("evidence") or ""
+        assert evidence.startswith(("measured", "UNVERIFIED")), c["name"]
 
     doc = scope_markdown()
     for c in (r.scope or {}).get("candidates", []):
         assert c["name"] in doc, f"{c['name']} is proposed but absent from the document"
+
+
+# --- the scope document quotes what the sources produced (2026-09-28) --------
+
+def _yield_db(tmp_path):
+    db = sig.open_signals(str(tmp_path / "s.db"))
+    rows = [("hn/hiring", "buyer", "Acme", "2026-09-20"), ("hn/hiring", "none", "unknown", "2026-09-20"),
+            ("himalayas/contract", "buyer", "Beta", "2026-09-25"),
+            ("himalayas/contract", "buyer", "beta ", "2026-09-26"),       # same company twice
+            ("himalayas/contract", "buyer", "Gamma", "2026-05-01"),       # older than 60 days
+            ("jobicy/jobs", "buyer", "unknown", "2026-09-27"),            # buyer, no company named
+            ("hn/comment", "buyer", "unknown", "2026-09-10"),
+            ("r/forhire", "buyer", "unknown", "2026-09-26")]
+    for i, (community, audience, company, created) in enumerate(rows):
+        db.execute(f"INSERT INTO {sig.TABLE} (record_id, mode, platform, source_id, community, "
+                   "audience, company, created_utc, removed_utc) VALUES (?,?,?,?,?,?,?,?,'')",
+                   (f"x:{i}", "live", "x", str(i), community, audience, company, created))
+    # A failure record and a synthetic row are not signals.
+    db.execute(f"INSERT INTO {sig.TABLE} (record_id, mode, platform, source_id, community, audience, "
+               "removed_utc) VALUES ('x:f', 'live', 'x', 'query-failure:q', 'himalayas/contract', "
+               "'buyer', '')")
+    db.execute(f"INSERT INTO {sig.TABLE} (record_id, mode, platform, source_id, community, audience, "
+               "removed_utc) VALUES ('x:s', 'synthetic', 'x', 's', 'hn/hiring', 'buyer', '')")
+    db.commit()
+    return db
+
+
+def test_the_yield_is_read_off_the_archive(tmp_path):
+    y = sc.measured_yield(_yield_db(tmp_path), today="2026-09-28")
+    by = {r["source"]: r for r in y["rows"]}
+    assert by["HN Who is hiring"]["records"] == 2 and by["HN Who is hiring"]["buyers"] == 1
+    himalayas = by["Himalayas (contract listings)"]
+    assert (himalayas["records"], himalayas["buyers"], himalayas["recent_buyers"]) == (3, 3, 2)
+    # Proposed = HN hiring + boards, last 60 days: Acme, Beta x2, Jobicy's unnamed one.
+    assert y["proposed_buyers"] == 4
+    assert y["proposed_companies"] == 2, "Beta counted once; 'unknown' is not a company"
+    assert not by["Reddit hiring rooms (worker archive, set apart)"]["proposed"]
+
+
+def test_with_an_archive_the_document_makes_the_proposal(tmp_path, rules):
+    md = sc.scope_markdown(rules, today="2026-09-28", db=_yield_db(tmp_path))
+    assert "### What each source has produced" in md
+    assert "**4 buyer signals from 2 named companies**" in md
+    assert md.index("Proposed source") < md.index("## 1. Communities")
+
+
+def test_without_an_archive_the_document_is_still_complete(rules):
+    md = sc.scope_markdown(rules, today="2026-09-28")
+    assert "What each source has produced" not in md
+    assert "## 6. Access" in md
+
+
+def test_the_access_section_names_owner_due_date_and_what_was_requested(rules):
+    md = sc.scope_markdown(rules, today="2026-09-28")
+    access = md[md.index("## 6. Access"):]
+    assert "**Who decides:** Seif (scope owner), **due 2026-10-02**." in access
+    assert "**Requested so far:**" in access
+    assert "free Data API tier is for non-commercial use" in access
+
+
+def test_the_document_no_longer_says_what_stopped_being_true(rules):
+    md = sc.scope_markdown(rules, today="2026-09-28")
+    assert "Book the data-design review" not in md, "the review was done on 25 Sep"
+    assert "none of them has been checked" not in md, "the rooms were measured from the archive"
+    assert "`fixture`" not in md, "the label is `synthetic`"
+    assert "sends Reddit no requests" in md

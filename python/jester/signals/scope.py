@@ -19,7 +19,7 @@ moves to a pre-named replacement source.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import EXCERPT_CHARS, FIELDS, field_map_markdown
@@ -50,7 +50,48 @@ REPLACEMENT_SOURCES = [
 ]
 
 
-def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
+#: How each stored community reads in the yield table, and which of them make
+#: up the proposed source.
+SOURCE_GROUPS = [
+    ("HN Who is hiring", "community = 'hn/hiring'", True),
+    ("Himalayas (contract listings)", "community = 'himalayas/contract'", True),
+    ("Jobicy", "community = 'jobicy/jobs'", True),
+    ("Remotive", "community = 'remotive/jobs'", True),
+    ("HN discussion (Ask HN, comments, Show, stories)",
+     "community IN ('hn/comment', 'hn/ask', 'hn/show', 'hn/story')", False),
+    ("Reddit hiring rooms (worker archive, set apart)", "community LIKE 'r/%'", False),
+]
+PROPOSAL_WINDOW_DAYS = 60
+
+
+def measured_yield(db, *, today: str = "") -> dict:
+    """What each source has actually produced, read off the live archive.
+
+    The proposal in section 0 quotes these numbers, so they are computed, not
+    typed: a hand-written "1,300 buyers" is wrong by the next morning's run.
+    Failure records and removed rows are not signals and are not counted.
+    """
+    since = (date.fromisoformat(today) if today else date.today()) - timedelta(days=PROPOSAL_WINDOW_DAYS)
+    base = ("FROM problem_signal WHERE mode = 'live' AND removed_utc = '' "
+            "AND source_id NOT LIKE 'query-failure%'")
+    rows, proposed_buyers, proposed_companies = [], 0, set()
+    for label, where, proposed in SOURCE_GROUPS:
+        records, buyers = db.execute(
+            f"SELECT COUNT(*), COALESCE(SUM(audience = 'buyer'), 0) {base} AND {where}").fetchone()
+        recent = db.execute(
+            f"SELECT company {base} AND {where} AND audience = 'buyer' "
+            "AND substr(created_utc, 1, 10) >= ?", (since.isoformat(),)).fetchall()
+        rows.append({"source": label, "records": records, "buyers": buyers,
+                     "recent_buyers": len(recent), "proposed": proposed})
+        if proposed:
+            proposed_buyers += len(recent)
+            proposed_companies |= {(c[0] or "").strip().lower() for c in recent
+                                   if (c[0] or "").strip().lower() not in ("", "unknown")}
+    return {"since": since.isoformat(), "rows": rows, "proposed_buyers": proposed_buyers,
+            "proposed_companies": len(proposed_companies)}
+
+
+def scope_markdown(rules: Rules | None = None, *, today: str = "", db=None) -> str:
     r = rules or load_rules()
     when = today or date.today().isoformat()
     approved = r.approved
@@ -61,8 +102,9 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
     add = lines.append
     add("# Problem-signal collector — scope and access status")
     add("")
-    add(f"> **Generated {when}** from `config/signal_rules.yaml` and the collector's field map. "
-        "Not typed by hand: if the rules change, this changes with them.")
+    add(f"> **Generated {when}** from `config/signal_rules.yaml`, the collector's field map"
+        + (" and the live archive" if db is not None else "")
+        + ". Not typed by hand: if the rules change, this changes with them.")
     # The unapproved branch used to append "awaiting sign-off" to a status
     # that already said it, so the line read "PROVISIONAL — awaiting sign-off
     # · awaiting sign-off". Only the approved branch has anything to add.
@@ -94,11 +136,28 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
         add(f"| `{s['name']}` | {s['platform']} | {s['access']} |")
     add("")
     add("They ask different questions and carry different rule sets. One reads "
-        "forum discussion for people describing a problem; the other reads "
-        "hiring adverts, where a company states what it will pay for. Measured "
-        "on the archive, the second finds buyers at roughly ten times the rate "
-        "of the first, which is why both are scheduled rather than one.")
+        "forum discussion for people describing a problem; the others read "
+        "hiring adverts, where a company states what it will pay for.")
     add("")
+    if db is not None:
+        y = measured_yield(db, today=when)
+        add("### What each source has produced")
+        add("")
+        add(f"Read off the live archive on {when}. *Buyers* are records the rules scored as "
+            "wanting contract engineering work; *recent* means posted on or after "
+            f"{y['since']}.")
+        add("")
+        add("| source | records | buyers | recent buyers |")
+        add("|---|---:|---:|---:|")
+        for row in y["rows"]:
+            add(f"| {row['source']} | {row['records']:,} | {row['buyers']:,} | {row['recent_buyers']:,} |")
+        add("")
+        add(f"**Proposed source: HN \"Who is hiring\" plus the three job boards.** In the last "
+            f"{PROPOSAL_WINDOW_DAYS} days they produced **{y['proposed_buyers']:,} buyer signals from "
+            f"{y['proposed_companies']:,} named companies**, on free public APIs that need no "
+            "access decision. Approving them as the source settles section 6 without a purchase; "
+            "the Reddit rooms in sections 1 and 6 stay available as a measured alternative.")
+        add("")
     add("## 1. Communities")
     add("")
     add("The scope owner owns this list: it defines the buyer test. Every line says whether it was "
@@ -154,8 +213,10 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
     add(f"- **Identities**: {ret.get('identities', 'handles as published; never enriched, never contacted')}.")
     add(f"- **Removal**: {ret.get('removal', 'recorded, not deleted')}. "
         "Counts stay reconcilable; the archive's retention sweep prunes the text on its own schedule.")
-    add("- **Never stored as fact**: company and buyer intent. Both columns exist and are fixed at "
-        "`unknown`; no code path infers them. A post is a signal, never evidence of a budget.")
+    add("- **Never inferred**: company and buyer intent. Both stay `unknown` unless the source "
+        "states them — a job advert names its company and its engagement (contract, part-time); "
+        "a forum post does not, and no code path guesses. A post is a signal, never evidence of "
+        "a budget.")
     add("")
     add("## 5. Classification")
     add("")
@@ -188,49 +249,66 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
         "paid agreement. Confirm the current terms and pricing with Reddit when applying; they have "
         "changed more than once since 2023.")
     add("")
+    owner = (r.scope or {}).get("decision_owner") or "the scope owner"
+    due = (r.scope or {}).get("decision_due") or ""
+    add("**Requested so far:** none on record. This project holds no application to Reddit "
+        "and no quote; whether to apply, and for what budget, is part of the decision below.")
+    add("")
+    add(f"**Who decides:** {owner}" + (f", **due {due}**." if due else ".")
+        + " The choice is between two things: approve the free sources already running "
+        "(section 0), or buy Reddit access for the rooms below.")
+    add("")
     cands = (r.scope or {}).get("candidates", [])
     if cands:
         # A shopping list for this decision, kept out of section 1 on purpose:
         # the task says the scope owner chooses 3-5 communities, and a
         # shortlist that grows itself is not a shortlist.
-        add("**If access is bought, these are the rooms to point it at — and none "
-            "of them has been checked by anyone.**")
+        add("**If access is bought, these are the rooms to point it at — measured, "
+            "and thin.**")
         add("")
         add("Every room in section 1 is a problem-DISCUSSION room, and those "
-            "yielded almost no buyers. That was read as \"Reddit does not carry "
-            "buyers\", but it tested the wrong hypothesis. The same split is "
-            "measured on Hacker News: discussion returns 0.4% buyers, hiring "
-            "adverts return 6.0% — same classifier, same archive, an order of "
-            "magnitude apart. Reddit's hiring rooms are the untested half.")
+            "yielded almost no buyers. The same split holds on Hacker News: "
+            "discussion rarely carries a buyer, hiring adverts often do — same "
+            "classifier, same archive. So the rooms worth paying for are Reddit's "
+            "hiring rooms, and these are the ones that produced buyers when "
+            "measured.")
         add("")
         add("| room | why | status |")
         add("|---|---|---|")
         for c in cands:
             add(f"| `{c.get('name')}` | {c.get('why','')} | {c.get('evidence','')} |")
         add("")
-        add("They are written from general knowledge, not measured and not even "
-            "browsed: Reddit is closed to the collector and to this repo. **The "
+        add("How they were measured: Jester's worker had already stored these "
+            "rooms' posts by browser, and `jester signals from-archive` scored "
+            "that archive without sending Reddit a single request. Those records "
+            "are **set apart and not used** until this decision is made. **The "
             "benchmark they have to beat is already running and costs nothing** "
-            "— `hn/hiring` at 6.0% on a keyless public API. If paid access "
-            "cannot beat free, the answer is not to buy it.")
+            "— HN \"Who is hiring\" and the job boards, on keyless public APIs "
+            "(section 0). If paid access cannot beat free, the answer is not to "
+            "buy it.")
         add("")
     add("**Open decisions**, none of which this repository can make for you:")
     add("")
-    add("- Choose the communities and queries (sections 1–2).")
-    add("- Apply for commercial access and name the budget.")
-    add("- Approve that access **or** name the replacement source.")
-    add("- Provide a ClickHouse instance and credentials scoped to this collector.")
-    add("- Book the data-design review.")
+    add("- Approve HN \"Who is hiring\" plus the job boards as the replacement source (section 0) **or** "
+        "choose 3-5 Reddit communities and approve the commercial access spend.")
+    add("- If Reddit: choose the queries (section 2), apply for access and name the budget.")
+    add("- Provide a ClickHouse instance and credentials scoped to this collector, or confirm "
+        "the self-hosted one.")
     add("")
-    add("**Until access exists, there is no Reddit code path at all.** Reddit is not in the "
+    add("Done: the data-design review (Rassil, 25 Sep 2026) — ClickHouse holds insert and "
+        "query only; no defects raised.")
+    add("")
+    add("**Until access exists, the collector sends Reddit no requests.** Reddit is not in the "
         "collector's source registry, so `jester signals run --source reddit` fails with "
         "\"no source named 'reddit'\" rather than quietly collecting something it should not. "
+        "The only Reddit records are the hiring rooms above, scored from what the worker "
+        "had already archived, and they are set apart until this decision. "
         "`jester signals sources` prints every collector that does exist and the authority each "
         "one runs on.")
     add("")
     add("Live collection against **approved** sources is already built and running, and every "
-        "record carries a `mode` column saying `live` or `fixture` — so a fixture row can never "
-        "be counted as a live one, whichever source it came from.")
+        "record carries a `mode` column saying `live` or `synthetic` — so a synthetic row can "
+        "never be counted as a live one, whichever source it came from.")
     add("")
     add("## 7. If access is refused or late")
     add("")
@@ -259,9 +337,10 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "") -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_scope(out_dir: str | Path, rules: Rules | None = None, *, today: str = "") -> Path:
+def write_scope(out_dir: str | Path, rules: Rules | None = None, *, today: str = "",
+                db=None) -> Path:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / "scope-and-access.md"
-    path.write_text(scope_markdown(rules, today=today), encoding="utf-8")
+    path.write_text(scope_markdown(rules, today=today, db=db), encoding="utf-8")
     return path
