@@ -98,6 +98,8 @@ from jester.store import (
 )
 
 _LIVE_CONFIG_DIR = "config-live"
+#: How a command is shown to a person: the CLI name, then its arguments.
+CLI = "jester "
 _PLATFORMS = tuple(PLATFORM_KINDS)
 
 
@@ -559,7 +561,7 @@ class ConsoleAPI:
             "last_result": st.get("last_result", ""),
             "job": active,
             "every_presets": list(self.JOBS_SCRAPER_EVERY),
-            "command": "jester " + " ".join(_schedule.command_argv(self.JOBS_SCRAPER_COMMAND)),
+            "command": CLI + " ".join(_schedule.command_argv(self.JOBS_SCRAPER_COMMAND)),
             "log_tail": tail,
             # Does the registered task still run what the button runs? The
             # button builds its command fresh; the task runs a file written
@@ -571,8 +573,8 @@ class ConsoleAPI:
         drift = _schedule.launcher_drift(self.JOBS_SCRAPER_COMMAND)
         if not st.get("installed") or not drift:
             return {"stale": False}
-        return {"stale": drift["stale"], "runs": "jester " + drift["argv"],
-                "should": "jester " + drift["want"]}
+        return {"stale": drift["stale"], "runs": CLI + drift["argv"],
+                "should": CLI + drift["want"]}
 
     def schedule_refresh(self):
         """Rewrite every stale launcher from the current code, keeping its

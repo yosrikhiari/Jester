@@ -16,6 +16,7 @@ repo config with every provider forced to `fake` — the stand-in chosen
 deliberately, which is a different thing from degrading into it by accident.
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -106,3 +107,19 @@ def _repo_config_is_offline(request, monkeypatch, _offline_repo_config):
     if getattr(request.module, "REPO_CONFIG", None) is not None:
         monkeypatch.setattr(request.module, "REPO_CONFIG", _offline_repo_config,
                             raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _restore_environment():
+    """Every test leaves os.environ as it found it.
+
+    `jester.cli.main` loads the repo's .env into os.environ, and seven test
+    files call it. Left there, this machine's JESTER_QDRANT_URL turned the
+    doctor tests that ran afterwards into checks against a real Qdrant -- so
+    the suite passed or failed depending on file order. CI never saw it: it
+    has no .env.
+    """
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)

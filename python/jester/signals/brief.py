@@ -41,7 +41,11 @@ SOURCE_LABEL = {
 # space backtracks on long digit strings.
 _RATE = re.compile(r"(\$|€|£|\busd\b|\beur\b|\bgbp\b|/hr|/hour|per hour|hourly|/mo\b"
                    r"|(?<!\d)\d{1,6} ?k\b|hrs?/w)", re.I)
-_URLISH = re.compile(r"(?:^(?:https?://|www\.))|(?:\.(?:com|io|ai|xyz|fr|dev|co)/?$)", re.I)
+# A headline segment that is a link, not a role: it starts like a URL or
+# ends like a domain. Two patterns rather than one alternation, so neither
+# anchor's reach is ambiguous.
+_URL_START = re.compile(r"^(?:https?://|www\.)", re.I)
+_URL_END = re.compile(r"\.(?:com|io|ai|xyz|fr|dev|co)/?$", re.I)
 _PLACE = re.compile(r"(remote|onsite|on-site|hybrid|\b[A-Z][a-z]+,? [A-Z]{2}\b|london|berlin|new york"
                     r"|nyc|sf\b|san francisco|europe|us only|emea|latam)", re.I)
 _CONTRACT = re.compile(r"contract|fractional|freelance|part[- ]time|consult", re.I)
@@ -56,6 +60,10 @@ _REDDIT_TASK = re.compile(r"get paid|role-play|contributor|annotat|data (label|c
                           r"|per ?task|remote ai freelance|specialists?\b|writers?\b", re.I)
 _REDDIT_ENGINEERING = re.compile(r"engineer|developer|software|full-?stack|python|\bapp\b|\bqa\b"
                                  r"|technical|data scientist|tech partner", re.I)
+
+
+def _urlish(segment: str) -> bool:
+    return bool(_URL_START.search(segment) or _URL_END.search(segment))
 
 
 def _segments(title: str) -> list:
@@ -84,7 +92,7 @@ def _role(best: dict, segs: list, company: str) -> str:
         return (best["title"] or "")[:110]
     if len(segs) < 2:
         return ""
-    return next((s for s in segs[1:] if not _URLISH.search(s) and not _PLACE.match(s)
+    return next((s for s in segs[1:] if not _urlish(s) and not _PLACE.match(s)
                  and not _RATE.search(s[:12])), "")[:90]
 
 

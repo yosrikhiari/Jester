@@ -1482,7 +1482,7 @@ def cmd_schedule(args):
             print("  depth  : " + (", ".join(depth) if depth else "no ceiling"))
             drift = _schedule.launcher_drift(_cmd)
             if drift and drift["stale"]:
-                print(f"  WARNING: the launcher runs an old command, written by older code:")
+                print("  WARNING: the launcher runs an old command, written by older code:")
                 print(f"    runs  : jester {drift['argv']}")
                 print(f"    should: jester {drift['want']}")
                 print("    fix   : jester schedule refresh")
