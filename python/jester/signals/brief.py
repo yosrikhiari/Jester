@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from importlib import resources
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,7 +26,7 @@ from pathlib import Path
 from . import OUTCOMES, TABLE, outcomes
 from .leads import MAX_AGE_DAYS, too_old
 
-TEMPLATE = Path(__file__).resolve().parent / "brief_template.html"
+TEMPLATE = "brief_template.html"   # shipped beside this module
 
 #: The sources outreach may use, and how the page names them. Forum records
 #: can be buyers too (an owner describing work they would pay to remove), so
@@ -36,8 +37,11 @@ SOURCE_LABEL = {
     "hn/comment": "HN comment", "hn/ask": "Ask HN", "hn/show": "Show HN", "hn/story": "HN story",
 }
 
-_RATE = re.compile(r"(\$|€|£|\busd\b|\beur\b|\bgbp\b|/hr|/hour|per hour|hourly|/mo\b|\d+\s?k\b|hrs?/w)", re.I)
-_URLISH = re.compile(r"^(https?://|www\.)|\.(com|io|ai|xyz|fr|dev|co)/?$", re.I)
+# `(?<!\d)\d{1,6}` rather than `\d+`: an unbounded run before an optional
+# space backtracks on long digit strings.
+_RATE = re.compile(r"(\$|€|£|\busd\b|\beur\b|\bgbp\b|/hr|/hour|per hour|hourly|/mo\b"
+                   r"|(?<!\d)\d{1,6} ?k\b|hrs?/w)", re.I)
+_URLISH = re.compile(r"(?:^(?:https?://|www\.))|(?:\.(?:com|io|ai|xyz|fr|dev|co)/?$)", re.I)
 _PLACE = re.compile(r"(remote|onsite|on-site|hybrid|\b[A-Z][a-z]+,? [A-Z]{2}\b|london|berlin|new york"
                     r"|nyc|sf\b|san francisco|europe|us only|emea|latam)", re.I)
 _CONTRACT = re.compile(r"contract|fractional|freelance|part[- ]time|consult", re.I)
@@ -74,23 +78,37 @@ def _stage(outcome: str) -> int:
     return OUTCOMES.index(outcome) if outcome in OUTCOMES else 0
 
 
+def _role(best: dict, segs: list, company: str) -> str:
+    """The role, read off the headline's segments; a forum post has only a title."""
+    if not company:
+        return (best["title"] or "")[:110]
+    if len(segs) < 2:
+        return ""
+    return next((s for s in segs[1:] if not _URLISH.search(s) and not _PLACE.match(s)
+                 and not _RATE.search(s[:12])), "")[:90]
+
+
+def _furthest_outcome(records: list) -> str:
+    return max((x["outcome"] or "" for x in records), key=_stage)
+
+
+def _is_agency(records: list) -> bool:
+    return any(_AGENCY.search(f"{x['title'] or ''} {x['excerpt'] or ''}") for x in records)
+
+
 def _company_row(records: list) -> dict:
     """One row for a company: its strongest advert, and what came of any of them."""
     from .sources.jobboards import _is_gig_task, _is_marketplace
     records.sort(key=lambda x: (-float(x["match_confidence"] or 0), x["created_utc"] or ""))
     best = records[0]
     segs = _segments(best["title"])
-    company = best["company"] if best["company"] and best["company"] != "unknown" else ""
-    if company and len(segs) > 1:
-        role = next((s for s in segs[1:] if not _URLISH.search(s) and not _PLACE.match(s)
-                     and not _RATE.search(s[:12])), "")[:90]
-    else:
-        role = "" if company else (best["title"] or "")[:110]
+    named = best["company"] or ""
+    company = "" if named in ("", "unknown") else named
+    role = _role(best, segs, company)
     rate = _pick(segs, _RATE)
-    engagement = "" if (best["buyer_intent"] or "") == "unknown" else (best["buyer_intent"] or "")
+    intent = best["buyer_intent"] or ""
+    engagement = "" if intent == "unknown" else intent
     dates = sorted((x["created_utc"] or "")[:10] for x in records if x["created_utc"])
-    outcome = max((x["outcome"] or "" for x in records), key=_stage)
-    text = " ".join(f"{x['title'] or ''} {x['excerpt'] or ''}" for x in records)
     return {
         "company": company or "(no company named)",
         "role": role,
@@ -100,15 +118,60 @@ def _company_row(records: list) -> dict:
         "fit": round(float(best["match_confidence"] or 0), 2),
         "ambiguous": "ambiguous" in (best["match_reason"] or ""),
         "contract": bool(_CONTRACT.search(f"{engagement} {best['title'] or ''}")),
-        "agency": bool(_AGENCY.search(text)),
+        "agency": _is_agency(records),
         "gig": _is_marketplace(company) or _is_gig_task(best["title"] or ""),
         "source": SOURCE_LABEL.get(best["community"], best["community"]),
         "posted": dates[-1] if dates else "",
         "times": len(records),
         "url": best["source_url"],
         "why": _why(best),
-        "outcome": outcome,
+        "outcome": _furthest_outcome(records),
     }
+
+
+def _split(rows: list, max_age_days: int, now: datetime):
+    """Recent buyers from usable sources, the Reddit rooms set apart, and how
+    many usable-source adverts were too old to list."""
+    recent, reddit, older = [], [], 0
+    for r in rows:
+        if r["community"].startswith("r/"):
+            reddit.append(r)
+        elif r["community"] not in SOURCE_LABEL:
+            continue
+        elif too_old(r, max_age_days, now=now):
+            older += 1
+        else:
+            recent.append(r)
+    return recent, reddit, older
+
+
+def _companies(recent: list) -> list:
+    """One row per company; a record that names none is its own row."""
+    groups: dict = {}
+    for r in recent:
+        key = (r["company"] or "").strip().lower()
+        groups.setdefault(key if key not in ("", "unknown") else r["record_id"], []).append(r)
+    # Strongest first; among equals, contract-shaped first, then newest. Two
+    # stable sorts, because "newest" runs the other way from the rest.
+    rows = sorted((_company_row(rs) for rs in groups.values()),
+                  key=lambda c: c["posted"], reverse=True)
+    rows.sort(key=lambda c: (-c["fit"], not c["contract"]))
+    return rows
+
+
+def _reddit_posts(reddit: list) -> list:
+    """The set-apart Reddit posts, one per headline, gig-like ones last."""
+    posts: dict = {}
+    for r in reddit:
+        key = (r["title"] or "").strip().lower()[:80] or r["record_id"]
+        fit = round(float(r["match_confidence"] or 0), 2)
+        if key in posts and posts[key]["fit"] >= fit:
+            continue
+        title = (r["title"] or "")[:120]
+        posts[key] = {"community": r["community"], "title": title, "fit": fit,
+                      "url": r["source_url"], "posted": (r["created_utc"] or "")[:10],
+                      "gig": bool(_REDDIT_TASK.search(title)) or not _REDDIT_ENGINEERING.search(title)}
+    return sorted(posts.values(), key=lambda x: (x["gig"], -x["fit"]))
 
 
 def build(db: sqlite3.Connection, *, mode: str = "live", max_age_days: int = MAX_AGE_DAYS,
@@ -120,49 +183,17 @@ def build(db: sqlite3.Connection, *, mode: str = "live", max_age_days: int = MAX
         "match_reason, created_utc, source_url, COALESCE(outcome, '') AS outcome "
         f"FROM {TABLE} WHERE mode = ? AND audience = 'buyer' AND COALESCE(removed_utc, '') = ''",
         (mode,))]
-
-    recent, reddit, older = [], [], 0
-    for r in rows:
-        if r["community"].startswith("r/"):
-            reddit.append(r)
-        elif r["community"] in SOURCE_LABEL:
-            if too_old(r, max_age_days, now=now):
-                older += 1
-            else:
-                recent.append(r)
-
-    # One row per company; a record that names none is its own row.
-    groups: dict = {}
-    for r in recent:
-        key = (r["company"] or "").strip().lower()
-        groups.setdefault(key if key and key != "unknown" else r["record_id"], []).append(r)
-    # Strongest first; among equals, contract-shaped first, then newest. Two
-    # stable sorts, because "newest" runs the other way from the rest.
-    companies = sorted((_company_row(rs) for rs in groups.values()),
-                       key=lambda c: c["posted"], reverse=True)
-    companies.sort(key=lambda c: (-c["fit"], not c["contract"]))
-
-    posts = {}
-    for r in reddit:
-        key = (r["title"] or "").strip().lower()[:80] or r["record_id"]
-        fit = round(float(r["match_confidence"] or 0), 2)
-        if key in posts and posts[key]["fit"] >= fit:
-            continue
-        title = (r["title"] or "")[:120]
-        posts[key] = {"community": r["community"], "title": title, "fit": fit,
-                      "url": r["source_url"], "posted": (r["created_utc"] or "")[:10],
-                      "gig": bool(_REDDIT_TASK.search(title)) or not _REDDIT_ENGINEERING.search(title)}
-
+    recent, reddit, older = _split(rows, max_age_days, now)
     o = outcomes(db, mode=mode)
     return {
         "generated": now.strftime("%Y-%m-%d"),
         "cutoff": (now - timedelta(days=max_age_days)).strftime("%Y-%m-%d"),
         "max_age_days": max_age_days,
         "total_buyers": len(rows),
-        "companies": companies,
+        "companies": _companies(recent),
         "older_count": older,
         "reddit_records": len(reddit),
-        "reddit": sorted(posts.values(), key=lambda x: (x["gig"], -x["fit"])),
+        "reddit": _reddit_posts(reddit),
         "worked": o["worked"],
         "picked": o["picked"],
     }
@@ -171,7 +202,8 @@ def build(db: sqlite3.Connection, *, mode: str = "live", max_age_days: int = MAX
 def render(data: dict) -> str:
     """The page, with the data embedded -- one file that opens anywhere."""
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return TEMPLATE.read_text(encoding="utf-8").replace("/*DATA*/null", payload)
+    page = resources.files(__package__).joinpath(TEMPLATE).read_text(encoding="utf-8")
+    return page.replace("/*DATA*/null", payload)
 
 
 def write(db: sqlite3.Connection, out_dir: str | Path, **kw) -> dict:
@@ -179,8 +211,10 @@ def write(db: sqlite3.Connection, out_dir: str | Path, **kw) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     page = out / "buyer-brief.html"
-    page.write_text(render(data), encoding="utf-8")
-    (out / "brief.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    with open(page, "w", encoding="utf-8") as fh:
+        fh.write(render(data))
+    with open(out / "brief.json", "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
     return {"path": str(page), "companies": len(data["companies"]),
             "reddit": len(data["reddit"]), "total_buyers": data["total_buyers"],
             "older": data["older_count"], "picked": data["picked"], "worked": data["worked"]}

@@ -28,7 +28,7 @@ def _rec(db, sid, *, community="himalayas/contract", company="Acme", conf=0.9,
     return f"{platform}:{sid}"
 
 
-@pytest.fixture()
+@pytest.fixture
 def db(tmp_path):
     conn = sig.open_signals(str(tmp_path / "s.db"))
     yield conn
@@ -41,7 +41,8 @@ def test_one_row_per_company_with_its_strongest_advert(db):
     _rec(db, "3", company="Beta", conf=0.9)
     rows = brief.build(db, now=NOW)["companies"]
     assert [c["company"] for c in rows] == ["acme ", "Beta"]
-    assert rows[0]["times"] == 2 and rows[0]["role"] == "Staff Engineer"
+    assert rows[0]["times"] == 2
+    assert rows[0]["role"] == "Staff Engineer"
 
 
 def test_old_removed_and_reddit_records_are_kept_out_of_the_list(db):
@@ -55,7 +56,8 @@ def test_old_removed_and_reddit_records_are_kept_out_of_the_list(db):
     data = brief.build(db, now=NOW)
     assert [c["company"] for c in data["companies"]] == ["Fresh"]
     assert data["older_count"] == 1
-    assert data["reddit_records"] == 1 and data["reddit"][0]["community"] == "r/forhire"
+    assert data["reddit_records"] == 1
+    assert data["reddit"][0]["community"] == "r/forhire"
     assert data["cutoff"] == "2026-07-31"
 
 
@@ -73,7 +75,8 @@ def test_a_company_carries_its_furthest_outcome_and_the_totals_count_picks(db):
     sig.set_outcome(db, b, "replied")
     data = brief.build(db, now=NOW)
     by = {c["company"]: c for c in data["companies"]}
-    assert by["Acme"]["outcome"] == "replied" and by["Beta"]["outcome"] == ""
+    assert by["Acme"]["outcome"] == "replied"
+    assert by["Beta"]["outcome"] == ""
     assert (data["picked"], data["worked"]) == (1, 1)
 
 
@@ -102,7 +105,8 @@ def test_the_command_writes_the_page_and_its_data(tmp_path, db, capsys):
     assert "1 companies from 1 buyer signal(s)" in out
     page = tmp_path / "out" / "brief" / "buyer-brief.html"
     data = json.loads((tmp_path / "out" / "brief" / "brief.json").read_text(encoding="utf-8"))
-    assert page.exists() and data["companies"][0]["company"] == "Acme"
+    assert page.exists()
+    assert data["companies"][0]["company"] == "Acme"
 
 
 def test_the_brief_is_a_schedulable_command():

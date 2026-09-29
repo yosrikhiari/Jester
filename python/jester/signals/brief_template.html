@@ -48,7 +48,7 @@ h2{font:600 22px/1.2 var(--display);margin:0;text-wrap:balance}
 .ask b{color:var(--ink)}
 
 /* the counts, as one line of facts rather than tiles */
-.facts{display:flex;flex-wrap:wrap;gap:8px 28px;padding-block:4px;border-block:1px solid var(--line)}
+.facts{display:flex;flex-wrap:wrap;gap:8px 28px;padding-block:4px;border-block:1px solid var(--line);list-style:none;margin:0;padding-inline:0}
 .fact{display:flex;flex-direction:column;gap:2px;padding-block:10px}
 .fact b{font:600 22px/1.1 var(--display);font-variant-numeric:tabular-nums}
 .fact span{font-size:13px;color:var(--muted)}
@@ -59,6 +59,7 @@ h2{font:600 22px/1.2 var(--display);margin:0;text-wrap:balance}
 .section-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
 .section-head p{margin:4px 0 0;color:var(--muted);max-width:70ch}
 .tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+fieldset.tools{border:0;margin:0;padding:0;min-inline-size:0}
 .chip{font:500 13px var(--body);border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:5px 12px;cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
 .search{font:400 14px var(--body);border:1px solid var(--line-2);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;inline-size:220px;max-inline-size:100%}
@@ -124,15 +125,15 @@ footer{font:400 12px var(--mono);color:var(--muted);border-top:1px solid var(--l
     </ol>
   </section>
 
-  <div class="facts" role="list">
-    <div class="fact" role="listitem"><b id="f-companies"></b><span>companies in the list</span></div>
-    <div class="fact" role="listitem"><b id="f-hn"></b><span>from HN Who is hiring</span></div>
-    <div class="fact" role="listitem"><b id="f-boards"></b><span>from job boards</span></div>
-    <div class="fact" role="listitem"><b id="f-older"></b><span>older adverts, not listed</span></div>
-    <div class="fact" role="listitem"><b id="f-reddit"></b><span>Reddit posts set apart</span></div>
-    <div class="fact" role="listitem"><b id="f-picked"></b><span>picked for outreach</span></div>
-    <div class="fact" role="listitem" id="fact-worked"><b id="f-worked"></b><span>worked so far</span></div>
-  </div>
+  <ul class="facts">
+    <li class="fact"><b id="f-companies"></b><span>companies in the list</span></li>
+    <li class="fact"><b id="f-hn"></b><span>from HN Who is hiring</span></li>
+    <li class="fact"><b id="f-boards"></b><span>from job boards</span></li>
+    <li class="fact"><b id="f-older"></b><span>older adverts, not listed</span></li>
+    <li class="fact"><b id="f-reddit"></b><span>Reddit posts set apart</span></li>
+    <li class="fact"><b id="f-picked"></b><span>picked for outreach</span></li>
+    <li class="fact" id="fact-worked"><b id="f-worked"></b><span>worked so far</span></li>
+  </ul>
 
   <section class="section" aria-labelledby="list-h">
     <div class="section-head">
@@ -149,11 +150,11 @@ footer{font:400 12px var(--mono);color:var(--muted);border-top:1px solid var(--l
         <button class="chip" type="button" data-f="hn" aria-pressed="false">HN</button>
         <button class="chip" type="button" data-f="boards" aria-pressed="false">Job boards</button>
       </div>
-      <div class="tools" id="sorts" role="group" aria-label="Sort">
+      <fieldset class="tools" id="sorts" aria-label="Sort">
         <span class="count">Sort</span>
         <button class="chip" type="button" data-s="fit" aria-pressed="true">Strongest first</button>
         <button class="chip" type="button" data-s="new" aria-pressed="false">Newest first</button>
-      </div>
+      </fieldset>
     </div>
     <div class="count" id="shown" aria-live="polite"></div>
     <div class="tablewrap">
