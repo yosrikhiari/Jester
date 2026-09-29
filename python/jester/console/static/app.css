@@ -87,7 +87,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .row{display:flex;gap:var(--s-3);flex-wrap:wrap;align-items:center}
 .row-end{margin-inline-start:auto}
 .row-between{display:flex;justify-content:space-between;align-items:center;gap:var(--s-4)}
-.stack{display:flex;flex-direction:column;gap:var(--s-3)}
+.stack{display:flex;flex-direction:column;gap:var(--s-4)}
 .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* â”€â”€ shell: side nav + column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -275,7 +275,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .chip--warn{border-color:transparent;background:var(--warn-bg);color:var(--running-ink)}
 .chip--bad{border-color:transparent;background:var(--bad-bg);color:var(--failed-ink)}
 .chip--sched{border-color:transparent;background:var(--accent-soft);color:var(--plum-ink)}
-.chiprow{display:flex;flex-wrap:wrap;gap:var(--s-3)}
+.chiprow{display:flex;flex-wrap:wrap;gap:var(--s-4)}
 .score{font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-h2);letter-spacing:-.01em}
 .score--hi{color:var(--done-ink)} .score--mid{color:var(--running-ink)} .score--lo{color:var(--failed-ink)}
 
@@ -497,7 +497,7 @@ pre{
 }
 @media (max-width:600px){
   :root{--fs-hero:30px}
-  .topbar{padding-inline:var(--s-5);gap:var(--s-3)}
+  .topbar{padding-inline:var(--s-5);gap:var(--s-4)}
   .topbar-meta{display:none}
   .kpis{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
   .dl{grid-template-columns:1fr}
@@ -643,7 +643,7 @@ pre{
 .scraper-state .bad{color:var(--failed-ink)}
 .scraper-state .pending{color:var(--running-ink)}
 /* infrastructure rows with consequences */
-.infra{display:flex;flex-direction:column;gap:var(--s-3)}
+.infra{display:flex;flex-direction:column;gap:var(--s-4)}
 .irow{display:flex;align-items:flex-start;gap:var(--s-4);padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--border-soft,var(--line));background:var(--bg);font-size:var(--fs-sm)}
 .irow .led{inline-size:8px;block-size:8px;border-radius:50%;background:var(--ok);flex:none;margin-block-start:6px}
 .irow.off{border-color:var(--accent-line);background:var(--accent-soft)}
@@ -765,7 +765,7 @@ mark{background:var(--warn-bg);color:inherit;border-radius:3px;padding:0 2px}
 }
 /* config groups + map knob */
 .cfg-group{border:1px solid var(--line);border-radius:var(--r-card);padding:var(--s-5) var(--s-6);margin-block-end:var(--s-4);background:var(--surface)}
-.cfg-group>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:var(--s-3)}
+.cfg-group>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:var(--s-4)}
 .cfg-group>summary::-webkit-details-marker{display:none}
 .cfg-group>summary::before{content:"â–¾";color:var(--ink-soft);font-size:12px}
 .cfg-group:not([open])>summary::before{content:"â–¸"}
@@ -877,3 +877,11 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   /* Origin is the first thing to go: the ledger is mostly scheduled ticks. */
   [data-page="runs"] th:nth-child(5),[data-page="runs"] td:nth-child(5){display:none}
 }
+
+/* marking a lead: an inline editor under the buyer row it belongs to */
+.sig-mark td{background:var(--surface-2,var(--surface));border-block-start:0}
+.sig-mark__box{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-4)}
+.sig-mark__choices{flex-wrap:wrap}
+.sig-mark__choices button{padding:5px 10px}
+.sig-mark__note{flex:1 1 220px;min-inline-size:0}
+.sig-mark__hint{flex-basis:100%;margin:0}

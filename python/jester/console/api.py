@@ -370,8 +370,14 @@ class ConsoleAPI:
         from jester.signals import open_signals
         return open_signals(self._signals_path)
 
+    #: The work queue: buyers nobody has marked, from the sources outreach may
+    #: use. Reddit rooms are left out -- their records are set apart until
+    #: there is an agreement with Reddit (docs/scope-and-access.md, section 6).
+    QUEUE_WHERE = ("audience = 'buyer' AND COALESCE(outcome, '') = '' "
+                   "AND community NOT LIKE 'r/%'")
+
     def signals(self, *, audience="", community="", kind="", q="", mode="",
-                outcome="", offset=0, limit=50):
+                outcome="", queue="", offset=0, limit=50):
         """The archive, filtered, with the facet counts for what is left.
 
         Facets are counted UNDER the other filters, not over the whole table:
@@ -389,11 +395,23 @@ class ConsoleAPI:
         try:
             filters = {"audience": audience, "community": community,
                        "kind": kind, "mode": mode, "outcome": outcome}
-            where, args = [], []
+
+            def cond(col, val):
+                # "untouched" is the work queue: no outcome recorded yet. It
+                # is the empty value, which a plain `= ?` filter cannot name.
+                if col == "outcome" and val == "untouched":
+                    return "COALESCE(outcome, '') = ''", []
+                return f"{col} = ?", [val]
+
+            # The queue is a fixed view, not a facet: it narrows everything,
+            # facets included, the same way.
+            fixed = [self.QUEUE_WHERE] if queue else []
+            where, args = list(fixed), []
             for col, val in filters.items():
                 if val:
-                    where.append(f"{col} = ?")
-                    args.append(val)
+                    c, a = cond(col, val)
+                    where.append(c)
+                    args += a
             if q:
                 where.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
                 args += [f"%{q}%"] * 3
@@ -424,16 +442,23 @@ class ConsoleAPI:
             for col in ("audience", "community", "kind", "mode", "outcome"):
                 # Each facet is counted with its OWN filter dropped, so the
                 # options a reader can switch to still show a number.
-                sub = [f"{c} = ?" for c, v in filters.items() if v and c != col]
-                subargs = [v for c, v in filters.items() if v and c != col]
+                sub, subargs = list(fixed), []
+                for c, v in filters.items():
+                    if v and c != col:
+                        cc, ca = cond(c, v)
+                        sub.append(cc)
+                        subargs += ca
                 if q:
                     sub.append("(title LIKE ? OR excerpt LIKE ? OR match_reason LIKE ?)")
                     subargs += [f"%{q}%"] * 3
                 sub_clause = ("WHERE " + " AND ".join(sub)) if sub else ""
+                # An empty outcome is a value worth clicking ("untouched");
+                # an empty anything-else is not.
+                expr = "COALESCE(NULLIF(outcome, ''), 'untouched')" if col == "outcome" else col
                 facets[col] = [
                     {"value": r[0], "n": r[1]} for r in db.execute(
-                        f"SELECT {col}, COUNT(*) FROM {TABLE} {sub_clause} "
-                        f"GROUP BY {col} ORDER BY COUNT(*) DESC", subargs).fetchall()
+                        f"SELECT {expr} AS v, COUNT(*) FROM {TABLE} {sub_clause} "
+                        "GROUP BY v ORDER BY COUNT(*) DESC", subargs).fetchall()
                     if r[0]]
 
             from jester.signals import counts as signal_counts
@@ -441,6 +466,34 @@ class ConsoleAPI:
                     "total": total, "rows": rows, "facets": facets,
                     "counts": signal_counts(db), "fields": FIELD_NAMES,
                     "offset": offset, "limit": limit}
+        finally:
+            db.close()
+
+    def signal_outcome(self, record_id, outcome, note=""):
+        """Record what came of one lead, from the console.
+
+        The same `set_outcome` the CLI calls, so the rules about outcomes (one
+        record at a time, a fixed list, re-recording overwrites) live in one
+        place. Returns the row as it now reads so the page can redraw it
+        without reloading the list, plus the new worked/picked totals.
+        """
+        from jester.signals import OutcomeError, outcomes, set_outcome
+        if self.read_only:
+            return {"ok": False, "error": "this console is read-only"}
+        if not Path(self._signals_path).exists():
+            return {"ok": False, "error": f"no signal archive at {self._signals_path}"}
+        db = self._signals_db()
+        try:
+            try:
+                res = set_outcome(db, str(record_id or ""), str(outcome or ""),
+                                  note=str(note or "").strip())
+            except OutcomeError as exc:
+                return {"ok": False, "error": str(exc)}
+            row = db.execute(
+                "SELECT record_id, outcome, outcome_at, outcome_note FROM problem_signal "
+                "WHERE record_id = ?", (res["record_id"],)).fetchone()
+            return {"ok": True, "was": res["was"], "row": dict(row),
+                    "totals": outcomes(db, mode="live")}
         finally:
             db.close()
 

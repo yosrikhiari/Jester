@@ -95,7 +95,11 @@ CONTRACT_SHAPED = ("contract", "freelance", "part-time", "part_time", "temporary
 #: board filed them under Developer. A company list cannot keep up with every
 #: data vendor; the shape of the task can.
 GIG_TASKS = ("ai trainer", "ai tutor", "annotat", "rater", "voice recording",
-             "transcription", "data labeling", "data labelling", "online tutor")
+             "transcription", "data labeling", "data labelling", "online tutor",
+             # "Evaluators for AI training", "Quality Control Specialist (AI
+             # Training)": every stored headline naming AI training on
+             # 2026-09-29 was a data task, none an engineering role.
+             "ai training")
 
 
 def _is_gig_task(role: str) -> bool:

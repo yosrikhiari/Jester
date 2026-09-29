@@ -99,7 +99,10 @@ FIELDS = [
 #: `unfit` is deliberately separate from `no`: a company that never should
 #: have reached outreach is a fault in the rules, and one that said no is not.
 #: Collapsing them would hide the only signal that can improve the classifier.
-OUTCOMES = ("", "contacted", "replied", "meeting", "won", "no", "unfit")
+#: `picked` comes before any of them: a person read the advert and chose it for
+#: outreach. It is a triage decision, not a result, so it counts as neither
+#: worked nor untouched, and a picked lead stays in the handover.
+OUTCOMES = ("", "picked", "contacted", "replied", "meeting", "won", "no", "unfit")
 FIELD_NAMES = [f[0] for f in FIELDS]
 
 #: How much permitted text a record carries. An excerpt, not a copy: retention
@@ -423,10 +426,14 @@ def outcomes(db: sqlite3.Connection, *, mode: str = "") -> dict:
     by_outcome = {r["o"]: r["n"] for r in rows}
     total = sum(by_outcome.values())
     untouched = by_outcome.get("untouched", 0)
+    picked = by_outcome.get("picked", 0)
     return {
         "by_outcome": by_outcome,
         "buyers": total,
-        "worked": total - untouched,
+        # Worked means somebody acted on it. A pick has not been sent yet, and
+        # counting it would dilute the reply rate the digest divides by this.
+        "worked": total - untouched - picked,
+        "picked": picked,
         "untouched": untouched,
         # The only conversion figure in the project that is not circular:
         # every other number here is the rules agreeing with themselves.
