@@ -1,0 +1,16 @@
+started_utc,kind,source,collected,new,seen_again,buyer,errors,status,note
+2026-09-29T10:13:03+00:00,manual,himalayas,269,4,265,223,0,ok,
+2026-09-29T08:30:52+00:00,scheduled,reddit-archive,608,2,77,11,0,ok,scored what the worker already collected from 29 Reddit room(s); no requests to Reddit; 480 seller/question post(s) discarded
+2026-09-29T08:30:49+00:00,scheduled,jobicy,7,0,7,5,0,ok,fallback: hackernews-hiring had nothing new
+2026-09-29T08:30:48+00:00,scheduled,remotive,1,0,1,1,0,ok,fallback: hackernews-hiring had nothing new; nothing new; fell back to jobicy
+2026-09-29T08:30:09+00:00,scheduled,himalayas,129,0,129,107,0,ok,fallback: hackernews-hiring had nothing new; nothing new; fell back to remotive
+2026-09-29T08:30:02+00:00,scheduled,hackernews-hiring,488,0,488,27,0,ok,nothing new; fell back to himalayas
+2026-09-29T08:00:02+00:00,scheduled,hackernews,225,82,143,4,0,ok,
+2026-09-28T15:04:57+00:00,scheduled,reddit-archive,570,0,77,11,0,ok,scored what the worker already collected from 29 Reddit room(s); no requests to Reddit; 447 seller/question post(s) discarded
+2026-09-28T15:04:50+00:00,scheduled,jobicy,7,0,7,5,0,ok,fallback: hackernews-hiring had nothing new
+2026-09-28T15:04:50+00:00,scheduled,remotive,1,0,1,1,0,ok,fallback: hackernews-hiring had nothing new; nothing new; fell back to jobicy
+2026-09-28T15:04:50+00:00,scheduled,himalayas,0,0,0,0,0,skipped,not asked: daily budget of 600 requests spent; resets at 2026-09-29T00:00:00+00:00; sitting out; fell back to remotive
+2026-09-28T15:04:37+00:00,scheduled,hackernews-hiring,489,0,489,27,0,ok,nothing new; fell back to himalayas
+2026-09-28T10:57:31+00:00,manual,himalayas,2,0,2,2,0,ok,
+2026-09-28T10:57:28+00:00,manual,himalayas,13,0,13,10,0,ok,
+2026-09-28T10:57:24+00:00,manual,himalayas,23,0,23,22,0,ok,

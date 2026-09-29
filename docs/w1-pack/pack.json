@@ -1,0 +1,22 @@
+{
+ "milestone": "W1, 28 Sep 2026",
+ "commit": "3815fe5aad6143f9919fad555d7aeeb1de262d9c",
+ "captured_utc": "2026-09-29T10:56:29Z",
+ "platform": "Linux x86_64, Python 3.12.14 (python:3.12)",
+ "files": {
+  "export-manifest.json": "3f1398f992400797e493277bd02a2f4198de19ed894cbfa7486adbb4fe7f9e3b",
+  "field-map.md": "21230d33403ed9f4900ffa96b03f0f26e8399e7ad32a6163fcfee1e5d73e7f9d",
+  "fixture-gate.json": "bcb0c6a260fd9ccc524153d19047df402477d7240aa4894f3c9e92728dde5fce",
+  "proof/01-clone.txt": "8c6669ff6f44134596678d228b0d0c8d3901784fde7acde117ea7891d554c5f5",
+  "proof/02-install.txt": "a2e46cf1d4a7ce0eb8b74ccf683feffbc1ec511a6c16d65890cca75b9f085226",
+  "proof/03-export-run1.txt": "45ddc3cc92de16eeb72baa58ec73d8dddec9567f58d5eb2cef68c5827351915f",
+  "proof/04-export-run2.txt": "a9c2fa2d588789c75c3752c83e9b8c774b9b08c1308ad9a57c7835aa5d9ee065",
+  "proof/05-check.txt": "c71d300dd226bedb06ca31ebca8fca24f9d59a45f2b6e706bf109ea2526633bb",
+  "proof/06-field-map.txt": "b453c20ee3ca2d7dfd0c5585d51870280eb049c1e14287ee4a623c86b0ae9060",
+  "README.md": "b6eb61861ce22429469deb1af4281a30ac559f39d9f2f6b26b3113b3e2d1b561",
+  "requests-per-source.csv": "c5e4a3200315a24945c901ef6df849b2476a24ee55c95e266ad20bb45bce7b8f",
+  "run-ledger-sample.csv": "1201f405d8a9c5d7ac02358609a9c9522dc1f9cfd23a1ebdf2bb96ad658067c0",
+  "schema.clickhouse.sql": "8ed562522d9d6de3e9e0e9449a7afa9a9e5f306cd5181aa78d6d888a670f6793",
+  "signals-synthetic.csv": "de5f3d496aace6ebcf4a0fba864169e5d57bd55a5a9eb2a99f56ab7ef319bf10"
+ }
+}

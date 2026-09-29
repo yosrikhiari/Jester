@@ -1,0 +1,51 @@
+{
+  "written_at": "2026-09-29T10:56:58+00:00",
+  "mode_filter": "synthetic",
+  "rows_in_db": 5,
+  "rows_in_csv": 5,
+  "reconciles": true,
+  "counts_by_mode": {
+    "synthetic": {
+      "unique_collected": 5,
+      "relevant": 3,
+      "buyer": 2,
+      "practitioner": 1,
+      "removed": 0,
+      "errors": 1
+    }
+  },
+  "fields": [
+    "record_id",
+    "mode",
+    "platform",
+    "source_id",
+    "source_url",
+    "community",
+    "kind",
+    "author",
+    "title",
+    "excerpt",
+    "text_hash",
+    "query",
+    "match_reason",
+    "match_confidence",
+    "audience",
+    "relevant",
+    "company",
+    "buyer_intent",
+    "created_utc",
+    "edited_utc",
+    "removed_utc",
+    "first_seen_utc",
+    "last_seen_utc",
+    "revisions",
+    "run_id",
+    "run_status",
+    "error",
+    "outcome",
+    "outcome_at",
+    "outcome_note"
+  ],
+  "excerpt_chars": 600,
+  "csv": "signals-synthetic.csv"
+}
