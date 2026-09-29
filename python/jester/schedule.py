@@ -184,14 +184,99 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # exits. From outside, a healthy long run and a hung one look identical,
         # and the console only says "running". One flag makes the difference
         # between the two visible while it is still happening.
-        # An argument with a space ("machine learning") is quoted, or cmd
-        # hands argparse two words and the task exits 2 on every run.
-        f'"{py}" -u -m jester.cli '
-        f'{" ".join(f"{chr(34)}{a}{chr(34)}" if " " in a else a for a in command_argv(command))} '
+        f'"{py}" -u -m jester.cli {argv_text(command)} '
         f'--db "{db}"{cfg}{args} '
         f'>>"{log}" 2>&1\r\n'
         f'>>"{log}" echo [%DATE% %TIME%] jester {command} exited %ERRORLEVEL%\r\n'
     )
+
+
+def argv_text(command: str) -> str:
+    """The command as the launcher writes it. An argument with a space
+    ("machine learning") is quoted, or cmd hands argparse two words and the
+    task exits 2 on every run."""
+    return " ".join(f'"{a}"' if " " in a else a for a in command_argv(command))
+
+
+_LAUNCH = " -u -m jester.cli "
+
+
+def read_launcher(command: str) -> dict | None:
+    """What an installed launcher actually runs, parsed back out of the file.
+
+    None when there is no launcher. `argv` is the command as written; `db`,
+    `config`, `python` and `extra` (the scrape flags) are the operator's own
+    settings, kept so a refresh can rewrite the file without changing them.
+    """
+    path = launcher_path(command)
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    line = next((ln for ln in text.splitlines() if _LAUNCH in ln), "")
+    body = line.split(">>", 1)[0].strip()
+    head, _, rest = body.partition(_LAUNCH)
+    argv, _, tail = rest.partition(' --db "')
+    db, _, after = tail.partition('"')
+    tokens = [t.strip('"') for t in shlex.split(after, posix=False)]
+    config = ""
+    if tokens[:1] == ["--config"] and len(tokens) > 1:
+        config, tokens = tokens[1], tokens[2:]
+    return {"command": command, "path": str(path), "python": head.strip().strip('"'),
+            "argv": argv.strip(), "db": db, "config": config, "extra": tokens}
+
+
+def launcher_drift(command: str) -> dict | None:
+    """Does the installed launcher still run what this code would write?
+
+    The failure it exists for, on 2026-09-28: the hiring task's launcher had
+    been written before the job-board fallback and the Reddit step were added,
+    so the 09:30 run read one thread and stopped -- for days, exit code 0,
+    while the console's button (which builds its command fresh) did the whole
+    chain. A launcher is a snapshot of the code that wrote it, and nothing
+    compared the two.
+
+    Only the command is compared. The database, config and scrape flags are
+    the operator's settings, not the code's.
+    """
+    have = read_launcher(command)
+    if have is None:
+        return None
+    want = argv_text(command)
+    return {**have, "want": want, "stale": have["argv"] != want}
+
+
+def stale_launchers(installed_only: bool = True) -> list:
+    """Every launcher whose command no longer matches the code.
+
+    A launcher file with no task behind it runs nothing, so by default only
+    installed tasks are reported -- a leftover file is not a missed run.
+    """
+    out = []
+    for command in COMMAND_SPEC:
+        drift = launcher_drift(command)
+        if not drift or not drift["stale"]:
+            continue
+        if installed_only and not status(TASK_FOR_COMMAND.get(command, TASK_NAME)).get("installed"):
+            continue
+        out.append(drift)
+    return out
+
+
+def refresh_launchers(commands=None) -> list:
+    """Rewrite stale launchers from the current code, keeping each one's
+    database, config, python and scrape flags. The task registration is not
+    touched: it points at the file, and the file is what changes."""
+    refreshed = []
+    for drift in stale_launchers(installed_only=False):
+        if commands and drift["command"] not in commands:
+            continue
+        write_launcher(drift["db"], drift["config"] or "config", drift["python"] or None,
+                       command=drift["command"], extra=drift["extra"])
+        refreshed.append({"command": drift["command"], "was": drift["argv"], "now": drift["want"]})
+    return refreshed
 
 
 def write_launcher(db, config, python, command="cycle", extra=()) -> Path:

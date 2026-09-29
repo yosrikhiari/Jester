@@ -561,7 +561,28 @@ class ConsoleAPI:
             "every_presets": list(self.JOBS_SCRAPER_EVERY),
             "command": "jester " + " ".join(_schedule.command_argv(self.JOBS_SCRAPER_COMMAND)),
             "log_tail": tail,
+            # Does the registered task still run what the button runs? The
+            # button builds its command fresh; the task runs a file written
+            # at install time, and on 2026-09-28 the two had drifted apart.
+            "launcher": self._launcher_state(st),
         }
+
+    def _launcher_state(self, st):
+        drift = _schedule.launcher_drift(self.JOBS_SCRAPER_COMMAND)
+        if not st.get("installed") or not drift:
+            return {"stale": False}
+        return {"stale": drift["stale"], "runs": "jester " + drift["argv"],
+                "should": "jester " + drift["want"]}
+
+    def schedule_refresh(self):
+        """Rewrite every stale launcher from the current code, keeping its
+        settings. The registrations are untouched."""
+        if self.read_only:
+            return {"ok": False, "error": "this console is read-only"}
+        done = _schedule.refresh_launchers()
+        return {"ok": True, "refreshed": done,
+                "detail": (f"{len(done)} launcher(s) rewritten" if done
+                           else "every launcher already runs what this code would write")}
 
     def jobs_scraper_run(self):
         """Run the scraper now, in the background, exactly as the task would."""

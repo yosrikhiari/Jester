@@ -1480,6 +1480,12 @@ def cmd_schedule(args):
                 if k != "only"
             ]
             print("  depth  : " + (", ".join(depth) if depth else "no ceiling"))
+            drift = _schedule.launcher_drift(_cmd)
+            if drift and drift["stale"]:
+                print(f"  WARNING: the launcher runs an old command, written by older code:")
+                print(f"    runs  : jester {drift['argv']}")
+                print(f"    should: jester {drift['want']}")
+                print("    fix   : jester schedule refresh")
         else:
             print(f"scrape job NOT installed ({st['scheduler']} has no jester entry)")
             print("  every N minutes: jester schedule install --every 30")
@@ -1510,6 +1516,15 @@ def cmd_schedule(args):
         )
     elif args.action == "remove":
         res = _schedule.remove(_task)
+    elif args.action == "refresh":
+        # Rewrites every launcher whose command no longer matches this code,
+        # keeping its database, config and scrape flags. Registrations stay.
+        done = _schedule.refresh_launchers()
+        for r in done:
+            print(f"{r['command']}: jester {r['was']}\n  -> jester {r['now']}")
+        print(f"{len(done)} launcher(s) rewritten" if done
+              else "every launcher already runs what this code would write")
+        return
     else:  # run
         res = _schedule.run_now(_task)
     print(res["detail"])
@@ -1804,10 +1819,18 @@ def evaluate_doctor(db):
     return findings
 
 
+def launcher_findings() -> list:
+    """A scheduled task whose launcher runs an older command than this code
+    would write: it keeps exiting 0 while doing less than it should."""
+    return [f"scheduled {d['command']} runs an old command (jester {d['argv']}); "
+            "fix: jester schedule refresh"
+            for d in _schedule.stale_launchers()]
+
+
 def cmd_doctor(args):
     db = open_db(args.db)  # SchemaVersionError propagates loud — that is a finding
-    checks = 4 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
-    findings = evaluate_doctor(db)
+    checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
+    findings = evaluate_doctor(db) + launcher_findings()
     if findings:
         for f in findings:
             print(f"doctor FAIL: {f}")
@@ -2713,7 +2736,7 @@ def main(argv=None):
     )
     sc.add_argument(
         "action",
-        choices=["status", "install", "remove", "run"],
+        choices=["status", "install", "remove", "run", "refresh"],
         nargs="?",
         default="status",
     )

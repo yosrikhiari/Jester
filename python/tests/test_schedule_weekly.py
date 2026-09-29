@@ -13,6 +13,17 @@ from jester import schedule
 
 
 @pytest.fixture(autouse=True)
+def _keep_env():
+    """cli.main loads .env into os.environ; restore it so no later test
+    inherits this machine's settings (a real JESTER_QDRANT_URL, say)."""
+    import os
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
 
