@@ -1506,6 +1506,7 @@ def cmd_schedule(args):
             every=args.every,
             extra=flags,
             command=command,
+            weekly=getattr(args, "weekly", None),
         )
     elif args.action == "remove":
         res = _schedule.remove(_task)
@@ -2727,6 +2728,12 @@ def main(argv=None):
         default=None,
         metavar="MINUTES",
         help="run every N minutes instead of daily (1-1439)",
+    )
+    sc.add_argument(
+        "--weekly",
+        default=None,
+        metavar="DAY",
+        help="run once a week on DAY (MON..SUN) at --at, instead of daily",
     )
     # What each tick fetches and how deep. Without these a scheduled run always
     # means "every enabled source, no ceiling", which is the last thing you

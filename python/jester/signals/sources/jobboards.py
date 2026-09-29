@@ -154,6 +154,17 @@ class _JobBoard:
         #: no cap). `collect` sets the cap from what is left of today's budget.
         self.requests = 0
         self.budget = None
+        #: What each search read, keyed by the `query` its records carry:
+        #: {"ids": every listing id the board returned, kept or filtered out,
+        #:  "complete": whether that was the board's whole answer}. A listing
+        #: missing from a COMPLETE read has closed; from a partial read it may
+        #: simply be further down. `run.collect` reads this.
+        self.reads = {}
+
+    def _note_read(self, stored_query: str, ids, *, complete: bool) -> None:
+        entry = self.reads.setdefault(stored_query, {"ids": set(), "complete": False})
+        entry["ids"].update(f"{self.name}:{i}" for i in ids if i)
+        entry["complete"] = complete
 
     #: What `jester signals sources` prints. A plain string, because
     #: `available()` reads it off the class, not an instance.
@@ -277,18 +288,26 @@ class Himalayas(_JobBoard):
     def search(self, query: str, *, since_utc: str = "", limit: int = 100) -> Iterator[Signal]:
         del since_utc  # the API has no date filter; dedupe does the work
         page = 1
+        label = f"himalayas {query}"
         # `limit` counts listing SLOTS asked for (page x 20), not kept: it
         # bounds the requests even when pages come back short.
         while (page - 1) * self.PAGE < limit:
             body = self._page(query, page)
             jobs = body.get("jobs") or []
+            last = not jobs or self._last_page(body, page, len(jobs))
+            # Complete only when the results ran out, not when `limit` did.
+            self._note_read(label, (self._listing_id(j) for j in jobs), complete=last)
             for job in jobs:
                 sig = self._keep(job, query)
                 if sig is not None:
                     yield sig
-            if not jobs or self._last_page(body, page, len(jobs)):
+            if last:
                 return
             page += 1
+
+    @staticmethod
+    def _listing_id(job: dict) -> str:
+        return str(job.get("guid") or "").rsplit("/", 1)[-1]
 
     def _last_page(self, body: dict, page: int, got: int) -> bool:
         """Himalayas returns SHORT pages mid-results (4 of 20 on page 1 of
@@ -312,7 +331,7 @@ class Himalayas(_JobBoard):
     def _to_signal(self, job: dict, query: str) -> Signal | None:
         where = ", ".join(job.get("locationRestrictions") or []) or "Remote"
         return self._advert(
-            source_id=str(job.get("guid") or "").rsplit("/", 1)[-1],
+            source_id=self._listing_id(job),
             url=job.get("guid") or job.get("applicationLink") or "",
             company=job.get("companyName") or "",
             role=job.get("title") or "",
@@ -351,8 +370,14 @@ class Remotive(_JobBoard):
         # the shared signature's query and window are both unused here.
         del query, since_utc
         body = self._get(self.API)
+        jobs = body.get("jobs") or []
+        # The whole board in one answer, so the read is complete -- unless it
+        # came back empty, which is a glitch far more often than a board that
+        # closed every listing overnight.
+        self._note_read("remotive all", (str(j.get("id") or "") for j in jobs),
+                        complete=bool(jobs))
         seen = 0
-        for job in body.get("jobs") or []:
+        for job in jobs:
             if job.get("category") not in self.TECH:
                 continue
             if not _contract_shaped(job.get("job_type")):
@@ -400,10 +425,16 @@ class Jobicy(_JobBoard):
 
     def search(self, query: str, *, since_utc: str = "", limit: int = 100) -> Iterator[Signal]:
         del since_utc
-        q = urllib.parse.urlencode({"count": min(max(limit, 1), 100), "industry": query})
+        count = min(max(limit, 1), 100)
+        q = urllib.parse.urlencode({"count": count, "industry": query})
         body = self._get(f"{self.API}?{q}")
+        jobs = body.get("jobs") or []
+        # Fewer than asked for means this is the whole industry; exactly as
+        # many means there may be more beyond the cap.
+        self._note_read(f"jobicy {query}", (str(j.get("id") or "") for j in jobs),
+                        complete=0 < len(jobs) < count)
         seen = 0
-        for job in body.get("jobs") or []:
+        for job in jobs:
             sig = self._to_signal(job, query)
             if sig is None:
                 continue

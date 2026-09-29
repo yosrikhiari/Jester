@@ -184,7 +184,10 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # exits. From outside, a healthy long run and a hung one look identical,
         # and the console only says "running". One flag makes the difference
         # between the two visible while it is still happening.
-        f'"{py}" -u -m jester.cli {" ".join(command_argv(command))} '
+        # An argument with a space ("machine learning") is quoted, or cmd
+        # hands argparse two words and the task exits 2 on every run.
+        f'"{py}" -u -m jester.cli '
+        f'{" ".join(f"{chr(34)}{a}{chr(34)}" if " " in a else a for a in command_argv(command))} '
         f'--db "{db}"{cfg}{args} '
         f'>>"{log}" 2>&1\r\n'
         f'>>"{log}" echo [%DATE% %TIME%] jester {command} exited %ERRORLEVEL%\r\n'
@@ -294,6 +297,7 @@ TASK_FOR_COMMAND = {
     "signals-hiring": TASK_NAME + "SignalsHiring",
     "leads-reddit": TASK_NAME + "LeadsReddit",
     "signals-brief": TASK_NAME + "SignalsBrief",
+    "signals-sweep": TASK_NAME + "SignalsSweep",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -304,6 +308,9 @@ TASK_FOR_COMMAND = {
 #: `--db X --config Y` shape would have made it exit 2 on every tick. A table
 #: is cheaper than a branch in the launcher, and it is the place to look when
 #: the next command does not fit the mould either.
+#: The hiring rule set, which three of the commands below score with.
+HIRING_RULES = "config/hiring_rules.yaml"
+
 COMMAND_SPEC = {
     "cycle": {"argv": ("cycle",), "config": True},
     "ingest": {"argv": ("ingest",), "config": True},
@@ -320,7 +327,7 @@ COMMAND_SPEC = {
     # collection. Scheduling it is safe for the same reason.
     "leads-reddit": {
         "argv": ("signals", "from-archive",
-                 "--rules", "config/hiring_rules.yaml",
+                 "--rules", HIRING_RULES,
                  "--archive", "data/jester.db"),
         "config": False,
     },
@@ -357,7 +364,7 @@ COMMAND_SPEC = {
         # covers every hiring source. It makes no requests to Reddit.
         "argv": ("signals", "run",
                  "--source", "hackernews-hiring",
-                 "--rules", "config/hiring_rules.yaml",
+                 "--rules", HIRING_RULES,
                  "--query", "2", "--limit", "1000",
                  "--fallback", "himalayas,remotive,jobicy",
                  "--also-reddit-archive", "--archive", "data/jester.db"),
@@ -367,6 +374,23 @@ COMMAND_SPEC = {
     # so the list a person reads is never older than the leads behind it.
     # Reads the archive only: no requests to anyone.
     "signals-brief": {"argv": ("signals", "brief"), "config": False},
+    # Himalayas read to the END of its results for the terms that found 95%
+    # of the stored listings (developer and engineer alone are 74%). Only a
+    # complete read can tell a closed listing from one further down, and the
+    # daily chain reads 100 per term, so this is what marks filled roles
+    # closed -- and it finds new listings on the way. ~300 requests: well
+    # inside the 600/day budget, but not something to do daily to a board
+    # whose data refreshes once a day.
+    "signals-sweep": {
+        "argv": ("signals", "run", "--source", "himalayas",
+                 "--rules", HIRING_RULES,
+                 "--query", "developer", "--query", "engineer", "--query", "data",
+                 "--query", "qa", "--query", "python", "--query", "integration",
+                 "--query", "machine learning", "--query", "ai",
+                 "--query", "automation", "--query", "devops",
+                 "--limit", "3000"),
+        "config": False,
+    },
 }
 
 
@@ -413,9 +437,14 @@ def interval_minutes(fields: dict):
     total = hours * 60 + mins
     if total > 0:
         return total
-    # A daily trigger repeats once every 24h; that is still a cadence.
-    if (fields.get("schedule type") or "").strip().lower().startswith("daily"):
+    # A daily trigger repeats once every 24h; that is still a cadence. So is
+    # a weekly one (one day named).
+    kind = (fields.get("schedule type") or "").strip().lower()
+    if kind.startswith("daily"):
         return 24 * 60
+    if kind.startswith("weekly"):
+        days = [d for d in re.split(r"[,\s]+", fields.get("days") or "") if d]
+        return 7 * 24 * 60 // max(1, len(days))
     return None
 
 
@@ -458,6 +487,9 @@ def _cadence_from(fields: dict) -> str:
         return repeat
     kind = (fields.get("schedule type") or "").strip()
     start = (fields.get("start time") or "").strip()
+    days = (fields.get("days") or "").strip()
+    if kind.lower().startswith("weekly") and days and start:
+        return f"weekly on {days} at {start}"
     if kind and start:
         return f"{kind.lower()} at {start}"
     return kind or repeat or ""
@@ -650,6 +682,20 @@ def installed_options(task_name: str = TASK_NAME, command: str = "cycle") -> dic
     return {}
 
 
+#: Days as schtasks names them (`/d SUN`), with cron's day-of-week number.
+#: Weekly exists for work that is worth doing but not every day -- the full
+#: Himalayas sweep reads ~300 pages of a board whose data refreshes daily.
+WEEKDAYS = {"MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6, "SUN": 0}
+
+
+def weekday(value: str) -> str:
+    """"sun", "Sunday" or "SUN" -> "SUN"; anything else is refused by name."""
+    key = (value or "").strip().upper()[:3]
+    if key not in WEEKDAYS:
+        raise ValueError(f"not a day of the week: {value!r}; use MON, TUE ... SUN")
+    return key
+
+
 def cron_line(
     at: str = DEFAULT_TIME,
     db: str = "data/jester.db",
@@ -658,6 +704,7 @@ def cron_line(
     every: int | None = None,
     extra=(),
     command: str = "cycle",
+    weekly: str | None = None,
 ) -> str:
     """The crontab line to install. `every` gives an every-N-minutes cadence;
     otherwise it is daily at `at`. `extra` carries the scrape scope, which the
@@ -682,7 +729,8 @@ def cron_line(
             )
     else:
         hh, _, mm = at.partition(":")
-        when = f"{int(mm or 0)} {int(hh)} * * *"
+        dow = str(WEEKDAYS[weekday(weekly)]) if weekly else "*"
+        when = f"{int(mm or 0)} {int(hh)} * * {dow}"
     args = "".join(f" {a}" for a in extra)
     cfg = f" --config {config}" if command_takes_config(command) else ""
     return (
@@ -703,23 +751,33 @@ def install(
     every: int | None = None,
     extra=(),
     command: str = "cycle",
+    weekly: str | None = None,
 ) -> dict:
     """Register the scrape+process job. Returns {ok, action, detail}.
 
-    `every` schedules every N minutes; without it the job runs daily at `at`.
+    `every` schedules every N minutes; `weekly` ("SUN") once a week at `at`;
+    with neither the job runs daily at `at`.
     Either way the registered command is `jester cycle` — fetch AND process.
     Registering `run` was the original bug: the job fired on time for months
     and archived nothing, because nothing had queued anything for it to read.
     """
+    if every is not None and weekly:
+        return {"ok": False, "action": "create",
+                "detail": "choose one cadence: --every N minutes, or --weekly DAY"}
     if every is not None:
         try:
             sc, mo = interval_schedule(every)
         except ValueError as exc:
             return {"ok": False, "action": "create", "detail": str(exc)}
+    if weekly:
+        try:
+            weekly = weekday(weekly)
+        except ValueError as exc:
+            return {"ok": False, "action": "create", "detail": str(exc)}
     if not is_windows():
         try:
             line = cron_line(at, db, config, python, every=every, extra=extra,
-                             command=command)
+                             command=command, weekly=weekly)
         except ValueError as exc:
             return {"ok": False, "action": "manual", "detail": str(exc)}
         try:
@@ -753,6 +811,9 @@ def install(
         # policy.
         cmd += ["/sc", sc, "/mo", str(mo)]
         cadence = f"every {mo} minute(s)" if sc == "MINUTE" else f"every {mo} hour(s)"
+    elif weekly:
+        cmd += ["/sc", "WEEKLY", "/d", weekly, "/st", at]
+        cadence = f"weekly on {weekly} at {at}"
     else:
         cmd += ["/sc", "DAILY", "/st", at]
         cadence = f"daily at {at}"
