@@ -293,6 +293,7 @@ TASK_FOR_COMMAND = {
     "signals": TASK_NAME + "Signals",
     "signals-hiring": TASK_NAME + "SignalsHiring",
     "leads-reddit": TASK_NAME + "LeadsReddit",
+    "signals-brief": TASK_NAME + "SignalsBrief",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -362,6 +363,10 @@ COMMAND_SPEC = {
                  "--also-reddit-archive", "--archive", "data/jester.db"),
         "config": False,
     },
+    # The buyer brief page, rebuilt from the archive after the morning runs,
+    # so the list a person reads is never older than the leads behind it.
+    # Reads the archive only: no requests to anyone.
+    "signals-brief": {"argv": ("signals", "brief"), "config": False},
 }
 
 

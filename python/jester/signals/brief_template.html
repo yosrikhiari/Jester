@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contract Buyer Brief</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f3f5f7; --surface:#ffffff; --surface-2:#eef1f4; --ink:#17212b; --ink-2:#3a4654; --muted:#5d6977;
+  --line:#dce2e8; --line-2:#c8d0d9; --accent:#0e6b62; --accent-soft:#e0f0ed; --accent-ink:#0b574f;
+  --warn:#9a5b0a; --warn-soft:#fbf0dc; --thin:#7a8593; --focus:#0e6b62;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#11161c; --surface:#171e26; --surface-2:#1e2731; --ink:#e7ecf1; --ink-2:#c3ccd6; --muted:#93a0ae;
+    --line:#26313c; --line-2:#34414e; --accent:#4fb8a9; --accent-soft:#16312e; --accent-ink:#7fd3c6;
+    --warn:#e0a54a; --warn-soft:#322614; --thin:#7d8997; --focus:#4fb8a9;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#11161c; --surface:#171e26; --surface-2:#1e2731; --ink:#e7ecf1; --ink-2:#c3ccd6; --muted:#93a0ae;
+  --line:#26313c; --line-2:#34414e; --accent:#4fb8a9; --accent-soft:#16312e; --accent-ink:#7fd3c6;
+  --warn:#e0a54a; --warn-soft:#322614; --thin:#7d8997; --focus:#4fb8a9;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:400 15px/1.55 var(--body);padding-inline:16px;padding-block:32px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:grid;gap:32px}
+a{color:var(--accent-ink)}
+a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font:600 clamp(28px,4.4vw,40px)/1.1 var(--display);margin:8px 0 10px;text-wrap:balance;letter-spacing:-.01em}
+h2{font:600 22px/1.2 var(--display);margin:0;text-wrap:balance}
+.byline{color:var(--muted);margin:0;max-width:68ch}
+.num{font-variant-numeric:tabular-nums}
+
+/* the ask */
+.ask{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:20px 22px}
+.ask h2{font-size:18px;margin-bottom:12px}
+.ask ol{margin:0;padding-left:22px;display:grid;gap:10px;max-width:78ch}
+.ask li::marker{font:600 14px var(--mono);color:var(--accent-ink)}
+.ask b{color:var(--ink)}
+
+/* the counts, as one line of facts rather than tiles */
+.facts{display:flex;flex-wrap:wrap;gap:8px 28px;padding-block:4px;border-block:1px solid var(--line);list-style:none;margin:0;padding-inline:0}
+.fact{display:flex;flex-direction:column;gap:2px;padding-block:10px}
+.fact b{font:600 22px/1.1 var(--display);font-variant-numeric:tabular-nums}
+.fact span{font-size:13px;color:var(--muted)}
+.fact.zero b{color:var(--warn)}
+
+/* list */
+.section{display:grid;gap:14px}
+.section-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
+.section-head p{margin:4px 0 0;color:var(--muted);max-width:70ch}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+fieldset.tools{border:0;margin:0;padding:0;min-inline-size:0}
+.chip{font:500 13px var(--body);border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:5px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.search{font:400 14px var(--body);border:1px solid var(--line-2);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;inline-size:220px;max-inline-size:100%}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;min-width:760px}
+th{font:500 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.co b{display:block;font-weight:600}
+.co span{display:block;color:var(--ink-2);font-size:14px;margin-top:2px}
+.co i{display:block;font-style:normal;font-size:12px;color:var(--muted);margin-top:4px;font-family:var(--mono)}
+.terms{font-size:14px;color:var(--ink-2)}
+.terms .rate{display:block;font-family:var(--mono);font-size:13px;color:var(--ink);margin-top:2px}
+.where{font-size:13px;color:var(--ink-2);max-width:22ch}
+.when{font:400 13px var(--mono);color:var(--ink-2);white-space:nowrap}
+.when small{display:block;font-family:var(--body);color:var(--muted)}
+.fit{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--mono);white-space:nowrap}
+.fit i{display:inline-block;width:8px;height:8px;border-radius:50%}
+.fit.strong i{background:var(--accent)} .fit.good i{background:var(--accent);opacity:.5} .fit.thin i{background:var(--thin)}
+.tag{display:inline-block;font:500 11px var(--body);border-radius:4px;padding:1px 6px;margin-top:6px}
+.tag.contract{background:var(--accent-soft);color:var(--accent-ink)}
+.tag.gig{background:var(--warn-soft);color:var(--warn)}
+.tag.outcome{background:var(--ink);color:var(--surface)}
+.tag.agency{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2)}
+.empty{padding:24px;color:var(--muted)}
+.more{justify-self:center;padding:8px 18px}
+.count{font-size:13px;color:var(--muted)}
+
+.pending{border:1px solid var(--line);border-left:4px solid var(--warn);background:var(--surface);border-radius:10px;padding:18px 20px;display:grid;gap:12px}
+.pending p{margin:0;max-width:78ch;color:var(--ink-2)}
+.rlist{list-style:none;margin:0;padding:0;display:grid}
+.rlist li{display:grid;grid-template-columns:150px 1fr 88px;gap:4px 14px;padding:10px 0;border-top:1px solid var(--line)}
+.rlist .d{font:400 12px var(--mono);color:var(--muted);text-align:right;padding-top:2px}
+.rlist .comm{font:400 12px var(--mono);color:var(--muted);padding-top:2px}
+.rlist .t{font-size:14px}
+.rlist .t.gig{color:var(--muted)}
+
+.notes{display:grid;gap:10px;color:var(--ink-2);font-size:14px;max-width:78ch}
+.notes h2{font-size:18px}
+.notes p{margin:0}
+footer{font:400 12px var(--mono);color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+@media (max-width:640px){
+  .rlist li{grid-template-columns:1fr}
+  .rlist .d{text-align:left}
+  .search{inline-size:100%}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">YU-01 · problem-signal collector · generated by <code>jester signals brief</code></div>
+    <h1>Contract buyers from the last 60 days</h1>
+    <p class="byline">Companies that advertised engineering work on a contract, fractional or part-time basis, from the sources the collector reads today. One row per company, strongest first. Built from the Jester live archive on <span class="num" id="gen"></span>.</p>
+  </header>
+
+  <section class="ask" aria-labelledby="ask-h">
+    <h2 id="ask-h">What I need from you</h2>
+    <ol>
+      <li><b>Go down the list and pick who is worth a message.</b> <span id="worked-line"></span> Mark picks in the Jester console: Problem signals, <i>buyers not worked yet</i>, <i>mark</i>, <i>picked</i>. Picks are listed first in <code>leads.csv</code>. Who is contacted is decided by a person; nothing is ever sent automatically.</li>
+      <li><b>Decide the Reddit leads below.</b> They came from Jester's browser scraper, not an approved API. The YU-01 card says Reddit needs approved access, so they are set apart until the scope owner says whether they can be used.</li>
+      <li><b>Confirm the source.</b> Either we apply for commercial Reddit API access, or you name HN "Who is hiring?" plus the job boards as the approved replacement. Every row in the main list comes from that replacement.</li>
+    </ol>
+  </section>
+
+  <ul class="facts">
+    <li class="fact"><b id="f-companies"></b><span>companies in the list</span></li>
+    <li class="fact"><b id="f-hn"></b><span>from HN Who is hiring</span></li>
+    <li class="fact"><b id="f-boards"></b><span>from job boards</span></li>
+    <li class="fact"><b id="f-older"></b><span>older adverts, not listed</span></li>
+    <li class="fact"><b id="f-reddit"></b><span>Reddit posts set apart</span></li>
+    <li class="fact"><b id="f-picked"></b><span>picked for outreach</span></li>
+    <li class="fact" id="fact-worked"><b id="f-worked"></b><span>worked so far</span></li>
+  </ul>
+
+  <section class="section" aria-labelledby="list-h">
+    <div class="section-head">
+      <div>
+        <h2 id="list-h">The list</h2>
+        <p>Posted on or after <span class="num" id="cutoff"></span>. Each company links to its own advert, which is where its contact route is.</p>
+      </div>
+      <div class="tools">
+        <label class="count" for="q">Filter</label>
+        <input id="q" class="search" type="search" placeholder="company, role, stack…" autocomplete="off">
+        <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
+        <button class="chip" type="button" data-f="open" aria-pressed="false">Not worked yet</button>
+        <button class="chip" type="button" data-f="contract" aria-pressed="false">Contract-shaped only</button>
+        <button class="chip" type="button" data-f="hn" aria-pressed="false">HN</button>
+        <button class="chip" type="button" data-f="boards" aria-pressed="false">Job boards</button>
+      </div>
+      <fieldset class="tools" id="sorts" aria-label="Sort">
+        <span class="count">Sort</span>
+        <button class="chip" type="button" data-s="fit" aria-pressed="true">Strongest first</button>
+        <button class="chip" type="button" data-s="new" aria-pressed="false">Newest first</button>
+      </fieldset>
+    </div>
+    <div class="count" id="shown" aria-live="polite"></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col">Fit</th><th scope="col">Company and role</th><th scope="col">Terms</th><th scope="col">Where</th><th scope="col">Posted</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <button class="chip more" type="button" id="more" hidden></button>
+  </section>
+
+  <section class="pending" aria-labelledby="reddit-h">
+    <h2 id="reddit-h">Set apart: Reddit hiring posts</h2>
+    <p><span class="num" id="r-records"></span> buyer records from Reddit hiring subs, <span class="num" id="r-unique"></span> unique posts. They were collected by Jester's browser scraper, not through Reddit's API, so they wait on decision 2. Data-task gigs and posts that name no engineering work are already filtered out; <span class="num" id="r-gig"></span> of what remains still looks like one.</p>
+    <ul class="rlist" id="reddit"></ul>
+  </section>
+
+  <section class="notes" aria-labelledby="notes-h">
+    <h2 id="notes-h">How to read this</h2>
+    <p><b>Fit</b> is the collector's own confidence that an advert wants the engagement we sell (contract, fractional, part-time) for engineering work we do. <i>Strong</i> means both are stated plainly; <i>thin</i> means the evidence is partial or ambiguous. It measures the rules, not the company. Only replies will tell us whether the rules pick the right ones.</p>
+    <p><b>No emails or names are collected into this page on purpose.</b> The collector never builds a contact list; the advert link is the route, and who gets contacted is your decision.</p>
+    <p><b>Agency</b> marks a company hiring contractors for its own client projects ("for our clients"). It may buy white-label engineering, but it is not the company with the problem. Recruiters placing someone with an unnamed client are already left out.</p>
+    <p><b>Older adverts:</b> <span class="num" id="n-older2"></span> more buyer adverts are older than <span class="num" id="n-days"></span> days. Most of those roles are likely filled, so they are left out here; they stay in the archive.</p>
+  </section>
+
+  <footer>Source: Jester signals archive (live mode), buyer audience, hiring rules · <span id="foot"></span></footer>
+</div>
+
+<script>
+const D = /*DATA*/null;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const BOARDS = new Set(['Himalayas', 'Remotive', 'Jobicy']);
+const $ = id => document.getElementById(id);
+
+const boards = D.companies.filter(c => BOARDS.has(c.source)).length;
+const hn = D.companies.filter(c => c.source === 'HN Who is hiring').length;
+$('gen').textContent = D.generated;
+$('cutoff').textContent = D.cutoff;
+$('f-companies').textContent = D.companies.length;
+$('f-picked').textContent = D.picked;
+$('fact-worked').classList.toggle('zero', !D.worked);
+$('worked-line').textContent = D.worked
+  ? `${D.worked} of ${D.total_buyers} buyer signals have been worked and ${D.picked} picked.`
+  : `None of the ${D.total_buyers} buyer signals has been worked yet (${D.picked} picked), so nothing here has been tested against a real reply. Your picks are the first test.`;
+$('n-days').textContent = D.max_age_days;
+$('f-hn').textContent = hn;
+$('f-boards').textContent = boards;
+$('f-older').textContent = D.older_count;
+$('f-reddit').textContent = D.reddit.length;
+$('f-worked').textContent = D.worked;
+$('n-older2').textContent = D.older_count;
+$('r-records').textContent = D.reddit_records;
+$('r-unique').textContent = D.reddit.length;
+$('r-gig').textContent = D.reddit.filter(r => r.gig).length;
+$('foot').textContent = `${D.total_buyers} buyer signals in total · generated ${D.generated}`;
+
+function fitLabel(c) {
+  if (c.fit >= 0.9 && !c.ambiguous) return ['strong', 'strong'];
+  if (c.fit >= 0.7 && !c.ambiguous) return ['good', 'good'];
+  return ['thin', 'thin'];
+}
+
+function rowHTML(c) {
+  const [cls, label] = fitLabel(c);
+  const times = c.times > 1 ? ` · posted ${c.times}×` : '';
+  const tags = (c.outcome ? '<span class="tag outcome">' + esc(c.outcome) + '</span> ' : '')
+    + (c.contract ? '<span class="tag contract">contract-shaped</span>' : '')
+    + (c.agency ? ' <span class="tag agency">agency: own client work</span>' : '')
+    + (c.gig ? ' <span class="tag gig">marketplace or gig</span>' : '');
+  const why = c.why.length ? '<i>matched: ' + esc(c.why.join(', ')) + '</i>' : '';
+  return `<tr>
+    <td><span class="fit ${cls}" title="collector confidence ${c.fit.toFixed(2)}"><i aria-hidden="true"></i>${label} <span class="num">${c.fit.toFixed(2)}</span></span></td>
+    <td class="co"><b><a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.company)}</a></b><span>${esc(c.role)}</span>${why}${tags}</td>
+    <td class="terms">${esc(c.engagement || '—')}${c.rate ? '<span class="rate">' + esc(c.rate) + '</span>' : ''}</td>
+    <td class="where">${esc(c.place || '—')}</td>
+    <td class="when">${esc(c.posted || '—')}<small>${esc(c.source)}${times}</small></td>
+  </tr>`;
+}
+
+const PAGE = 60;
+let SHOW = PAGE, SORT = 'fit';
+const BY = {
+  fit: (a, b) => b.fit - a.fit || (b.posted || '').localeCompare(a.posted || ''),
+  new: (a, b) => (b.posted || '').localeCompare(a.posted || '') || b.fit - a.fit,
+};
+let FILTER = 'all';
+try { FILTER = localStorage.getItem('brief-filter') || 'all'; } catch (_) { /* storage blocked: default */ }
+
+function render() {
+  const q = $('q').value.trim().toLowerCase();
+  const keep = c => {
+    if (FILTER === 'open' && c.outcome) return false;
+    if (FILTER === 'contract' && !c.contract) return false;
+    if (FILTER === 'hn' && !c.source.startsWith('HN') && c.source !== 'Ask HN') return false;
+    if (FILTER === 'boards' && !BOARDS.has(c.source)) return false;
+    return !q || `${c.company} ${c.role} ${c.engagement} ${c.place} ${c.why.join(' ')}`.toLowerCase().includes(q);
+  };
+  const rows = D.companies.filter(keep).sort(BY[SORT]);
+  // Picked companies lead whatever the sort: a person already chose them.
+  rows.sort((a, b) => (b.outcome === 'picked') - (a.outcome === 'picked'));
+  const shown = rows.slice(0, SHOW);
+  $('rows').innerHTML = shown.map(rowHTML).join('')
+    || '<tr><td colspan="5" class="empty">Nothing matches that filter.</td></tr>';
+  $('shown').textContent = rows.length === D.companies.length
+    ? `${rows.length} companies · showing ${shown.length}`
+    : `${rows.length} of ${D.companies.length} companies match · showing ${shown.length}`;
+  const left = rows.length - shown.length;
+  $('more').hidden = left <= 0;
+  $('more').textContent = `Show ${Math.min(PAGE, left)} more (${left} left)`;
+  document.querySelectorAll('[data-s]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === SORT)));
+  document.querySelectorAll('[data-f]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.f === FILTER)));
+}
+
+document.querySelector('.tools:not(#sorts)').addEventListener('click', e => {
+  const b = e.target.closest('[data-f]');
+  if (!b) return;
+  FILTER = b.dataset.f;
+  SHOW = PAGE;
+  try { localStorage.setItem('brief-filter', FILTER); } catch (_) { /* storage blocked: filter still applies */ }
+  render();
+});
+$('q').addEventListener('input', () => { SHOW = PAGE; render(); });
+$('sorts').addEventListener('click', e => {
+  const b = e.target.closest('[data-s]');
+  if (!b) return;
+  SORT = b.dataset.s; SHOW = PAGE; render();
+});
+$('more').addEventListener('click', () => { SHOW += PAGE; render(); });
+
+$('reddit').innerHTML = D.reddit.map(r => `<li>
+  <span class="comm">${esc(r.community)}</span>
+  <span class="t${r.gig ? ' gig' : ''}"><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a>${r.gig ? ' <span class="tag gig">gig or not engineering</span>' : ''}</span>
+  <span class="d">${esc(r.posted || '—')}</span>
+</li>`).join('');
+
+render();
+</script>

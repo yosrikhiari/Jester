@@ -2143,6 +2143,25 @@ def cmd_signals(args):
             db.close()
         return
 
+    if action == "brief":
+        # The one-page buyer list for whoever works the leads. Generated from
+        # the archive like every other deliverable, so it can be rebuilt on a
+        # schedule instead of by hand.
+        from jester.signals import brief as sigbrief
+
+        db = sig.open_signals(args.db)
+        try:
+            res = sigbrief.write(db, out_dir / "brief", mode=args.only_mode or "live",
+                                 max_age_days=args.max_age_days)
+        finally:
+            db.close()
+        print(f"{res['companies']} companies from {res['total_buyers']} buyer signal(s) · "
+              f"{res['older']} older than {args.max_age_days} days left out · "
+              f"{res['reddit']} Reddit post(s) set apart")
+        print(f"{res['picked']} picked · {res['worked']} worked")
+        print(f"written: {res['path']}")
+        return
+
     if action in ("leads", "outcome"):
         from jester.signals import leads as sigleads
 
@@ -2510,14 +2529,15 @@ def main(argv=None):
                              "load", "queries", "evidence",
                              "run", "recover", "runs", "sources",
                              "digest", "reclassify", "leads", "outcome",
-                             "from-archive"],
+                             "from-archive", "brief"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
                          "run a live collection | recover failed queries | "
                          "list runs | list sources | write the weekly digest | "
                          "re-score the archive against the rules | "
-                         "write the handover list | record what came of a lead")
+                         "write the handover list | record what came of a lead | "
+                         "score the stored Reddit rooms | write the buyer brief page")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
