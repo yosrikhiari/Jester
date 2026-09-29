@@ -2003,7 +2003,14 @@ def cmd_signals(args):
         return
 
     if action == "scope":
-        path = sigscope.write_scope(out_dir, rules)
+        # With an archive, section 0 quotes what each source has produced;
+        # without one (a fresh clone) the document is still complete.
+        db = sig.open_signals(args.db) if Path(args.db).exists() else None
+        try:
+            path = sigscope.write_scope(out_dir, rules, db=db)
+        finally:
+            if db is not None:
+                db.close()
         status = "APPROVED" if rules.approved else "PROVISIONAL — awaiting the scope owner"
         print(f"scope: {status}")
         # The 3-5 applies to the BUYER list, which is the decision being

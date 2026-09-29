@@ -49,6 +49,10 @@ scope:
   status: provisional        # provisional | approved
   decided_by: ""
   decided_on: ""
+  # Who signs, and by when. Printed in the access section so the document
+  # says whose decision it is rather than leaving it to be inferred.
+  decision_owner: "the scope owner"
+  decision_due: "2026-10-02"
 
   communities:
     # ---- buyer side ------------------------------------------------------
@@ -103,43 +107,45 @@ scope:
   # somebody else's.
   #
   # WHY THEY EXIST. Every room in `communities` is a PROBLEM-DISCUSSION room:
-  # people describing work they dislike. They yielded almost no buyers, and
-  # that was read as "Reddit does not carry buyers". It tested the wrong
-  # hypothesis. The same split is measured on Hacker News: hn/comment, which
-  # is discussion, returns 0.4% buyers; hn/hiring, which is companies posting
-  # adverts, returns 6.0%. Identical classifier, identical archive, an order
-  # of magnitude apart. The difference is not the platform — it is whether the
-  # poster is describing a problem or announcing a budget. Reddit's hiring
-  # rooms are the untested half.
+  # people describing work they dislike. They yielded almost no buyers. The
+  # same split is measured on Hacker News: discussion returns 0.4% buyers,
+  # hn/hiring (companies posting adverts) about 5% -- identical classifier,
+  # identical archive. The difference is whether the poster is describing a
+  # problem or announcing a budget, so the Reddit rooms worth paying for are
+  # the hiring rooms.
   #
-  # EVERY LINE IS UNVERIFIED. Written from general knowledge, not from the
-  # archive and not from the sites: Reddit is closed both to the collector (no
-  # approved access, so no code path exists) and to this repo's browser.
-  # Nobody has confirmed these rooms exist, permit adverts, or carry volume.
+  # MEASURED, 21-28 Sep 2026. These were first written from general knowledge
+  # and marked UNVERIFIED. Since then the Reddit hiring rooms have been scored
+  # from Jester's worker archive -- posts the worker already stored by
+  # browser, read by `signals from-archive` without a single request to
+  # Reddit. The five below are the rooms that produced buyers. Those records
+  # are set apart and not used until the access decision.
   #
-  # The benchmark is already running and costs nothing: hn/hiring at 6.0%. If
-  # paid Reddit access cannot beat a free keyless API, do not buy it.
+  # The benchmark is already running and costs nothing: hn/hiring on a
+  # keyless API, and the job boards. Across all 13 archived hiring rooms the
+  # week produced 10 buyers; Himalayas alone produced over a thousand. If paid
+  # Reddit access cannot beat free, do not buy it.
   candidates:
+    - name: r/techjobs
+      serves: buyer
+      evidence: "measured — 6 scored posts, 2 buyers (21-27 Sep, worker archive)"
+      why: "[Hiring] posts with stated hourly rates, remote and worldwide"
+    - name: r/DevsForHire
+      serves: buyer
+      evidence: "measured — 5 scored posts, 2 buyers (23-24 Sep, worker archive)"
+      why: "[Hiring] posts for full-stack and QA work, rates stated"
     - name: r/forhire
       serves: buyer
-      evidence: "UNVERIFIED — never measured. Must beat hn/hiring's 6.0% to justify paid access."
+      evidence: "measured — 1 scored post, 1 buyer (26 Sep, worker archive); thin"
       why: "[HIRING] and [FOR HIRE] posts; the closest Reddit analogue to a Who-is-hiring thread"
-    - name: r/devopsjobs
+    - name: r/MachineLearningJobs
       serves: buyer
-      evidence: "UNVERIFIED — never measured; volume unknown and may be far too thin to matter."
-      why: "devops and cloud roles specifically, which is the work the offer covers"
-    - name: r/jobbit
+      evidence: "measured — 12 scored posts, 1 buyer (23-28 Sep, worker archive); mostly full-time roles"
+      why: "ML and data roles, some on contract"
+    - name: r/hiredev
       serves: buyer
-      evidence: "UNVERIFIED — never measured."
-      why: "technology job postings, often contract and remote"
-    - name: r/remotejs
-      serves: buyer
-      evidence: "UNVERIFIED — never measured."
-      why: "remote engineering roles; remote-first posters are likelier to accept contract shapes"
-    - name: r/hiring
-      serves: buyer
-      evidence: "UNVERIFIED — never measured, and the broadest of the five, so the noisiest."
-      why: "general hiring room; the rules would have to separate engineering from everything else"
+      evidence: "measured — 10 scored posts, 1 buyer (23-27 Sep, worker archive); mostly full-time roles"
+      why: "developer hiring posts"
 
   # Communities measured and NOT recommended, with the reason, so the decision
   # is auditable rather than a silent omission.
@@ -171,6 +177,17 @@ scope:
     - name: r/shopify
       evidence: "measured — 8 posts + 48 comments: 0 buyer, 5 practitioner."
       keep_for: "content only"
+
+    # First proposed as hiring rooms from general knowledge; the worker's
+    # archive then measured them (21-28 Sep 2026) and they did not deliver.
+    - name: r/devopsjobs
+      evidence: "measured — 12 scored posts, 0 buyers: full-time roles only (worker archive, 23-27 Sep)"
+    - name: r/jobbit
+      evidence: "measured — 2 scored posts, both months old, 0 buyers (worker archive)"
+    - name: r/remotejs
+      evidence: "proposed, never measured — no posts in the worker's archive"
+    - name: r/hiring
+      evidence: "proposed, never measured — listed in the worker's sources, no scored posts yet"
 
   # ---- the phrases. These are literal search strings, not descriptions. ----
   #

@@ -65,12 +65,14 @@ Providers: **Ollama** (fully offline) and **Groq** (cloud, OpenAI-compatible).
 
 The idea pipeline is generative and probabilistic. Sitting beside it is a **problem-signal collector** built to a different standard, because its output has to survive review:
 
+> **Scope, fields and access status: [docs/scope-and-access.md](docs/scope-and-access.md)** — what each source collects and has produced, the 30-field map, and the open Reddit access decision. Regenerate it with `python -m jester.cli signals scope --db data/signals-live.db --out docs/`.
+
 - **No model in the acceptance path.** Classification is rules over text — same input, same verdict, no network and no quota. A model may one day propose new phrases; it never decides one.
 - **Search, not listing walks.** Measured: reading a community's `/new/` returns a 0.65% buyer rate, because what a community posts today is mostly not a buyer. Searching for the sentences a buyer actually writes is the same number of requests at a far higher hit rate.
-- **Every record says how it was collected.** `mode` is a column (`live` or `fixture`), so a fixture row can never be counted as a real one — the count is a `GROUP BY`, not a promise in a report.
+- **Every record says how it was collected.** `mode` is a column (`live` or `synthetic`), so a synthetic row can never be counted as a real one — the count is a `GROUP BY`, not a promise in a report.
 - **Failures are rows, not log lines.** A query that fails is stored, counted and re-runnable by the recovery pass. A run that collects nothing is a valid run and is recorded as one.
 - **Verdicts are checkable.** Each record stores the words that classified it: `buyer signal: owner_voice + work_named [matched: i run a, reporting, how do you]`.
-- **Nothing is inferred about people.** `company` and `buyer_intent` are always `unknown`. Handles are stored as published, never enriched, never contacted.
+- **Nothing is inferred about people.** `company` and `buyer_intent` stay `unknown` unless the source states them (a job advert names its company). Handles are stored as published, never enriched, never contacted.
 
 ```bash
 python -m jester.cli signals sources     # the collectors, and the authority each runs on
