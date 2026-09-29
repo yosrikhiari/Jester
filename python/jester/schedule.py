@@ -184,7 +184,10 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # exits. From outside, a healthy long run and a hung one look identical,
         # and the console only says "running". One flag makes the difference
         # between the two visible while it is still happening.
-        f'"{py}" -u -m jester.cli {" ".join(command_argv(command))} '
+        # An argument with a space ("machine learning") is quoted, or cmd
+        # hands argparse two words and the task exits 2 on every run.
+        f'"{py}" -u -m jester.cli '
+        f'{" ".join(f"{chr(34)}{a}{chr(34)}" if " " in a else a for a in command_argv(command))} '
         f'--db "{db}"{cfg}{args} '
         f'>>"{log}" 2>&1\r\n'
         f'>>"{log}" echo [%DATE% %TIME%] jester {command} exited %ERRORLEVEL%\r\n'
@@ -294,6 +297,7 @@ TASK_FOR_COMMAND = {
     "signals-hiring": TASK_NAME + "SignalsHiring",
     "leads-reddit": TASK_NAME + "LeadsReddit",
     "signals-brief": TASK_NAME + "SignalsBrief",
+    "signals-sweep": TASK_NAME + "SignalsSweep",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -367,6 +371,23 @@ COMMAND_SPEC = {
     # so the list a person reads is never older than the leads behind it.
     # Reads the archive only: no requests to anyone.
     "signals-brief": {"argv": ("signals", "brief"), "config": False},
+    # Himalayas read to the END of its results for the terms that found 95%
+    # of the stored listings (developer and engineer alone are 74%). Only a
+    # complete read can tell a closed listing from one further down, and the
+    # daily chain reads 100 per term, so this is what marks filled roles
+    # closed -- and it finds new listings on the way. ~300 requests: well
+    # inside the 600/day budget, but not something to do daily to a board
+    # whose data refreshes once a day.
+    "signals-sweep": {
+        "argv": ("signals", "run", "--source", "himalayas",
+                 "--rules", "config/hiring_rules.yaml",
+                 "--query", "developer", "--query", "engineer", "--query", "data",
+                 "--query", "qa", "--query", "python", "--query", "integration",
+                 "--query", "machine learning", "--query", "ai",
+                 "--query", "automation", "--query", "devops",
+                 "--limit", "3000"),
+        "config": False,
+    },
 }
 
 

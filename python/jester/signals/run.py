@@ -28,7 +28,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
-from . import FIELD_NAMES, Signal, TABLE, limits, upsert
+from . import FIELD_NAMES, Signal, TABLE, limits, mark_removed, upsert
 from .filters import apply_to, load_rules
 from .sources import SourceError, get_source
 
@@ -130,6 +130,8 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
     # What is left of the source's daily budget becomes this instance's cap.
     if hasattr(source, "budget"):
         source.budget = limits.budget_left(db, source)
+    if hasattr(source, "reads"):
+        source.reads = {}   # this run's reads only
     limit_hit = None
 
     for i, query in enumerate(queries):
@@ -163,6 +165,17 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         note = f"limit reached: {limit_hit}; sits out until {until}"
 
     counts = upsert(db, signals, seen_at=seen_at)
+    closed = mark_closed(db, source, mode=mode, at=seen_at)
+    if closed["marked"]:
+        note = "; ".join(filter(None, [note, f"{closed['marked']} listing(s) gone from the "
+                                             "board; marked closed"]))
+    elif closed["held"]:
+        note = "; ".join(filter(None, [note, closed["held"]]))
+    elif closed["judged"]:
+        # Said out loud: a check that found nothing closed and a check that
+        # never ran read the same in an empty note.
+        note = "; ".join(filter(None, [note, f"all {closed['judged']} listing(s) checked "
+                                             "are still on the board"]))
     row = {
         "run_id": run_id,
         "source": source.name,
@@ -196,6 +209,47 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
     # of keeping it.
     row["failed_queries"] = failed_queries
     return row
+
+
+#: If one run would close more than this share of the listings it could
+#: judge, it closes none: a board returning a short or empty answer by mistake
+#: must not empty the archive. Below the floor the share is not meaningful.
+CLOSE_AT_MOST = 0.5
+CLOSE_FLOOR = 20
+
+
+def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
+                at: Optional[str] = None) -> dict:
+    """Mark the listings a board no longer shows as removed at source.
+
+    A job advert closes when the role is filled, and until now nothing
+    noticed: `mark_removed` existed, but only the fixtures called it, so the
+    brief and the handover slowly filled with filled roles.
+
+    Only COMPLETE reads decide. A listing missing from a search read to the
+    end is gone; one missing from a partial read may simply be further down.
+    The comparison is against every listing the board returned, kept or
+    filtered, so a record the rules now reject is not mistaken for a closed
+    one. A record seen again later is reopened by `upsert`.
+    """
+    reads = getattr(source, "reads", None) or {}
+    complete = {q: r["ids"] for q, r in reads.items() if r.get("complete") and r.get("ids")}
+    if not complete or mode != "live":
+        return {"marked": 0, "held": "", "judged": 0}
+    seen = set().union(*complete.values())
+    marks = ",".join("?" * len(complete))
+    rows = db.execute(
+        f"SELECT record_id, source_id FROM {TABLE} WHERE platform = ? AND mode = ? "
+        f"AND COALESCE(removed_utc, '') = '' AND query IN ({marks}) "
+        "AND source_id NOT LIKE ?",
+        (source.platform, mode, *complete, f"{FAILURE_PREFIX}:%")).fetchall()
+    gone = [r[0] for r in rows if r[1] not in seen]
+    if len(gone) > CLOSE_FLOOR and len(gone) > CLOSE_AT_MOST * len(rows):
+        return {"marked": 0, "judged": len(rows),
+                "held": f"{len(gone)} of {len(rows)} listing(s) missing from the board -- "
+                        "too many to be real; none marked closed"}
+    mark_removed(db, gone, at=at)
+    return {"marked": len(gone), "held": "", "judged": len(rows)}
 
 
 def recover(db: sqlite3.Connection, *, source_name: str = "hackernews", rules=None,
