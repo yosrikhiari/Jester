@@ -162,7 +162,7 @@ class Handler(BaseHTTPRequestHandler):
             g = lambda k, d="": qs.get(k, [d])[0]  # noqa: E731
             self._json(api.signals(audience=g("audience"), community=g("community"),
                                    kind=g("kind"), q=g("q"), mode=g("mode"),
-                                   outcome=g("outcome"),
+                                   outcome=g("outcome"), queue=g("queue"),
                                    offset=g("offset", 0), limit=g("limit", 50)))
             return
         if path == "/api/signals/runs":
@@ -330,6 +330,9 @@ class Handler(BaseHTTPRequestHandler):
                 options=body.get("options")),
             "/api/schedule/remove": api.schedule_remove,
             "/api/schedule/run": api.schedule_run_now,
+            # What came of a lead: picked, contacted, replied ... one record.
+            "/api/signals/outcome": lambda: api.signal_outcome(
+                body.get("record_id"), body.get("outcome"), body.get("note", "")),
             # The jobs scraper: run it now, or set/pause its own schedule.
             "/api/signals/scraper/run": api.jobs_scraper_run,
             "/api/signals/scraper/schedule": lambda: api.jobs_scraper_schedule(

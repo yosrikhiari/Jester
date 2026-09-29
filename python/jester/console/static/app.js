@@ -3097,7 +3097,7 @@ applyTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark'
  * the runs that produced them, then the records. A reader's first question is
  * "did the collector run and what did it find", not "show me row 1".
  */
-const SIG = { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', offset: 0, limit: 50 };
+const SIG = { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', queue: '', offset: 0, limit: 50 };
 let SIG_FACETS = {};
 let SIG_TOTAL = 0;
 let SIG_EXISTS = true;
@@ -3125,15 +3125,21 @@ function signalFacetBlock(title, key, items, limit) {
 }
 
 function renderSignalActive() {
-  const label = { audience: 'audience', community: 'source', kind: 'kind',
+  const label = { queue: 'work queue', audience: 'audience', community: 'source', kind: 'kind',
                   mode: 'mode', outcome: 'outcome', q: 'text' };
+  // The queue chip says what it holds rather than showing its flag value.
+  const shown = k => k === 'queue' ? 'buyers not worked yet, Reddit set apart' : SIG[k];
   const chips = Object.keys(label).filter(k => SIG[k]).map(k =>
-    '<span class="fchip"><b>' + label[k] + '</b> ' + esc(SIG[k])
+    '<span class="fchip"><b>' + label[k] + '</b> ' + esc(shown(k))
     + '<button data-sfacet-drop="' + k + '" aria-label="Remove ' + label[k] + ' filter">✕</button></span>'
   ).join('');
-  $('#signals-active').innerHTML = chips
+  // The work queue: buyers nobody has marked yet. One click, because it is
+  // the view this page is used from once the collector is running.
+  const queue = SIG.queue ? ''
+    : '<button class="btn btn--sm" type="button" data-sfacet-queue>buyers not worked yet</button>';
+  $('#signals-active').innerHTML = (chips
     ? chips + '<button class="btn btn--ghost btn--sm" data-sfacet-clear>clear all</button>'
-    : '<span class="xs">showing every record, kept and rejected</span>';
+    : '<span class="xs">showing every record, kept and rejected</span>') + queue;
 }
 
 function renderSignalTiles(counts) {
@@ -3192,7 +3198,8 @@ function emptyMessage() {
     return 'No signal archive yet — run <span class="mono">jester signals run</span> to create one.';
   }
   const filtered = ['audience', 'community', 'kind', 'mode', 'outcome', 'q'].some(k => SIG[k]);
-  if (filtered) {
+  if (SIG.queue && !filtered) return 'The queue is empty: every buyer from the usable sources has an outcome.';
+  if (filtered || SIG.queue) {
     return 'Nothing matches these filters. '
       + '<button class="btn btn--ghost btn--sm" data-sfacet-clear>clear the filters</button>';
   }
@@ -3210,8 +3217,7 @@ function signalFlags(r) {
   // An untouched buyer signal is not a neutral fact — it is the reason none
   // of the precision numbers on this page mean anything yet — so it is shown.
   if (r.audience === 'buyer') {
-    const tone = { replied: 'tone-ok', meeting: 'tone-ok', won: 'tone-ok',
-                   contacted: 'tone-info', no: 'tone-neutral', unfit: 'tone-bad' };
+    const tone = OUTCOME_TONE;
     flags.push(r.outcome
       ? '<span class="pill pill--sm ' + (tone[r.outcome] || 'tone-neutral') + '">'
         + esc(r.outcome) + (r.outcome_note ? ': ' + esc(r.outcome_note.slice(0, 60)) : '')
@@ -3223,8 +3229,44 @@ function signalFlags(r) {
   return flags;
 }
 
+/* Marking a lead. The one thing a person writes into this archive: what came
+ * of it. `picked` is the step before outreach -- read, chosen, not sent yet --
+ * so a lead can be triaged here without anyone contacting it. */
+const OUTCOME_CHOICES = [
+  ['picked', 'picked', 'chosen for outreach, not sent yet'],
+  ['contacted', 'contacted', 'a message went out'],
+  ['replied', 'replied', 'they answered'],
+  ['meeting', 'meeting', 'a call or meeting is booked or done'],
+  ['won', 'won', 'it became work'],
+  ['no', 'said no', 'they declined; the lead was fair'],
+  ['unfit', 'unfit', 'should never have been a lead: a fault in the rules'],
+];
+const OUTCOME_TONE = { picked: 'tone-info', contacted: 'tone-info', replied: 'tone-ok',
+                       meeting: 'tone-ok', won: 'tone-ok', no: 'tone-neutral', unfit: 'tone-bad' };
+let SIG_LIST = [];
+// The row whose editor is open, and what the editor holds so far.
+const MARK = { rid: null, pick: '', note: '', saving: false };
+
+function markEditorHTML(r) {
+  const choices = OUTCOME_CHOICES.map(([v, label, hint]) =>
+    '<button type="button" data-soutcome="' + v + '" aria-pressed="' + (MARK.pick === v) + '" title="'
+    + esc(hint) + '">' + esc(label) + '</button>').join('')
+    + '<button type="button" data-soutcome="" aria-pressed="' + (MARK.pick === '') + '" title="no outcome">clear</button>';
+  return '<tr class="sig-mark"><td colspan="4"><div class="sig-mark__box">'
+    + '<fieldset class="seg sig-mark__choices" aria-label="What came of this lead">' + choices + '</fieldset>'
+    + '<input class="sig-mark__note" type="text" maxlength="400" autocomplete="off"'
+    + ' aria-label="Note" placeholder="one line, optional: who, what they said" value="' + esc(MARK.note) + '">'
+    + '<button class="btn btn--sm" type="button" data-smark-save' + (MARK.saving ? ' disabled' : '') + '>'
+    + (MARK.saving ? 'saving…' : 'save') + '</button>'
+    + '<button class="btn btn--ghost btn--sm" type="button" data-smark-cancel>cancel</button>'
+    + '<p class="xs sig-mark__hint">By hand, one lead at a time. Picked means chosen for outreach and not sent;'
+    + ' it stays in leads.csv, listed first.</p>'
+    + '</div></td></tr>';
+}
+
 function renderSignals(rows) {
   const body = $('#signals-body');
+  SIG_LIST = rows;
   if (!rows.length) {
     /* The empty state has to know why it is empty. "Nothing here" on a
      * filtered view of a full archive sends people to re-run a collector that
@@ -3235,6 +3277,11 @@ function renderSignals(rows) {
   body.innerHTML = rows.map(r => {
     const what = (r.title || r.excerpt || '').trim();
     const flags = signalFlags(r);
+    if (r.audience === 'buyer') {
+      const open = MARK.rid === r.record_id;
+      flags.push('<button class="btn btn--ghost btn--sm" type="button" data-smark="' + esc(r.record_id)
+        + '" aria-expanded="' + open + '">' + (r.outcome ? 'change' : 'mark') + '</button>');
+    }
     // A hiring record names its own company and quotes its engagement line;
     // a forum record leaves both "unknown" and shows neither.
     const named = r.company && r.company !== 'unknown' ? esc(r.company) : '';
@@ -3251,8 +3298,47 @@ function renderSignals(rows) {
       + '</td><td><span class="pill pill--sm ' + (AUDIENCE_TONE[r.audience] || 'tone-neutral') + '">'
       + esc(r.audience) + '</span></td>'
       + '<td class="num">' + Number(r.match_confidence).toFixed(2) + '</td>'
-      + '<td class="xs">' + esc(r.match_reason || '') + '</td></tr>';
+      + '<td class="xs">' + esc(r.match_reason || '') + '</td></tr>'
+      + (MARK.rid === r.record_id ? markEditorHTML(r) : '');
   }).join('');
+}
+
+function openMark(rid) {
+  const r = SIG_LIST.find(x => x.record_id === rid);
+  if (!r) return;
+  Object.assign(MARK, { rid, pick: r.outcome || 'picked', note: r.outcome_note || '', saving: false });
+  renderSignals(SIG_LIST);
+  const pressed = document.querySelector('.sig-mark [data-soutcome][aria-pressed="true"]');
+  if (pressed) pressed.focus();
+}
+
+function closeMark() {
+  const rid = MARK.rid;
+  Object.assign(MARK, { rid: null, pick: '', note: '', saving: false });
+  renderSignals(SIG_LIST);
+  const back = rid && document.querySelector('[data-smark="' + CSS.escape(rid) + '"]');
+  if (back) back.focus();
+}
+
+async function saveMark() {
+  if (!MARK.rid || MARK.saving) return;
+  const note = (document.querySelector('.sig-mark__note') || {}).value || '';
+  Object.assign(MARK, { note, saving: true });
+  renderSignals(SIG_LIST);
+  const res = await api('/api/signals/outcome', { record_id: MARK.rid, outcome: MARK.pick, note });
+  if (res.ok === false) {
+    MARK.saving = false;
+    renderSignals(SIG_LIST);
+    toast('not saved: ' + (res.error || 'unknown error'), 'bad');
+    return;
+  }
+  const r = SIG_LIST.find(x => x.record_id === MARK.rid);
+  if (r) Object.assign(r, res.row);
+  const t = res.totals || {};
+  toast((res.row.outcome ? 'marked ' + res.row.outcome : 'outcome cleared')
+    + ' · ' + (t.picked || 0) + ' picked, ' + (t.worked || 0) + ' worked of '
+    + Number(t.buyers || 0).toLocaleString() + ' buyers', 'ok');
+  closeMark();
 }
 
 function renderSignalPager() {
@@ -3497,7 +3583,7 @@ $('#signals-facets').addEventListener('click', e => {
   loadSignals();
 });
 function clearSignalFilters() {
-  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', offset: 0 });
+  Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', queue: '', offset: 0 });
   $('#signals-q').value = '';
   loadSignals();
 }
@@ -3510,10 +3596,34 @@ $('#signals-active').addEventListener('click', e => {
     loadSignals();
     return;
   }
-  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+  if (e.target.closest('[data-sfacet-clear]')) { clearSignalFilters(); return; }
+  if (e.target.closest('[data-sfacet-queue]')) {
+    Object.assign(SIG, { queue: '1', offset: 0 });
+    loadSignals();
+  }
 });
 $('#signals-body').addEventListener('click', e => {
-  if (e.target.closest('[data-sfacet-clear]')) clearSignalFilters();
+  if (e.target.closest('[data-sfacet-clear]')) { clearSignalFilters(); return; }
+  const open = e.target.closest('[data-smark]');
+  if (open) {
+    if (MARK.rid === open.dataset.smark) closeMark(); else openMark(open.dataset.smark);
+    return;
+  }
+  const choice = e.target.closest('[data-soutcome]');
+  if (choice) {
+    // Kept in place rather than re-rendered, so a half-typed note survives.
+    MARK.pick = choice.dataset.soutcome;
+    document.querySelectorAll('.sig-mark [data-soutcome]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.soutcome === MARK.pick)));
+    return;
+  }
+  if (e.target.closest('[data-smark-save]')) { saveMark(); return; }
+  if (e.target.closest('[data-smark-cancel]')) closeMark();
+});
+$('#signals-body').addEventListener('keydown', e => {
+  if (!e.target.closest('.sig-mark')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeMark(); }
+  if (e.key === 'Enter' && e.target.classList.contains('sig-mark__note')) { e.preventDefault(); saveMark(); }
 });
 $('#signals-pager').addEventListener('click', e => {
   const b = e.target.closest('[data-spage]');

@@ -2567,7 +2567,7 @@ def main(argv=None):
     sg.add_argument("--record", default="",
                     help="outcome: which record_id to mark (last column of leads.csv)")
     sg.add_argument("--set", default="", dest="set",
-                    help="outcome: contacted | replied | meeting | won | no | unfit, "
+                    help="outcome: picked | contacted | replied | meeting | won | no | unfit, "
                          "or empty to clear it")
     sg.add_argument("--note", default="",
                     help="outcome: one line from whoever worked it")

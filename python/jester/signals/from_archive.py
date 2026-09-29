@@ -146,7 +146,10 @@ def not_an_advert(body: str) -> str:
 #: no engineering in them at all (medical writers, health-service managers).
 _GIG_RE = re.compile(
     r"per ?task|role-?play|contributor|annotat|data (label|collection)|generalist"
-    r"|ai (freelance|trainer|tutor)|\brater\b|transcri|voice record|audit specialist",
+    # "ai training": every stored headline naming it on 2026-09-29 was a data
+    # task ("Programmers wanted for Remote AI Training | $50+/hr"), none an
+    # engineering role.
+    r"|ai (freelance|trainer|tutor|training)|\brater\b|transcri|voice record|audit specialist",
     re.I)
 #: Engineering work named in the headline. A buyer here is someone paying for
 #: an engineer; a headline that names none is not that, however much of the

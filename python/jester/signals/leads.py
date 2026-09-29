@@ -134,11 +134,14 @@ def gather(db: sqlite3.Connection, *, mode: str = "live",
         args.append(mode)
     if not include_worked:
         # Already worked means somebody has it. Handing it over again is how
-        # two people email the same company in the same week.
-        where.append("COALESCE(outcome, '') = ''")
+        # two people email the same company in the same week. A pick has not
+        # been sent: it is exactly what the handover is for, so it stays.
+        where.append("COALESCE(outcome, '') IN ('', 'picked')")
     rows = [dict(r) for r in db.execute(
         f"SELECT * FROM {TABLE} WHERE {' AND '.join(where)} "
-        "ORDER BY match_confidence DESC, first_seen_utc DESC", args).fetchall()]
+        # Picked first: a person already chose these.
+        "ORDER BY COALESCE(outcome, '') = 'picked' DESC, "
+        "match_confidence DESC, first_seen_utc DESC", args).fetchall()]
 
     actionable, unreachable, old = [], [], []
     for r in rows:
