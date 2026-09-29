@@ -298,7 +298,7 @@ def test_crossposts_are_reported_with_their_communities(tmp_path):
 
 # ---- the scope document is generated, not typed ---------------------------
 
-def test_scope_document_states_the_things_seif_has_to_decide(rules):
+def test_scope_document_states_the_things_the_scope_owner_has_to_decide(rules):
     md = sc.scope_markdown(rules, today="2026-09-22")
     assert "PROVISIONAL" in md
     for c in rules.communities:
@@ -465,7 +465,7 @@ def test_without_an_archive_the_document_is_still_complete(rules):
 def test_the_access_section_names_owner_due_date_and_what_was_requested(rules):
     md = sc.scope_markdown(rules, today="2026-09-28")
     access = md[md.index("## 6. Access"):]
-    assert "**Who decides:** Seif (scope owner), **due 2026-10-02**." in access
+    assert "**Who decides:** the scope owner, **due 2026-10-02**." in access
     assert "**Requested so far:**" in access
     assert "free Data API tier is for non-commercial use" in access
 

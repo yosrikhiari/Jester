@@ -1,6 +1,6 @@
 # Problem-signal collector — scope and access status
 
-> **Generated 2026-09-28** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
+> **Generated 2026-09-29** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
 > **Scope status: PROVISIONAL — awaiting sign-off**
 
 ## 0. What is collecting today
@@ -19,18 +19,18 @@ They ask different questions and carry different rule sets. One reads forum disc
 
 ### What each source has produced
 
-Read off the live archive on 2026-09-28. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-07-30.
+Read off the live archive on 2026-09-29. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-07-31.
 
 | source | records | buyers | recent buyers |
 |---|---:|---:|---:|
 | HN Who is hiring | 3,000 | 149 | 27 |
-| Himalayas (contract listings) | 1,471 | 1,122 | 1,122 |
+| Himalayas (contract listings) | 1,471 | 1,122 | 1,115 |
 | Jobicy | 22 | 15 | 15 |
 | Remotive | 1 | 1 | 1 |
 | HN discussion (Ask HN, comments, Show, stories) | 756 | 3 | 3 |
-| Reddit hiring rooms (worker archive, set apart) | 71 | 10 | 10 |
+| Reddit hiring rooms (worker archive, set apart) | 77 | 11 | 11 |
 
-**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,165 buyer signals from 554 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
+**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,158 buyer signals from 551 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
 
 ## 1. Communities
 
@@ -156,7 +156,7 @@ No model sits in the acceptance path: the fixture gate is deterministic checks, 
 
 **Requested so far:** none on record. This project holds no application to Reddit and no quote; whether to apply, and for what budget, is part of the decision below.
 
-**Who decides:** Seif (scope owner), **due 2026-10-02**. The choice is between two things: approve the free sources already running (section 0), or buy Reddit access for the rooms below.
+**Who decides:** the scope owner, **due 2026-10-02**. The choice is between two things: approve the free sources already running (section 0), or buy Reddit access for the rooms below.
 
 **If access is bought, these are the rooms to point it at — measured, and thin.**
 
@@ -178,7 +178,7 @@ How they were measured: Jester's worker had already stored these rooms' posts by
 - If Reddit: choose the queries (section 2), apply for access and name the budget.
 - Provide a ClickHouse instance and credentials scoped to this collector, or confirm the self-hosted one.
 
-Done: the data-design review (Rassil, 25 Sep 2026) — ClickHouse holds insert and query only; no defects raised.
+Done: the data-design review (25 Sep 2026) — ClickHouse holds insert and query only; no defects raised.
 
 **Until access exists, the collector sends Reddit no requests.** Reddit is not in the collector's source registry, so `jester signals run --source reddit` fails with "no source named 'reddit'" rather than quietly collecting something it should not. The only Reddit records are the hiring rooms above, scored from what the worker had already archived, and they are set apart until this decision. `jester signals sources` prints every collector that does exist and the authority each one runs on.
 

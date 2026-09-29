@@ -295,7 +295,7 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "", db=None) -> s
     add("- Provide a ClickHouse instance and credentials scoped to this collector, or confirm "
         "the self-hosted one.")
     add("")
-    add("Done: the data-design review (Rassil, 25 Sep 2026) — ClickHouse holds insert and "
+    add("Done: the data-design review (25 Sep 2026) — ClickHouse holds insert and "
         "query only; no defects raised.")
     add("")
     add("**Until access exists, the collector sends Reddit no requests.** Reddit is not in the "

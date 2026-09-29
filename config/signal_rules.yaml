@@ -51,7 +51,7 @@ scope:
   decided_on: ""
   # Who signs, and by when. Printed in the access section so the document
   # says whose decision it is rather than leaving it to be inferred.
-  decision_owner: "Seif (scope owner)"
+  decision_owner: "the scope owner"
   decision_due: "2026-10-02"
 
   communities:
