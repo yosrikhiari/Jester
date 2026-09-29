@@ -330,6 +330,7 @@ class Handler(BaseHTTPRequestHandler):
                 options=body.get("options")),
             "/api/schedule/remove": api.schedule_remove,
             "/api/schedule/run": api.schedule_run_now,
+            "/api/schedule/refresh": api.schedule_refresh,
             # What came of a lead: picked, contacted, replied ... one record.
             "/api/signals/outcome": lambda: api.signal_outcome(
                 body.get("record_id"), body.get("outcome"), body.get("note", "")),

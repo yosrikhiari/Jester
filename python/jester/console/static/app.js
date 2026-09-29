@@ -3437,6 +3437,17 @@ function scraperLastRunWords(d) {
   return 'Last scheduled run ' + esc(d.last_run) + ' · ' + exit + '.';
 }
 
+// The scheduled task runs a launcher file written when it was installed; the
+// run-now button builds its command fresh. On 28 Sep they had drifted apart
+// and the 09:30 run did a fraction of the work, exit 0, for days.
+function scraperLauncherWords(l) {
+  if (!l || !l.stale) return '';
+  return '<span class="bad"><b>The scheduled task runs an older command than run now.</b></span>'
+    + ' It runs <span class="mono">' + esc(l.runs) + '</span>;'
+    + ' it should run <span class="mono">' + esc(l.should) + '</span>.'
+    + ' <button class="btn btn--sm" type="button" data-scraper-refresh>update the launcher</button>';
+}
+
 function renderScraper() {
   const d = SCRAPER.data;
   if (!d) return;
@@ -3455,6 +3466,7 @@ function renderScraper() {
     scraperLastRunWords(d),
     d.running ? '<b>The scheduled run is in progress.</b>' : '',
     changed && d.windows ? '<span class="pending">Unsaved: press save schedule.</span>' : '',
+    scraperLauncherWords(d.launcher),
   ].filter(Boolean).join(' ');
   if (!SCRAPER.following) {
     const run = $('#scraper-run');
@@ -3549,6 +3561,15 @@ $('#scraper-run').addEventListener('click', async () => {
   followScraper(res.job_id);
 });
 
+$('#scraper-state').addEventListener('click', async e => {
+  const b = e.target.closest('[data-scraper-refresh]');
+  if (!b) return;
+  b.disabled = true;
+  const res = await api('/api/schedule/refresh', {});
+  toast(res.ok === false ? 'not updated: ' + (res.error || 'unknown error') : res.detail,
+        res.ok === false ? 'bad' : 'ok');
+  loadScraper();
+});
 $('#scraper-mode').addEventListener('click', e => {
   const b = e.target.closest('[data-scraper-mode]');
   if (!b) return;
