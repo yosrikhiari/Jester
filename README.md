@@ -66,6 +66,8 @@ Providers: **Ollama** (fully offline) and **Groq** (cloud, OpenAI-compatible).
 The idea pipeline is generative and probabilistic. Sitting beside it is a **problem-signal collector** built to a different standard, because its output has to survive review:
 
 > **Scope, fields and access status: [docs/scope-and-access.md](docs/scope-and-access.md)** — what each source collects and has produced, the 30-field map, and the open Reddit access decision. Regenerate it with `python -m jester.cli signals scope --db data/signals-live.db --out docs/`.
+>
+> **W1 evidence: [docs/w1-pack/](docs/w1-pack/README.md)** — a fresh clone, one command run twice (5 rows, then 0 new), the field map and the 20/20 fixture gate, captured to files.
 
 - **No model in the acceptance path.** Classification is rules over text — same input, same verdict, no network and no quota. A model may one day propose new phrases; it never decides one.
 - **Search, not listing walks.** Measured: reading a community's `/new/` returns a 0.65% buyer rate, because what a community posts today is mostly not a buyer. Searching for the sentences a buyer actually writes is the same number of requests at a far higher hit rate.

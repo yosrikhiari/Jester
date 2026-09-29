@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS problem_signal (
+  record_id String,
+  mode LowCardinality(String),
+  platform LowCardinality(String),
+  source_id String,
+  source_url String,
+  community LowCardinality(String),
+  kind LowCardinality(String),
+  author String,
+  title String,
+  excerpt String,
+  text_hash String,
+  query String,
+  match_reason String,
+  match_confidence Float32,
+  audience LowCardinality(String),
+  relevant UInt8,
+  company LowCardinality(String),
+  buyer_intent LowCardinality(String),
+  created_utc Nullable(DateTime64(3)),
+  edited_utc Nullable(DateTime64(3)),
+  removed_utc Nullable(DateTime64(3)),
+  first_seen_utc DateTime64(3),
+  last_seen_utc DateTime64(3),
+  revisions UInt16,
+  run_id String,
+  run_status LowCardinality(String),
+  error String,
+  outcome LowCardinality(String),
+  outcome_at Nullable(DateTime64(3)),
+  outcome_note String
+)
+ENGINE = ReplacingMergeTree(last_seen_utc)
+PARTITION BY toYYYYMM(first_seen_utc)
+ORDER BY record_id;

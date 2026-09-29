@@ -1,0 +1,6 @@
+$ python -m jester.cli signals export --db s.db --out out   (run 1: a database nothing has run against)
+upserted: 5 new, 0 seen again, 0 edited
+synthetic: 5 unique, 3 relevant, 0 removed, 1 error(s)
+csv: /tmp/w1-run/out/signals-synthetic.csv (5 row(s), reconciles=True)
+also written: field-map.md, schema.clickhouse.sql, manifest.json in /tmp/w1-run/out
+exit 0

@@ -1,0 +1,44 @@
+$ python -m jester.cli signals check
+PASS  rel-01-toil-with-a-number               relevant   1.00  buyer
+        buyer signal: owner_voice, cost + work_pain, work_named
+PASS  rel-02-software-that-does-not-exist     relevant   0.85  buyer
+        buyer signal: owner_voice, capacity + needs_built
+PASS  rel-03-tool-ceiling                     relevant   1.00  buyer
+        buyer signal: owner_voice, capacity, cost + work_pain
+PASS  rel-04-terse-answer-in-a-buyer-thread   relevant   0.50  buyer (amb) (inherited)
+        ambiguous buyer signal (voice inherited from the thread): thread frame + work_named, but the post does not say
+PASS  irr-01-hobbyist                         irrelevant 0.00  none
+        rejected: hobby, showcase outweighs any problem language
+PASS  irr-02-supply-side                      irrelevant 0.20  none
+        rejected: supply_side outweighs any problem language
+PASS  irr-03-industry-essay                   irrelevant 0.00  none
+        rejected: opinion_essay outweighs any problem language
+PASS  irr-04-recruiting                       irrelevant 0.00  none
+        hard reject: contains 'we are hiring'
+PASS  amb-01-owner-with-no-cost               ambiguous  0.45  buyer (amb)
+        ambiguous buyer signal: owner_voice + asking, but the post does not say what the work costs
+PASS  amb-02-practitioner-thin                ambiguous  0.35  practitioner (amb)
+        ambiguous practitioner pain: work_pain, asking but little detail
+PASS  amb-03-inherited-voice                  ambiguous  0.50  buyer (amb) (inherited)
+        ambiguous buyer signal (voice inherited from the thread): thread frame + work_named, but the post does not say
+PASS  amb-04-cost-without-a-voice             ambiguous  0.45  practitioner
+        practitioner pain (content, not a lead): work_pain
+PASS  edit-01-unchanged-is-not-a-duplicate    edits        -   1 row, revisions 0, edited False, removed False
+        The plainest version of the M2 check: seeing a record again updates when we last saw it and nothing else.
+PASS  edit-02-an-edit-is-dated-and-counted-onceedits        -   1 row, revisions 1, edited True, removed False
+        The author edits, then the text sits still. One revision, dated when we first noticed - not one per sighting.
+PASS  edit-03-a-removal-is-recorded-not-deletededits        -   1 row, revisions 0, edited False, removed True
+        The source stops returning it. The row survives - the signal was real when it was collected, and an archive th
+PASS  edit-04-a-removal-that-comes-back       edits        -   1 row, revisions 0, edited False, removed False
+        Deleted posts reappear - a moderator queue, a cache, a restore. Seeing it again clears the removal instead of 
+PASS  fail-01-source-unavailable              failures   0.00  none
+        rejected: no problem stated
+PASS  fail-02-rate-limited                    failures   0.00  none
+        rejected: no problem stated
+PASS  fail-03-malformed-payload               failures   0.00  none
+        rejected: no problem stated
+PASS  fail-04-blocked-page                    failures   0.00  none
+        rejected: no problem stated
+
+20/20 case(s) passed · categories: ambiguous, edits, failures, irrelevant, relevant
+exit 0
