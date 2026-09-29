@@ -308,6 +308,9 @@ TASK_FOR_COMMAND = {
 #: `--db X --config Y` shape would have made it exit 2 on every tick. A table
 #: is cheaper than a branch in the launcher, and it is the place to look when
 #: the next command does not fit the mould either.
+#: The hiring rule set, which three of the commands below score with.
+HIRING_RULES = "config/hiring_rules.yaml"
+
 COMMAND_SPEC = {
     "cycle": {"argv": ("cycle",), "config": True},
     "ingest": {"argv": ("ingest",), "config": True},
@@ -324,7 +327,7 @@ COMMAND_SPEC = {
     # collection. Scheduling it is safe for the same reason.
     "leads-reddit": {
         "argv": ("signals", "from-archive",
-                 "--rules", "config/hiring_rules.yaml",
+                 "--rules", HIRING_RULES,
                  "--archive", "data/jester.db"),
         "config": False,
     },
@@ -361,7 +364,7 @@ COMMAND_SPEC = {
         # covers every hiring source. It makes no requests to Reddit.
         "argv": ("signals", "run",
                  "--source", "hackernews-hiring",
-                 "--rules", "config/hiring_rules.yaml",
+                 "--rules", HIRING_RULES,
                  "--query", "2", "--limit", "1000",
                  "--fallback", "himalayas,remotive,jobicy",
                  "--also-reddit-archive", "--archive", "data/jester.db"),
@@ -380,7 +383,7 @@ COMMAND_SPEC = {
     # whose data refreshes once a day.
     "signals-sweep": {
         "argv": ("signals", "run", "--source", "himalayas",
-                 "--rules", "config/hiring_rules.yaml",
+                 "--rules", HIRING_RULES,
                  "--query", "developer", "--query", "engineer", "--query", "data",
                  "--query", "qa", "--query", "python", "--query", "integration",
                  "--query", "machine learning", "--query", "ai",
