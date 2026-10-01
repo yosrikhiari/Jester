@@ -98,7 +98,18 @@ captured -> proposed -> chosen -> researching -> experimenting -> drafting
   -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
 ```
 
-The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (proof checks, experiment runs, posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
+The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (experiment runs, posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
+
+Slice J1 adds the proof checks a saved version must pass before review. Each one is offline and deterministic, and stores its verdict against that version:
+
+| Check | Passes when |
+|---|---|
+| `citations` | every external link has a saved copy that answered 2xx, and every quote of 5+ words is attributed to a link whose saved copy contains those words |
+| `numbers` | every number in the prose links to its proof — `[91.2%](run:12#accuracy)` (value checked against the run), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes)` — or names go in backticks |
+| `lint` | the prose does not read as generated (Wikipedia's "signs of AI writing" list plus structure signals) and the title is not clickbait |
+| `origin` | no paragraph a tool wrote speaks in the first person, gives an opinion or claims an observation |
+
+`journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
 
 ```bash
 python -m jester.cli journal new "Rules vs a decision model" --question "Which sorts hiring posts best?"
@@ -107,6 +118,9 @@ python -m jester.cli journal set rules-vs-a-decision-model --metric "macro F1" -
 python -m jester.cli journal approve rules-vs-a-decision-model choose
 python -m jester.cli journal state rules-vs-a-decision-model chosen
 python -m jester.cli journal save rules-vs-a-decision-model -m "first draft"
+python -m jester.cli journal snapshot rules-vs-a-decision-model   # save copies of every cited page
+python -m jester.cli journal check rules-vs-a-decision-model      # citations, numbers, lint, origin
+python -m jester.cli journal fixtures                             # the checkers against labelled cases
 ```
 
 ## Quick Start

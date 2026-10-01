@@ -2545,6 +2545,45 @@ def _print_journal(db, root, j):
             print(f"    {h['at']}  {h['from_state']} -> {h['to_state']} by {h['actor']}{note}")
 
 
+def _journal_snapshot(db, root, j, args, sleep=None, opener=None):
+    """Save copies of the article's links (or one --url)."""
+    import time
+
+    from jester import journal as J
+    from jester.journal import snapshots as S
+    from jester.journal import text as T
+
+    sleep = sleep or time.sleep
+    if args.url:
+        urls = [args.url]
+    else:
+        path = _journal_file(root, j)
+        if path is None or not path.exists():
+            raise J.JournalError(f"the article file is missing: {path}")
+        md = path.read_text(encoding="utf-8")
+        urls = list(dict.fromkeys(S.strip_fragment(ln.target)
+                                  for b in T.prose_blocks(md) for ln in T.links(b.text) if ln.external))
+    if args.from_file and len(urls) != 1:
+        raise J.JournalError("--from-file needs exactly one --url")
+    if not urls:
+        print("no links to save")
+        return
+    fetched = 0
+    for url in urls:
+        prev = S.latest(db, url)
+        if S.is_ok(prev) and not args.refresh and not args.from_file:
+            print(f"  kept  {url} (saved {prev['fetched_at']})")
+            continue
+        if fetched and not args.from_file:
+            sleep(1.0)  # one request a second; these are other people's servers
+        row = S.take(db, root, url, opener=opener,
+                     from_file=Path(args.from_file) if args.from_file else None)
+        fetched += 1
+        state = "ok  " if S.is_ok(row) and row["text_path"] else ("saved" if S.is_ok(row) else "FAIL")
+        detail = "" if state == "ok  " else f" - {S.describe(row)}"
+        print(f"  {state}  {url} ({row['method']}, {row['status']}){detail}")
+
+
 def cmd_journal(args):
     """the journal: question -> experiment -> article, with proof required.
 
@@ -2583,6 +2622,35 @@ def cmd_journal(args):
             print(f"created {slug} ({args.kind}, captured)")
             print(f"  file: {path}")
             print(f"  next: jester journal show {slug}")
+            return
+
+        if args.action == "fixtures":
+            from jester.journal import fixtures as jfx
+
+            try:
+                gates = jfx.check_all()
+            except jfx.FixtureError as exc:
+                raise J.JournalError(str(exc))
+            for g in gates:
+                if g["gate"].startswith("G4"):
+                    print(f"{'PASS' if g['pass'] else 'FAIL'}  {g['gate']}: {g['ai_flagged']}/{g['ai']} "
+                          f"AI paragraphs flagged (need {jfx.LINT_MIN_AI_FLAGGED}), "
+                          f"{g['human_flagged']}/{g['human']} human flagged "
+                          f"(allow {jfx.LINT_MAX_HUMAN_FLAGGED})")
+                    misses = [c for c in g["cases"] if c["flagged"] != (c["origin"] == "ai")]
+                else:
+                    good = sum(c["pass"] for c in g["cases"])
+                    extra = f", {g['planted']} planted" if "planted" in g else ""
+                    print(f"{'PASS' if g['pass'] else 'FAIL'}  {g['gate']}: {good}/{len(g['cases'])} "
+                          f"cases{extra}")
+                    misses = [c for c in g["cases"] if not c["pass"]]
+                for c in misses:
+                    print(f"      miss {c['id']}: " + "; ".join(c["findings"][:2] or ["no findings"]))
+            held = jfx.check_lint_gate(name="lint_holdout.json")
+            print(f"      held out (not used to choose the rules): {held['ai_flagged']}/{held['ai']} AI "
+                  f"flagged, {held['human_flagged']}/{held['human']} human flagged")
+            if not all(g["pass"] for g in gates):
+                sys.exit(1)
             return
 
         if args.action == "list":
@@ -2660,6 +2728,26 @@ def cmd_journal(args):
                         reason=args.reason, file_sha256=_journal_file_sha(root, j))
             print(f"{args.slug} is now {j['state']}")
             return
+
+        if args.action == "snapshot":
+            _journal_snapshot(db, root, j, args)
+            return
+
+        if args.action == "check":
+            from jester.journal import checks as jchecks
+
+            rev, outcomes = jchecks.check_saved(db, root, args.slug)
+            print(f"{args.slug} version {rev['n']}:")
+            for o in outcomes:
+                stats = ", ".join(f"{k} {v}" for k, v in o.stats.items())
+                print(f"  {'ok  ' if o.ok else 'FAIL'}  {o.kind:<10}{stats}")
+                for f in o.findings:
+                    where = f"line {f['line']}" if f["line"] else "overall"
+                    tag = "" if not o.ok else "warning: "
+                    print(f"          {where}: {tag}{f['message']}")
+            if not all(o.ok for o in outcomes):
+                sys.exit(1)
+            return
     except js.MoveRefused as exc:
         print(f"{args.slug} cannot move to {args.to}:")
         for r in exc.reasons:
@@ -2719,6 +2807,17 @@ def _add_journal_parser(sub):
     p.add_argument("to", choices=STATES)
     p.add_argument("--note", default="")
     p.add_argument("--reason", default="", help="why it is abandoned")
+
+    p = common(jsub.add_parser("snapshot", help="save copies of the pages the article links to"))
+    p.add_argument("slug")
+    p.add_argument("--url", default="", help="save just this one")
+    p.add_argument("--from-file", default="",
+                   help="with --url: store this text file as the copy (a PDF you extracted, "
+                        "a page behind a login); recorded as manual")
+    p.add_argument("--refresh", action="store_true", help="fetch again even if a good copy exists")
+
+    common(jsub.add_parser("check", help="run the proof checks on the saved version")).add_argument("slug")
+    common(jsub.add_parser("fixtures", help="run the checkers against their labelled cases"))
 
 
 def main(argv=None):

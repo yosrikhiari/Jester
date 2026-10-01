@@ -1,0 +1,459 @@
+[
+  {
+    "id": "clean-draft",
+    "want": "pass",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-count",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe read 500 posts by hand.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-percent",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nRecall fell by 3.5% on short posts.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-times-sign",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nIt was 3× faster than the baseline.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-thousands",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe archive holds 1,303 buyers.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-currency",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nEach post with a link costs $0.20 on X.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-decimal",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe kept a threshold of 0.87 for duplicates.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-unit",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe median call took 12 ms.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-range",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nBetween 3–13% of links were invented.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-x-suffix",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nLocal scoring was 5x cheaper.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-spaced-percent",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nAbout 50 % of runs hit the limit.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-minutes",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nA full run took 9.9 minutes.\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "planted-table-cell",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\n| model | f1 |\n|---|---|\n| llm | 0.88 |\n",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ],
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "run-value-does-not-match",
+    "want": "fail",
+    "reason": "the text says 91.2% but the run recorded 0.905",
+    "article": "Accuracy was [91.2%](run:1#accuracy).",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.905
+        }
+      }
+    ]
+  },
+  {
+    "id": "run-value-as-plain-number",
+    "want": "pass",
+    "article": "Accuracy was [0.91](run:1#accuracy).",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912
+        }
+      }
+    ]
+  },
+  {
+    "id": "run-of-another-journal",
+    "want": "fail",
+    "reason": "no run 1 in this journal",
+    "article": "Accuracy was [91.2%](run:1#accuracy).",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912
+        },
+        "other_journal": true
+      }
+    ]
+  },
+  {
+    "id": "run-that-failed",
+    "want": "fail",
+    "reason": "did not finish ok",
+    "article": "Accuracy was [91.2%](run:1).",
+    "runs": [
+      {
+        "status": "failed"
+      }
+    ]
+  },
+  {
+    "id": "run-key-missing",
+    "want": "fail",
+    "reason": "has no number at 'recall'",
+    "article": "Recall was [80%](run:1#recall).",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912
+        }
+      }
+    ]
+  },
+  {
+    "id": "run-without-key-only-needs-to-exist",
+    "want": "pass",
+    "article": "We labelled [500](run:1) posts.",
+    "runs": [
+      {
+        "result": {}
+      }
+    ]
+  },
+  {
+    "id": "source-has-the-number",
+    "want": "pass",
+    "article": "[10.1%](https://arxiv.example.org/abs/2604) of links did not open.",
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "source-lacks-the-number",
+    "want": "fail",
+    "reason": "does not appear in the saved copy",
+    "article": "[13.3%](https://arxiv.example.org/abs/2604) of links were invented.",
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 200,
+        "content_type": "text/html",
+        "body": "<p>We found that 3.5% of links were invented and 10.1% did not open.</p>"
+      }
+    }
+  },
+  {
+    "id": "source-is-dead",
+    "want": "fail",
+    "reason": "the link is dead",
+    "article": "[3.5%](https://arxiv.example.org/abs/2604) of links were invented.",
+    "web": {
+      "https://arxiv.example.org/abs/2604": {
+        "status": 404,
+        "reason": "Not Found"
+      }
+    }
+  },
+  {
+    "id": "unknown-kind-of-proof",
+    "want": "fail",
+    "reason": "not a kind of proof",
+    "article": "It took [3 days](trust:me).",
+    "web": {}
+  },
+  {
+    "id": "block-proof-missing-run",
+    "want": "fail",
+    "reason": "block proof",
+    "article": "<!-- backed-by: run:7 -->\n| a | b |\n|---|---|\n| x | 0.5 |",
+    "runs": [
+      {
+        "result": {
+          "accuracy": 0.912,
+          "n": 500,
+          "latency_ms": {
+            "p50": 12.4
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "observation",
+    "want": "pass",
+    "article": "I spent [6 hours](obs:notes) labelling.",
+    "web": {}
+  },
+  {
+    "id": "years-dates-versions-identifiers",
+    "want": "pass",
+    "article": "In 2026, H100 and L40S cards ran gpt-oss-120b 1.2.3 on 2026-09-28 (see #12 and 0x1F).",
+    "web": {}
+  }
+]

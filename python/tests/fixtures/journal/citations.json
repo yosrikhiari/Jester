@@ -1,0 +1,354 @@
+[
+  {
+    "id": "quote-found",
+    "want": "pass",
+    "article": "As one writer [put it](https://blog.example.org/benchmarks), \"readers trust numbers they can reproduce\" and little else.",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-smart-quotes",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks) says “readers trust numbers they can reproduce”.",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-case-and-wrapping",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks) found that \"Readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>readers trust\n numbers   they can\n reproduce</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-with-ellipsis",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers trust numbers ... on their own machines\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-ellipsis-out-of-order",
+    "want": "fail",
+    "reason": "not in the saved copy",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"on their own machines ... readers trust numbers\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-not-in-page",
+    "want": "fail",
+    "reason": "not in the saved copy",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers trust benchmarks they did not run\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-unattributed",
+    "want": "fail",
+    "reason": "not attributed to a source link",
+    "article": "Everyone agrees that \"readers trust numbers they can reproduce\" in practice.",
+    "web": {}
+  },
+  {
+    "id": "short-quote-is-not-a-citation",
+    "want": "pass",
+    "article": "People call it \"AI slop\" now.",
+    "web": {}
+  },
+  {
+    "id": "dead-link",
+    "want": "fail",
+    "reason": "the link is dead (HTTP 404)",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 404,
+        "reason": "Not Found"
+      }
+    }
+  },
+  {
+    "id": "invented-link",
+    "want": "fail",
+    "reason": "could not reach it",
+    "article": "A [study](https://made-up-journal.example/paper-123) found \"readers trust numbers they can reproduce\".",
+    "fetch_only": [
+      "https://made-up-journal.example/paper-123"
+    ],
+    "web": {}
+  },
+  {
+    "id": "never-saved",
+    "want": "fail",
+    "reason": "no saved copy yet",
+    "article": "See [the notes](https://notes.example.net/judges) for details.",
+    "web": {}
+  },
+  {
+    "id": "paywall",
+    "want": "fail",
+    "reason": "not in the saved copy",
+    "article": "The [paper](https://blog.example.org/benchmarks) concludes \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>Subscribe to continue reading.</p><p>Sign in or create an account.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "moved-page",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>",
+        "final_url": "https://blog.example.org/2026/benchmarks"
+      }
+    }
+  },
+  {
+    "id": "pdf-has-no-text",
+    "want": "fail",
+    "reason": "no readable text",
+    "article": "The [paper](https://blog.example.org/benchmarks.pdf) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks.pdf": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "body": "%PDF-1.7 binary"
+      }
+    }
+  },
+  {
+    "id": "pdf-with-manual-copy",
+    "want": "pass",
+    "article": "The [paper](https://blog.example.org/benchmarks.pdf) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks.pdf": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "body": "%PDF-1.7 binary"
+      }
+    },
+    "manual": {
+      "https://blog.example.org/benchmarks.pdf": "Section 4. In our survey, readers trust numbers they can reproduce on their own machines."
+    }
+  },
+  {
+    "id": "link-without-quote",
+    "want": "pass",
+    "article": "More detail is in [the benchmark write-up](https://blog.example.org/benchmarks).",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "server-error",
+    "want": "fail",
+    "reason": "the link is dead (HTTP 500)",
+    "article": "More detail is in [the write-up](https://blog.example.org/benchmarks).",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 500,
+        "reason": "Server Error"
+      }
+    }
+  },
+  {
+    "id": "blockquote-with-attribution",
+    "want": "pass",
+    "article": "> Readers trust numbers they can reproduce on their own machines.\n> — [The survey](https://blog.example.org/benchmarks)",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "blockquote-source-next-paragraph",
+    "want": "pass",
+    "article": "> Readers trust numbers they can reproduce on their own machines.\n\nThat line is from [the survey](https://blog.example.org/benchmarks).",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "blockquote-unattributed",
+    "want": "fail",
+    "reason": "not attributed to a source link",
+    "article": "> Readers trust numbers they can reproduce on their own machines.\n\nI agree with this.",
+    "web": {}
+  },
+  {
+    "id": "blockquote-wrong-words",
+    "want": "fail",
+    "reason": "not in the saved copy",
+    "article": "> Readers only trust numbers that come with a free trial.\n> — [The survey](https://blog.example.org/benchmarks)",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "quote-inside-inline-code-ignored",
+    "want": "pass",
+    "article": "The config line is `msg = \"this is not a citation at all\"` and nothing more.",
+    "web": {}
+  },
+  {
+    "id": "quote-matches-second-link",
+    "want": "pass",
+    "article": "Compare [the notes](https://notes.example.net/judges) with [the survey](https://blog.example.org/benchmarks): \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      },
+      "https://notes.example.net/judges": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>LLM judges agree with each other more than with people.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "script-text-does-not-count",
+    "want": "fail",
+    "reason": "not in the saved copy",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><script>var s = 'readers trust numbers they can reproduce';</script><p>Nothing to see.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "html-entities",
+    "want": "pass",
+    "article": "The [notes](https://notes.example.net/judges) say “it’s cheap & it’s fast enough for us”.",
+    "web": {
+      "https://notes.example.net/judges": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>Honestly, it&rsquo;s cheap &amp; it&#8217;s fast enough for us.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "emphasis-inside-quote",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks) says \"readers *trust* numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "image-link-needs-only-a-status",
+    "want": "pass",
+    "article": "![latency chart](https://img.example.org/chart.png)",
+    "web": {
+      "https://img.example.org/chart.png": {
+        "status": 200,
+        "content_type": "image/png",
+        "body": "PNG"
+      }
+    }
+  },
+  {
+    "id": "fragment-is-ignored",
+    "want": "pass",
+    "article": "The [survey](https://blog.example.org/benchmarks#results) says \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "plain-text-source",
+    "want": "pass",
+    "article": "The [raw notes](https://notes.example.net/raw.txt) say \"readers trust numbers they can reproduce\".",
+    "web": {
+      "https://notes.example.net/raw.txt": {
+        "status": 200,
+        "content_type": "text/plain",
+        "body": "Survey notes: readers trust numbers they can reproduce."
+      }
+    }
+  },
+  {
+    "id": "quote-in-list-item",
+    "want": "pass",
+    "article": "- The [survey](https://blog.example.org/benchmarks) says \"readers trust numbers they can reproduce\".\n- Nothing else was measured.",
+    "web": {
+      "https://blog.example.org/benchmarks": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "body": "<html><head><title>t</title></head><body><p>In our survey, readers trust numbers they can reproduce on their own machines.</p><p>Everything else is marketing.</p></body></html>"
+      }
+    }
+  },
+  {
+    "id": "dead-link-inside-code-fence-ignored",
+    "want": "pass",
+    "article": "```\ncurl https://dead.example.org/gone\n```",
+    "web": {}
+  }
+]
