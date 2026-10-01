@@ -18,17 +18,6 @@ PY = r"C:\Python312\python.exe"
 
 
 @pytest.fixture(autouse=True)
-def _keep_env():
-    """cli.main loads .env into os.environ. Left there, JESTER_QDRANT_URL
-    turned later doctor tests into checks against a real Qdrant."""
-    import os
-    before = dict(os.environ)
-    yield
-    os.environ.clear()
-    os.environ.update(before)
-
-
-@pytest.fixture(autouse=True)
 def _tmp_root(tmp_path, monkeypatch):
     monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
     # Installed unless a test says otherwise; never asks the real scheduler.
@@ -155,5 +144,6 @@ def test_the_console_card_shows_it_and_can_fix_it(tmp_path):
 
     assert ConsoleAPI(main, str(config), read_only=True).schedule_refresh()["ok"] is False
     res = api.schedule_refresh()
-    assert res["ok"] and [r["command"] for r in res["refreshed"]] == ["signals-hiring"]
+    assert res["ok"]
+    assert [r["command"] for r in res["refreshed"]] == ["signals-hiring"]
     assert api.jobs_scraper()["launcher"]["stale"] is False

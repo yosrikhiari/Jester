@@ -3441,7 +3441,7 @@ function scraperLastRunWords(d) {
 // run-now button builds its command fresh. On 28 Sep they had drifted apart
 // and the 09:30 run did a fraction of the work, exit 0, for days.
 function scraperLauncherWords(l) {
-  if (!l || !l.stale) return '';
+  if (!l?.stale) return '';
   return '<span class="bad"><b>The scheduled task runs an older command than run now.</b></span>'
     + ' It runs <span class="mono">' + esc(l.runs) + '</span>;'
     + ' it should run <span class="mono">' + esc(l.should) + '</span>.'
