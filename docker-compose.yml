@@ -44,6 +44,11 @@ services:
     # The qdrant image ships no curl/wget, so a HTTP healthcheck isn't
     # available without rebuilding it. Downstream services depend on
     # `service_started` instead; qdrant listens within ~1s of start.
+    # Same policy as clickhouse and cloakbrowser. Without it, every Docker or
+    # machine restart brought the rest of the stack back and left qdrant
+    # exited, and the scheduled treat runs reported "dedup down" for hours
+    # (2026-10-01: exited at ~07:50, noticed at 14:50).
+    restart: unless-stopped
     networks: [jester_net]
 
   jester-console:
