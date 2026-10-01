@@ -18,6 +18,7 @@ from __future__ import annotations
 import html
 import re
 from typing import Callable, List, Optional
+from urllib.parse import urlsplit
 
 from jester.journal import text as T
 
@@ -48,13 +49,22 @@ _LNK = re.compile(r"\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?(?:\s+&quot;[^&]*&quot;)?\s
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*|__([^_\n]+)__")
 _EM_STAR = re.compile(r"(?<![\w*])\*([^*\s][^*\n]*)\*(?![\w*])")
 _EM_UNDER = re.compile(r"(?<!\w)_([^_\s][^_\n]*)_(?!\w)")
-_SAFE_PREFIXES = ("http://", "https://", "#", "/", "./", "../")
+_WEB_SCHEMES = frozenset({"http", "https"})
+_LOCAL_PREFIXES = ("#", "/", "./", "../")
 _RELATIVE_PATH = re.compile(r"[\w\-./]+")
+
+
+def _is_web(url: str) -> bool:
+    return urlsplit(url).scheme.lower() in _WEB_SCHEMES
 
 
 def _safe(url: str) -> str:
     """Only web, anchor and relative URLs survive; `javascript:` does not."""
-    return url if url.startswith(_SAFE_PREFIXES) or _RELATIVE_PATH.fullmatch(url) else "#"
+    if _is_web(url):
+        return url
+    if not urlsplit(url).scheme and (url.startswith(_LOCAL_PREFIXES) or _RELATIVE_PATH.fullmatch(url)):
+        return url
+    return "#"
 
 
 def inline(text: str, rewrite: Rewrite = default_rewrite) -> str:
@@ -75,7 +85,7 @@ def inline(text: str, rewrite: Rewrite = default_rewrite) -> str:
     def lnk(m):
         label, target = m.group(1), html.unescape(m.group(2))
         href = _safe(rewrite(target))
-        ext = ' rel="noopener"' if href.startswith(("http://", "https://")) else ""
+        ext = ' rel="noopener"' if _is_web(href) else ""
         cls = ' class="proof"' if evidence_target(target) else ""
         return f'<a href="{html.escape(href)}"{cls}{ext}>{label}</a>'
 
