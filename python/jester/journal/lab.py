@@ -174,13 +174,21 @@ def run_command(db: sqlite3.Connection, root: Path, slug: str, argv: Sequence[st
                 experiment_id: Optional[int] = None, code_dir: Optional[Path] = None,
                 seed: Optional[str] = None, timeout: Optional[float] = None,
                 runner: Callable = subprocess.run, gpu_query: Callable = None,
-                clock: Callable[[], float] = time.monotonic) -> sqlite3.Row:
-    """Execute one run of an experiment and record everything about it."""
+                clock: Callable[[], float] = time.monotonic,
+                data_before_plan: bool = False) -> sqlite3.Row:
+    """Execute one run of an experiment and record everything about it.
+
+    `data_before_plan` says the command re-analyses data recorded before the
+    plan was written (a re-count of old runs). The run is marked exactly
+    like an attached ledger run: it is data, and it cannot confirm the plan.
+    """
     if not argv:
         raise J.JournalError("give the command to run after --")
     j = J.get(db, slug)
     exp = experiment(db, j["id"], experiment_id)
     env = fingerprint(code_dir, seed, gpu_query=gpu_query)
+    if data_before_plan:
+        env["before_plan"] = True
     rid = _start_run(db, exp["id"], "command", shlex.join(argv), env, J.now_utc())
     folder = run_dir(root, slug, rid)
     folder.mkdir(parents=True, exist_ok=True)

@@ -2691,7 +2691,8 @@ def _journal_lab(db, root, j, args):
             argv = argv[1:]
         run = L.run_command(db, root, j["slug"], argv, experiment_id=exp_id,
                             code_dir=Path(args.code) if args.code else None,
-                            seed=args.seed or None, timeout=args.timeout)
+                            seed=args.seed or None, timeout=args.timeout,
+                            data_before_plan=args.data_before_plan)
         _print_run(run)
         if run["status"] != "ok":
             sys.exit(1)
@@ -3033,6 +3034,8 @@ def _add_journal_parser(sub):
     p.add_argument("--code", default="", help="the code's git checkout (its commit is recorded)")
     p.add_argument("--seed", default="")
     p.add_argument("--timeout", type=float, default=None, help="seconds")
+    p.add_argument("--data-before-plan", action="store_true",
+                   help="the command re-analyses data recorded before the plan; the run is marked so")
     # `*` after `--`, not REMAINDER: REMAINDER swallows --seed/--code given
     # after the slug and tries to run "--seed" as the program.
     p.add_argument("cmd", nargs="*", help="the command, after --")
