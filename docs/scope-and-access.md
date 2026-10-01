@@ -1,6 +1,6 @@
 # Problem-signal collector — scope and access status
 
-> **Generated 2026-09-29** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
+> **Generated 2026-10-01** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
 > **Scope status: PROVISIONAL — awaiting sign-off**
 
 ## 0. What is collecting today
@@ -19,18 +19,18 @@ They ask different questions and carry different rule sets. One reads forum disc
 
 ### What each source has produced
 
-Read off the live archive on 2026-09-29. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-07-31.
+Read off the live archive on 2026-10-01. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-08-02.
 
 | source | records | buyers | recent buyers |
 |---|---:|---:|---:|
 | HN Who is hiring | 3,000 | 149 | 27 |
-| Himalayas (contract listings) | 1,471 | 1,122 | 1,115 |
+| Himalayas (contract listings) | 1,475 | 1,122 | 1,112 |
 | Jobicy | 22 | 15 | 15 |
 | Remotive | 1 | 1 | 1 |
-| HN discussion (Ask HN, comments, Show, stories) | 756 | 3 | 3 |
-| Reddit hiring rooms (worker archive, set apart) | 77 | 11 | 11 |
+| HN discussion (Ask HN, comments, Show, stories) | 939 | 6 | 6 |
+| Reddit hiring rooms (worker archive, set apart) | 85 | 11 | 11 |
 
-**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,158 buyer signals from 551 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
+**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,155 buyer signals from 549 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
 
 ## 1. Communities
 
