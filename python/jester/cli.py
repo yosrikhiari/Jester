@@ -2477,6 +2477,250 @@ def cmd_signals(args):
     print(f"also written: field-map.md, schema.clickhouse.sql, manifest.json in {out_dir}")
 
 
+def _journal_file(root, j):
+    return Path(root) / j["path"] if j["path"] else None
+
+
+def _journal_file_sha(root, j):
+    from jester.journal import files as jfiles
+
+    path = _journal_file(root, j)
+    return jfiles.content_sha256(path) if path is not None and path.exists() else ""
+
+
+def _print_journal(db, root, j):
+    from jester import journal as J
+    from jester.journal import states as js
+
+    print(f"{j['slug']} · {j['kind']} · {j['state']}")
+    print(f"  {j['title']}")
+    for field in ("question", "hypothesis", "metric", "baseline", "prior_coverage",
+                  "disclosure", "canonical_url"):
+        if j[field]:
+            print(f"  {field.replace('_', ' ')}: {j[field]}")
+    if j["state"] == js.PARKED:
+        print(f"  parked from: {j['parked_from']}")
+    if j["state"] == js.ABANDONED:
+        print(f"  abandoned: {j['abandoned_reason']}")
+    path = _journal_file(root, j)
+    file_sha = _journal_file_sha(root, j)
+    revs = J.revisions(db, j["id"])
+    if path is not None:
+        unsaved = bool(revs) and file_sha and file_sha != revs[-1]["content_sha256"]
+        state = "missing" if not file_sha else ("unsaved changes" if unsaved else "saved")
+        print(f"  file: {path} ({state})")
+    if revs:
+        last = revs[-1]
+        print(f"  versions: {len(revs)} (latest {last['n']}, commit {last['git_sha'][:8]}, "
+              f"{last['created_at']})")
+        checks = J.latest_checks(db, last["id"])
+        if checks:
+            print("  checks on latest: " + ", ".join(
+                f"{k} {'ok' if v else 'FAIL'}" for k, v in sorted(checks.items())))
+    for e in J.experiments(db, j["id"]):
+        n_runs = len(J.runs(db, e["id"]))
+        lock = f"locked {e['locked_at']}" if e["locked_at"] else "not locked"
+        print(f"  experiment {e['id']}: {n_runs}/{e['n_planned']} run(s), {lock}")
+    approvals = db.execute(
+        "SELECT what, actor, at, revision_id FROM approval WHERE journal_id = ? ORDER BY id",
+        (j["id"],)).fetchall()
+    for a in approvals:
+        tag = "" if a["actor"] == J.HUMAN else "  (not counted: not a human decision)"
+        rev = f" version-id {a['revision_id']}" if a["revision_id"] else ""
+        print(f"  approved {a['what']}{rev} by {a['actor']} at {a['at']}{tag}")
+    to, reasons = js.next_step(db, j, file_sha256=file_sha)
+    if to is None:
+        print("  next: nothing, this journal is finished")
+    elif reasons:
+        print(f"  next: {to}, blocked by:")
+        for r in reasons:
+            print(f"    - {r}")
+    else:
+        print(f"  next: {to} is open -> jester journal state {j['slug']} {to}")
+    hist = J.history(db, j["id"])
+    if hist:
+        print("  history:")
+        for h in hist:
+            note = f" ({h['note']})" if h["note"] else ""
+            print(f"    {h['at']}  {h['from_state']} -> {h['to_state']} by {h['actor']}{note}")
+
+
+def cmd_journal(args):
+    """the journal: question -> experiment -> article, with proof required.
+
+        new       start a journal: a database row plus a Markdown file,
+                  committed as version 1 in the journal's own git repository
+        list      every journal, newest first (or one state)
+        show      one journal: brief, file, versions, checks, approvals, and
+                  what blocks the next step
+        set       edit the brief (question, metric, baseline, ...)
+        save      commit the article file as a new version
+        approve   record YOUR decision (choose | plan | review | publish)
+        state     move to a state; refused with reasons if a gate fails
+
+    Approvals made here are recorded as `human`. That is the only actor the
+    gates count, so nothing an agent does can open a human gate.
+    """
+    from jester import journal as J
+    from jester.journal import files as jfiles
+    from jester.journal import states as js
+
+    db = J.open_journal(args.db)
+    root = Path(args.root)
+    try:
+        if args.action == "new":
+            slug = args.slug or J.slugify(args.title)
+            if J.find(db, slug) is not None:
+                raise J.JournalError(f"a journal called {slug!r} already exists")
+            if args.kind not in J.KINDS:
+                raise J.JournalError(f"kind must be one of {', '.join(J.KINDS)}")
+            path = jfiles.create_article(root, slug, args.title.strip(), args.kind)
+            rel = path.relative_to(root).as_posix()
+            j = J.create_journal(db, args.title, kind=args.kind, slug=slug,
+                                 question=args.question, path=rel)
+            sha = jfiles.commit(root, path, f"{slug}: start")
+            J.record_revision(db, j["id"], sha, jfiles.content_sha256(path), rel, note="start")
+            print(f"created {slug} ({args.kind}, captured)")
+            print(f"  file: {path}")
+            print(f"  next: jester journal show {slug}")
+            return
+
+        if args.action == "list":
+            rows = J.list_journals(db, state=args.state)
+            if not rows:
+                print("no journals yet: jester journal new \"<title>\"")
+                return
+            for j in rows:
+                to, reasons = js.next_step(db, j, file_sha256=_journal_file_sha(root, j))
+                if to is None:
+                    nxt = "done"
+                elif reasons:
+                    nxt = f"-> {to}: {len(reasons)} thing(s) to do"
+                else:
+                    nxt = f"-> {to}: open"
+                print(f"{j['state']:<14}{j['kind']:<11}{j['slug']:<44}{nxt}")
+            counts = J.counts_by_state(db)
+            print(" · ".join(f"{n} {s}" for s, n in sorted(counts.items())))
+            return
+
+        j = J.get(db, args.slug)
+
+        if args.action == "show":
+            _print_journal(db, root, j)
+            return
+
+        if args.action == "set":
+            fields = {f: getattr(args, f) for f in J.BRIEF_FIELDS if getattr(args, f) is not None}
+            if not fields:
+                raise J.JournalError("nothing to set; pass at least one of "
+                                     + ", ".join("--" + f.replace("_", "-") for f in J.BRIEF_FIELDS))
+            J.update_brief(db, args.slug, **fields)
+            print(f"updated {args.slug}: {', '.join(sorted(fields))}")
+            return
+
+        if args.action == "save":
+            path = _journal_file(root, j)
+            if path is None or not path.exists():
+                raise J.JournalError(f"the article file is missing: {path}")
+            digest = jfiles.content_sha256(path)
+            last = J.latest_revision(db, j["id"])
+            if last is not None and last["content_sha256"] == digest:
+                print(f"no changes since version {last['n']}")
+                return
+            n = (last["n"] + 1) if last else 1
+            sha = jfiles.commit(root, path, f"{args.slug}: version {n}"
+                                + (f" - {args.message}" if args.message else ""))
+            rev = J.record_revision(db, j["id"], sha, digest, j["path"], note=args.message)
+            print(f"saved {args.slug} version {rev['n']} (commit {sha[:8]})")
+            return
+
+        if args.action == "approve":
+            revision_id = None
+            if args.what in ("review", "publish"):
+                last = J.latest_revision(db, j["id"])
+                if last is None:
+                    raise J.JournalError("nothing saved to approve yet (save)")
+                file_sha = _journal_file_sha(root, j)
+                if file_sha and file_sha != last["content_sha256"]:
+                    raise J.JournalError("the file has unsaved changes; save first, so you "
+                                         "approve what you actually read")
+                revision_id = last["id"]
+            if args.what == "post":
+                raise J.JournalError("post approvals belong to a publication; "
+                                     "publishing arrives in slice J3")
+            J.approve(db, j["id"], args.what, actor=J.HUMAN, note=args.note,
+                      revision_id=revision_id)
+            what = f"{args.what} on version {J.latest_revision(db, j['id'])['n']}" \
+                if revision_id else args.what
+            print(f"recorded your approval: {args.slug} {what}")
+            return
+
+        if args.action == "state":
+            j = js.move(db, args.slug, args.to, actor=J.HUMAN, note=args.note,
+                        reason=args.reason, file_sha256=_journal_file_sha(root, j))
+            print(f"{args.slug} is now {j['state']}")
+            return
+    except js.MoveRefused as exc:
+        print(f"{args.slug} cannot move to {args.to}:")
+        for r in exc.reasons:
+            print(f"  - {r}")
+        sys.exit(1)
+    except (J.JournalError, jfiles.GitError) as exc:
+        print(f"journal: {exc}")
+        sys.exit(1)
+    finally:
+        db.close()
+
+
+def _add_journal_parser(sub):
+    from jester.journal import APPROVALS, BRIEF_FIELDS, DEFAULT_DB, KINDS
+    from jester.journal.files import DEFAULT_ROOT
+    from jester.journal.states import STATES
+
+    jp = sub.add_parser(
+        "journal",
+        help="research -> experiment -> article, with every number and quote traced")
+    jsub = jp.add_subparsers(dest="action", required=True)
+
+    def common(p):
+        p.add_argument("--db", default=DEFAULT_DB)
+        p.add_argument("--root", default=DEFAULT_ROOT,
+                       help="folder holding the article files; its own git repository")
+        p.set_defaults(func=cmd_journal)
+        return p
+
+    p = common(jsub.add_parser("new", help="start a journal"))
+    p.add_argument("title")
+    p.add_argument("--kind", default="article", choices=KINDS)
+    p.add_argument("--slug", default="")
+    p.add_argument("--question", default="")
+
+    p = common(jsub.add_parser("list", help="every journal and what it needs next"))
+    p.add_argument("--state", default="", choices=("",) + STATES)
+
+    common(jsub.add_parser("show", help="one journal in full")).add_argument("slug")
+
+    p = common(jsub.add_parser("set", help="edit the brief"))
+    p.add_argument("slug")
+    for field in BRIEF_FIELDS:
+        p.add_argument("--" + field.replace("_", "-"), dest=field, default=None)
+
+    p = common(jsub.add_parser("save", help="commit the article file as a new version"))
+    p.add_argument("slug")
+    p.add_argument("-m", "--message", default="")
+
+    p = common(jsub.add_parser("approve", help="record your decision"))
+    p.add_argument("slug")
+    p.add_argument("what", choices=APPROVALS)
+    p.add_argument("--note", default="")
+
+    p = common(jsub.add_parser("state", help="move to a state (gates checked)"))
+    p.add_argument("slug")
+    p.add_argument("to", choices=STATES)
+    p.add_argument("--note", default="")
+    p.add_argument("--reason", default="", help="why it is abandoned")
+
+
 def main(argv=None):
     # Secrets live in .env, not in thresholds.yaml — the config files are
     # committed and the console writes to them. Loading here rather than at
@@ -2631,6 +2875,8 @@ def main(argv=None):
     sg.add_argument("--only-mode", default="", choices=["", "live", "synthetic"],
                     help="load/export only rows of this mode (default: all)")
     sg.set_defaults(func=cmd_signals)
+
+    _add_journal_parser(sub)
 
     rt = sub.add_parser("retention")
     rt.add_argument("--db", default="data/jester.db")
