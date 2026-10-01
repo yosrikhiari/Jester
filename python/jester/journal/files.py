@@ -42,11 +42,25 @@ def _git(root: Path, *args: str) -> str:
     return out.stdout.strip()
 
 
+#: Folders under the root that are not articles: saved copies of other
+#: people's pages, and the site worktrees exports are written to.
+IGNORED = ("_snapshots/", "_site/")
+
+
 def ensure_repo(root: Path) -> Path:
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     if not (root / ".git").exists():
         _git(root, "init", "-q")
+    # Kept out of git through .git/info/exclude rather than a .gitignore, so
+    # nothing extra is ever committed next to the articles.
+    exclude = root / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    have = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    missing = [p for p in IGNORED if p not in have.splitlines()]
+    if missing:
+        exclude.write_text(have + ("" if have.endswith("\n") or not have else "\n")
+                           + "\n".join(missing) + "\n", encoding="utf-8")
     return root
 
 
