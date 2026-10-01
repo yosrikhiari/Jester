@@ -87,6 +87,28 @@ python -m jester.cli signals evidence    # one folder a reviewer can read in an 
 
 The archive is a `ReplacingMergeTree` keyed on the record id alone, so a repeat import collapses to the same rows; every saved query says `FINAL`, because a count without it counts parts rather than records. `signals evidence` reconciles SQLite against ClickHouse against the CSV and exits non-zero if the three disagree.
 
+## Journal — research, experiment, publish (in progress)
+
+A third part, separate from the problem-signal work above and not part of its scope or milestones. The journal turns a question into a published engineering write-up, and refuses to publish anything it cannot trace: every number must point at an experiment run or a query, and every quote at a stored copy of its source.
+
+Built so far (slice J0): its own database (`data/journal.db`), articles as Markdown in their own git repository (`data/journal/`, so drafts stay private and every saved version is a commit), and a state machine where each step forward has a gate:
+
+```
+captured -> proposed -> chosen -> researching -> experimenting -> drafting
+  -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
+```
+
+The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (proof checks, experiment runs, posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
+
+```bash
+python -m jester.cli journal new "Rules vs a decision model" --question "Which sorts hiring posts best?"
+python -m jester.cli journal show rules-vs-a-decision-model     # brief, versions, and what blocks the next step
+python -m jester.cli journal set rules-vs-a-decision-model --metric "macro F1" --baseline "the rule set"
+python -m jester.cli journal approve rules-vs-a-decision-model choose
+python -m jester.cli journal state rules-vs-a-decision-model chosen
+python -m jester.cli journal save rules-vs-a-decision-model -m "first draft"
+```
+
 ## Quick Start
 
 ```bash
@@ -143,6 +165,7 @@ All tuning lives in `config/`:
 │       ├── agents/      # Extractor, synthesizer, critic, labeller, archivist
 │       ├── console/     # Operator console: API + the static UI it serves
 │       ├── signals/     # Problem-signal collector, rules, ClickHouse, digest
+│       ├── journal/     # Research -> experiment -> article, with gated states
 │       └── ...
 ├── go/                  # Ingestion worker and probe commands
 │   ├── cmd/             # worker, forumprobe, siteprobe, renderprobe
