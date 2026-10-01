@@ -98,7 +98,7 @@ captured -> proposed -> chosen -> researching -> experimenting -> drafting
   -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
 ```
 
-The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (experiment runs, posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
+The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
 
 Slice J1 adds the proof checks a saved version must pass before review. Each one is offline and deterministic, and stores its verdict against that version:
 
@@ -111,6 +111,8 @@ Slice J1 adds the proof checks a saved version must pass before review. Each one
 
 `journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
 
+Slice J2 adds experiments. `journal plan` writes the hypothesis, metric, the threshold that will count as "yes", the baseline and the number of runs down **before** any result; the first run locks it, and every later edit is logged as a change after the lock. `journal run SLUG -- <command>` executes a run into its own folder (stdout, stderr, `result.json`) and records the exit code, timing and a fingerprint: OS, Python, GPU and driver, the code's commit and whether it had uncommitted changes — a run from uncommitted code does not count toward drafting. `journal attach` records a run Jester already made (a signals or pipeline ledger row) as evidence, and marks it if it happened before the plan was written. `journal table` and `journal figure` are made from runs: every value in a generated table is checked against the runs it names, and a figure is stored with its hash, so a hand-edited chart fails the number check.
+
 ```bash
 python -m jester.cli journal new "Rules vs a decision model" --question "Which sorts hiring posts best?"
 python -m jester.cli journal show rules-vs-a-decision-model     # brief, versions, and what blocks the next step
@@ -121,6 +123,11 @@ python -m jester.cli journal save rules-vs-a-decision-model -m "first draft"
 python -m jester.cli journal snapshot rules-vs-a-decision-model   # save copies of every cited page
 python -m jester.cli journal check rules-vs-a-decision-model      # citations, numbers, lint, origin
 python -m jester.cli journal fixtures                             # the checkers against labelled cases
+python -m jester.cli journal plan rules-vs-a-decision-model --hypothesis "rules lose on recall" --metric "macro F1" --threshold "+0.05" --baseline "the rule set" --runs 5
+python -m jester.cli journal run rules-vs-a-decision-model --code ../journal-experiments -- python bench.py
+python -m jester.cli journal attach rules-vs-a-decision-model --ledger signals --run-id <run_id>
+python -m jester.cli journal table rules-vs-a-decision-model --runs 1,2 --keys f1,latency_ms.p50
+python -m jester.cli journal figure rules-vs-a-decision-model --runs 1,2 --key f1 --name f1
 ```
 
 ## Quick Start

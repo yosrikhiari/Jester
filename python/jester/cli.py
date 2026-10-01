@@ -2518,9 +2518,23 @@ def _print_journal(db, root, j):
             print("  checks on latest: " + ", ".join(
                 f"{k} {'ok' if v else 'FAIL'}" for k, v in sorted(checks.items())))
     for e in J.experiments(db, j["id"]):
-        n_runs = len(J.runs(db, e["id"]))
+        runs = J.runs(db, e["id"])
         lock = f"locked {e['locked_at']}" if e["locked_at"] else "not locked"
-        print(f"  experiment {e['id']}: {n_runs}/{e['n_planned']} run(s), {lock}")
+        print(f"  experiment {e['id']}: {len(runs)}/{e['n_planned']} run(s), {lock}")
+        for field in ("hypothesis", "metric", "threshold", "baseline"):
+            if e[field]:
+                print(f"    {field}: {e[field]}")
+        changes = json.loads(e["changes_after_lock"] or "[]")
+        for c in changes:
+            print(f"    changed after the lock: {c['field']} {c['was']!r} -> {c['now']!r} ({c['at']})")
+        missing = J.missing_answers(e["checklist"])
+        if missing:
+            print(f"    checklist: {len(J.CHECKLIST) - len(missing)}/{len(J.CHECKLIST)} answered")
+        for r in runs:
+            env = json.loads(r["env"] or "{}")
+            dirty = " UNCOMMITTED CODE" if (env.get("code") or {}).get("dirty") else ""
+            early = " - ran before the plan was written" if env.get("before_plan") else ""
+            print(f"    run {r['id']}: {r['status']} ({r['source']}){dirty}{early}")
     approvals = db.execute(
         "SELECT what, actor, at, revision_id FROM approval WHERE journal_id = ? ORDER BY id",
         (j["id"],)).fetchall()
@@ -2582,6 +2596,111 @@ def _journal_snapshot(db, root, j, args, sleep=None, opener=None):
         state = "ok  " if S.is_ok(row) and row["text_path"] else ("saved" if S.is_ok(row) else "FAIL")
         detail = "" if state == "ok  " else f" - {S.describe(row)}"
         print(f"  {state}  {url} ({row['method']}, {row['status']}){detail}")
+
+
+def _journal_lab(db, root, j, args):
+    """plan / run / attach / checklist / table / figure."""
+    from jester import journal as J
+    from jester.journal import lab as L
+
+    exp_id = getattr(args, "experiment", None)
+    if args.action == "plan":
+        fields = {"hypothesis": args.hypothesis, "metric": args.metric, "threshold": args.threshold,
+                  "baseline": args.baseline, "n_planned": args.runs,
+                  "threats": args.threat or None}
+        existing = J.experiments(db, j["id"])
+        if args.new or not existing:
+            exp_id = L.plan(db, j["id"], **fields)
+            print(f"experiment {exp_id} planned for {j['slug']}")
+        else:
+            target = L.experiment(db, j["id"], exp_id)
+            L.plan(db, j["id"], experiment_id=target["id"], **fields)
+            exp_id = target["id"]
+            print(f"experiment {exp_id} plan updated")
+        row = L.experiment(db, j["id"], exp_id)
+        if row["locked_at"]:
+            changes = json.loads(row["changes_after_lock"] or "[]")
+            print(f"  locked at {row['locked_at']}: {len(changes)} change(s) after the lock, "
+                  "and the article will say so")
+        return
+
+    if args.action == "run":
+        argv = list(args.cmd)
+        if argv and argv[0] == "--":
+            argv = argv[1:]
+        run = L.run_command(db, root, j["slug"], argv, experiment_id=exp_id,
+                            code_dir=Path(args.code) if args.code else None,
+                            seed=args.seed or None, timeout=args.timeout)
+        _print_run(run)
+        if run["status"] != "ok":
+            sys.exit(1)
+        return
+
+    if args.action == "attach":
+        run = L.attach_ledger(db, root, j["slug"], args.ledger, args.run_id,
+                              ledger_db=args.ledger_db or None, experiment_id=exp_id)
+        _print_run(run)
+        return
+
+    if args.action == "checklist":
+        exp = L.experiment(db, j["id"], exp_id)
+        answers = {}
+        for item in args.set or []:
+            key, sep, value = item.partition("=")
+            if not sep:
+                raise J.JournalError(f"--set takes key=answer (got {item!r})")
+            answers[key.strip()] = value.strip()
+        if answers:
+            J.answer_checklist(db, exp["id"], answers)
+            exp = L.experiment(db, j["id"], exp["id"])
+        given = json.loads(exp["checklist"] or "{}")
+        for key, question in J.CHECKLIST:
+            answer = str(given.get(key, "")).strip()
+            print(f"  {'ok' if answer else '--'}  {key:<17}{question}")
+            if answer:
+                print(f"      {answer}")
+        missing = J.missing_answers(exp["checklist"])
+        print(f"experiment {exp['id']}: {len(J.CHECKLIST) - len(missing)}/{len(J.CHECKLIST)} answered")
+        return
+
+    if args.action == "table":
+        snippet = L.table(db, j["id"], _ids(args.runs), [k for k in args.keys.split(",") if k],
+                          label_key=args.label)
+        print(snippet)
+        return
+
+    if args.action == "figure":
+        made = L.figure(db, root, j["slug"], _ids(args.runs), args.key, args.name,
+                        caption=args.caption, label_key=args.label, unit=args.unit)
+        print(f"drew {made['path']}")
+        print(made["markdown"])
+        return
+
+
+def _ids(text):
+    from jester import journal as J
+
+    try:
+        return [int(x) for x in text.split(",") if x.strip()]
+    except ValueError:
+        raise J.JournalError(f"--runs takes run ids like 3,4,5 (got {text!r})")
+
+
+def _print_run(run):
+    env = json.loads(run["env"] or "{}")
+    code = env.get("code") or {}
+    where = ""
+    if code.get("commit"):
+        where = f", code {code['commit'][:8]}{' (UNCOMMITTED CHANGES - will not count)' if code.get('dirty') else ''}"
+    took = f", {run['duration_s']} s" if run["duration_s"] is not None else ""
+    print(f"run {run['id']}: {run['status']}{took}{where}")
+    print(f"  raw data: {run['raw_path']}")
+    keys = [k for k in json.loads(run["result"] or "{}") if not k.startswith("_")]
+    if keys:
+        print(f"  result keys: {', '.join(keys[:12])}{' ...' if len(keys) > 12 else ''}")
+    note = json.loads(run["result"] or "{}").get("_note")
+    if note:
+        print(f"  note: {note}")
 
 
 def cmd_journal(args):
@@ -2733,6 +2852,10 @@ def cmd_journal(args):
             _journal_snapshot(db, root, j, args)
             return
 
+        if args.action in ("plan", "run", "attach", "checklist", "table", "figure"):
+            _journal_lab(db, root, j, args)
+            return
+
         if args.action == "check":
             from jester.journal import checks as jchecks
 
@@ -2817,6 +2940,55 @@ def _add_journal_parser(sub):
     p.add_argument("--refresh", action="store_true", help="fetch again even if a good copy exists")
 
     common(jsub.add_parser("check", help="run the proof checks on the saved version")).add_argument("slug")
+
+    def experiment_arg(p):
+        p.add_argument("slug")
+        p.add_argument("--experiment", type=int, default=None,
+                       help="which experiment (default: the newest)")
+        return p
+
+    p = experiment_arg(common(jsub.add_parser(
+        "plan", help="write the experiment plan down before any run (locks at the first run)")))
+    p.add_argument("--hypothesis", default=None)
+    p.add_argument("--metric", default=None)
+    p.add_argument("--threshold", default=None, help="the result that would count as yes")
+    p.add_argument("--baseline", default=None)
+    p.add_argument("--runs", type=int, default=None, help="how many runs are planned")
+    p.add_argument("--threat", action="append", default=[], help="a known threat to validity; repeatable")
+    p.add_argument("--new", action="store_true", help="start another experiment instead of editing")
+
+    p = experiment_arg(common(jsub.add_parser(
+        "run", help="run the experiment: jester journal run SLUG -- python bench.py")))
+    p.add_argument("--code", default="", help="the code's git checkout (its commit is recorded)")
+    p.add_argument("--seed", default="")
+    p.add_argument("--timeout", type=float, default=None, help="seconds")
+    # `*` after `--`, not REMAINDER: REMAINDER swallows --seed/--code given
+    # after the slug and tries to run "--seed" as the program.
+    p.add_argument("cmd", nargs="*", help="the command, after --")
+
+    p = experiment_arg(common(jsub.add_parser(
+        "attach", help="record a run Jester already made (signals or pipeline ledger)")))
+    p.add_argument("--ledger", required=True, choices=("signals", "pipeline"))
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--ledger-db", default="", help="default: data/signals-live.db or data/jester.db")
+
+    p = experiment_arg(common(jsub.add_parser("checklist", help="answer the benchmark checklist")))
+    p.add_argument("--set", action="append", default=[], metavar="KEY=ANSWER")
+
+    p = common(jsub.add_parser("table", help="print a Markdown table made from runs"))
+    p.add_argument("slug")
+    p.add_argument("--runs", required=True, help="run ids, e.g. 3,4,5")
+    p.add_argument("--keys", required=True, help="result keys, e.g. accuracy,latency_ms.p50")
+    p.add_argument("--label", default="", help="result key to name each row by")
+
+    p = common(jsub.add_parser("figure", help="draw a bar chart from runs into figures/"))
+    p.add_argument("slug")
+    p.add_argument("--runs", required=True)
+    p.add_argument("--key", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--caption", default="")
+    p.add_argument("--label", default="")
+    p.add_argument("--unit", default="")
     common(jsub.add_parser("fixtures", help="run the checkers against their labelled cases"))
 
 
