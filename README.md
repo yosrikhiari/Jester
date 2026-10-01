@@ -98,7 +98,7 @@ captured -> proposed -> chosen -> researching -> experimenting -> drafting
   -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
 ```
 
-The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. Gates for the later slices (posting, metrics) already read their tables, so until those slices land the honest answer is "blocked", not a silent pass.
+The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. The gate for the last slice (metrics) already reads its table, so until that slice lands the honest answer is "blocked", not a silent pass.
 
 Slice J1 adds the proof checks a saved version must pass before review. Each one is offline and deterministic, and stores its verdict against that version:
 
@@ -112,6 +112,10 @@ Slice J1 adds the proof checks a saved version must pass before review. Each one
 `journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
 
 Slice J2 adds experiments. `journal plan` writes the hypothesis, metric, the threshold that will count as "yes", the baseline and the number of runs down **before** any result; the first run locks it, and every later edit is logged as a change after the lock. `journal run SLUG -- <command>` executes a run into its own folder (stdout, stderr, `result.json`) and records the exit code, timing and a fingerprint: OS, Python, GPU and driver, the code's commit and whether it had uncommitted changes — a run from uncommitted code does not count toward drafting. `journal attach` records a run Jester already made (a signals or pipeline ledger row) as evidence, and marks it if it happened before the plan was written. `journal table` and `journal figure` are made from runs: every value in a generated table is checked against the runs it names, and a figure is stored with its hash, so a hand-edited chart fails the number check.
+
+Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version.
+
+Every other platform gets a version that links back (`journal variant`): Dev.to gets the full article as an unpublished draft, Bluesky and Mastodon a short post, LinkedIn/HN/Reddit/Medium a text you post yourself and then record with `journal posted`. A version may not add a number the original does not have, must fit the platform and must pass the lint. Approving it (`journal approve SLUG post --channel X`) stores the fingerprint of the file you read; editing it afterwards blocks posting until you approve again. Credentials come from `.env` (`DEVTO_API_KEY`, `BLUESKY_HANDLE` + `BLUESKY_APP_PASSWORD`, `MASTODON_INSTANCE` + `MASTODON_TOKEN`).
 
 ```bash
 python -m jester.cli journal new "Rules vs a decision model" --question "Which sorts hiring posts best?"
@@ -128,6 +132,11 @@ python -m jester.cli journal run rules-vs-a-decision-model --code ../journal-exp
 python -m jester.cli journal attach rules-vs-a-decision-model --ledger signals --run-id <run_id>
 python -m jester.cli journal table rules-vs-a-decision-model --runs 1,2 --keys f1,latency_ms.p50
 python -m jester.cli journal figure rules-vs-a-decision-model --runs 1,2 --key f1 --name f1
+python -m jester.cli journal export rules-vs-a-decision-model --site ../portfolio --push   # opens the site PR
+python -m jester.cli journal variant rules-vs-a-decision-model bluesky
+python -m jester.cli journal approve rules-vs-a-decision-model post --channel bluesky
+python -m jester.cli journal post rules-vs-a-decision-model bluesky
+python -m jester.cli journal posted rules-vs-a-decision-model hn --url https://news.ycombinator.com/item?id=...
 ```
 
 ## Quick Start

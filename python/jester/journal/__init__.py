@@ -101,6 +101,9 @@ ADDED_COLUMNS = (
     ("experiment_run", "env", "TEXT NOT NULL DEFAULT '{}'"),
     ("experiment_run", "exit_code", "INTEGER"),
     ("experiment_run", "duration_s", "REAL"),
+    ("publication", "body_path", "TEXT NOT NULL DEFAULT ''"),
+    ("publication", "approved_sha256", "TEXT NOT NULL DEFAULT ''"),
+    ("publication", "external_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 DDL = """

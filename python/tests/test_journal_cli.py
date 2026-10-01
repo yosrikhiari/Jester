@@ -112,9 +112,10 @@ def test_save_refuses_a_missing_file(run, tmp_path):
     assert "(missing)" in run("show", "gone")
 
 
-def test_post_approvals_wait_for_publishing(run):
+def test_post_approvals_name_a_channel(run):
     run("new", "Post")
-    assert "publishing arrives in slice J3" in run("approve", "post", "post", ok=False)
+    assert "say which version you approve" in run("approve", "post", "post", ok=False)
+    assert "no bluesky version yet" in run("approve", "post", "post", "--channel", "bluesky", ok=False)
 
 
 def test_list(run):
@@ -177,6 +178,18 @@ def test_commit_works_with_no_git_identity(tmp_path, monkeypatch):
     assert _git(root, "log", "-1", "--format=%an") == "Jester journal"
     with pytest.raises(jfiles.GitError, match="already exists"):
         jfiles.create_article(root, "x", "X", "note")
+
+
+def test_snapshots_and_site_worktrees_stay_out_of_the_articles_repo(tmp_path):
+    root = jfiles.ensure_repo(tmp_path / "arts")
+    (root / "_snapshots").mkdir()
+    (root / "_snapshots" / "copy.txt").write_text("someone else's page", encoding="utf-8")
+    (root / "_site").mkdir()
+    (root / "_site" / "x.html").write_text("x", encoding="utf-8")
+    assert _git(root, "status", "--porcelain") == ""
+    jfiles.ensure_repo(root)
+    exclude = (root / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
+    assert exclude.count("_snapshots/") == 1 and exclude.count("_site/") == 1
 
 
 def test_git_errors_are_reported(tmp_path):
