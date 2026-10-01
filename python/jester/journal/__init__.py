@@ -26,6 +26,11 @@ What lives where, so nobody has to guess:
     experiment_run   one run of it, with its raw data path (slice J2 fills it)
     publication      one post of one revision to one channel (slice J3)
     channel_metric   numbers read back from a publication (slice J8)
+    snapshot         a saved copy of a cited page: status, final URL, and the
+                     path of its readable text. Shared by every journal; a
+                     URL keeps every copy ever taken, newest wins
+    generated_text   fingerprints of paragraphs a tool wrote, so the origin
+                     check can tell them from paragraphs you typed
 
 The tables for later slices exist now because the gates read them. A gate
 that checked a placeholder would pass silently; a gate that reads an empty
@@ -80,7 +85,8 @@ CHECKLIST = (
 )
 
 TABLES = ("journal", "transition", "approval", "revision", "check_result",
-          "experiment", "experiment_run", "publication", "channel_metric")
+          "experiment", "experiment_run", "publication", "channel_metric",
+          "snapshot", "generated_text")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS journal (
@@ -179,6 +185,26 @@ CREATE TABLE IF NOT EXISTS channel_metric (
   views INTEGER,
   points INTEGER,
   comments INTEGER
+);
+CREATE TABLE IF NOT EXISTS snapshot (
+  id INTEGER PRIMARY KEY,
+  url TEXT NOT NULL,
+  final_url TEXT NOT NULL DEFAULT '',
+  status INTEGER NOT NULL,
+  content_type TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL,
+  error TEXT NOT NULL DEFAULT '',
+  text_path TEXT NOT NULL DEFAULT '',
+  text_sha256 TEXT NOT NULL DEFAULT '',
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS snapshot_url ON snapshot (url);
+CREATE TABLE IF NOT EXISTS generated_text (
+  id INTEGER PRIMARY KEY,
+  journal_id INTEGER NOT NULL REFERENCES journal(id),
+  sha256 TEXT NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 """
 
@@ -450,6 +476,27 @@ def metric_times(db: sqlite3.Connection, publication_id: int) -> List[str]:
     return [r["at"] for r in db.execute(
         "SELECT at FROM channel_metric WHERE publication_id = ? ORDER BY at",
         (publication_id,))]
+
+
+def register_generated(db: sqlite3.Connection, journal_id: int, text: str, role: str,
+                       at: Optional[str] = None) -> str:
+    """Record that a tool wrote this paragraph. Returns its fingerprint.
+
+    The origin check compares fingerprints, so a paragraph you then edit is
+    no longer the tool's: it is yours, and you answer for what it says.
+    """
+    from jester.journal.text import paragraph_hash
+
+    digest = paragraph_hash(text)
+    db.execute("INSERT INTO generated_text (journal_id, sha256, role, created_at) VALUES (?, ?, ?, ?)",
+               (journal_id, digest, role, at or now_utc()))
+    db.commit()
+    return digest
+
+
+def generated_hashes(db: sqlite3.Connection, journal_id: int) -> Dict[str, str]:
+    return {r["sha256"]: r["role"] for r in db.execute(
+        "SELECT sha256, role FROM generated_text WHERE journal_id = ?", (journal_id,))}
 
 
 def counts_by_state(db: sqlite3.Connection) -> Dict[str, int]:
