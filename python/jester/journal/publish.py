@@ -115,13 +115,16 @@ def _run_html(db, run_id: str, journal_id: int) -> str:
         return ""
     env = json.loads(row["env"] or "{}")
     code = env.get("code") or {}
+    code_text = ""
+    if code.get("commit"):
+        dirty = " (uncommitted changes)" if code.get("dirty") else ""
+        code_text = f"{code['commit']}{dirty}"
     facts = [("status", row["status"]), ("source", row["source"]), ("command", row["command"]),
              ("started", row["started_at"]), ("finished", row["finished_at"]),
              ("duration", f"{row['duration_s']} s" if row["duration_s"] is not None else ""),
              ("os", env.get("os")), ("python", env.get("python")),
              ("gpu", "; ".join(env.get("gpu") or [])), ("seed", env.get("seed")),
-             ("code", f"{code.get('commit')}{' (uncommitted changes)' if code.get('dirty') else ''}"
-              if code.get("commit") else ""),
+             ("code", code_text),
              ("ledger", f"{env.get('ledger')} run {env.get('ledger_run')}" if env.get("ledger") else "")]
     items = "".join(f"<dt>{_esc(k)}</dt><dd>{_esc(v)}</dd>" for k, v in facts if v)
     note = '<p class="warn">This run happened before the plan was written, so it cannot confirm the plan; ' \
@@ -143,8 +146,12 @@ def _plan_html(db, journal_id: int) -> str:
         changes = json.loads(e["changes_after_lock"] or "[]")
         moved = "".join(f"<li>{_esc(c['field'])}: {_esc(c['was'])} → {_esc(c['now'])} "
                         f"({_esc(c['at'])})</li>" for c in changes)
-        moved_html = f"<p>Changed after the plan was locked:</p><ul>{moved}</ul>" if moved else \
-            "<p>The plan was not changed after it was locked.</p>" if e["locked_at"] else ""
+        if moved:
+            moved_html = f"<p>Changed after the plan was locked:</p><ul>{moved}</ul>"
+        elif e["locked_at"]:
+            moved_html = "<p>The plan was not changed after it was locked.</p>"
+        else:
+            moved_html = ""
         answers = json.loads(e["checklist"] or "{}")
         checklist = "".join(f"<dt>{_esc(q)}</dt><dd>{_esc(answers.get(k, ''))}</dd>"
                             for k, q in J.CHECKLIST if str(answers.get(k, "")).strip())
@@ -155,7 +162,7 @@ def _plan_html(db, journal_id: int) -> str:
     return "".join(out)
 
 
-def evidence_html(db: sqlite3.Connection, root: Path, j: sqlite3.Row, md: str) -> str:
+def evidence_html(db: sqlite3.Connection, j: sqlite3.Row, md: str) -> str:
     refs = _referenced(md)
     parts = ['<section class="evidence" id="evidence"><h2>Evidence</h2>',
              "<p>Every number above links here. Each run lists the machine and code it ran on; "
@@ -242,12 +249,12 @@ def _page(title: str, description: str, canonical: str, body: str, kind: str = "
 """
 
 
-def article_page(db: sqlite3.Connection, root: Path, j: sqlite3.Row, md: str, canonical: str,
+def article_page(db: sqlite3.Connection, j: sqlite3.Row, md: str, canonical: str,
                  published_on: str) -> str:
     title = T.title_of(md) or j["title"]
     description = R.first_paragraph(md)[:200]
     body = (f"<article><h1>{_esc(title)}</h1><p class=\"meta\">{_esc(published_on)} · {_esc(j['kind'])}</p>"
-            f"{R.body_html(md)}{evidence_html(db, root, j, md)}</article>")
+            f"{R.body_html(md)}{evidence_html(db, j, md)}</article>")
     return _page(title, description, canonical, body)
 
 
@@ -351,7 +358,7 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
     site = site_worktree(site_repo, root, slug)
     out_dir = site / "journal" / slug
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "index.html").write_bytes(article_page(db, root, j, md, url, published_on).encode("utf-8"))
+    (out_dir / "index.html").write_bytes(article_page(db, j, md, url, published_on).encode("utf-8"))
     article_dir = Path(root) / Path(j["path"]).parent
     copied = []
     for b in T.prose_blocks(md):

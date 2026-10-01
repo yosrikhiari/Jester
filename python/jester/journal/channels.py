@@ -121,14 +121,26 @@ def _fit(text: str, budget: int) -> str:
     return cut + "…"
 
 
+def _drop_title(md: str) -> str:
+    lines = md.lstrip("﻿").splitlines()
+    for i, line in enumerate(lines):
+        if line.strip():
+            if line.lstrip().startswith("# "):
+                rest = lines[i + 1:]
+                while rest and not rest[0].strip():
+                    rest = rest[1:]
+                return "\n".join(rest) + "\n"
+            break
+    return md
+
+
 def build(j: sqlite3.Row, md: str, name: str) -> str:
     ch = channel(name)
     canonical = j["canonical_url"]
     title = T.title_of(md) or j["title"]
     opening = R.first_paragraph(md)
     if name == "devto":
-        body = _absolute(md, canonical)
-        body = re.sub(r"^\s{0,3}#\s+.*\n+", "", body, count=1)  # Dev.to shows the title itself
+        body = _drop_title(_absolute(md, canonical))  # Dev.to shows the title itself
         return (f"{body.rstrip()}\n\n---\n\n*Originally published at [{canonical}]({canonical}), "
                 f"where every number links to the run or source behind it.* {j['disclosure']}\n")
     if name in ("bluesky", "mastodon"):
@@ -233,7 +245,7 @@ def _request(method: str, url: str, payload: Optional[Dict], headers: Dict[str, 
     except urllib.error.HTTPError as exc:
         detail = exc.read()[:300].decode("utf-8", "replace") if hasattr(exc, "read") else ""
         raise J.JournalError(f"{url} answered HTTP {exc.code}: {detail}") from exc
-    except (urllib.error.URLError, OSError) as exc:
+    except OSError as exc:  # URLError is an OSError
         raise J.JournalError(f"could not reach {url}: {getattr(exc, 'reason', exc)}") from exc
     return json.loads(body or b"{}")
 

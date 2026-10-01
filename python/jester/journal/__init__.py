@@ -93,17 +93,19 @@ TABLES = ("journal", "transition", "approval", "revision", "check_result",
 #: Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS`
 #: never widens an existing table, so a database made by an older build gets
 #: them here -- the same lesson the signals archive learned.
+_EMPTY_TEXT = "TEXT NOT NULL DEFAULT ''"
+_EMPTY_LIST = "TEXT NOT NULL DEFAULT '[]'"
 ADDED_COLUMNS = (
-    ("experiment", "threats", "TEXT NOT NULL DEFAULT '[]'"),
-    ("experiment", "changes_after_lock", "TEXT NOT NULL DEFAULT '[]'"),
+    ("experiment", "threats", _EMPTY_LIST),
+    ("experiment", "changes_after_lock", _EMPTY_LIST),
     ("experiment_run", "source", "TEXT NOT NULL DEFAULT 'manual'"),
-    ("experiment_run", "command", "TEXT NOT NULL DEFAULT ''"),
+    ("experiment_run", "command", _EMPTY_TEXT),
     ("experiment_run", "env", "TEXT NOT NULL DEFAULT '{}'"),
     ("experiment_run", "exit_code", "INTEGER"),
     ("experiment_run", "duration_s", "REAL"),
-    ("publication", "body_path", "TEXT NOT NULL DEFAULT ''"),
-    ("publication", "approved_sha256", "TEXT NOT NULL DEFAULT ''"),
-    ("publication", "external_id", "TEXT NOT NULL DEFAULT ''"),
+    ("publication", "body_path", _EMPTY_TEXT),
+    ("publication", "approved_sha256", _EMPTY_TEXT),
+    ("publication", "external_id", _EMPTY_TEXT),
 )
 
 DDL = """

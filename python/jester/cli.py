@@ -2562,53 +2562,62 @@ def _print_journal(db, root, j):
             print(f"    {h['at']}  {h['from_state']} -> {h['to_state']} by {h['actor']}{note}")
 
 
-def _journal_publishing(db, root, j, args):
-    """export / variant / post / posted."""
-    from jester.journal import channels as CH
+def _journal_export(db, root, j, args):
     from jester.journal import publish as P
 
-    if args.action == "export":
-        made = P.export(db, root, j["slug"], Path(args.site), base_url=args.base_url)
-        print(f"exported {j['slug']} -> {made['url']}")
-        print(f"  site worktree: {made['site']} (branch {made['branch']}, commit {made['commit'][:8]}"
-              f"{'' if made['changed'] else ', nothing changed'})")
-        if made["figures"]:
-            print(f"  figures: {', '.join(made['figures'])}")
-        if args.push:
-            pr = P.push(made["site"], j["title"])
-            print(f"  pull request: {pr}")
-            print("  merging it publishes the article; then: jester journal state "
-                  f"{j['slug']} published")
-        else:
-            print(f"  next: look at {made['site'] / 'journal' / j['slug'] / 'index.html'}, then "
-                  f"export again with --push to open the pull request")
+    made = P.export(db, root, j["slug"], Path(args.site), base_url=args.base_url)
+    unchanged = "" if made["changed"] else ", nothing changed"
+    print(f"exported {j['slug']} -> {made['url']}")
+    print(f"  site worktree: {made['site']} (branch {made['branch']}, commit {made['commit'][:8]}{unchanged})")
+    if made["figures"]:
+        print(f"  figures: {', '.join(made['figures'])}")
+    if not args.push:
+        print(f"  next: look at {made['site'] / 'journal' / j['slug'] / 'index.html'}, then "
+              f"export again with --push to open the pull request")
         return
+    print(f"  pull request: {P.push(made['site'], j['title'])}")
+    print(f"  merging it publishes the article; then: jester journal state {j['slug']} published")
 
-    if args.action == "variant":
-        made = CH.make_version(db, root, j["slug"], args.channel)
-        print(f"wrote {made['path']}")
-        if made["problems"]:
-            print("  it cannot be approved yet:")
-            for p in made["problems"]:
-                print(f"    - {p}")
-        else:
-            print(f"  read it, edit it if you like, then: jester journal approve {j['slug']} post "
-                  f"--channel {args.channel}")
-        return
 
-    if args.action == "post":
-        pub = CH.post(db, root, j["slug"], args.channel)
-        if pub["status"] == "sent":
-            print(f"sent to {args.channel} as an unpublished draft: {pub['url']}")
-            print(f"  publish it there, then: jester journal posted {j['slug']} {args.channel} --url <link>")
-        else:
-            print(f"posted to {args.channel}: {pub['url']}")
-        return
+def _journal_variant(db, root, j, args):
+    from jester.journal import channels as CH
 
-    if args.action == "posted":
-        pub = CH.record_posted(db, j["slug"], args.channel, args.url)
-        print(f"recorded the {args.channel} post: {pub['url']}")
+    made = CH.make_version(db, root, j["slug"], args.channel)
+    print(f"wrote {made['path']}")
+    if not made["problems"]:
+        print(f"  read it, edit it if you like, then: jester journal approve {j['slug']} post "
+              f"--channel {args.channel}")
         return
+    print("  it cannot be approved yet:")
+    for p in made["problems"]:
+        print(f"    - {p}")
+
+
+def _journal_post(db, root, j, args):
+    from jester.journal import channels as CH
+
+    pub = CH.post(db, root, j["slug"], args.channel)
+    if pub["status"] != "sent":
+        print(f"posted to {args.channel}: {pub['url']}")
+        return
+    print(f"sent to {args.channel} as an unpublished draft: {pub['url']}")
+    print(f"  publish it there, then: jester journal posted {j['slug']} {args.channel} --url <link>")
+
+
+def _journal_posted(db, root, j, args):
+    from jester.journal import channels as CH
+
+    pub = CH.record_posted(db, j["slug"], args.channel, args.url)
+    print(f"recorded the {args.channel} post: {pub['url']}")
+
+
+_PUBLISHING = {"export": _journal_export, "variant": _journal_variant,
+               "post": _journal_post, "posted": _journal_posted}
+
+
+def _journal_publishing(db, root, j, args):
+    """export / variant / post / posted."""
+    _PUBLISHING[args.action](db, root, j, args)
 
 
 def _journal_snapshot(db, root, j, args, sleep=None, opener=None):
@@ -2726,7 +2735,6 @@ def _journal_lab(db, root, j, args):
                         caption=args.caption, label_key=args.label, unit=args.unit)
         print(f"drew {made['path']}")
         print(made["markdown"])
-        return
 
 
 def _ids(text):

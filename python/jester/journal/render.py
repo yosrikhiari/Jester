@@ -45,14 +45,16 @@ def default_rewrite(target: str) -> str:
 _CODE = re.compile(r"`([^`\n]+)`")
 _IMG = re.compile(r"!\[([^\]\n]*)\]\(\s*<?([^)\s>]+)>?\s*\)")
 _LNK = re.compile(r"\[([^\]\n]+)\]\(\s*<?([^)\s>]+)>?(?:\s+&quot;[^&]*&quot;)?\s*\)")
-_BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
-_EM = re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])|(?<![\w_])_(?!\s)(.+?)(?<!\s)_(?![\w_])")
-_SAFE_URL = re.compile(r"^(https?://|#|/|\./|\.\./|[\w\-./]+$)")
+_BOLD = re.compile(r"\*\*([^*\n]+)\*\*|__([^_\n]+)__")
+_EM_STAR = re.compile(r"(?<![\w*])\*([^*\s][^*\n]*)\*(?![\w*])")
+_EM_UNDER = re.compile(r"(?<!\w)_([^_\s][^_\n]*)_(?!\w)")
+_SAFE_PREFIXES = ("http://", "https://", "#", "/", "./", "../")
+_RELATIVE_PATH = re.compile(r"[\w\-./]+")
 
 
 def _safe(url: str) -> str:
     """Only web, anchor and relative URLs survive; `javascript:` does not."""
-    return url if _SAFE_URL.match(url) else "#"
+    return url if url.startswith(_SAFE_PREFIXES) or _RELATIVE_PATH.fullmatch(url) else "#"
 
 
 def inline(text: str, rewrite: Rewrite = default_rewrite) -> str:
@@ -80,7 +82,8 @@ def inline(text: str, rewrite: Rewrite = default_rewrite) -> str:
     text = _IMG.sub(img, text)
     text = _LNK.sub(lnk, text)
     text = _BOLD.sub(lambda m: f"<strong>{m.group(1) or m.group(2)}</strong>", text)
-    text = _EM.sub(lambda m: f"<em>{m.group(1) or m.group(2)}</em>", text)
+    text = _EM_STAR.sub(lambda m: f"<em>{m.group(1)}</em>", text)
+    text = _EM_UNDER.sub(lambda m: f"<em>{m.group(1)}</em>", text)
     return re.sub("\x00(\\d+)\x00", lambda m: codes[int(m.group(1))], text)
 
 
@@ -88,11 +91,12 @@ def _list(block: T.Block, rewrite: Rewrite) -> str:
     items: List[str] = []
     ordered = bool(re.match(r"^\s*\d+[.)]\s", block.text))
     for line in block.text.splitlines():
-        m = re.match(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$", line)
-        if m:
-            items.append(m.group(1))
+        stripped = line.strip()
+        marker = re.match(r"(?:[-*+]|\d+[.)])\s", stripped)
+        if marker:
+            items.append(stripped[marker.end():].strip())
         elif items:
-            items[-1] += " " + line.strip()
+            items[-1] += " " + stripped
     tag = "ol" if ordered else "ul"
     body = "".join(f"<li>{inline(i, rewrite)}</li>" for i in items)
     return f"<{tag}>{body}</{tag}>"
@@ -104,7 +108,7 @@ def _cells(line: str) -> List[str]:
 
 def _table(block: T.Block, rewrite: Rewrite) -> str:
     lines = [ln for ln in block.text.splitlines() if ln.strip()]
-    if len(lines) >= 2 and re.fullmatch(r"\s*\|?[\s:\-|]+\|?\s*", lines[1]):
+    if len(lines) >= 2 and "-" in lines[1] and set(lines[1].strip()) <= set("|:- "):
         head, rows = _cells(lines[0]), lines[2:]
     else:
         head, rows = None, lines
