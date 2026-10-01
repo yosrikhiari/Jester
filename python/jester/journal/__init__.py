@@ -26,6 +26,8 @@ What lives where, so nobody has to guess:
     experiment_run   one run of it, with its raw data path (slice J2 fills it)
     publication      one post of one revision to one channel (slice J3)
     channel_metric   numbers read back from a publication (slice J8)
+    artifact         a figure or table made from runs, with the hash of the
+                     file as made, so a hand-edited chart is caught
     snapshot         a saved copy of a cited page: status, final URL, and the
                      path of its readable text. Shared by every journal; a
                      URL keeps every copy ever taken, newest wins
@@ -86,7 +88,20 @@ CHECKLIST = (
 
 TABLES = ("journal", "transition", "approval", "revision", "check_result",
           "experiment", "experiment_run", "publication", "channel_metric",
-          "snapshot", "generated_text")
+          "snapshot", "artifact", "generated_text")
+
+#: Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS`
+#: never widens an existing table, so a database made by an older build gets
+#: them here -- the same lesson the signals archive learned.
+ADDED_COLUMNS = (
+    ("experiment", "threats", "TEXT NOT NULL DEFAULT '[]'"),
+    ("experiment", "changes_after_lock", "TEXT NOT NULL DEFAULT '[]'"),
+    ("experiment_run", "source", "TEXT NOT NULL DEFAULT 'manual'"),
+    ("experiment_run", "command", "TEXT NOT NULL DEFAULT ''"),
+    ("experiment_run", "env", "TEXT NOT NULL DEFAULT '{}'"),
+    ("experiment_run", "exit_code", "INTEGER"),
+    ("experiment_run", "duration_s", "REAL"),
+)
 
 DDL = """
 CREATE TABLE IF NOT EXISTS journal (
@@ -199,6 +214,16 @@ CREATE TABLE IF NOT EXISTS snapshot (
   fetched_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshot_url ON snapshot (url);
+CREATE TABLE IF NOT EXISTS artifact (
+  id INTEGER PRIMARY KEY,
+  journal_id INTEGER NOT NULL REFERENCES journal(id),
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  runs TEXT NOT NULL DEFAULT '[]',
+  caption TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS generated_text (
   id INTEGER PRIMARY KEY,
   journal_id INTEGER NOT NULL REFERENCES journal(id),
@@ -230,8 +255,19 @@ def open_journal(db_path: str = DEFAULT_DB) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.executescript(DDL)
+    _catch_up_columns(db)
     db.commit()
     return db
+
+
+def _catch_up_columns(db: sqlite3.Connection) -> List[str]:
+    added = []
+    for table, column, ddl in ADDED_COLUMNS:
+        have = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            added.append(f"{table}.{column}")
+    return added
 
 
 def slugify(title: str, limit: int = 60) -> str:

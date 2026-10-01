@@ -116,10 +116,15 @@ def _gate_drafting(db, j, ctx):
     exps = J.experiments(db, j["id"])
     if not exps:
         out.append("no experiment recorded")
+    from jester.journal.lab import counts_for_gate
+
     for e in exps:
-        finished = [r for r in J.runs(db, e["id"]) if r["status"] == "ok" and r["raw_path"]]
-        if not finished:
+        done = [r for r in J.runs(db, e["id"]) if r["status"] == "ok" and r["raw_path"]]
+        if not done:
             out.append(f"experiment {e['id']} has no finished run with raw data")
+        elif not any(counts_for_gate(r) for r in done):
+            out.append(f"experiment {e['id']}'s finished runs all come from uncommitted code; "
+                       "commit it and run again")
         missing = J.missing_answers(e["checklist"])
         if missing:
             out.append(f"experiment {e['id']} checklist unanswered: {', '.join(missing)}")

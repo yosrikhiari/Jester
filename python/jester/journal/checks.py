@@ -8,7 +8,10 @@
                                            (with #key, the value must match)
                  [3.5%](https://...)       a source whose saved copy has it
                  [4 hours](obs:labelling)  your own observation
-               or sits in a block marked `<!-- backed-by: run:12 -->`.
+               or sits in a block marked `<!-- backed-by: run:12,run:13 -->`,
+               where every number must be a value those runs recorded (what
+               `journal table` writes). A figure under `figures/` must be
+               one `journal figure` drew, unedited.
                A name or version (`RTX 4060`, `Python 3.12`) goes in
                backticks, which says "this is not a measurement"
     lint       the article does not read like generated text, and its
@@ -233,14 +236,68 @@ def _verify_link(db, root: Path, journal_id: int, target: str, token: Optional[s
     return "unknown", f"{target}: not a kind of proof (use run:, obs: or a source link)"
 
 
+def _leaves(value) -> List[float]:
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    if isinstance(value, dict):
+        return [x for v in value.values() for x in _leaves(v)]
+    if isinstance(value, list):
+        return [x for v in value for x in _leaves(v)]
+    return []
+
+
+def _block_runs(db, journal_id: int, backing: str) -> Tuple[Optional[List[float]], Optional[str]]:
+    """For `<!-- backed-by: run:1,run:2 -->`: every number those runs recorded,
+    or why the proof does not hold."""
+    targets = [t.strip() for t in backing.split(",") if t.strip()]
+    if not all(t.startswith("run:") for t in targets):
+        return None, None
+    values: List[float] = []
+    for t in targets:
+        run_id = t[len("run:"):].partition("#")[0]
+        row = _run_row(db, journal_id, run_id)
+        if row is None:
+            return None, f"{t}: no run {run_id or '?'} in this journal's experiments"
+        if row["status"] != "ok":
+            return None, f"{t}: that run did not finish ok ({row['status']})"
+        values += _leaves(json.loads(row["result"] or "{}"))
+    return values, None
+
+
+def _shown_matches(token: str, values: List[float]) -> bool:
+    shown, decimals, pct = _value(token)
+    if shown is None:
+        return False
+    return any(round(v, decimals) == shown or (pct and round(v * 100, decimals) == shown) for v in values)
+
+
+def _check_figures(db, root, journal_id: int, block: T.Block, out: Outcome) -> None:
+    from jester.journal import lab as X
+
+    row = db.execute("SELECT path FROM journal WHERE id = ?", (journal_id,)).fetchone()
+    article_dir = Path(row["path"]).parent.as_posix() if row and row["path"] else ""
+    for ln in T.links(block.text):
+        if ln.image and ln.target.startswith("figures/"):
+            out.stats["figures"] += 1
+            problem = X.artifact_problem(db, root, journal_id, article_dir, ln.target)
+            if problem:
+                out.fail(block.line_at(ln.start), problem)
+
+
 def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) -> Outcome:
     out = Outcome("numbers", stats={"numbers": 0, "run": 0, "source": 0, "observation": 0,
-                                    "block": 0, "unbacked": 0})
+                                    "block": 0, "unbacked": 0, "figures": 0})
     for block in T.prose_blocks(md):
+        if db is not None:
+            _check_figures(db, root, journal_id, block, out)
         lks = [ln for ln in T.links(block.text) if not ln.image]
-        block_problem = None
+        block_problem, block_values = None, None
         if block.backing:
-            _, block_problem = _verify_link(db, root, journal_id, block.backing, None)
+            block_values, block_problem = _block_runs(db, journal_id, block.backing)
+            if block_values is None and block_problem is None:
+                _, block_problem = _verify_link(db, root, journal_id, block.backing, None)
         for start, _end, token in _figures(T.mask(block.text)):
             out.stats["numbers"] += 1
             line = block.line_at(start)
@@ -254,6 +311,8 @@ def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) 
             elif block.backing:
                 if block_problem:
                     out.fail(line, f"{token}: block proof {block_problem}")
+                elif block_values is not None and not _shown_matches(token, block_values):
+                    out.fail(line, f"{token} is not a value recorded by {block.backing}")
                 else:
                     out.stats["block"] += 1
             else:
