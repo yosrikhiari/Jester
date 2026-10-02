@@ -26,6 +26,7 @@ from jester.llm import (
     PROMPT_VERSIONS,
     RUBRIC_VERSION,
     FakeLLM,
+    kind_for,
     provider_for,
     select_critic_llm,
     select_extractor_llm,
@@ -453,7 +454,10 @@ def cmd_run(args):
     # Which extractor was ASKED for. A configured stand-in is a choice; a
     # stand-in result from a configured real model is a failure, and the two
     # must not be archived the same way.
-    extractor_provider = provider_for(cfg.thresholds, "extractor")
+    # The KIND, not the name: a declared provider (a local server, the
+    # AgentOps gateway) is as real as Ollama, and its stand-in output must be
+    # refused the same way.
+    extractor_provider = kind_for(cfg.thresholds, "extractor")
     nuggets, degraded_batches, degraded = [], set(), 0
     # Which batch each nugget came from. The archivist works on a flat list and
     # can hand nuggets back undecided (see below); without this there is no way
@@ -2043,6 +2047,68 @@ def _rescore_pending_now(args):
         )
         print(f"stopped: the critic's quota ran out; treat waits until {stamp}")
     return {"ok": True, **res}
+
+
+def cmd_models(args):
+    """Print which provider, model and settings each job resolves to.
+
+    With --diff, only what differs between two profiles. Every value says
+    which line set it, so "why is the critic on Ollama?" has an answer that
+    is not "read the resolver".
+    """
+    import yaml
+
+    from jester.config import unused_settings
+    from jester.roles import resolve_all
+
+    def table(config_dir):
+        return resolve_all(load_config(config_dir).thresholds)
+
+    mine = table(args.config)
+    if args.diff:
+        theirs = table(args.diff)
+        same = True
+        for role in mine:
+            a, b = mine[role].as_record(), theirs[role].as_record()
+            for key in sorted(set(a) | set(b)):
+                if a.get(key) != b.get(key):
+                    same = False
+                    print(f"{role:<12} {key:<16} {a.get(key, '-')!s:<28} {b.get(key, '-')}")
+        if same:
+            print("the two profiles resolve every role identically")
+        return {"ok": True, "same": same}
+
+    for role, r in mine.items():
+        print(f"{role:<12} {r.provider} ({r.kind})  {r.model or '-'}")
+        print(f"{'':<12}   provider from {r.source.get('provider')}; "
+              f"model from {r.source.get('model')}")
+        for key, value in r.as_record().items():
+            if key in ("role", "provider", "kind", "model"):
+                continue
+            print(f"{'':<12}   {key} = {value}  ({r.source.get(key, 'provider block')})")
+    raw = yaml.safe_load(
+        (Path(args.config) / "thresholds.yaml").read_text(encoding="utf-8")) or {}
+    for line in unused_settings(raw):
+        print(f"unused: {line}")
+    return {"ok": True, "roles": {role: r.as_record() for role, r in mine.items()}}
+
+
+def _apply_role_overrides(parser, specs):
+    """`--role critic=ollama:qwen3:8b` becomes JESTER_ROLE_CRITIC for this
+    process and anything it starts, which is where jester.roles reads it."""
+    from jester.roles import ENV_PREFIX, ROLES, RoleError, parse_override
+
+    for spec in specs or []:
+        role, sep, value = spec.partition("=")
+        role = role.strip()
+        if not sep or role not in ROLES:
+            parser.error(f"--role {spec!r}: expected ROLE=PROVIDER[:MODEL], "
+                         f"ROLE one of {', '.join(ROLES)}")
+        try:
+            parse_override(value)
+        except RoleError as exc:
+            parser.error(f"--role {spec!r}: {exc}")
+        os.environ[ENV_PREFIX + role.upper()] = value.strip()
 
 
 def cmd_resynth(args):
@@ -3764,7 +3830,23 @@ def main(argv=None):
     mg.add_argument("--db", default="data/jester.db")
     mg.set_defaults(func=cmd_migrate)
 
+    md = sub.add_parser(
+        "models", help="show which provider, model and settings each job uses")
+    md.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    md.add_argument("--diff", default="", metavar="OTHER_CONFIG",
+                    help="print only what differs from another config directory")
+    md.set_defaults(func=cmd_models)
+
+    # Commands that call a model accept a one-off override per job.
+    for name in ("run", "treat", "cycle", "cluster", "resynth", "rescore", "models"):
+        if name in sub.choices:
+            sub.choices[name].add_argument(
+                "--role", action="append", default=[], metavar="ROLE=PROVIDER[:MODEL]",
+                help="use this provider/model for one job in this run only, "
+                     "e.g. critic=ollama:qwen3:8b (repeatable)")
+
     args = p.parse_args(argv)
+    _apply_role_overrides(p, getattr(args, "role", None))
     try:
         args.func(args)
     except Exception as exc:

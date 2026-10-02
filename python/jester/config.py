@@ -68,10 +68,16 @@ class Thresholds:
     request_delay_ms: int = 2000
     embedding_model: str = "nomic-embed-text"
     # Agent model keys (synced from the `models:` block in thresholds.yaml).
-    extractor_model: str = "claude-sonnet-4-6"
-    archivist_model: str = "claude-sonnet-4-6"
-    synthesizer_model: str = "claude-opus-4-7"
-    critic_model: str = "claude-opus-4-7"
+    # Empty means "not set here": jester.roles then uses the `roles:` block or
+    # its built-in model for the provider. These used to default to Claude
+    # model names, which no configured provider serves; a profile without a
+    # `models:` block would have sent them to Ollama or Groq and failed every
+    # call.
+    extractor_model: str = ""
+    #: Read by no code. Kept so old files load; flagged by `unused_settings`.
+    archivist_model: str = ""
+    synthesizer_model: str = ""
+    critic_model: str = ""
     # §37.10 provider selection: which backend serves the agent roles.
     llm_provider: str = "fake"          # fake | ollama | groq
     embedding_provider: str = "fake"    # fake | ollama
@@ -154,6 +160,11 @@ class Thresholds:
     # when run alone. The number that fits depends on which sources a
     # deployment enables, which is a config question, not a code one.
     ingest_timeout_seconds: int = 0
+    #: Per-job model settings and the providers they name (jester.roles).
+    #: Raw YAML mappings, checked by `validate`. Not console-editable as
+    #: threshold knobs: the Agent models card owns them.
+    roles: dict = field(default_factory=dict)
+    providers: dict = field(default_factory=dict)
     #: Ideas waiting for a score (`needs_score`) that one run re-scores. The
     #: critic leaves those behind when it did not answer. Every run calls
     #: `cmd_run` — treat every 15 minutes and cycle every 30 on this machine,
@@ -268,6 +279,15 @@ class Thresholds:
                     f"{key}={v!r} invalid; valid: {', '.join(LLM_PROVIDERS)} "
                     "(or empty to follow llm_provider)"
                 )
+        # roles:/providers: shape, then a full resolution of every role, so a
+        # provider that does not exist or a model nobody named fails at load
+        # time rather than at the first call, minutes into a run.
+        from jester.roles import RoleError, check_blocks, resolve_all
+        try:
+            check_blocks(self.roles, self.providers)
+            resolve_all(self)
+        except RoleError as exc:
+            raise ConfigError(str(exc)) from None
         if self.competitor_search_provider not in ("none", "fake", "duckduckgo"):
             raise ConfigError(
                 f"competitor_search_provider={self.competitor_search_provider!r} "
@@ -282,8 +302,39 @@ class Config:
     sources: List[Source] = field(default_factory=list)
 
 
+#: Top-level keys only the Go worker reads. Not flagged as unused.
+GO_ONLY_KEYS = frozenset({"models"})
+#: `models:` entries some code reads. `archivist` is not one of them.
+READ_MODEL_KEYS = frozenset({"extractor", "synthesizer", "critic"})
+
+
+def unused_settings(data: dict) -> list:
+    """Keys in a thresholds file that no code reads (plan gate G6).
+
+    A setting that silently does nothing is worse than a missing one: it
+    looks like a decision. The archivist model is the case that prompted
+    this: loaded, shown in the console, checked for "not pulled", and read by
+    nothing.
+    """
+    known = set(Thresholds.__dataclass_fields__) | GO_ONLY_KEYS
+    out = [f"{k}: no code reads this key" for k in data if k not in known]
+    for k in (data.get("models") or {}):
+        if k not in READ_MODEL_KEYS:
+            out.append(f"models.{k}: no code reads this model")
+    return out
+
+
+_warned = set()
+
+
 def load_thresholds(path) -> Thresholds:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    for line in unused_settings(data):
+        # Once per file and key: the console reloads config on every request.
+        if (str(path), line) not in _warned:
+            _warned.add((str(path), line))
+            import logging
+            logging.getLogger("jester.config").warning("%s: %s", path, line)
     known = {f for f in Thresholds.__dataclass_fields__}
     kwargs = {k: v for k, v in data.items() if k in known}
     # The `models:` block holds agent model names; map them onto Thresholds.

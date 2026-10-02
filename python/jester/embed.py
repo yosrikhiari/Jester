@@ -49,10 +49,12 @@ class OllamaEmbedding:
     #: into "defer this batch" rather than a dead run.
     TIMEOUT_S = 600.0
 
-    def __init__(self, model: str = "nomic-embed-text", client=None, timeout=None):
+    def __init__(self, model: str = "nomic-embed-text", client=None, timeout=None,
+                 host=None):
         self._model = model
         self._client = client
         self._timeout = self.TIMEOUT_S if timeout is None else timeout
+        self._host = host
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         resp = self._ensure_client().embed(model=self._model, input=list(texts))
@@ -61,20 +63,20 @@ class OllamaEmbedding:
     def _ensure_client(self):
         if self._client is None:
             from ollama import Client  # lazy import
-            self._client = Client(timeout=self._timeout)
+            kw = {"timeout": self._timeout}
+            if self._host:
+                kw["host"] = self._host
+            self._client = Client(**kw)
         return self._client
 
 
-_VALID_EMBEDDING_PROVIDERS = ("fake", "ollama")
-
-
 def select_embedding(cfg):
-    provider = getattr(cfg, "embedding_provider", "fake")
-    if provider not in _VALID_EMBEDDING_PROVIDERS:
-        raise ValueError(
-            f"embedding_provider={provider!r} not supported; "
-            f"valid: {', '.join(_VALID_EMBEDDING_PROVIDERS)}"
-        )
-    if provider == "ollama":
-        return OllamaEmbedding(model=cfg.embedding_model)
+    """The embedding client for the configured embedding role (jester.roles).
+    Only Ollama or the hash stand-in can serve it; the resolver refuses any
+    other provider at load time."""
+    from jester.roles import resolve_role
+
+    r = resolve_role(cfg, "embedding")
+    if r.kind == "ollama":
+        return OllamaEmbedding(model=r.model, timeout=r.timeout_s, host=r.host)
     return FakeEmbedding()

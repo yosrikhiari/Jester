@@ -186,3 +186,26 @@ models:
 # roughly "one result page's worth". Property24 answered 503 during development
 # after a heavy session, which is why this is a number someone chooses.
 realestate_detail_per_page: 0
+
+# Per-job model settings (python/jester/roles.py). Optional: without a `roles:`
+# block every job uses the keys above (models:, *_provider, llm_provider) and
+# behaves exactly as it did before. `jester models` prints what each job
+# resolves to and which line set every value; `--diff config-live` compares.
+# One run can override a job: `jester treat --role critic=ollama:qwen3:8b`.
+#
+# The values below are EXAMPLES, not recommendations: a default changes only
+# after an experiment backs it (model-roles plan §7).
+#
+# roles:
+#   defaults:              # every chat job, unless the job sets its own
+#     think: false         # qwen3: answer without a thinking pass
+#   critic:
+#     provider: groq
+#     model: qwen/qwen3.6-27b
+#     temperature: 0.2
+#     seed: 7
+# providers:
+#   agentops:              # any OpenAI-compatible server
+#     kind: openai
+#     base_url: http://localhost:8080/v1
+#     key_env: AGENTOPS_KEY  # omit for a server that takes no key

@@ -309,3 +309,36 @@ func TestDepthOrIgnoresZeroAndNegative(t *testing.T) {
 		}
 	}
 }
+
+// The model settings belong to the Python pipeline. The worker parses the same
+// thresholds.yaml, so a nested `models:` entry or the `roles:` / `providers:`
+// blocks must not stop it loading. When `models:` was a struct of strings, a
+// nested block there failed this loader and the scraper with it.
+func TestModelBlocksDoNotStopTheWorker(t *testing.T) {
+	dir := writeConfigDir(t)
+	extra := `
+roles:
+  critic:
+    provider: groq
+    model: openai/gpt-oss-120b
+    temperature: 0.2
+  defaults:
+    think: false
+providers:
+  agentops:
+    kind: openai
+    base_url: http://localhost:8080/v1
+`
+	path := filepath.Join(dir, "thresholds.yaml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := []byte(string(raw) + "  labeller:\n    provider: ollama\n" + extra)
+	if err := os.WriteFile(path, nested, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(dir); err != nil {
+		t.Fatalf("LoadConfig with model blocks: %v", err)
+	}
+}
