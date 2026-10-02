@@ -23,7 +23,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import List, Optional, Protocol, Sequence, runtime_checkable
 
-from jester.llm import _GroqAgent, _OllamaAgent, provider_for
+from jester.llm import _GroqAgent, _OllamaAgent
 
 #: Words too common to describe anything. Not a full stop-word list: only what
 #: actually swamps the fallback labels on this corpus.
@@ -152,24 +152,31 @@ class OllamaLabeller(_LabellerRole, _OllamaAgent):
     #: A cluster preview is up to 12 comments; the synthesizer's allowance.
     TIMEOUT_S = 300.0
 
-    def __init__(self, model="qwen3:8b", client=None, timeout=None):
-        super().__init__(model, client=client, timeout=timeout)
+    def __init__(self, model="qwen3:8b", client=None, timeout=None, settings=None):
+        super().__init__(model, client=client, timeout=timeout, settings=settings)
 
 
 def select_labeller(cfg, provider: Optional[str] = None) -> LabellerLLM:
     """Pick a labeller the same way the other agents are picked.
 
-    Follows the SYNTHESIZER, provider and model: naming a theme and framing an
-    idea are the same class of work, and an operator who set up one good model
-    should not have to discover a second knob to get a labelled cluster
-    instead of a bag of keywords.
+    jester.roles resolves it: its own `roles.labeller` block when there is
+    one, otherwise the SYNTHESIZER's provider and model. Naming a theme and
+    framing an idea are the same class of work, and an operator who set up
+    one good model should not have to discover a second knob to get a
+    labelled cluster instead of a bag of keywords.
 
-    It used to read `cfg.models`, which the loaded config does not have (the
-    YAML block is copied into `synthesizer_model`), so the configured model was
-    ignored; and it read only `synthesizer_provider`, never `llm_provider`, so
-    a profile serving every role from Ollama got the keyword stand-in.
+    `provider` forces a built-in backend by name, with the synthesizer's model.
     """
-    provider = (provider or provider_for(cfg, "synthesizer")).lower()
+    if provider is None:
+        from jester.roles import resolve_role
+
+        r = resolve_role(cfg, "labeller")
+        if r.kind == "openai":
+            return GroqLabeller(model=r.model, settings=r)
+        if r.kind == "ollama":
+            return OllamaLabeller(model=r.model, settings=r)
+        return FakeLabeller()
+    provider = provider.lower()
     model = (getattr(cfg, "synthesizer_model", "") or "").strip()
     if provider == "groq":
         return GroqLabeller(model=model or "openai/gpt-oss-120b")

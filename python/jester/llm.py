@@ -90,54 +90,41 @@ def _chat_content(resp) -> str:
     return _field(message, "content", "") or ""
 
 
-_VALID_LLM_PROVIDERS = ("fake", "ollama", "groq")
-
-
-def _require_provider(provider: str) -> None:
-    if provider not in _VALID_LLM_PROVIDERS:
-        raise ValueError(
-            f"llm_provider={provider!r} not supported; valid: {', '.join(_VALID_LLM_PROVIDERS)}"
-        )
-
-
 def provider_for(cfg, role: str) -> str:
-    """The backend serving one role: its override if set, else llm_provider.
+    """The provider NAME serving one role. jester.roles decides; this is the
+    short form callers that only need the name have always used."""
+    from jester.roles import resolve_role
+    return resolve_role(cfg, role).provider
 
-    Kept here rather than in config so a caller holding any object with the
-    right attributes (the console builds one, tests fake one) resolves a role
-    the same way the pipeline does.
-    """
-    override = (getattr(cfg, f"{role}_provider", "") or "").strip()
-    provider = override or getattr(cfg, "llm_provider", "fake")
-    _require_provider(provider)
-    return provider
+
+def kind_for(cfg, role: str) -> str:
+    """How that provider is spoken to: fake, ollama or openai."""
+    from jester.roles import resolve_role
+    return resolve_role(cfg, role).kind
+
+
+def _build(settings, ollama_cls, openai_cls, fake_cls):
+    if settings.kind == "ollama":
+        return ollama_cls(model=settings.model, settings=settings)
+    if settings.kind == "openai":
+        return openai_cls(model=settings.model, settings=settings)
+    return fake_cls()
 
 
 def select_extractor_llm(cfg):
-    provider = provider_for(cfg, "extractor")
-    if provider == "ollama":
-        return OllamaLLM(model=cfg.extractor_model)
-    if provider == "groq":
-        return GroqLLM(model=cfg.extractor_model)
-    return FakeLLM()
+    from jester.roles import resolve_role
+    return _build(resolve_role(cfg, "extractor"), OllamaLLM, GroqLLM, FakeLLM)
 
 
 def select_synthesizer_llm(cfg):
-    provider = provider_for(cfg, "synthesizer")
-    if provider == "ollama":
-        return OllamaSynthesizerLLM(model=cfg.synthesizer_model)
-    if provider == "groq":
-        return GroqSynthesizerLLM(model=cfg.synthesizer_model)
-    return FakeSynthesizerLLM()
+    from jester.roles import resolve_role
+    return _build(resolve_role(cfg, "synthesizer"), OllamaSynthesizerLLM,
+                  GroqSynthesizerLLM, FakeSynthesizerLLM)
 
 
 def select_critic_llm(cfg):
-    provider = provider_for(cfg, "critic")
-    if provider == "ollama":
-        return OllamaCriticLLM(model=cfg.critic_model)
-    if provider == "groq":
-        return GroqCriticLLM(model=cfg.critic_model)
-    return FakeCriticLLM()
+    from jester.roles import resolve_role
+    return _build(resolve_role(cfg, "critic"), OllamaCriticLLM, GroqCriticLLM, FakeCriticLLM)
 
 
 class FakeLLM:
@@ -275,9 +262,15 @@ class _Agent:
     #: Seconds before one call is abandoned. Subclasses set their own.
     TIMEOUT_S = 180.0
 
-    def __init__(self, model, client=None, timeout=None):
+    def __init__(self, model, client=None, timeout=None, settings=None):
         self._model = model
         self._client = client
+        #: The resolved jester.roles.RoleSettings, or None for an agent built
+        #: by hand (tests, the journal's scripts): then nothing beyond the
+        #: model and the messages is sent, exactly as before roles existed.
+        self.settings = settings
+        if timeout is None and settings is not None and settings.timeout_s:
+            timeout = settings.timeout_s
         self._timeout = self.TIMEOUT_S if timeout is None else timeout
         #: Set when a call fell back to the deterministic stand-in, so a caller
         #: can tell "the model wrote this" from "the model was unreachable".
@@ -345,19 +338,42 @@ class _Agent:
             self.fallback_reasons.append(reason)
 
 
+#: RoleSettings fields Ollama takes inside `options`.
+_OLLAMA_OPTIONS = ("temperature", "top_p", "top_k", "presence_penalty", "seed", "num_ctx")
+
+
 class _OllamaAgent(_Agent):
     """One call to a local Ollama model.
 
-    Temperature is accepted and NOT sent: Ollama roles have always run on the
-    model's own sampling settings, and this refactor changes no default. The
-    roles block (plan step S4) makes it a setting.
+    Sends only what the role's settings set. The role's built-in temperature
+    is NOT sent: Ollama roles have always run on the model's own sampling,
+    and a missing `roles:` block must not change that.
     """
 
     def _ensure_client(self):
         if self._client is None:
             from ollama import Client  # lazy import: mock mode needs no package
-            self._client = Client(timeout=self._timeout)
+            kw = {"timeout": self._timeout}
+            if self.settings is not None and self.settings.host:
+                kw["host"] = self.settings.host
+            self._client = Client(**kw)
         return self._client
+
+    def _request_extras(self):
+        s = self.settings
+        if s is None:
+            return {}
+        kw = {}
+        options = {k: getattr(s, k) for k in _OLLAMA_OPTIONS if getattr(s, k) is not None}
+        if options:
+            kw["options"] = options
+        if s.think is not None:
+            kw["think"] = s.think
+        if s.json_mode:
+            kw["format"] = "json"
+        if s.keep_alive is not None:
+            kw["keep_alive"] = s.keep_alive
+        return kw
 
     def _complete(self, system, user, temperature=None):
         resp = self._ensure_client().chat(
@@ -366,6 +382,7 @@ class _OllamaAgent(_Agent):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            **self._request_extras(),
         )
         return _chat_content(resp)
 
@@ -475,9 +492,8 @@ class OllamaLLM(_ExtractorRole, _OllamaAgent):
     #: rather than on a slow-but-working generation.
     TIMEOUT_S = 180.0
 
-    def __init__(self, model: str = "claude-sonnet-4-6", client=None,
-                 timeout: float = TIMEOUT_S):
-        super().__init__(model, client=client, timeout=timeout)
+    def __init__(self, model: str = "qwen3:8b", client=None, timeout=None, settings=None):
+        super().__init__(model, client=client, timeout=timeout, settings=settings)
 
 
 class OllamaSynthesizerLLM(_SynthesizerRole, _OllamaAgent):
@@ -492,8 +508,8 @@ class OllamaSynthesizerLLM(_SynthesizerRole, _OllamaAgent):
     #: insights (~2k tokens) and the reply is three fields, not one line.
     TIMEOUT_S = 300.0
 
-    def __init__(self, model: str = "claude-opus-4-7", client=None, timeout=None):
-        super().__init__(model, client=client, timeout=timeout)
+    def __init__(self, model: str = "qwen3:8b", client=None, timeout=None, settings=None):
+        super().__init__(model, client=client, timeout=timeout, settings=settings)
 
 
 class OllamaCriticLLM(_CriticRole, _OllamaAgent):
@@ -502,8 +518,8 @@ class OllamaCriticLLM(_CriticRole, _OllamaAgent):
 
     TIMEOUT_S = 180.0
 
-    def __init__(self, model: str = "claude-opus-4-7", client=None, timeout=None):
-        super().__init__(model, client=client, timeout=timeout)
+    def __init__(self, model: str = "qwen3:8b", client=None, timeout=None, settings=None):
+        super().__init__(model, client=client, timeout=timeout, settings=settings)
 
 
 # ── Groq ────────────────────────────────────────────────────────────────────
@@ -654,8 +670,13 @@ class GroqClient:
     """
 
     def __init__(self, api_key=None, base_url=None, timeout=60, opener=None,
-                 max_retries=3, sleep=None):
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
+                 max_retries=3, sleep=None, key_env="GROQ_API_KEY"):
+        #: Which variable holds the key, for the error message. None means a
+        #: server that takes no key (a local OpenAI-compatible endpoint), and
+        #: then no Authorization header is sent at all, so a Groq key is never
+        #: handed to some other server.
+        self.key_env = key_env
+        self.api_key = api_key or (os.environ.get(key_env, "") if key_env else "")
         self.base_url = (base_url or os.environ.get("GROQ_BASE_URL")
                          or GROQ_DEFAULT_BASE_URL).rstrip("/")
         self.timeout = timeout
@@ -664,21 +685,26 @@ class GroqClient:
         self._sleep = sleep or time.sleep
 
     def _headers(self):
-        return {
-            "Authorization": "Bearer " + self.api_key,
+        headers = {
             "Accept": "application/json",
             # Not optional: Groq sits behind Cloudflare, which 403s the default
             # `Python-urllib/3.x` user agent with error 1010.
             "User-Agent": "jester/1.0 (+local operator console)",
         }
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
+        return headers
 
-    def chat(self, model, messages, temperature=0.4, json_object=True):
-        if not self.api_key:
+    def chat(self, model, messages, temperature=0.4, json_object=True, **extra):
+        """One completion. `extra` carries optional fields (top_p, seed,
+        presence_penalty, reasoning_effort); a None value is not sent."""
+        if not self.api_key and self.key_env:
             raise GroqError(
-                "GROQ_API_KEY is not set - put it in .env at the repo root "
+                f"{self.key_env} is not set - put it in .env at the repo root "
                 "(see config/local.env.example)"
             )
         payload = {"model": model, "messages": messages, "temperature": temperature}
+        payload.update({k: v for k, v in extra.items() if v is not None})
         if json_object:
             # Groq honours OpenAI's json_object mode, which removes the whole
             # class of "the model wrapped its JSON in prose" parse failures.
@@ -753,23 +779,44 @@ class _GroqAgent(_Agent):
     #: The transport's own default; it also retries 429s and 5xx inside this.
     TIMEOUT_S = 60.0
 
-    def __init__(self, model, client=None, api_key=None, base_url=None, timeout=None):
-        super().__init__(model, client=client, timeout=timeout)
+    def __init__(self, model, client=None, api_key=None, base_url=None, timeout=None,
+                 settings=None):
+        super().__init__(model, client=client, timeout=timeout, settings=settings)
         self._api_key = api_key
         self._base_url = base_url
 
     def _ensure_client(self):
         if self._client is None:
-            self._client = GroqClient(api_key=self._api_key, base_url=self._base_url,
-                                      timeout=self._timeout)
+            s = self.settings
+            if s is None:
+                self._client = GroqClient(api_key=self._api_key, base_url=self._base_url,
+                                          timeout=self._timeout)
+            else:
+                self._client = GroqClient(
+                    api_key=self._api_key, base_url=self._base_url or s.base_url,
+                    timeout=self._timeout, key_env=s.key_env,
+                    max_retries=3 if s.max_retries is None else s.max_retries)
         return self._client
 
     def _complete(self, system, user, temperature=0.4):
+        s = self.settings
+        extra, json_object = {}, True
+        if s is not None:
+            if s.temperature is not None:
+                temperature = s.temperature
+            extra = {k: getattr(s, k) for k in ("top_p", "presence_penalty", "seed")}
+            if isinstance(s.think, str):
+                # An OpenAI-compatible reasoning model (gpt-oss) takes a level.
+                extra["reasoning_effort"] = s.think
+            if s.json_mode is not None:
+                json_object = bool(s.json_mode)
         resp = self._ensure_client().chat(
             model=self._model,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
             temperature=temperature,
+            json_object=json_object,
+            **extra,
         )
         return _chat_content(resp)
 

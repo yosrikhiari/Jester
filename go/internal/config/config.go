@@ -206,15 +206,10 @@ type Thresholds struct {
 	// by a bound that was never about reviews.
 	MaxReviewsPerApp int    `yaml:"max_reviews_per_app"`
 	EmbeddingModel   string `yaml:"embedding_model"`
-	Models           Models `yaml:"models"`
-}
-
-// Models names the LLM roles used by the Python agent pipeline.
-type Models struct {
-	Extractor   string `yaml:"extractor"`
-	Archivist   string `yaml:"archivist"`
-	Synthesizer string `yaml:"synthesizer"`
-	Critic      string `yaml:"critic"`
+	// The model settings (`models:`, `roles:`, `providers:`) belong to the
+	// Python pipeline and are not parsed here. The worker never read them,
+	// and declaring `models:` as a struct of strings meant a nested block
+	// there failed this loader and stopped the scraper.
 }
 
 // Scraper holds CloakBrowser integration config. Live fetch (M1.1+) reads
