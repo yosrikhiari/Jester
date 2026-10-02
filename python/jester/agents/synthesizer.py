@@ -8,7 +8,7 @@ unprocessed nuggets stay NULL.
 from collections import defaultdict
 from typing import List, Optional
 
-from jester.agents.critic import Critic
+from jester.agents.critic import Critic, apply_scores
 from jester.config import Thresholds
 from jester.idea_dedup import (
     MergeResult,
@@ -19,9 +19,15 @@ from jester.idea_dedup import (
     rescore_after_merge,
 )
 from jester.llm import CriticLLM, SynthesizerLLM, model_name
-from jester.models import Idea, IdeaScores, Nugget
-from jester.scoring import compute_overall, SCORE_MAX, SCORE_MIN
-from jester.store import _now, insert_idea, set_synthesized, unprocessed_nuggets
+from jester.models import Idea, Nugget
+from jester.scoring import SCORE_MAX, SCORE_MIN
+from jester.store import (
+    _now,
+    insert_idea,
+    mark_needs_score,
+    set_synthesized,
+    unprocessed_nuggets,
+)
 
 
 class GoldenGateError(ValueError):
@@ -41,6 +47,10 @@ def golden_gate(idea: Idea, input_keys: set) -> None:
     outside = [k for k in supporting if k not in input_keys]
     if outside:
         raise GoldenGateError(f"idea cites nugget(s) outside input set (R48): {outside}")
+    if idea.needs_score:
+        # Unscored by design: the critic did not answer, so there are no
+        # subscores to range-check yet. The citation rules above still hold.
+        return
     for name, val in (
         ("demand_signal", idea.scores.demand_signal),
         ("feasibility", idea.scores.feasibility),
@@ -112,6 +122,9 @@ class Synthesizer:
         #: Thread groups that exceeded max_nuggets_per_idea and were cut into
         #: chunks this run. Reported so "12 ideas from 3 threads" is legible.
         self.split_groups: int = 0
+        #: Ideas archived without scores because the critic did not answer.
+        #: Reported, and re-scored by a later run (`rescore_pending`).
+        self.unscored: int = 0
 
     def run(
         self,
@@ -155,6 +168,7 @@ class Synthesizer:
         #: off" should not look the same in a run summary.
         self.stopped_on_quota = False
         self.split_groups = 0
+        self.unscored = 0
         for (platform, thread_id), group_rows in _chunk_groups(
             groups, int(self.config.max_nuggets_per_idea or 0), self
         ):
@@ -246,23 +260,26 @@ class Synthesizer:
             )
 
             # Critic fills the subscores (golden gate R48/R29).
+            #
+            # When the critic does not answer, the idea is still archived, but
+            # unscored and marked `needs_score`. The synthesis call already
+            # spent its share of the quota, and the idea it wrote is real; only
+            # the numbers are missing, and a later run supplies them. Before,
+            # the stand-in's formula went in under the real model's name.
             now = _now()
-            c = critic_llm.score(idea)
-            idea.scores = IdeaScores(
-                demand_signal=c.demand_signal,
-                feasibility=c.feasibility,
-                competition=c.competition,
-                overall=compute_overall(c.demand_signal, c.feasibility, c.competition),
-            )
-            idea.competition_checked = c.competition is not None
-            idea.competitor_notes = None  # never fabricated (R29/R41)
-            idea.critic_model = model_name(critic_llm, self.config.critic_model)
-            idea.last_scored_at = now
+            critic_limited_before = int(getattr(critic_llm, "rate_limited", 0) or 0)
+            scored = apply_scores(idea, critic_llm, self.config)
+            critic_hit_the_limit = (
+                int(getattr(critic_llm, "rate_limited", 0) or 0) > critic_limited_before)
+            if not scored:
+                self.unscored += 1
 
             # M2.3 / D-1: a verified competitor check overrides the model's
             # prior. When it cannot run, R29 applies — competition goes NULL
             # and §7.2 imputes 5 rather than trusting an unverified number.
-            if checker is not None and checker.enabled:
+            # Skipped on an unscored idea: there is no score to fold it into,
+            # and the web check has its own daily budget.
+            if scored and checker is not None and checker.enabled:
                 apply_verdict(idea, checker.check(idea))
 
             # R48 structural gate: reject before persisting anything.
@@ -276,11 +293,19 @@ class Synthesizer:
                 existing_id, score = match
                 grew, added = merge_supporting(self.db, existing_id, supporting)
                 self.merged.append(MergeResult(existing_id, grew, score, added))
-                if grew:
+                if grew and critic_hit_the_limit:
+                    # The critic just refused on quota; asking it again for
+                    # the re-score would only be refused again. Flag the idea
+                    # so a later run re-scores it against its new evidence.
+                    mark_needs_score(self.db, existing_id)
+                elif grew:
                     # R49: re-score against the evidence it now actually rests on.
                     rescore_after_merge(self.db, existing_id, Critic(self.db, self.config),
                                         critic_llm, checker)
                 set_synthesized(self.db, supporting, now)
+                if critic_hit_the_limit:
+                    self._stop_on_quota()
+                    break
                 continue
 
             idea.id = insert_idea(self.db, idea)
@@ -290,4 +315,16 @@ class Synthesizer:
             set_synthesized(self.db, supporting, now)
             ideas.append(idea)
 
+            if critic_hit_the_limit:
+                # The same brake as the synthesizer's, for the same reason:
+                # every idea after this one would be filed unscored. This one
+                # is kept (it is a real idea, waiting for a score); the groups
+                # not reached stay unclaimed for the next run.
+                self._stop_on_quota()
+                break
+
         return ideas
+
+    def _stop_on_quota(self):
+        self.stopped_early = True
+        self.stopped_on_quota = True

@@ -929,14 +929,22 @@ function evidenceCount(i) {
   try { const a = typeof i.supporting_nuggets === 'string' ? JSON.parse(i.supporting_nuggets) : i.supporting_nuggets; return Array.isArray(a) ? a.length : 0; }
   catch { return 0; }
 }
+/** The critic did not answer for this idea: no scores yet (new idea) or stale
+ *  ones (an idea that grew). A later run re-scores it. */
+function scoreWait(i) {
+  if (!+i.needs_score) return '';
+  return i.overall == null
+    ? ' <span class="chip chip--warn" title="The critic did not answer. A later run scores this idea.">unscored</span>'
+    : ' <span class="chip chip--warn" title="The critic did not answer the last re-score. A later run tries again.">re-score due</span>';
+}
 function renderIdeas() {
   $('#ideas-body').innerHTML = IDEAS.map(i => {
-    const overall = +i.overall || 0;
-    const tone = overall >= 7.5 ? 'score--hi' : overall >= 5 ? 'score--mid' : 'score--lo';
+    const overall = i.overall == null ? null : +i.overall;
+    const tone = overall == null ? '' : overall >= 7.5 ? 'score--hi' : overall >= 5 ? 'score--mid' : 'score--lo';
     return `<tr data-id="${i.id}" class="clickable">
       <td><button class="btn btn--ghost btn--sm" data-open style="max-inline-size:46ch;text-align:start;white-space:normal;padding-inline:0"><b>${esc(i.title)}</b></button>
           <div class="xs" style="max-inline-size:52ch">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
-      <td class="num"><span class="score ${tone}">${num(overall)}</span></td>
+      <td class="num"><span class="score ${tone}">${num(overall)}</span>${scoreWait(i)}</td>
       <td>${scoreBars(i)}</td>
       <td>${pill(i.status)}</td>
       <td class="num" style="white-space:nowrap">${evidenceCount(i)} <span class="xs">nuggets · ${int(i.source_threads)} threads</span></td>
@@ -1044,7 +1052,7 @@ async function showIdea(id) {
   const missing = cites.filter(c => !c.found).length;
   $('#drawer-body').innerHTML = `
     <div class="row">${pill(i.status)}
-      <span class="score">${num(i.overall)}</span><span class="xs">overall</span>
+      <span class="score">${num(i.overall)}</span><span class="xs">overall</span>${scoreWait(i)}
       <span class="row-end row" style="gap:var(--s-2)">
         <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}" style="inline-size:130px">
           ${IDEA_STATUSES.map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}

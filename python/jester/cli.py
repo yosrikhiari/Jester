@@ -13,7 +13,7 @@ from pathlib import Path
 DEFAULT_CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "config")
 
 from jester.agents.archivist import Archivist
-from jester.agents.critic import Critic, row_to_idea
+from jester.agents.critic import Critic, rescore_pending, row_to_idea
 from jester.agents.extractor import extract
 from jester.agents.synthesizer import Synthesizer
 from jester.competitors import CompetitorChecker
@@ -571,6 +571,10 @@ def cmd_run(args):
         max_ideas=getattr(args, "max_ideas", None),
     )
     for idea in ideas:
+        if idea.needs_score:
+            print(f"idea #{idea.id}: {idea.title}  UNSCORED "
+                  "(the critic did not answer; a later run scores it)")
+            continue
         verdict = (
             "PASS" if idea.scores.overall >= cfg.thresholds.good_idea_min else "REVIEW"
         )
@@ -624,6 +628,27 @@ def cmd_run(args):
             f"chunks of {cfg.thresholds.max_nuggets_per_idea} nuggets "
             "(max_nuggets_per_idea)"
         )
+    if getattr(synthesizer, "unscored", 0):
+        # The ideas are real; only their scores are missing. Said separately
+        # from "NOT archived" because the two failures leave different things
+        # behind: no idea at all, versus an idea waiting for its numbers.
+        print(
+            f"NOT scored: {synthesizer.unscored} idea(s) archived without scores "
+            "because the critic did not answer — marked needs_score, scored by "
+            "a later run"
+        )
+    # Ideas waiting for a score get one, a few per run (D1/D2). Skipped when
+    # this run already ran out of quota: the next call would be refused too.
+    if not getattr(synthesizer, "stopped_on_quota", False):
+        rescored = rescore_pending(
+            db, cfg.thresholds, critic_llm, int(cfg.thresholds.rescore_per_run or 0))
+        if rescored["scored"] or rescored["still_waiting"]:
+            print(
+                f"re-scored {rescored['scored']} waiting idea(s); "
+                f"{rescored['still_waiting']} still waiting for the critic"
+                + (" (stopped: the critic's quota ran out)"
+                   if rescored["stopped_on_quota"] else "")
+            )
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
     checkpoint("synthesize")
@@ -743,6 +768,11 @@ def cmd_mark(args):
     print(f"idea #{args.id} -> status={args.status}")
 
 
+def _score(value) -> str:
+    """One subscore for display. An unscored idea has none to format."""
+    return "unscored" if value is None else f"{value:.1f}"
+
+
 def cmd_show(args):
     """R26: one-idea detail view — the no-SQL half of the review loop."""
     db = open_db(args.db)
@@ -751,13 +781,16 @@ def cmd_show(args):
         print(f"idea #{args.id} not found")
         sys.exit(1)
     comp = (
-        "unchecked" if not row["competition_checked"] else f"{row['competition']:.1f}"
+        "unchecked" if not row["competition_checked"] else _score(row["competition"])
     )
     print(f"IDEA #{row['id']}: {row['title']}  [{row['status']}]")
     print(
-        f"  overall={row['overall']:.1f}  demand={row['demand_signal']:.1f}  "
-        f"feasibility={row['feasibility']:.1f}  competition={comp}"
+        f"  overall={_score(row['overall'])}  demand={_score(row['demand_signal'])}  "
+        f"feasibility={_score(row['feasibility'])}  competition={comp}"
     )
+    if row["needs_score"]:
+        print("  needs_score: the critic did not answer last time; "
+              "a later run re-scores it")
     if row["competitor_notes"]:
         print(f"  competitor notes: {row['competitor_notes']}")
     print(f"  problem: {row['problem_statement'] or '-'}")
@@ -793,13 +826,15 @@ def cmd_list(args):
         )
     for i in ideas:
         comp = (
-            "unchecked" if not i["competition_checked"] else f"{i['competition']:.1f}"
+            "unchecked" if not i["competition_checked"] else _score(i["competition"])
         )
         print(
             f"IDEA #{i['id']}: {i['title']}  "
-            f"overall={i['overall']:.1f}  "
-            f"demand={i['demand_signal']:.1f} feasibility={i['feasibility']:.1f} "
+            f"overall={_score(i['overall'])}  "
+            f"demand={_score(i['demand_signal'])} "
+            f"feasibility={_score(i['feasibility'])} "
             f"competition={comp}  status={i['status']}"
+            + ("  needs_score" if i["needs_score"] else "")
         )
     print(f"total: {len(ideas)} idea(s)")
 

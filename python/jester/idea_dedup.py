@@ -95,7 +95,10 @@ def rescore_after_merge(db, existing_id: int, critic, critic_llm, checker=None):
         return None
     idea = row_to_idea(row)
     idea = critic.score(idea, critic_llm)
-    if checker is not None and checker.enabled:
+    # A critic that did not answer leaves the idea marked `needs_score` with
+    # its old numbers; there is no fresh score for a competitor verdict to
+    # fold into, so the web check waits for the real re-score.
+    if not idea.needs_score and checker is not None and checker.enabled:
         verdict = checker.check(idea)
         apply_verdict(idea, verdict)
         update_idea(db, idea)
