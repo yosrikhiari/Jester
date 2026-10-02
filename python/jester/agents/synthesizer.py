@@ -191,7 +191,14 @@ class Synthesizer:
             before_fallbacks = int(getattr(synth_llm, "fallbacks", 0) or 0)
             before_limited = int(getattr(synth_llm, "rate_limited", 0) or 0)
             draft = synth_llm.synthesize(nuggets)
-            fell_back = int(getattr(synth_llm, "fallbacks", 0) or 0) > before_fallbacks
+            # Either signal is enough: the agent counted a fallback, or the
+            # draft names someone other than the agent that was asked (the
+            # stand-in signs its drafts "fake-synth"). The stamp also covers
+            # an agent with no counters at all.
+            who = getattr(draft, "model", "") or ""
+            fell_back = (
+                int(getattr(synth_llm, "fallbacks", 0) or 0) > before_fallbacks
+                or (bool(who) and who != model_name(synth_llm, who)))
             hit_the_limit = (
                 int(getattr(synth_llm, "rate_limited", 0) or 0) > before_limited)
 

@@ -23,7 +23,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import List, Optional, Protocol, Sequence, runtime_checkable
 
-from jester.llm import _GroqAgent
+from jester.llm import _GroqAgent, _OllamaAgent, provider_for
 
 #: Words too common to describe anything. Not a full stop-word list: only what
 #: actually swamps the fallback labels on this corpus.
@@ -49,6 +49,8 @@ class ClusterLabel:
     #: a threshold's opinion; the label step is the first thing able to
     #: disagree with it, and that disagreement is worth keeping.
     incoherent: bool = False
+    #: WHO wrote the label: the model's name, or "fake-labeller".
+    model: str = ""
 
 
 @runtime_checkable
@@ -84,12 +86,13 @@ class FakeLabeller:
                 f"{len(texts)} related comment(s) mentioning {kw}."
                 if texts else "Empty cluster."
             ),
+            model=self.name,
         )
 
 
-class GroqLabeller(_GroqAgent):
-    """Live labeller. Falls back to keywords when the model is unreachable or
-    replies with something unparseable."""
+class _LabellerRole:
+    """The labeller's prompt and parsing, shared by both providers. Falls back
+    to keywords when the model is unreachable or its reply is unusable."""
 
     LABEL_SYSTEM = (
         "You are given several comments that an embedding model grouped "
@@ -114,102 +117,64 @@ class GroqLabeller(_GroqAgent):
         "useful finding, not a failure to be papered over."
     )
 
-    def __init__(self, model="openai/gpt-oss-120b", **kw):
-        super().__init__(model, **kw)
-
     def label(self, texts: Sequence[str]) -> ClusterLabel:
         if not texts:
             return ClusterLabel(label="unnamed theme", problem_statement="Empty cluster.")
         corpus = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
         obj = self._obj(self.LABEL_SYSTEM, corpus)
-        if obj is not None and all(
-            isinstance(obj.get(k), str) and obj.get(k).strip()
-            for k in ("label", "problem_statement")
-        ):
-            return ClusterLabel(
-                label=obj["label"].strip(),
-                problem_statement=obj["problem_statement"].strip(),
-                # Absent `coherent` is treated as coherent: the model not
-                # objecting is not the same as the model objecting, and
-                # defaulting to "incoherent" would flag every reply from a
-                # model that simply omitted the field.
-                incoherent=obj.get("coherent") is False,
-            )
+        if obj is not None:
+            if all(isinstance(obj.get(k), str) and obj.get(k).strip()
+                   for k in ("label", "problem_statement")):
+                return ClusterLabel(
+                    label=obj["label"].strip(),
+                    problem_statement=obj["problem_statement"].strip(),
+                    # Absent `coherent` is treated as coherent: the model not
+                    # objecting is not the same as the model objecting, and
+                    # defaulting to "incoherent" would flag every reply from a
+                    # model that simply omitted the field.
+                    incoherent=obj.get("coherent") is False,
+                    model=self._model,
+                )
+            self._reject("reply is missing label or problem_statement")
         return FakeLabeller().label(texts)
 
 
-class OllamaLabeller:
+class GroqLabeller(_LabellerRole, _GroqAgent):
+    """Live labeller via Groq."""
+
+    def __init__(self, model="openai/gpt-oss-120b", **kw):
+        super().__init__(model, **kw)
+
+
+class OllamaLabeller(_LabellerRole, _OllamaAgent):
     """Live labeller over a local Ollama model."""
 
-    LABEL_SYSTEM = GroqLabeller.LABEL_SYSTEM
+    #: A cluster preview is up to 12 comments; the synthesizer's allowance.
+    TIMEOUT_S = 300.0
 
-    def __init__(self, model="qwen3:8b", client=None):
-        self._model = model
-        self._client = client
-        self.last_error = None
-        self.fallbacks = 0
-        self.fallback_reasons = []
-
-    @property
-    def name(self):
-        return self._model
-
-    def _ensure_client(self):
-        if self._client is None:
-            from ollama import Client  # lazy import
-
-            self._client = Client()
-        return self._client
-
-    def label(self, texts: Sequence[str]) -> ClusterLabel:
-        if not texts:
-            return ClusterLabel(label="unnamed theme", problem_statement="Empty cluster.")
-        from jester.llm import _chat_content, _parse_json_object
-
-        corpus = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
-        try:
-            resp = self._ensure_client().chat(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": self.LABEL_SYSTEM},
-                    {"role": "user", "content": corpus},
-                ],
-            )
-            obj = _parse_json_object(_chat_content(resp))
-        except Exception as exc:  # noqa: BLE001 - any transport failure falls back
-            self.last_error = str(exc)
-            self.fallbacks += 1
-            self.fallback_reasons.append(str(exc))
-            return FakeLabeller().label(texts)
-        if obj is not None and all(
-            isinstance(obj.get(k), str) and obj.get(k).strip()
-            for k in ("label", "problem_statement")
-        ):
-            return ClusterLabel(
-                label=obj["label"].strip(),
-                problem_statement=obj["problem_statement"].strip(),
-                incoherent=obj.get("coherent") is False,
-            )
-        self.fallbacks += 1
-        self.fallback_reasons.append("malformed reply (not a JSON object)")
-        return FakeLabeller().label(texts)
+    def __init__(self, model="qwen3:8b", client=None, timeout=None):
+        super().__init__(model, client=client, timeout=timeout)
 
 
 def select_labeller(cfg, provider: Optional[str] = None) -> LabellerLLM:
     """Pick a labeller the same way the other agents are picked.
 
-    Defaults to whatever the SYNTHESIZER is configured to use: naming a theme
-    and framing an idea are the same class of work, and an operator who set up
-    one good model should not have to discover a second knob to get a labelled
-    cluster instead of a bag of keywords.
+    Follows the SYNTHESIZER, provider and model: naming a theme and framing an
+    idea are the same class of work, and an operator who set up one good model
+    should not have to discover a second knob to get a labelled cluster
+    instead of a bag of keywords.
+
+    It used to read `cfg.models`, which the loaded config does not have (the
+    YAML block is copied into `synthesizer_model`), so the configured model was
+    ignored; and it read only `synthesizer_provider`, never `llm_provider`, so
+    a profile serving every role from Ollama got the keyword stand-in.
     """
-    provider = (provider or getattr(cfg, "synthesizer_provider", "fake") or "fake").lower()
+    provider = (provider or provider_for(cfg, "synthesizer")).lower()
+    model = (getattr(cfg, "synthesizer_model", "") or "").strip()
     if provider == "groq":
-        return GroqLabeller(model=getattr(cfg, "models", {}).get("synthesizer")
-                            or "openai/gpt-oss-120b")
+        return GroqLabeller(model=model or "openai/gpt-oss-120b")
     if provider == "ollama":
-        return OllamaLabeller(model=getattr(cfg, "models", {}).get("synthesizer")
-                              or "qwen3:8b")
+        return OllamaLabeller(model=model or "qwen3:8b")
     return FakeLabeller()
 
 
