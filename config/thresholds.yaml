@@ -138,6 +138,11 @@ ingest_timeout_seconds: 7200
 # M2.3/D-1 competitor web check. none = keep M2.2 behaviour (competition
 # rides on the model prior); fake = deterministic offline; duckduckgo = live.
 competitor_search_provider: none
+# Ideas the critic left unscored (it did not answer; marked needs_score) that
+# each run re-scores. treat runs every 15 minutes and cycle every 30, about 144
+# runs a day, so 1 is roughly 150 re-scores a day inside the Groq free tier.
+# 0 turns re-scoring off.
+rescore_per_run: 1
 embedding_provider: ollama
 embedding_model: nomic-embed-text
 synthesizer_provider: groq

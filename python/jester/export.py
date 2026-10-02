@@ -72,6 +72,9 @@ IDEA_COLUMNS = [
     "overall", "status", "competitor_notes", "source_threads",
     "source_platforms", "supporting_nugget_count", "critic_model",
     "synthesis_model", "run_id", "last_scored_at", "created_at",
+    # Last, so existing readers keep their column positions. 1 = the critic
+    # did not answer and the scores are absent or stale.
+    "needs_score",
 ]
 CITATION_COLUMNS = [
     "idea_id", "idea_title", "nugget_key", "resolved",

@@ -90,10 +90,11 @@ class IdeaScores:
     """§7.2 subscores (all 1-10). `competition` is nullable: None means the
     critic did NOT verify it (never fabricated). Overall is always derived."""
 
-    demand_signal: float = 0.0
-    feasibility: float = 0.0
+    demand_signal: Optional[float] = 0.0
+    feasibility: Optional[float] = 0.0
     competition: Optional[float] = None
-    overall: float = 0.0
+    #: None only on an idea the critic has not scored yet (`Idea.needs_score`).
+    overall: Optional[float] = 0.0
 
 
 @dataclass
@@ -113,3 +114,8 @@ class Idea:
     critic_model: str = ""
     synthesis_model: str = ""
     run_id: str = ""
+    #: The critic was asked and did not answer (or answered with the
+    #: stand-in). The scores are either absent (a new idea) or out of date (an
+    #: idea that grew), and a later run re-scores it. Kept apart from `status`,
+    #: which is the operator's own marking and must survive a re-score.
+    needs_score: bool = False

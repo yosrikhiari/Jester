@@ -1416,7 +1416,7 @@ class ConsoleAPI:
         reading / drafting / scoring / saving.
         """
         say = progress or (lambda _msg: None)
-        from jester.agents.critic import Critic
+        from jester.agents.critic import apply_scores
         from jester.agents.synthesizer import row_to_nugget
         from jester.llm import (
             model_name,
@@ -1448,7 +1448,16 @@ class ConsoleAPI:
 
         synth = select_synthesizer_llm(self._cfg().thresholds)
         say("drafting the problem and the solution")
+        before = int(getattr(synth, "fallbacks", 0) or 0)
         draft = synth.synthesize(nuggets)
+        if int(getattr(synth, "fallbacks", 0) or 0) > before:
+            # The stand-in's draft is the comments glued together under a
+            # "Build a focused tool" prefix. Showing it as a draft is the same
+            # mistake the pipeline refuses to make: it reads like output.
+            why = getattr(synth, "last_error", None) or "no reason given"
+            return {"ok": False, "error": (
+                f"the synthesizer model ({model_name(synth)}) did not answer: "
+                f"{why}. Nothing was saved; try again later.")}
         idea = Idea(
             title=draft.title,
             problem_statement=draft.problem_statement,
@@ -1457,12 +1466,16 @@ class ConsoleAPI:
             synthesis_model=model_name(synth),
             scores=IdeaScores(),
         )
-        # Critic.score persists ONLY when idea.id is set. A draft has none, so
-        # this scores in memory and nothing reaches the ideas archive — which
-        # is the whole point of the draft/promote split.
+        # Scored in memory only: a draft has no id, so nothing reaches the
+        # ideas archive, which is the whole point of the draft/promote split.
+        # apply_scores also says whether the critic actually answered.
         say("scoring demand, feasibility and competition")
-        critic = Critic(self.db, self._cfg().thresholds)
-        idea = critic.score(idea, select_critic_llm(self._cfg().thresholds))
+        critic_llm = select_critic_llm(self._cfg().thresholds)
+        if not apply_scores(idea, critic_llm, self._cfg().thresholds):
+            why = getattr(critic_llm, "last_error", None) or "no reason given"
+            return {"ok": False, "error": (
+                f"the critic model ({model_name(critic_llm)}) did not answer: "
+                f"{why}. Nothing was saved; try again later.")}
 
         say("saving the draft")
         draft_id = insert_cluster_idea(self.db, cluster_id, idea)

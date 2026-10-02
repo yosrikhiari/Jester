@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS ideas (
     critic_model         TEXT,
     synthesis_model       TEXT,
     run_id               TEXT,
-    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    needs_score          INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS clusters (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +179,10 @@ _ADD_COLUMNS = [
     # Which extractor produced the insight. Without it a run that crossed its
     # daily allowance halfway leaves real and stand-in rows indistinguishable.
     "ALTER TABLE nuggets ADD COLUMN extractor_model TEXT",
+    # The critic was asked and did not answer: scores absent or stale, re-scored
+    # by a later run. A column rather than a `status` value because status is
+    # the operator's own marking and a failed re-score must not overwrite it.
+    "ALTER TABLE ideas ADD COLUMN needs_score INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN trivial_share REAL",
     "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
     "ALTER TABLE runs ADD COLUMN n_posts INTEGER",
@@ -910,8 +915,9 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
             (title, problem_statement, proposed_solution, supporting_nuggets,
              source_threads, source_platforms, demand_signal, feasibility,
              competition, overall, competitor_notes, competition_checked,
-             status, last_scored_at, critic_model, synthesis_model, run_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             status, last_scored_at, critic_model, synthesis_model, run_id,
+             needs_score)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             idea.title,
@@ -931,6 +937,7 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
             idea.critic_model,
             idea.synthesis_model,
             idea.run_id,
+            1 if idea.needs_score else 0,
         ),
     )
     db.commit()
@@ -945,7 +952,8 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             demand_signal=?, feasibility=?, competition=?, overall=?,
             competitor_notes=?, competition_checked=?, status=?,
             last_scored_at=?, critic_model=?, synthesis_model=?,
-            supporting_nuggets=?, source_threads=?, source_platforms=?
+            supporting_nuggets=?, source_threads=?, source_platforms=?,
+            needs_score=?
         WHERE id=?
         """,
         (
@@ -962,9 +970,16 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             json.dumps(idea.supporting_nuggets),
             idea.source_threads,
             json.dumps(idea.source_platforms),
+            1 if idea.needs_score else 0,
             idea.id,
         ),
     )
+    db.commit()
+
+
+def mark_needs_score(db: sqlite3.Connection, idea_id: int) -> None:
+    """Flag an idea for a later re-score without touching its scores."""
+    db.execute("UPDATE ideas SET needs_score=1 WHERE id=?", (idea_id,))
     db.commit()
 
 

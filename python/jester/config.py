@@ -154,6 +154,13 @@ class Thresholds:
     # when run alone. The number that fits depends on which sources a
     # deployment enables, which is a config question, not a code one.
     ingest_timeout_seconds: int = 0
+    #: Ideas waiting for a score (`needs_score`) that one run re-scores. The
+    #: critic leaves those behind when it did not answer. Every run calls
+    #: `cmd_run` — treat every 15 minutes and cycle every 30 on this machine,
+    #: about 144 a day — so 1 here is roughly 150 a day: enough to clear a
+    #: backlog in days without starving new ideas of the free-tier quota.
+    #: 0 turns re-scoring off.
+    rescore_per_run: int = 1
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -175,6 +182,7 @@ class Thresholds:
         "max_reviews_per_app": (1, 5000),
         "export_rows_per_file": (100, 1000000),
         "ingest_timeout_seconds": (0, 86400),
+        "rescore_per_run": (0, 1000),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -204,6 +212,7 @@ class Thresholds:
         "export_after_run": _as_bool,
         "export_rows_per_file": int,
         "ingest_timeout_seconds": int,
+        "rescore_per_run": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

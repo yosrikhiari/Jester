@@ -333,6 +333,17 @@ class CriticDraft:
     demand_signal: float
     feasibility: float
     competition: Optional[float] = None
+    #: WHO produced these numbers: the model's name, or "fake-critic" when the
+    #: deterministic stand-in answered. Same idea as `NuggetDraft.model`.
+    #:
+    #: Without it a caller could only ask the agent object, and the agent is
+    #: named after the model it was ASKED to use. When a call failed and the
+    #: stand-in filled in, the archive stamped the stand-in's numbers with the
+    #: real model's name: 602 of 2,588 ideas in the live archive carry the
+    #: stand-in's exact fingerprint (demand = 2 + nuggets, feasibility 5,
+    #: competition unchecked) under `openai/gpt-oss-120b`, and 430 of them
+    #: cleared the good-idea bar on those numbers.
+    model: str = ""
 
 
 @runtime_checkable
@@ -354,7 +365,8 @@ class FakeCriticLLM:
         # crude demand proxy from evidence volume
         demand = min(10.0, 2.0 + n)
         feasibility = 5.0
-        return CriticDraft(demand_signal=demand, feasibility=feasibility, competition=None)
+        return CriticDraft(demand_signal=demand, feasibility=feasibility, competition=None,
+                           model=self.name)
 
 
 class OllamaCriticLLM:
@@ -405,7 +417,8 @@ class OllamaCriticLLM:
             if demand is not None and feasibility is not None:
                 raw_comp = obj.get("competition")
                 comp = None if raw_comp in (None, "", "unchecked") else _clamp_1_10(raw_comp)
-                return CriticDraft(demand_signal=demand, feasibility=feasibility, competition=comp)
+                return CriticDraft(demand_signal=demand, feasibility=feasibility, competition=comp,
+                                   model=self._model)
         return FakeCriticLLM().score(idea)
 
 
@@ -835,7 +848,7 @@ class GroqCriticLLM(_GroqAgent):
                 raw_comp = obj.get("competition")
                 comp = None if raw_comp in (None, "", "unchecked") else _clamp_1_10(raw_comp)
                 return CriticDraft(demand_signal=demand, feasibility=feasibility,
-                                   competition=comp)
+                                   competition=comp, model=self._model)
         return FakeCriticLLM().score(idea)
 
 
@@ -849,6 +862,19 @@ class GroqCriticLLM(_GroqAgent):
 def model_name(llm, fallback=""):
     """What actually produced this output, for the archive's provenance field."""
     return getattr(llm, "name", None) or fallback
+
+
+def critic_answered(draft, critic_llm) -> bool:
+    """True when the critic that was ASKED is the one that answered.
+
+    A stand-in critic chosen on purpose (`critic_provider: fake`, or a test
+    double) answers as itself and counts as answered. A real critic whose call
+    failed hands back the stand-in's numbers stamped `fake-critic`, and that is
+    the case a caller must not archive as a score. A draft with no stamp at all
+    comes from an older or hand-written critic and is trusted, as before.
+    """
+    who = getattr(draft, "model", "") or ""
+    return not who or who == model_name(critic_llm, who)
 
 
 def fallback_report(*llms):
