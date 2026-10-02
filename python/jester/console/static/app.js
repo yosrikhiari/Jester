@@ -2429,52 +2429,136 @@ $('#cfg-knobs').addEventListener('click', e => {
 });
 
 const ROLE_HELP = {
-  extractor: 'turns one comment into a nugget — one call per comment, so this is the throughput role',
-  archivist: 'dedups and files nuggets into the archive',
+  extractor: 'turns one comment into a nugget — one call per comment, so this is the throughput job',
   synthesizer: 'writes the problem and the proposed solution — one call per idea cluster',
-  critic: 'scores an idea and checks competitors',
-  embedding_model: 'vectorises nuggets for dedup and search (Ollama only)',
+  critic: 'scores an idea 1–10 — one call per idea, plus re-scores',
+  labeller: 'names each cluster in jester cluster — follows the synthesizer unless set here',
+  embedding: 'vectorises nuggets for dedup and search (Ollama or the stand-in only)',
 };
-// Roles served by a chat provider, and therefore overridable per role. The
-// embedding role is not one: Groq serves no embedding model.
-const CHAT_ROLES = ['extractor', 'synthesizer', 'critic'];
-const LLM_PROVIDER_OPTIONS = ['fake', 'ollama', 'groq'];
-let PROVIDERS_BASE = {};
+// Settings the Advanced row offers, per kind of job. top_k, num_ctx and
+// keep_alive mean something only to Ollama; the rest to both providers.
+const SETTING_HELP = {
+  temperature: ['number', '0–2', 'randomness'],
+  top_p: ['number', '0–1', 'nucleus sampling'],
+  top_k: ['number', '1–1000', 'Ollama only'],
+  presence_penalty: ['number', '−2–2', 'discourage repeats'],
+  seed: ['number', 'integer', 'repeatable sampling'],
+  think: ['select', ['', 'false', 'true', 'low', 'medium', 'high'], 'qwen3 thinking / gpt-oss effort'],
+  json_mode: ['select', ['', 'true', 'false'], 'ask for a JSON reply'],
+  num_ctx: ['number', 'tokens', 'Ollama context size'],
+  keep_alive: ['text', 'e.g. 10m', 'Ollama: keep the model loaded'],
+  timeout_s: ['number', 'seconds', 'give up on one call after'],
+  max_retries: ['number', '0–10', 'OpenAI-compatible retries'],
+};
+const EMBEDDING_SETTINGS = ['timeout_s', 'keep_alive'];
 const CUSTOM = '__custom__';
-let MODELS_BASE = {};
+let MODELS_RES = null;     // the last /api/models answer
+let MODELS_BASE = {};      // {role: {provider, model, settings: {key: string}}}
 let MODELS_PROFILE = null;
 
-function modelsDirty() {
-  const out = {};
-  for (const [role, base] of Object.entries(MODELS_BASE)) {
-    const sel = $(`[data-model="${role}"]`);
-    const txt = $(`[data-model-custom="${role}"]`);
-    if (!sel) continue;
-    const value = (sel.value === CUSTOM ? txt.value : sel.value).trim();
-    const changed = value !== base;
-    sel.classList.toggle('dirty', changed);
-    if (txt) txt.classList.toggle('dirty', changed);
-    if (changed && value) out[role] = value;
-  }
-  return out;
+/** Models a provider can serve, for the picker. A declared OpenAI-compatible
+ *  server has no catalogue here, so its job takes a typed name. */
+function modelPool(providerName) {
+  const p = (MODELS_RES.providers || []).find(x => x.name === providerName);
+  if (!p) return [];
+  if (p.kind === 'ollama') return MODELS_RES.ollama_choices || [];
+  if (providerName === 'groq') return MODELS_RES.groq_choices || [];
+  return [];
 }
 
-/** Per-role provider overrides, which live in thresholds.yaml rather than the
- *  `models:` block and so save through a different endpoint. */
-function providersDirty() {
-  const out = {};
-  for (const [role, base] of Object.entries(PROVIDERS_BASE)) {
-    const sel = $(`[data-provider="${role}"]`);
-    if (!sel) continue;
-    const changed = sel.value !== base;
-    sel.classList.toggle('dirty', changed);
-    if (changed) out[`${role}_provider`] = sel.value;
+function modelOptions(role, providerName, value) {
+  const pool = modelPool(providerName);
+  const options = [...new Set([...pool, value].filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+  const known = options.includes(value);
+  return `${options.map(o => `<option value="${esc(o)}" ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+    <option value="${CUSTOM}" ${known ? '' : 'selected'}>custom…</option>`;
+}
+
+function settingField(role, key, own, eff, src) {
+  const [type, range, help] = SETTING_HELP[key];
+  const value = own === undefined || own === null ? '' : String(own);
+  const shown = eff === undefined || eff === null ? 'server default' : `${eff} · ${src || ''}`;
+  const id = `adv-${role}-${key}`;
+  const input = type === 'select'
+    ? `<select id="${id}" data-adv="${role}" data-key="${key}">
+        ${range.map(o => `<option value="${o}" ${o === value ? 'selected' : ''}>${o === '' ? `default (${esc(String(eff ?? 'server'))})` : o}</option>`).join('')}
+      </select>`
+    : `<input id="${id}" data-adv="${role}" data-key="${key}" value="${esc(value)}"
+         placeholder="${esc(shown)}" autocomplete="off" ${type === 'number' ? 'inputmode="decimal"' : ''}>`;
+  return `<div class="adv-field"><label for="${id}">${esc(key.replace(/_/g, ' '))}
+      <span class="xs">${esc(help)}</span></label>${input}</div>`;
+}
+
+function roleCard(role) {
+  const r = MODELS_RES.resolved[role];
+  const own = (MODELS_RES.own || {})[role] || {};
+  const src = r.source || {};
+  const isEmbedding = role === 'embedding';
+  const providers = (MODELS_RES.providers || [])
+    .filter(p => !isEmbedding || p.kind === 'ollama' || p.kind === 'fake')
+    .map(p => p.name);
+  if (!providers.includes(r.provider)) providers.push(r.provider);
+  const missing = (MODELS_RES.missing || []).includes(r.model) && r.kind === 'ollama';
+  const unreachable = r.provider === 'groq' && MODELS_RES.groq_ready === false;
+  const keys = isEmbedding ? EMBEDDING_SETTINGS : (MODELS_RES.settings || []);
+  const setCount = keys.filter(k => own[k] !== undefined).length;
+  return `<div class="knob model-job" data-role="${role}">
+    <div class="row" style="gap:var(--s-2);align-items:baseline">
+      <label for="model-${role}">${esc(role)}</label>
+      ${missing ? '<span class="chip chip--warn">not pulled</span>' : ''}
+      ${unreachable ? '<span class="chip chip--bad">groq unreachable</span>' : ''}
+      <span class="row-end"><button class="btn btn--ghost btn--sm" data-test="${role}">test</button></span>
+    </div>
+    <div class="row" style="gap:var(--s-2)">
+      <select data-provider="${role}" aria-label="Provider for ${role}" style="inline-size:40%">
+        ${providers.map(o => `<option value="${esc(o)}" ${o === r.provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+      </select>
+      <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}" style="flex:1;min-inline-size:0">
+        ${modelOptions(role, r.provider, r.model)}
+      </select>
+    </div>
+    <input data-model-custom="${role}" class="${r.model ? 'hidden' : ''}"
+           value="${esc(r.model || '')}" placeholder="model name" autocomplete="off" aria-label="Model name for ${role}">
+    <span class="hint">${esc(ROLE_HELP[role] || '')}</span>
+    <span class="hint">provider: ${esc(src.provider || '')} · model: ${esc(src.model || '')}</span>
+    <div class="xs" data-test-result="${role}" aria-live="polite"></div>
+    <details class="adv"><summary>Advanced <span class="xs">${setCount ? `${setCount} set here` : 'all defaults'}</span></summary>
+      <div class="adv-grid">${keys.map(k => settingField(role, k, own[k], r[k], src[k])).join('')}</div>
+    </details>
+  </div>`;
+}
+
+/** What changed, as a roles: patch: {role: {key: value or null}}. */
+function modelsDirty() {
+  const patch = {};
+  const put = (role, key, value) => { (patch[role] = patch[role] || {})[key] = value; };
+  for (const [role, base] of Object.entries(MODELS_BASE)) {
+    const prov = $(`[data-provider="${role}"]`);
+    const sel = $(`[data-model="${role}"]`);
+    const txt = $(`[data-model-custom="${role}"]`);
+    if (!prov || !sel) continue;
+    const provider = prov.value;
+    const model = (sel.value === CUSTOM ? txt.value : sel.value).trim();
+    prov.classList.toggle('dirty', provider !== base.provider);
+    const modelChanged = model !== base.model;
+    sel.classList.toggle('dirty', modelChanged);
+    txt.classList.toggle('dirty', modelChanged);
+    if (provider !== base.provider) put(role, 'provider', provider);
+    // A new provider usually needs its own model: send the model with it.
+    if (modelChanged || (provider !== base.provider && model)) put(role, 'model', model || null);
+    $$(`[data-adv="${role}"]`).forEach(el => {
+      const was = base.settings[el.dataset.key] ?? '';
+      const now = el.value.trim();
+      el.classList.toggle('dirty', now !== was);
+      if (now !== was) put(role, el.dataset.key, now === '' ? null : now);
+    });
   }
-  return out;
+  return patch;
 }
 
 function syncModelsBar() {
-  const n = Object.keys(modelsDirty()).length + Object.keys(providersDirty()).length;
+  const patch = modelsDirty();
+  const n = Object.values(patch).reduce((acc, p) => acc + Object.keys(p).length, 0);
   $('#models-savebar').classList.toggle('hidden', n === 0);
   $('#models-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
 }
@@ -2482,6 +2566,7 @@ function syncModelsBar() {
 async function loadModels(profile) {
   const res = await api('/api/models' + (profile ? `?profile=${encodeURIComponent(profile)}` : ''));
   if (res.ok === false) { toast(res.error, 'bad'); return; }
+  MODELS_RES = res;
   MODELS_PROFILE = res.profile;
   MODELS_BASE = {};
 
@@ -2493,51 +2578,33 @@ async function loadModels(profile) {
   badge.textContent = res.ollama_up ? `Ollama · ${res.installed.length} pulled` : 'Ollama down';
   badge.className = 'pill pill--sm ' + (res.ollama_up ? 'tone-done' : 'tone-off');
 
-  $('#models-grid').innerHTML = res.roles.map(role => {
-    const value = res.models[role] || '';
-    MODELS_BASE[role] = value;
-    // Which backend serves THIS role. The embedding role has no override —
-    // Groq serves no embedding model, so there is nothing to choose between.
-    const provider = CHAT_ROLES.includes(role)
-      ? (res.role_providers[role] || res.llm_provider) : res.embedding_provider;
-    if (CHAT_ROLES.includes(role)) PROVIDERS_BASE[role] = provider;
-    // A role served by Groq picks from Groq's catalogue; an Ollama role picks
-    // from what is pulled. Offering the wrong list is offering a choice that
-    // can only fail at run time.
-    const pool = provider === 'groq' ? (res.groq_choices || [])
-      : provider === 'ollama' ? (res.ollama_choices || []) : [];
-    // The configured model always appears, even when it is not available —
-    // the console must show what the file says, then flag the gap.
-    const options = [...new Set([...pool, value].filter(Boolean))]
-      .sort((a, b) => String(a).localeCompare(String(b)));
-    const known = options.includes(value);
-    // Only an Ollama-served role can be "not pulled"; Groq has nothing to pull.
-    const missing = (res.missing || []).includes(value);
-    const unreachable = provider === 'groq' && res.groq_ready === false;
-    return `<div class="knob">
-      <label for="model-${role}">${esc(role.replace('_model', '').replace(/_/g, ' '))}
-        ${missing ? '<span class="chip chip--warn">not pulled</span>' : ''}
-        ${unreachable ? '<span class="chip chip--bad">groq unreachable</span>' : ''}</label>
-      ${CHAT_ROLES.includes(role) ? `<select data-provider="${role}" aria-label="Provider for ${role}">
-        ${LLM_PROVIDER_OPTIONS.map(o => `<option value="${esc(o)}" ${o === provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
-      </select>` : ''}
-      <select id="model-${role}" data-model="${role}">
-        ${options.map(o => `<option value="${esc(o)}" ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}
-        <option value="${CUSTOM}" ${known ? '' : 'selected'}>custom…</option>
-      </select>
-      <input data-model-custom="${role}" class="${known ? 'hidden' : ''}"
-             value="${esc(known ? '' : value)}" placeholder="model name" autocomplete="off">
-      <span class="hint">${esc(ROLE_HELP[role] || '')}</span>
-    </div>`;
-  }).join('');
+  for (const role of res.roles) {
+    const r = res.resolved[role];
+    const own = (res.own || {})[role] || {};
+    MODELS_BASE[role] = {
+      provider: r.provider,
+      model: r.model || '',
+      settings: Object.fromEntries(Object.entries(own).map(([k, v]) => [k, String(v)])),
+    };
+  }
+  $('#models-grid').innerHTML = res.roles.map(roleCard).join('')
+    + ((res.unused || []).length
+      ? `<div class="xs" style="grid-column:1/-1">Ignored in this file: ${res.unused.map(esc).join('; ')}</div>`
+      : '');
 
-  // Changing a role's provider changes which models are valid for it, so the
-  // grid is rebuilt from the server rather than re-filtered in place — the
-  // server owns which models each provider actually serves.
   $$('#models-grid [data-provider]').forEach(sel => {
-    sel.onchange = () => { sel.classList.add('dirty'); syncModelsBar(); };
+    sel.onchange = () => {
+      // A job's model list depends on its provider: rebuild it in place.
+      const role = sel.dataset.provider;
+      const msel = $(`[data-model="${role}"]`);
+      const txt = $(`[data-model-custom="${role}"]`);
+      const keep = MODELS_BASE[role].provider === sel.value ? MODELS_BASE[role].model : '';
+      msel.innerHTML = modelOptions(role, sel.value, keep);
+      txt.value = keep;
+      txt.classList.toggle('hidden', msel.value !== CUSTOM);
+      syncModelsBar();
+    };
   });
-
   $$('#models-grid [data-model]').forEach(sel => {
     sel.onchange = () => {
       const txt = $(`[data-model-custom="${sel.dataset.model}"]`);
@@ -2546,9 +2613,26 @@ async function loadModels(profile) {
       syncModelsBar();
     };
   });
-  $$('#models-grid [data-model-custom]').forEach(el => { el.oninput = syncModelsBar; });
+  $$('#models-grid [data-model-custom], #models-grid [data-adv]').forEach(el => {
+    el.oninput = syncModelsBar;
+    el.onchange = syncModelsBar;
+  });
   syncModelsBar();
 }
+
+$('#models-grid').addEventListener('click', async e => {
+  const b = e.target.closest('[data-test]');
+  if (!b) return;
+  const role = b.dataset.test;
+  const out = $(`[data-test-result="${role}"]`);
+  out.textContent = 'calling the model once…';
+  const res = await busy(b, () => api('/api/models/test', { role, profile: MODELS_PROFILE }));
+  if (res.ok === false) { out.innerHTML = `<span class="chip chip--bad">error</span> ${esc(res.error)}`; return; }
+  const secs = (res.latency_ms / 1000).toFixed(1);
+  out.innerHTML = res.answered
+    ? `<span class="chip chip--ok">answered</span> ${esc(res.model)} in ${secs} s${res.sample ? ` · <span class="mono">${esc(String(res.sample).slice(0, 80))}</span>` : ''}`
+    : `<span class="chip chip--bad">no answer</span> after ${secs} s · ${esc(res.error || 'the stand-in answered')}`;
+});
 
 $('#models-profile').addEventListener('click', e => {
   const b = e.target.closest('button[data-profile]');
@@ -2557,21 +2641,10 @@ $('#models-profile').addEventListener('click', e => {
 });
 $('#models-save').onclick = async e => {
   const patch = modelsDirty();
-  const providers = providersDirty();
-  if (!Object.keys(patch).length && !Object.keys(providers).length) return;
-  const res = await busy(e.currentTarget, async () => {
-    // Providers first: saving a Groq model name under an Ollama-served role
-    // would flag it "not pulled" for the moment between the two writes.
-    if (Object.keys(providers).length) {
-      const pr = await api('/api/thresholds', { patch: providers, profile: MODELS_PROFILE });
-      if (pr.ok === false) return pr;
-    }
-    return Object.keys(patch).length
-      ? api('/api/models', { patch, profile: MODELS_PROFILE })
-      : { ok: true, applied: {}, profile: MODELS_PROFILE };
-  });
+  if (!Object.keys(patch).length) return;
+  const res = await busy(e.currentTarget, () => api('/api/models/roles', { patch, profile: MODELS_PROFILE }));
   if (res.ok === false) { toast(res.error, 'bad'); return; }
-  const n = Object.keys(res.applied || {}).length + Object.keys(providers).length;
+  const n = Object.values(patch).reduce((acc, p) => acc + Object.keys(p).length, 0);
   toast(`saved ${n} setting(s) to ${res.profile || MODELS_PROFILE}`, 'ok');
   loadModels(MODELS_PROFILE);
 };

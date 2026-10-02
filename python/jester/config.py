@@ -529,6 +529,82 @@ def save_models(path, patch: dict) -> dict:
     return applied
 
 
+def save_roles(path, patch: dict) -> dict:
+    """Write per-job settings into the `roles:` block of one profile.
+
+    `patch` is {role: {key: value}}; a None or blank value removes that key,
+    and a job left with no keys is removed. Values are cast and range-checked
+    the way the loader checks them, and the whole file is validated BEFORE
+    anything is written, so a refused edit leaves the file as it was.
+
+    The block is rewritten from the merged mapping, so comments INSIDE
+    `roles:` do not survive an edit; everything outside it is untouched. The
+    old keys (`models:`, `*_provider`) are left alone: `roles:` outranks them,
+    and `jester models` shows which line each value came from.
+    """
+    import copy
+
+    from jester.roles import ROLES, SETTINGS, RoleError, _cast_setting
+
+    path = Path(path)
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    data = yaml.safe_load(text) or {}
+    roles = copy.deepcopy(data.get("roles") or {})
+    for role, changes in (patch or {}).items():
+        if role not in ROLES and role != "defaults":
+            raise ConfigError(f"{role} is not a role; valid: {', '.join(ROLES)}, defaults")
+        block = dict(roles.get(role) or {})
+        for key, value in (changes or {}).items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                block.pop(key, None)
+                continue
+            if key in SETTINGS:
+                try:
+                    value = _cast_setting(f"roles.{role}", key, value)
+                except RoleError as exc:
+                    raise ConfigError(str(exc)) from None
+            elif key in ("provider", "model"):
+                value = str(value).strip()
+            elif key == "models":
+                value = [str(m).strip() for m in value if str(m).strip()]
+            else:
+                raise ConfigError(f"roles.{role}.{key}: unknown setting")
+            block[key] = value
+        if block:
+            roles[role] = block
+        else:
+            roles.pop(role, None)
+
+    current = load_thresholds(path) if path.exists() else Thresholds()
+    candidate = Thresholds(**{**{f: getattr(current, f) for f in Thresholds.__dataclass_fields__},
+                              "roles": roles})
+    candidate.validate()  # raises ConfigError naming the bad value
+
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if re.match(r"roles\s*:", ln)), None)
+    if start is not None:
+        end = start + 1
+        while end < len(lines) and (not lines[end].strip() or lines[end][:1].isspace()):
+            end += 1
+        # Trailing blank lines belong to whatever follows, not to the block.
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        del lines[start:end]
+        insert_at = start
+    else:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        lines.append("")
+        insert_at = len(lines)
+    if roles:
+        dumped = yaml.safe_dump(roles, sort_keys=False, default_flow_style=False)
+        block_lines = ["roles:"] + ["  " + ln for ln in dumped.splitlines()]
+        lines[insert_at:insert_at] = block_lines
+    _atomic_write(path, "\n".join(lines).rstrip("\n") + "\n", prefix=".thresholds-")
+    load_thresholds(path)  # fail loudly if the rewrite produced junk
+    return roles
+
+
 def load_config(config_dir) -> Config:
     config_dir = Path(config_dir)
     thresholds = load_thresholds(config_dir / "thresholds.yaml")

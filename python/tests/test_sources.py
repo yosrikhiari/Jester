@@ -342,8 +342,11 @@ def test_save_models_rejects_junk(config_dir):
 def test_console_models_lists_roles_and_profiles(api):
     res = api.models()
     assert res["ok"] is True
-    assert res["roles"] == ["extractor", "archivist", "synthesizer", "critic", "embedding_model"]
-    assert set(res["models"]) == set(res["roles"])
+    # Every job that calls a model, the labeller included; the archivist slot
+    # is gone because no code ever read it (plan D5).
+    assert res["roles"] == ["extractor", "synthesizer", "critic", "labeller", "embedding"]
+    assert set(res["resolved"]) == set(res["roles"])
+    assert all({"provider", "kind", "source"} <= set(r) for r in res["resolved"].values())
     assert isinstance(res["installed"], list)
     assert res["ollama_up"] in (True, False)
     # A console pointed at a fixture dir offers only that dir, never the repo's.

@@ -355,6 +355,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/thresholds": lambda: api.update_thresholds(
                 body.get("patch") or {}, body.get("profile")),
             "/api/models": lambda: api.update_models(body.get("patch") or {}, body.get("profile")),
+            "/api/models/roles": lambda: api.update_roles(
+                body.get("patch") or {}, body.get("profile")),
+            "/api/models/test": lambda: api.test_role(
+                str(body.get("role", "")), body.get("profile")),
         }
         if path in simple:
             self._json(simple[path]())

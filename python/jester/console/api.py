@@ -43,14 +43,13 @@ from jester.cli import (
     evaluate_doctor,
     evaluate_smoke,
 )
-from jester.llm import GROQ_CHAT_MODELS, GroqClient, provider_for
+from jester.llm import GROQ_CHAT_MODELS, GroqClient
 from jester.config import (
     EMBEDDING_PROVIDERS,
     LLM_PROVIDERS,
     ROLE_PROVIDER_KEYS,
 )
 from jester.config import (
-    MODEL_ROLES,
     ConfigError,
     Thresholds,
     load_config,
@@ -1904,52 +1903,50 @@ class ConsoleAPI:
         return sorted(set(names))
 
     def models(self, profile=None):
+        """Every model job of one profile, resolved, with where each value
+        came from, the providers it may name, and what can be picked.
+
+        The UI draws from `resolved` and must not re-implement precedence:
+        jester.roles is the only place that decides it."""
+        import yaml
+
+        from jester.config import unused_settings
+        from jester.roles import BUILTIN_PROVIDERS, ROLES, SETTINGS, resolve_all
+
         try:
             path = self._resolve_profile(profile)
         except ConfigError as exc:
             return {"ok": False, "error": str(exc)}
         t = load_config(str(path)).thresholds
+        resolved = resolve_all(t)
         installed = self.ollama_models()
-        # Which backends are in play once per-role overrides are resolved —
-        # keying this off `llm_provider` alone missed the whole point of the
-        # overrides, which exist so one role can use Groq while the rest do not.
-        in_use = {provider_for(t, role) for role in ("extractor", "synthesizer", "critic")}
+
         groq_ready = None
         groq_choices = []
-        if "groq" in in_use:
+        if any(r.provider == "groq" for r in resolved.values()):
             # Ask Groq what this key can actually reach. An empty list means
             # "could not ask" (no key, no network), never "no models".
             groq_choices = GroqClient().list_models()
             groq_ready = bool(groq_choices)
             if not groq_choices:
                 groq_choices = list(GROQ_CHAT_MODELS)
-        current = {
-            "extractor": t.extractor_model,
-            "archivist": t.archivist_model,
-            "synthesizer": t.synthesizer_model,
-            "critic": t.critic_model,
-            "embedding_model": t.embedding_model,
-        }
+
         # "Missing" means "configured but not pulled", which is only a
-        # question for an Ollama-served role. A Groq role has nothing to pull,
+        # question for an Ollama-served job. A Groq job has nothing to pull,
         # so flagging it would be a permanent false alarm.
-        missing = set()
-        if installed is not None:
-            by_role = {
-                "extractor": t.extractor_model,
-                "synthesizer": t.synthesizer_model,
-                "critic": t.critic_model,
-            }
-            for role, name in by_role.items():
-                if provider_for(t, role) == "ollama" and name                         and not _model_installed(name, installed):
-                    missing.add(name)
-            # The archivist has no provider of its own; it follows llm_provider.
-            if t.llm_provider == "ollama" and t.archivist_model                     and not _model_installed(t.archivist_model, installed):
-                missing.add(t.archivist_model)
-            # Embedding is Ollama's job regardless of the chat provider.
-            if t.embedding_provider == "ollama" and t.embedding_model                     and not _model_installed(t.embedding_model, installed):
-                missing.add(t.embedding_model)
-        missing = sorted(missing)
+        missing = sorted({
+            r.model for r in resolved.values()
+            if installed is not None and r.kind == "ollama" and r.model
+            and not _model_installed(r.model, installed)
+        })
+        providers = [{"name": n, "kind": b.get("kind")} for n, b in BUILTIN_PROVIDERS.items()]
+        for name, block in (t.providers or {}).items():
+            if name not in BUILTIN_PROVIDERS:
+                providers.append({"name": name, "kind": (block or {}).get("kind")})
+        try:
+            raw = yaml.safe_load((path / "thresholds.yaml").read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            raw = {}
         return {
             "ok": True,
             "profile": path.name,
@@ -1959,31 +1956,114 @@ class ConsoleAPI:
                  "llm_provider": load_config(str(p)).thresholds.llm_provider}
                 for p in self._profiles()
             ],
-            "roles": list(MODEL_ROLES) + ["embedding_model"],
-            "models": current,
-            "llm_provider": t.llm_provider,
-            "embedding_provider": t.embedding_provider,
-            # Which backend actually serves each chat role once its override is
-            # resolved. The UI must not re-implement that precedence.
-            "role_providers": {
-                role: provider_for(t, role) for role in ("extractor", "synthesizer", "critic")
-            },
+            "roles": list(ROLES),
+            # Fully resolved, per job, with `source` naming the line behind
+            # every value (jester.roles.RoleSettings).
+            "resolved": {role: {**r.as_record(), "models": list(r.models),
+                                "source": dict(r.source)}
+                         for role, r in resolved.items()},
+            # What this profile's `roles:` block itself sets, per job: the
+            # Advanced fields show these as values and the rest as defaults.
+            "own": {role: dict((t.roles or {}).get(role) or {}) for role in ROLES},
+            "settings": list(SETTINGS),
+            "providers": providers,
+            "unused": unused_settings(raw),
             "ollama_up": installed is not None,
             "installed": installed or [],
-            # One catalogue per backend rather than one merged "available
-            # models" list: which of these applies is a per-role question, and
-            # the role's provider is the only thing that answers it.
+            # One catalogue per backend rather than one merged list: which
+            # applies is a per-job question, answered by the job's provider.
             "groq_choices": groq_choices,
             "ollama_choices": installed or [],
             "groq_ready": groq_ready,
-            # Anything configured but not pulled would fail at run time — the
-            # UI marks these rather than letting the run discover it. Ollama
-            # reports `name:latest`, so a bare `name` is the same model. Only
-            # Ollama-served roles can be checked this way; Groq has nothing to
-            # pull, so an unreachable Groq is reported as `groq_ready: false`
-            # instead of marking every model "missing".
             "missing": missing,
+            # Kept for older readers of this endpoint.
+            "llm_provider": t.llm_provider,
+            "embedding_provider": t.embedding_provider,
+            "role_providers": {role: resolved[role].provider
+                               for role in ("extractor", "synthesizer", "critic")},
         }
+
+    def update_roles(self, patch, profile=None):
+        """Save per-job settings into the profile's `roles:` block."""
+        from jester.config import save_roles
+
+        try:
+            path = self._resolve_profile(profile)
+            roles = save_roles(path / "thresholds.yaml", patch or {})
+        except (ConfigError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "roles": roles, "profile": path.name,
+                "written_to": str(path / "thresholds.yaml")}
+
+    #: What each job is asked during a Test: small, cheap, and shaped like
+    #: real work, so a reply that parses means the job would work.
+    _TEST_COMMENT = ("Our nightly backups have failed silently for two weeks "
+                     "and nobody noticed until we needed a restore.")
+
+    def test_role(self, role, profile=None):
+        """One real call for one job, with the profile's settings as resolved.
+
+        Reports whether the MODEL answered (not the stand-in), how long it
+        took, and why not when it did not. Costs one request, which on Groq
+        counts against the free tier like any other.
+        """
+        import time
+
+        from jester.agents.labeller import select_labeller
+        from jester.embed import select_embedding
+        from jester.llm import select_critic_llm, select_extractor_llm, select_synthesizer_llm
+        from jester.models import Idea, Nugget
+        from jester.roles import ROLES, RoleError, resolve_role
+
+        if role not in ROLES:
+            return {"ok": False, "error": f"{role!r} is not a job; valid: {', '.join(ROLES)}"}
+        try:
+            path = self._resolve_profile(profile)
+            t = load_config(str(path)).thresholds
+            r = resolve_role(t, role)
+        except (ConfigError, RoleError) as exc:
+            return {"ok": False, "error": str(exc)}
+
+        out = {"ok": True, "role": role, "provider": r.provider, "kind": r.kind,
+               "model": r.model}
+        started = time.perf_counter()
+        try:
+            if role == "embedding":
+                vectors = select_embedding(t).embed([self._TEST_COMMENT])
+                answered = bool(vectors and vectors[0])
+                out["sample"] = f"{len(vectors[0])}-dimension vector" if answered else ""
+                out["error"] = None if answered else "no vector came back"
+            else:
+                nuggets = [Nugget(unique_key=f"t{i}", platform="test", thread_id="t",
+                                  extracted_insight=text)
+                           for i, text in enumerate((self._TEST_COMMENT,
+                                                     "Restores take a full day by hand."))]
+                agent, call = {
+                    "extractor": (select_extractor_llm, lambda a: a.extract(self._TEST_COMMENT)),
+                    "synthesizer": (select_synthesizer_llm, lambda a: a.synthesize(nuggets)),
+                    "critic": (select_critic_llm, lambda a: a.score(Idea(
+                        title="Backup check", problem_statement=self._TEST_COMMENT,
+                        supporting_nuggets=["t0", "t1"]))),
+                    "labeller": (select_labeller, lambda a: a.label(
+                        [n.extracted_insight for n in nuggets])),
+                }[role]
+                agent = agent(t)
+                result = call(agent)
+                who = getattr(result, "model", "") or ""
+                answered = r.kind == "fake" or (who == r.model and not getattr(agent, "fallbacks", 0))
+                out["error"] = None if answered else (getattr(agent, "last_error", None)
+                                                      or "the stand-in answered")
+                out["sample"] = (getattr(result, "extracted_insight", None)
+                                 or getattr(result, "title", None)
+                                 or getattr(result, "label", None)
+                                 or (f"demand {result.demand_signal}, feasibility "
+                                     f"{result.feasibility}" if hasattr(result, "demand_signal")
+                                     else ""))
+        except Exception as exc:  # noqa: BLE001 - a test reports, it never 500s
+            answered, out["error"] = False, f"{type(exc).__name__}: {exc}"
+        out["answered"] = answered
+        out["latency_ms"] = int((time.perf_counter() - started) * 1000)
+        return out
 
     def update_models(self, patch, profile=None):
         try:

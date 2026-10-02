@@ -480,8 +480,10 @@
       <div class="row" style="align-items:flex-start">
         <div>
           <h3 style="margin:0">Agent models</h3>
-          <p class="xs" style="margin:2px 0 0">Pick from what Ollama has pulled, or type any name your
-            provider accepts. Written to the selected profile's <span class="mono">thresholds.yaml</span>.</p>
+          <p class="xs" style="margin:2px 0 0">Every job that calls a model: its provider, model and
+            settings, with where each value comes from. Saved to the <span class="mono">roles:</span>
+            block of the selected profile's <span class="mono">thresholds.yaml</span>;
+            <span class="mono">test</span> makes one real call.</p>
         </div>
         <div class="row row-end" style="gap:var(--s-3)">
           <span class="pill pill--sm tone-neutral" id="models-ollama">—</span>
