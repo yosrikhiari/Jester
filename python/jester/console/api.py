@@ -715,12 +715,29 @@ class ConsoleAPI:
         def key(r):
             v = r.get(sort)
             if sort in ("title", "status", "created_at"):
-                return (v is None, str(v or "").lower())
+                return str(v or "").lower()
+            return float(v)
+
+        def missing(r):
+            v = r.get(sort)
+            if v is None:
+                return True
+            if sort in ("title", "status", "created_at"):
+                return False
             try:
-                return (v is None, float(v))
+                float(v)
+                return False
             except (TypeError, ValueError):
-                return (True, 0.0)
-        rows.sort(key=key, reverse=rev)
+                return True
+
+        # Rows with no value go LAST in either direction. Sorting them with a
+        # `(is None, value)` key and reversing put them first on a descending
+        # sort, the default: once ideas could be unscored (`needs_score`),
+        # the Ideas page opened on hundreds of rows with no score at all.
+        present = [r for r in rows if not missing(r)]
+        absent = [r for r in rows if missing(r)]
+        present.sort(key=key, reverse=rev)
+        rows = present + absent
         total = len(rows)
         try:
             offset = max(0, int(offset or 0))

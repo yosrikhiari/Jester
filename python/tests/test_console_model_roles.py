@@ -203,3 +203,25 @@ def test_the_embedding_guard_follows_a_roles_block(tmp_path):
         Archivist(db, None, t).run([])
     assert "mxbai-embed-large" in str(e.value), (
         "the guard must compare against the model the client will actually use")
+
+
+# ---- unscored ideas in the Ideas list ---------------------------------------------
+
+@pytest.mark.parametrize("direction", ["desc", "asc"])
+def test_unscored_ideas_sort_last_in_both_directions(tmp_path, config_dir, direction):
+    """Found in the end-to-end pass: with 603 ideas marked needs_score, the
+    default Ideas view (overall, descending) opened on rows with no score."""
+    from jester.models import Idea, IdeaScores
+    from jester.store import insert_idea, open_db
+
+    path = str(tmp_path / "ideas.db")
+    db = open_db(path)
+    for n, overall in (("low", 4.0), ("none", None), ("high", 8.0)):
+        scores = IdeaScores(demand_signal=None, feasibility=None, competition=None, overall=None) \
+            if overall is None else IdeaScores(demand_signal=5, feasibility=5, overall=overall)
+        insert_idea(db, Idea(title=n, supporting_nuggets=["k"], scores=scores,
+                             needs_score=overall is None))
+    api = ConsoleAPI(db_path=path, config_dir=str(config_dir))
+    titles = [i["title"] for i in api.ideas(sort="overall", dir=direction)["ideas"]]
+    assert titles[-1] == "none"
+    assert titles[:2] == (["high", "low"] if direction == "desc" else ["low", "high"])
