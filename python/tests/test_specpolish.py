@@ -54,7 +54,8 @@ def test_models_used_records_prompt_and_rubric_versions(tmp_path):
     record = json.loads(r["models_used"])
     assert isinstance(record, dict)
     assert record["prompt_versions"] == PROMPT_VERSIONS
-    assert set(record["prompt_versions"]) == {"extractor", "synthesizer", "critic"}
+    assert set(record["prompt_versions"]) == {"extractor", "synthesizer", "critic",
+                                              "labeller"}
     assert record["rubric_version"] == RUBRIC_VERSION
     assert isinstance(record["rubric_version"], int)
 

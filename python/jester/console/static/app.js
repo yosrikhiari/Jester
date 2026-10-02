@@ -1711,23 +1711,26 @@ function renderQueueStatuses() {
     `<button data-qs="${esc(st)}" aria-pressed="${QUEUE_STATUS === st}">${esc(st)}</button>`).join('');
 }
 
-/** Whether treatment can run at all, and when it next can. */
+/** Which models are out of quota, and until when. Blocks are per model: only
+ *  the jobs using a blocked model wait, the others keep draining the queue. */
 function renderTreatment(t) {
   const box = $('#queue-treatment');
   if (!t) { box.innerHTML = ''; return; }
   if (!t.blocked) {
     box.innerHTML = `<div class="card"><span class="chip chip--ok">clear</span>
-      ${esc(t.provider || 'the provider')} is not rate-limited &mdash; treatment drains this
-      queue on its own schedule.</div>`;
+      No model is rate-limited &mdash; treatment drains this queue on its own schedule.</div>`;
     return;
   }
+  const blocks = (t.blocks && t.blocks.length) ? t.blocks
+    : [{ provider: t.provider, human: t.human, blocked_until: t.blocked_until, reason: t.reason }];
   box.innerHTML = `<div class="card">
-    <span class="chip chip--warn">treatment paused</span>
-    <b>${esc(t.human)}</b> until ${esc(when(t.blocked_until))}.
-    ${t.reason ? `<div class="xs">${esc(t.reason)}</div>` : ''}
-    <div class="xs">Nothing is lost while it waits &mdash; the queue is the buffer, and
-      <span class="mono">treat</span> exits in a second and a half rather than
-      grinding against an exhausted quota.</div>
+    <span class="chip chip--warn">quota block</span>
+    ${blocks.map(b => `<div><span class="mono">${esc(b.provider)}</span>
+      out of quota for <b>${esc(b.human)}</b>, until ${esc(when(b.blocked_until))}.
+      ${b.reason ? `<div class="xs">${esc(b.reason)}</div>` : ''}</div>`).join('')}
+    <div class="xs">Only the jobs using a blocked model wait; jobs on other models, and on
+      local Ollama, keep running. Nothing is lost while they wait &mdash; the queue is the
+      buffer.</div>
   </div>`;
 }
 

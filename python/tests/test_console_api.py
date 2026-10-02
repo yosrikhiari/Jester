@@ -16,7 +16,8 @@ def api(tmp_path):
 def test_overview_shape(api):
     o = api.overview()
     assert o["ok"] and {"counts", "quota", "prompt_versions"} <= set(o)
-    assert o["prompt_versions"] == {"extractor": 1, "synthesizer": 1, "critic": 1}
+    assert o["prompt_versions"] == {"extractor": 1, "synthesizer": 1, "critic": 1,
+                                    "labeller": 1}
 
 
 def test_run_pipeline_end_to_end_then_runs_and_doctor(api):
