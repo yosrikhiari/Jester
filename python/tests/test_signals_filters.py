@@ -466,8 +466,18 @@ def test_the_access_section_names_owner_due_date_and_what_was_requested(rules):
     md = sc.scope_markdown(rules, today="2026-09-28")
     access = md[md.index("## 6. Access"):]
     assert "**Who decides:** the scope owner, **due 2026-10-02**." in access
-    assert "**Requested so far:**" in access
+    assert "**Application to Reddit:** none." in access
+    assert "**Decision asked of the scope owner:**" in access
     assert "free Data API tier is for non-commercial use" in access
+
+
+def test_the_access_section_says_when_the_decision_was_asked(rules):
+    rules.scope["asked_on"] = ["29 Sep (daily update)", "1 Oct (daily update)"]
+    md = sc.scope_markdown(rules, today="2026-10-02")
+    access = md[md.index("## 6. Access"):]
+    assert ("**Decision asked of the scope owner:** 29 Sep (daily update); "
+            "1 Oct (daily update).") in access
+    assert "none on record" not in access
 
 
 def test_the_document_no_longer_says_what_stopped_being_true(rules):

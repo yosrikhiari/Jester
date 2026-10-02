@@ -53,6 +53,11 @@ scope:
   # says whose decision it is rather than leaving it to be inferred.
   decision_owner: "the scope owner"
   decision_due: "2026-10-02"
+  # When the decision was put to the decision owner, so the document does not
+  # read as if nobody asked. Dates only; the asks were in the team channel.
+  asked_on:
+    - "29 Sep 2026 (daily update, team channel)"
+    - "1 Oct 2026 (daily update, team channel)"
 
   communities:
     # ---- buyer side ------------------------------------------------------
