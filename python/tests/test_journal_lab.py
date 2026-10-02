@@ -373,6 +373,13 @@ def test_cli_run_failure_and_dirty_code(cli_run, tmp_path):
     assert "UNCOMMITTED CODE" in cli_run("show", "fails")
 
 
+def test_cli_run_of_data_recorded_before_the_plan(cli_run):
+    cli_run("new", "Recount")
+    cli_run("plan", "recount", "--runs", "1")
+    cli_run("run", "recount", "--data-before-plan", "--", sys.executable, "-c", "print(1)")
+    assert "ran before the plan was written" in cli_run("show", "recount")
+
+
 def test_cli_run_note_is_printed(cli_run):
     cli_run("new", "Noted")
     cli_run("plan", "noted")
