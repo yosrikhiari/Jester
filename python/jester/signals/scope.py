@@ -251,8 +251,17 @@ def scope_markdown(rules: Rules | None = None, *, today: str = "", db=None) -> s
     add("")
     owner = (r.scope or {}).get("decision_owner") or "the scope owner"
     due = (r.scope or {}).get("decision_due") or ""
-    add("**Requested so far:** none on record. This project holds no application to Reddit "
+    # Two different "requests" used to share one line, and a reader took "none
+    # on record" to mean the decision had never been asked for. Applying to
+    # Reddit and asking the scope owner are separate facts; print both.
+    add("**Application to Reddit:** none. This project holds no application to Reddit "
         "and no quote; whether to apply, and for what budget, is part of the decision below.")
+    add("")
+    asked = (r.scope or {}).get("asked_on") or []
+    if asked:
+        add(f"**Decision asked of {owner}:** " + "; ".join(str(a) for a in asked) + ".")
+    else:
+        add(f"**Decision asked of {owner}:** not yet on record.")
     add("")
     add(f"**Who decides:** {owner}" + (f", **due {due}**." if due else ".")
         + " The choice is between two things: approve the free sources already running "

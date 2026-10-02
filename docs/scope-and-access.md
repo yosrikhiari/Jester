@@ -1,6 +1,6 @@
 # Problem-signal collector — scope and access status
 
-> **Generated 2026-10-01** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
+> **Generated 2026-10-02** from `config/signal_rules.yaml`, the collector's field map and the live archive. Not typed by hand: if the rules change, this changes with them.
 > **Scope status: PROVISIONAL — awaiting sign-off**
 
 ## 0. What is collecting today
@@ -19,18 +19,18 @@ They ask different questions and carry different rule sets. One reads forum disc
 
 ### What each source has produced
 
-Read off the live archive on 2026-10-01. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-08-02.
+Read off the live archive on 2026-10-02. *Buyers* are records the rules scored as wanting contract engineering work; *recent* means posted on or after 2026-08-03.
 
 | source | records | buyers | recent buyers |
 |---|---:|---:|---:|
-| HN Who is hiring | 3,000 | 149 | 27 |
-| Himalayas (contract listings) | 1,475 | 1,122 | 1,112 |
-| Jobicy | 22 | 15 | 15 |
+| HN Who is hiring | 3,135 | 156 | 34 |
+| Himalayas (contract listings) | 1,622 | 1,238 | 1,228 |
+| Jobicy | 22 | 16 | 16 |
 | Remotive | 1 | 1 | 1 |
-| HN discussion (Ask HN, comments, Show, stories) | 939 | 6 | 6 |
-| Reddit hiring rooms (worker archive, set apart) | 85 | 11 | 11 |
+| HN discussion (Ask HN, comments, Show, stories) | 965 | 8 | 8 |
+| Reddit hiring rooms (worker archive, set apart) | 110 | 15 | 15 |
 
-**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,155 buyer signals from 549 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
+**Proposed source: HN "Who is hiring" plus the three job boards.** In the last 60 days they produced **1,279 buyer signals from 594 named companies**, on free public APIs that need no access decision. Approving them as the source settles section 6 without a purchase; the Reddit rooms in sections 1 and 6 stay available as a measured alternative.
 
 ## 1. Communities
 
@@ -154,7 +154,9 @@ No model sits in the acceptance path: the fixture gate is deterministic checks, 
 
 **Why it is not free:** Reddit's free Data API tier is for non-commercial use. This work is commercial — the signals feed a buyer test and published content — so it needs a paid agreement. Confirm the current terms and pricing with Reddit when applying; they have changed more than once since 2023.
 
-**Requested so far:** none on record. This project holds no application to Reddit and no quote; whether to apply, and for what budget, is part of the decision below.
+**Application to Reddit:** none. This project holds no application to Reddit and no quote; whether to apply, and for what budget, is part of the decision below.
+
+**Decision asked of the scope owner:** 29 Sep 2026 (daily update, team channel); 1 Oct 2026 (daily update, team channel).
 
 **Who decides:** the scope owner, **due 2026-10-02**. The choice is between two things: approve the free sources already running (section 0), or buy Reddit access for the rooms below.
 
