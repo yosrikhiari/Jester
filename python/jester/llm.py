@@ -41,7 +41,7 @@ ALLOWED_CATEGORIES = {
 
 # §37.15 reproducibility (v3.8 #2/v3.7 #4): bump when a prompt or the rubric
 # changes so runs.models_used can diff a score shift back to its cause.
-PROMPT_VERSIONS = {"extractor": 1, "synthesizer": 1, "critic": 1}
+PROMPT_VERSIONS = {"extractor": 1, "synthesizer": 1, "critic": 1, "labeller": 1}
 RUBRIC_VERSION = 1
 
 
@@ -287,6 +287,9 @@ class _Agent:
         #: quota (Ollama).
         self.rate_limited = 0
         self.retry_after = None
+        #: Calls attempted. With `fallbacks`, tells "the model answered at
+        #: least once" (clear its quota block) from "it was never asked".
+        self.calls = 0
 
     @property
     def name(self):
@@ -306,6 +309,7 @@ class _Agent:
         substitution". The second is a run that should not continue.
         """
         self.last_error = None
+        self.calls += 1
         try:
             raw = self._complete(system, user, temperature)
         except GroqRateLimited as exc:
@@ -870,6 +874,30 @@ class GroqCriticLLM(_CriticRole, _GroqAgent):
 
     def __init__(self, model="openai/gpt-oss-120b", **kw):
         super().__init__(model, **kw)
+
+
+class QuotaPausedCritic:
+    """The critic for a run in which its model is known to be out of quota.
+
+    Answers as the stand-in WITHOUT calling, so each idea is filed unscored
+    (`needs_score`) instead of spending a refused request, and a later run
+    scores it. It carries the real critic's name, which is exactly what makes
+    `critic_answered` say no.
+    """
+
+    def __init__(self, critic, key=""):
+        self.name = model_name(critic)
+        self.settings = getattr(critic, "settings", None)
+        self.calls = 0
+        self.fallbacks = 0
+        self.rate_limited = 0
+        self.retry_after = None
+        self.last_error = f"quota block on {key} in force; not called"
+        self.fallback_reasons = [self.last_error]
+
+    def score(self, idea):
+        self.fallbacks += 1
+        return FakeCriticLLM().score(idea)
 
 
 # ── model provenance ────────────────────────────────────────────────────────

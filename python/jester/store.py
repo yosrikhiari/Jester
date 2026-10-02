@@ -1046,6 +1046,32 @@ def start_run(
     return cur.lastrowid
 
 
+def add_to_models_used(db: sqlite3.Connection, run_id: str, extra: dict) -> None:
+    """Merge `extra` into a run's `models_used` record.
+
+    The record is written when the run starts (what was ASKED for); this adds
+    what happened (who answered, who fell back) once it is known.
+    """
+    row = db.execute(
+        "SELECT models_used FROM runs WHERE run_id=? ORDER BY id DESC LIMIT 1", (run_id,)
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        record = json.loads(row[0] or "{}")
+    except (TypeError, ValueError):
+        record = {}
+    if not isinstance(record, dict):
+        record = {"models": record}
+    record.update(extra)
+    db.execute(
+        "UPDATE runs SET models_used=? WHERE id=(SELECT id FROM runs WHERE run_id=? "
+        "ORDER BY id DESC LIMIT 1)",
+        (json.dumps(record), run_id),
+    )
+    db.commit()
+
+
 def reap_running(
     db: sqlite3.Connection, older_than_minutes: Optional[int] = None
 ) -> int:

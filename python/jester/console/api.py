@@ -1139,25 +1139,29 @@ class ConsoleAPI:
         """
         from jester import llm_quota
 
-        # "groq" and not the CONFIGURED provider, because cmd_treat records the
-        # block under that literal name whatever thresholds.yaml says — and it
-        # is the only writer. Reading the configured one instead looked up
-        # "fake" against a block filed under "groq" and reported a queue that
-        # was free to drain while treatment was in fact shut until 12:08.
-        # The two must agree; this is the side that has to follow.
-        provider = llm_quota.TREATMENT_PROVIDER
+        # Every block in force, per provider/model (plan D9), longest first.
+        # `cmd_run` files them under the model that ran out, so this reads
+        # them all rather than guessing one key; an old provider-wide "groq"
+        # row is among them until it expires.
         try:
-            st = llm_quota.status(self.db, provider)
+            blocks = llm_quota.active_blocks(self.db)
         except Exception:  # noqa: BLE001 - table absent before the first block
-            return {"provider": provider, "blocked": False}
+            blocks = []
+        if not blocks:
+            return {"provider": llm_quota.TREATMENT_PROVIDER, "blocked": False, "blocks": []}
+        st = blocks[0]
         waiting = int(st.get("seconds_remaining") or 0)
         return {
-            "provider": provider,
-            "blocked": bool(st.get("blocked")) and waiting > 0,
+            "provider": st["provider"],
+            "blocked": waiting > 0,
             "seconds_remaining": waiting,
             "human": llm_quota.human(waiting) if waiting > 0 else "",
             "blocked_until": st.get("blocked_until") or "",
             "reason": st.get("reason") or "",
+            "blocks": [{"provider": b["provider"],
+                        "human": llm_quota.human(b["seconds_remaining"]),
+                        "blocked_until": b.get("blocked_until") or "",
+                        "reason": b.get("reason") or ""} for b in blocks],
         }
 
     def queue(self, status="pending", limit=None, kind=""):

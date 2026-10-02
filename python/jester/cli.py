@@ -26,6 +26,7 @@ from jester.llm import (
     PROMPT_VERSIONS,
     RUBRIC_VERSION,
     FakeLLM,
+    QuotaPausedCritic,
     kind_for,
     provider_for,
     select_critic_llm,
@@ -40,7 +41,9 @@ from jester.ops import compute_floor_flags
 from jester.prefilter import prefilter_comment
 from jester.scoring import compute_overall
 from jester.triviality import judge_trivial
+from jester.roles import env_overrides, resolve_all
 from jester.store import (
+    add_to_models_used,
     ConcurrentRunError,
     active_run,
     count_failed_batches,
@@ -245,6 +248,21 @@ def cmd_run(args):
     llm = select_extractor_llm(cfg.thresholds)
     synth_llm = select_synthesizer_llm(cfg.thresholds)
     critic_llm = select_critic_llm(cfg.thresholds)
+    roles_resolved = resolve_all(cfg.thresholds)
+
+    # Jobs whose model is known to be out of quota sit this run out, and only
+    # those (plan D9). Groq's free tier counts each model separately, so one
+    # model running out says nothing about the others; and a job on local
+    # Ollama has no quota at all. `--force` (treat) ignores the record.
+    from jester import llm_quota
+
+    paused = {} if getattr(args, "force", False) else llm_quota.blocked_roles(
+        db, {r: roles_resolved[r] for r in ("extractor", "synthesizer", "critic")})
+    for role, (key, wait) in paused.items():
+        print(f"{role} paused: {key} is out of quota for another "
+              f"{llm_quota.human(wait)}")
+    if "critic" in paused:
+        critic_llm = QuotaPausedCritic(critic_llm, paused["critic"][0])
 
     # R25: reap orphaned 'running' rows from crashed sessions, then take the lock.
     #
@@ -271,11 +289,19 @@ def cmd_run(args):
             db,
             args.run,
             models_used={
+                # Kept first and in this shape: older readers know it.
                 "models": [
                     model_name(llm),
                     model_name(synth_llm),
                     model_name(critic_llm),
                 ],
+                # Everything each job was asked to run with: provider, model,
+                # sampling, think, timeouts. A score shift can then be traced
+                # to a settings change as well as to a model change.
+                "roles": {role: r.as_record() for role, r in roles_resolved.items()},
+                "overrides": {role: f"{p}:{m}" if m else p
+                              for role, (p, m) in env_overrides().items()},
+                "paused": {role: key for role, (key, _w) in paused.items()},
                 "prompt_versions": PROMPT_VERSIONS,
                 "rubric_version": RUBRIC_VERSION,
             },
@@ -463,7 +489,14 @@ def cmd_run(args):
     # can hand nuggets back undecided (see below); without this there is no way
     # to tell which batch to leave queued for them.
     batch_of = {}
+    extraction_stopped = "extractor" in paused
     for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
+        if extraction_stopped:
+            # Out of quota: every batch not reached stays queued, its comments
+            # off the skip-list, for a run with allowance left.
+            degraded_batches.add(batch_id)
+            continue
+        limited_before = int(getattr(llm, "rate_limited", 0) or 0)
         produced = extract(
             [c],
             llm,
@@ -472,6 +505,11 @@ def cmd_run(args):
             source_url=source,
             run_id=args.run,
         )
+        if int(getattr(llm, "rate_limited", 0) or 0) > limited_before:
+            # The synthesizer's brake, for the extractor: one exhaustion after
+            # the transport's own retries is enough, and every comment after it
+            # would spend a refused request before falling back.
+            extraction_stopped = True
         for n in produced:
             if extractor_provider != "fake" and n.extractor_model == FakeLLM.name:
                 # R29/R40: the model was asked and did not answer — most often
@@ -539,6 +577,12 @@ def cmd_run(args):
             r["thread_id"],
             [c.get("fingerprint") for c in payload if isinstance(c, dict)],
         )
+    if extraction_stopped:
+        print(
+            f"extraction {'paused' if 'extractor' in paused else 'stopped'}: "
+            "the extractor's model is out of quota; "
+            f"{len(degraded_batches)} batch(es) stay queued"
+        )
     if degraded:
         # No silent caps. "kept 812" on a run that quietly dropped 4,000
         # comments to a rate limit is the same line as a clean run.
@@ -566,14 +610,20 @@ def cmd_run(args):
     checker = CompetitorChecker(db, cfg.thresholds)
     idea_vector = _idea_vector_for(cfg, args.db)
     synthesizer = Synthesizer(db, cfg.thresholds)
-    ideas = synthesizer.run(
-        synth_llm,
-        critic_llm,
-        run_id=args.run,
-        checker=checker,
-        idea_vector=idea_vector,
-        max_ideas=getattr(args, "max_ideas", None),
-    )
+    if "synthesizer" in paused:
+        # Nothing is lost: unclustered nuggets stay unclaimed (R50) and are
+        # the first work of a run with allowance left.
+        ideas = []
+        print("synthesis paused: unclustered nuggets stay queued")
+    else:
+        ideas = synthesizer.run(
+            synth_llm,
+            critic_llm,
+            run_id=args.run,
+            checker=checker,
+            idea_vector=idea_vector,
+            max_ideas=getattr(args, "max_ideas", None),
+        )
     for idea in ideas:
         if idea.needs_score:
             print(f"idea #{idea.id}: {idea.title}  UNSCORED "
@@ -643,7 +693,7 @@ def cmd_run(args):
         )
     # Ideas waiting for a score get one, a few per run (D1/D2). Skipped when
     # this run already ran out of quota: the next call would be refused too.
-    if not getattr(synthesizer, "stopped_on_quota", False):
+    if not getattr(synthesizer, "stopped_on_quota", False) and "critic" not in paused:
         rescored = rescore_pending(
             db, cfg.thresholds, critic_llm, int(cfg.thresholds.rescore_per_run or 0))
         if rescored["scored"] or rescored["still_waiting"]:
@@ -655,6 +705,19 @@ def cmd_run(args):
             )
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
+
+    # Per model, not per provider: record a block for each model that ran
+    # out, clear it for each that answered. `treat` and the next run read it.
+    agents = {"extractor": llm, "synthesizer": synth_llm, "critic": critic_llm}
+    limited = llm_quota.settle(db, agents, args.run)
+    # What happened, beside what was asked for (G7): per job, how many calls,
+    # how many fell back, how many hit the rate limit.
+    add_to_models_used(db, args.run, {"outcome": {
+        role: {"model": model_name(a),
+               "calls": int(getattr(a, "calls", 0) or 0),
+               "fallbacks": int(getattr(a, "fallbacks", 0) or 0),
+               "rate_limited": int(getattr(a, "rate_limited", 0) or 0)}
+        for role, a in agents.items()}})
     checkpoint("synthesize")
 
     failed = count_failed_batches(db)
@@ -708,9 +771,11 @@ def cmd_run(args):
         "ideas": len(ideas),
         "flags": flags,
         "rate_limited": rate_limited,
-        # The LONGEST reset any agent saw: they share one key, so waiting out
-        # the shortest would just be refused again.
+        # The LONGEST reset any agent saw.
         "retry_after": max(resets) if resets else None,
+        # {role: quota key}: which jobs ran out this run, and which sat it out.
+        "limited": limited,
+        "paused": {role: key for role, (key, _w) in paused.items()},
     }
 
 
@@ -1431,8 +1496,6 @@ def cmd_treat(args):
     from jester import llm_quota
 
     db = open_db(args.db)
-    # The console's Queue page reads the block back under this same key.
-    provider = llm_quota.TREATMENT_PROVIDER
 
     pending = len(pending_batches(db))
     if not pending:
@@ -1442,49 +1505,47 @@ def cmd_treat(args):
     # Ask the recorded state BEFORE spending a request. This is what makes it
     # safe to schedule `treat` frequently: when the quota is known to be gone,
     # it costs one SQLite read and exits.
-    waiting = llm_quota.blocked_for(db, provider)
-    if waiting > 0 and not args.force:
-        st = llm_quota.status(db, provider)
-        print(
-            f"{provider} quota exhausted for another {llm_quota.human(waiting)} "
-            f"(until {st['blocked_until']})"
-        )
+    #
+    # Per model (plan D9): blocks are filed under provider/model, so only the
+    # jobs whose model ran out sit out. Treatment is pointless only when it can
+    # neither extract nor synthesize; anything less still drains the queue.
+    paused = {} if args.force else llm_quota.blocked_roles(
+        db, resolve_all(load_config(args.config).thresholds))
+    if "extractor" in paused and "synthesizer" in paused:
+        for role in ("extractor", "synthesizer"):
+            key, wait = paused[role]
+            st = llm_quota.status(db, key)
+            print(f"{role}: {key} quota exhausted for another "
+                  f"{llm_quota.human(wait)} (until {st['blocked_until']})")
+            if st["reason"]:
+                print(f"  reason: {st['reason'][:160]}")
         print(f"  {pending} batch(es) waiting; they keep until it resets")
-        if st["reason"]:
-            print(f"  reason: {st['reason'][:160]}")
         return {"ok": True, "treated": 0, "pending": pending, "blocked": True}
 
     print(f"treating {pending} pending batch(es)")
     if not getattr(args, "run", None):
         args.run = "treat-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    result = cmd_run(args)
-
-    # cmd_run stamps the agents it used onto the result so the caller can see
-    # whether the work was really done or quietly substituted.
-    limited = (result or {}).get("rate_limited") or 0
-    retry_after = (result or {}).get("retry_after")
+    # cmd_run pauses the blocked jobs, and records or clears each model's
+    # block itself once it knows who ran out and who answered.
+    result = cmd_run(args) or {}
     left = len(pending_batches(db))
 
+    limited = result.get("limited") or {}
     if limited:
-        stamp = llm_quota.record_block(
-            db, provider,
-            retry_after if retry_after is not None else 3600,
-            reason=f"{limited} call(s) lost to the rate limit during {args.run}",
-        )
-        print(
-            f"{provider} rate limit reached after {limited} call(s); "
-            f"not treating the remaining {left} batch(es)"
-        )
-        print(f"  will retry after {stamp}")
+        for role, key in sorted(limited.items()):
+            print(f"{role}: {key} rate limit reached; "
+                  f"blocked until {llm_quota.status(db, key)['blocked_until']}")
+        print(f"  {left} batch(es) stay queued for a run with allowance left")
         # Exit 0: stopping on an exhausted quota is the design working, not a
         # failure. A non-zero exit here would make every scheduler on the box
         # start emailing about a healthy system.
-        return {"ok": True, "treated": pending - left, "pending": left, "blocked": True}
+        return {"ok": True, "treated": pending - left, "pending": left, "blocked": True,
+                "limited": limited}
 
-    llm_quota.clear_block(db, provider)
     print(f"treated {pending - left} batch(es); {left} still pending")
-    return {"ok": True, "treated": pending - left, "pending": left, "blocked": False}
+    return {"ok": True, "treated": pending - left, "pending": left, "blocked": False,
+            "paused": result.get("paused") or {}}
 
 
 def cmd_schedule(args):
@@ -2026,12 +2087,13 @@ def _rescore_pending_now(args):
     cfg = load_config(args.config)
     db = open_db(args.db)
     critic_llm = select_critic_llm(cfg.thresholds)
-    uses_groq = provider_for(cfg.thresholds, "critic") == "groq"
-    # The same block treat honours: a quota known to be gone costs one read.
-    if uses_groq and not args.force:
-        waiting = llm_quota.blocked_for(db, llm_quota.TREATMENT_PROVIDER)
+    # The same per-model block treat honours: a quota known to be gone costs
+    # one read. None for a critic with no quota (Ollama, fake).
+    key = llm_quota.quota_key(getattr(critic_llm, "settings", None))
+    if key and not args.force:
+        waiting = llm_quota.blocked_for(db, key)
         if waiting > 0:
-            print(f"groq quota exhausted for another {llm_quota.human(waiting)}; "
+            print(f"{key} quota exhausted for another {llm_quota.human(waiting)}; "
                   "nothing re-scored (--force to try anyway)")
             return {"ok": True, "scored": 0, "blocked": True}
 
@@ -2039,13 +2101,10 @@ def _rescore_pending_now(args):
     print(f"re-scored {res['scored']} idea(s); {res['still_waiting']} still waiting")
     for line in fallback_report(critic_llm):
         print("degraded: " + line)
-    if res["stopped_on_quota"] and uses_groq:
-        stamp = llm_quota.record_block(
-            db, llm_quota.TREATMENT_PROVIDER,
-            critic_llm.retry_after if critic_llm.retry_after is not None else 3600,
-            reason="critic quota ran out during jester rescore --pending",
-        )
-        print(f"stopped: the critic's quota ran out; treat waits until {stamp}")
+    llm_quota.settle(db, {"critic": critic_llm}, "rescore --pending")
+    if res["stopped_on_quota"] and key:
+        print("stopped: the critic's quota ran out; treat waits until "
+              f"{llm_quota.status(db, key)['blocked_until']}")
     return {"ok": True, **res}
 
 

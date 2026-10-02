@@ -36,18 +36,22 @@ CREATE TABLE IF NOT EXISTS llm_quota (
 #: in seconds; the daily one does not.
 LONG_BLOCK_SECONDS = 120
 
-#: The provider key treatment blocks are filed under.
+#: The key blocks used to be filed under, for every model at once.
 #:
-#: A CONSTANT because two sides have to agree on it and they are in different
-#: files: `cmd_treat` writes the block, the console's Queue page reads it. The
-#: console originally looked up whatever `thresholds.llm_provider` said, which
-#: is "fake" in the default profile — so it read nothing, and showed a queue
-#: as free to drain while treatment was in fact shut for another 22 minutes.
-#:
-#: Deliberately not the configured provider: the quota being tracked is Groq's
-#: daily token allowance, which is a fact about an account rather than about
-#: whichever model role happens to be pointed where.
+#: Groq's free tier counts each MODEL separately, so one model running out
+#: said nothing about the others, yet a block filed here stopped every job,
+#: including the extractor on local Ollama. Blocks are now filed per provider
+#: and model (`quota_key`). A row under this old key is still honoured, as a
+#: block on every model of that provider, until it expires or is cleared.
 TREATMENT_PROVIDER = "groq"
+
+
+def quota_key(settings):
+    """Where a job's quota block is filed: `provider/model` for a metered
+    (OpenAI-compatible) provider, None for one with no quota (Ollama, fake)."""
+    if settings is None or getattr(settings, "kind", None) != "openai":
+        return None
+    return f"{settings.provider}/{settings.model}"
 
 
 def ensure_schema(db) -> None:
@@ -81,22 +85,86 @@ def record_block(db, provider: str, retry_after_seconds: float, reason: str = ""
 
 
 def clear_block(db, provider: str) -> None:
-    """The provider answered; forget any recorded block."""
+    """The provider answered; forget any recorded block.
+
+    Clearing a `provider/model` key also clears an old provider-wide row:
+    a model of that provider just answered, so the old block is stale.
+    """
     ensure_schema(db)
-    db.execute(
+    keys = [provider] + ([provider.split("/", 1)[0]] if "/" in provider else [])
+    db.executemany(
         "UPDATE llm_quota SET blocked_until=NULL, reason='' WHERE provider=?",
-        (provider,),
+        [(k,) for k in keys],
     )
     db.commit()
 
 
+def active_blocks(db) -> list:
+    """Every block still in force, longest first, as `status` dicts."""
+    ensure_schema(db)
+    keys = [r[0] for r in db.execute(
+        "SELECT provider FROM llm_quota WHERE blocked_until IS NOT NULL")]
+    out = [status(db, k) for k in keys]
+    out = [st for st in out if _remaining(db, st["provider"]) > 0]
+    return sorted(out, key=lambda st: -st["seconds_remaining"])
+
+
+def blocked_roles(db, settings_by_role: dict) -> dict:
+    """{role: (key, seconds)} for each job whose model is known to be out of
+    quota. A job on a provider with no quota is never in it."""
+    out = {}
+    for role, settings in settings_by_role.items():
+        key = quota_key(settings)
+        if key:
+            wait = blocked_for(db, key)
+            if wait > 0:
+                out[role] = (key, wait)
+    return out
+
+
+def settle(db, agents_by_role: dict, run_id: str = "") -> dict:
+    """After a run: record a block for each model that ran out, and clear the
+    block of each model that answered. {role: key} of the ones that ran out.
+
+    Two jobs can share a model (synthesizer and critic on gpt-oss-120b); a
+    model that ran out for one is not cleared because the other answered
+    earlier in the same run.
+    """
+    limited, answered = {}, set()
+    for role, agent in agents_by_role.items():
+        key = quota_key(getattr(agent, "settings", None))
+        if not key:
+            continue
+        if int(getattr(agent, "rate_limited", 0) or 0):
+            limited[role] = key
+            record_block(
+                db, key,
+                agent.retry_after if getattr(agent, "retry_after", None) is not None else 3600,
+                reason=f"{role}: {agent.rate_limited} call(s) lost to the rate limit"
+                       + (f" during {run_id}" if run_id else ""),
+            )
+        elif int(getattr(agent, "calls", 0) or 0) > int(getattr(agent, "fallbacks", 0) or 0):
+            answered.add(key)
+    for key in answered - set(limited.values()):
+        clear_block(db, key)
+    return limited
+
+
 def blocked_for(db, provider: str) -> float:
-    """Seconds until `provider` is usable again. 0.0 when it is usable now.
+    """Seconds until `provider` (a quota key) is usable again; 0.0 when now.
 
     Reading this BEFORE making a call is the point: a treatment run that knows
     it is blocked exits without spending a request, which is what makes it safe
-    to schedule frequently.
+    to schedule frequently. A `provider/model` key is also blocked by an
+    old provider-wide row (see TREATMENT_PROVIDER).
     """
+    own = _remaining(db, provider)
+    if "/" in provider:
+        return max(own, _remaining(db, provider.split("/", 1)[0]))
+    return own
+
+
+def _remaining(db, provider: str) -> float:
     ensure_schema(db)
     db.row_factory = sqlite3.Row
     row = db.execute(

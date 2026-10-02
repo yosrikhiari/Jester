@@ -154,13 +154,18 @@ class _Critic:
         return {"message": {"content": self.reply}}
 
 
+#: Where the default profile's critic files its quota block (plan D9).
+CRITIC_KEY = "groq/openai/gpt-oss-120b"
+
+
 def _with_critic(monkeypatch, reply):
     import jester.cli as cli
     from jester.llm import GroqCriticLLM
+    from jester.roles import resolve_role
 
     transport = _Critic(reply)
-    monkeypatch.setattr(cli, "select_critic_llm",
-                        lambda cfg: GroqCriticLLM(client=transport))
+    monkeypatch.setattr(cli, "select_critic_llm", lambda cfg: GroqCriticLLM(
+        client=transport, settings=resolve_role(cfg, "critic")))
     return transport
 
 
@@ -179,12 +184,14 @@ def test_pending_rescores_the_marked_ideas(archive, monkeypatch):
     assert row["critic_model"] == "openai/gpt-oss-120b"
 
 
-def test_pending_honours_a_recorded_quota_block(archive, monkeypatch):
+@pytest.mark.parametrize("key", [CRITIC_KEY, "groq"])
+def test_pending_honours_a_recorded_quota_block(archive, monkeypatch, key):
+    """The critic's own model block, and an old provider-wide "groq" row."""
     from jester import llm_quota
 
     path, db, _ids = archive
     cmd_rescore(_args(path, apply=True))
-    llm_quota.record_block(open_db(path), llm_quota.TREATMENT_PROVIDER, 3600, "test")
+    llm_quota.record_block(open_db(path), key, 3600, "test")
     transport = _with_critic(monkeypatch, "{}")
 
     res = cmd_rescore(_args(path, standin=False, pending=True))
@@ -201,4 +208,7 @@ def test_pending_records_a_block_when_the_quota_runs_out(archive, monkeypatch):
 
     res = cmd_rescore(_args(path, standin=False, pending=True))
     assert res["stopped_on_quota"] and transport.calls == 1
-    assert llm_quota.blocked_for(open_db(path), llm_quota.TREATMENT_PROVIDER) > 1700
+    db = open_db(path)
+    assert llm_quota.blocked_for(db, CRITIC_KEY) > 1700
+    assert llm_quota.blocked_for(db, "groq/openai/gpt-oss-20b") == 0.0, (
+        "another model of the same provider is not blocked")
