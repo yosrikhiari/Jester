@@ -1925,6 +1925,126 @@ def cmd_reembed(args):
         sys.exit(1)
 
 
+def cmd_rescore(args):
+    """Repair scores the critic did not really give, then score them for real.
+
+    --standin           Report ideas whose scores match the stand-in critic's
+                        formula. Read-only: the database is opened read-only
+                        and not migrated, so this is safe on the live archive.
+    --standin --apply   Back up and verify the archive, write an audit CSV of
+                        the values being removed, then clear them and mark the
+                        ideas needs_score in one transaction.
+    --pending           Re-score waiting ideas now with the configured critic,
+                        up to --limit, stopping at the first quota refusal.
+                        Without this, every run re-scores rescore_per_run.
+    """
+    if args.standin:
+        return _rescore_standin(args)
+    return _rescore_pending_now(args)
+
+
+def _rescore_standin(args):
+    import sqlite3
+
+    from jester.agents.critic import find_standin_scored, mark_standin_scored
+
+    cfg = load_config(args.config)
+    gate = cfg.thresholds.good_idea_min
+    if not Path(args.db).is_file():
+        print(f"no database at {args.db}")
+        sys.exit(1)
+
+    ro = sqlite3.connect(f"file:{Path(args.db).as_posix()}?mode=ro", uri=True)
+    try:
+        rows = find_standin_scored(ro)
+        total = ro.execute("SELECT COUNT(*) FROM ideas").fetchone()[0]
+        # Shown so the match is judged, not trusted: the same two values
+        # without the exact demand formula are left alone.
+        near = ro.execute(
+            "SELECT COUNT(*) FROM ideas WHERE feasibility = 5.0 AND competition IS NULL "
+            "AND COALESCE(critic_model, '') != 'fake-critic'"
+        ).fetchone()[0] - len(rows)
+    finally:
+        ro.close()
+
+    good = sum(1 for r in rows if (r["overall"] or 0) >= gate)
+    print(f"{len(rows)} of {total} idea(s) carry the stand-in critic's scores "
+          f"(demand = 2 + nuggets, feasibility 5, competition unchecked)")
+    if rows:
+        by_model = {}
+        for r in rows:
+            by_model[r["critic_model"] or "(none)"] = by_model.get(r["critic_model"] or "(none)", 0) + 1
+        print(f"  {good} of them are at or above good_idea_min ({gate})")
+        print("  stamped as: " + ", ".join(f"{m} {n}" for m, n in sorted(by_model.items())))
+        print(f"  created {rows[0]['created_at'][:10]} .. {max(r['created_at'] for r in rows)[:10]}")
+        print("  first ids: " + ", ".join(str(r["id"]) for r in rows[:10])
+              + (" …" if len(rows) > 10 else ""))
+    print(f"  left alone: {near} idea(s) with feasibility 5 and no competition "
+          "but a demand the formula would not give")
+
+    if not args.apply:
+        if rows:
+            print("\nnothing was written — re-run with --apply to back up, "
+                  "record and clear them")
+        return {"ok": True, "found": len(rows), "applied": False}
+    if not rows:
+        return {"ok": True, "found": 0, "applied": False}
+
+    from jester.backup import backup_db, verify_backup
+
+    snap = backup_db(args.db)
+    check = verify_backup(snap["path"]) if snap.get("ok") else {"ok": False,
+                                                                 "error": snap.get("error")}
+    if not check["ok"]:
+        # No verified backup, no write. This changes rows nothing else can
+        # reconstruct except the audit file, and that is not reason enough.
+        print(f"refusing to write: backup failed ({check.get('error')})")
+        sys.exit(1)
+    print(f"\nbacked up to {snap['path']} (verified)")
+
+    db = open_db(args.db)
+    rows = find_standin_scored(db)  # again, on the migrated live connection
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    audit = Path(args.db).parent / "audit" / f"standin-scores-{stamp}.csv"
+    n = mark_standin_scored(db, rows, audit)
+    per_run = int(cfg.thresholds.rescore_per_run or 0)
+    print(f"marked {n} idea(s) needs_score; old values in {audit}")
+    print(f"  each run now re-scores {per_run} of them; "
+          "`jester rescore --pending --limit N` does more at once")
+    return {"ok": True, "found": n, "applied": True, "audit": str(audit),
+            "backup": snap["path"]}
+
+
+def _rescore_pending_now(args):
+    from jester import llm_quota
+    from jester.agents.critic import rescore_pending
+
+    cfg = load_config(args.config)
+    db = open_db(args.db)
+    critic_llm = select_critic_llm(cfg.thresholds)
+    uses_groq = provider_for(cfg.thresholds, "critic") == "groq"
+    # The same block treat honours: a quota known to be gone costs one read.
+    if uses_groq and not args.force:
+        waiting = llm_quota.blocked_for(db, llm_quota.TREATMENT_PROVIDER)
+        if waiting > 0:
+            print(f"groq quota exhausted for another {llm_quota.human(waiting)}; "
+                  "nothing re-scored (--force to try anyway)")
+            return {"ok": True, "scored": 0, "blocked": True}
+
+    res = rescore_pending(db, cfg.thresholds, critic_llm, int(args.limit))
+    print(f"re-scored {res['scored']} idea(s); {res['still_waiting']} still waiting")
+    for line in fallback_report(critic_llm):
+        print("degraded: " + line)
+    if res["stopped_on_quota"] and uses_groq:
+        stamp = llm_quota.record_block(
+            db, llm_quota.TREATMENT_PROVIDER,
+            critic_llm.retry_after if critic_llm.retry_after is not None else 3600,
+            reason="critic quota ran out during jester rescore --pending",
+        )
+        print(f"stopped: the critic's quota ran out; treat waits until {stamp}")
+    return {"ok": True, **res}
+
+
 def cmd_resynth(args):
     """D-16/R56 escape hatch: re-derive a NEW idea from an existing idea's
     evidence. Original idea untouched; nuggets not reassigned."""
@@ -3580,6 +3700,25 @@ def main(argv=None):
     rs_.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     rs_.add_argument("--id", type=int, required=True)
     rs_.set_defaults(func=cmd_resynth)
+
+    rsc = sub.add_parser(
+        "rescore",
+        help="find ideas scored by the stand-in critic, or re-score waiting ideas now",
+    )
+    rsc.add_argument("--db", default="data/jester.db")
+    rsc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    what = rsc.add_mutually_exclusive_group(required=True)
+    what.add_argument("--standin", action="store_true",
+                      help="report ideas whose scores match the stand-in critic's formula")
+    what.add_argument("--pending", action="store_true",
+                      help="re-score ideas marked needs_score now")
+    rsc.add_argument("--apply", action="store_true",
+                     help="with --standin: back up, record and clear them (default: report only)")
+    rsc.add_argument("--limit", type=int, default=50,
+                     help="with --pending: at most this many critic calls (default 50)")
+    rsc.add_argument("--force", action="store_true",
+                     help="with --pending: ignore a recorded quota block")
+    rsc.set_defaults(func=cmd_rescore)
 
     # Property commands (real-estate intelligence)
     pa = sub.add_parser(
