@@ -160,86 +160,6 @@ class FakeLLM:
         )
 
 
-class OllamaLLM:
-    """Real LLM via Ollama (§37.10). The transport is injectable so parsing,
-    validation, and fallback rules are testable without the ollama package;
-    the lazy import only happens when no client is provided."""
-
-    EXTRACT_SYSTEM = (
-        "You classify developer-pain comments. Reply with ONLY a JSON object: "
-        '{"category": <one of pain_point|feature_request|workaround|complaint|question>, '
-        '"insight": "<one-sentence distilled insight>"}.'
-    )
-
-    #: Seconds before one comment is abandoned. There was no timeout at all,
-    #: which did not matter while the extractor was the stub: it returned
-    #: instantly and never touched the network. With a real local model the
-    #: shape changes completely -- measured on this machine, a 500-char comment
-    #: takes ~15s and a 3,000-char one ~29s, and nothing bounds the tail. One
-    #: pathological comment then holds the whole run open forever, and a run
-    #: that never ends is worse than a comment that never gets extracted: the
-    #: next scheduled tick stands down behind it, so the pipeline stops.
-    #:
-    #: 180s is six times the measured worst case, so it fires on a stall
-    #: rather than on a slow-but-working generation.
-    TIMEOUT_S = 180.0
-
-    def __init__(self, model: str = "claude-sonnet-4-6", client=None,
-                 timeout: float = TIMEOUT_S):
-        self._model = model
-        self._client = client
-        self._timeout = timeout
-
-    @property
-    def name(self):
-        return self._model
-
-    def _ensure_client(self):
-        if self._client is None:
-            from ollama import Client  # lazy import: mock mode needs no package
-            self._client = Client(timeout=self._timeout)
-        return self._client
-
-    def _complete(self, system: str, user: str) -> str:
-        resp = self._ensure_client().chat(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return _chat_content(resp)
-
-    def extract(self, comment_body: str) -> NuggetDraft:
-        body = comment_body or ""
-        try:
-            raw = self._complete(self.EXTRACT_SYSTEM, body)
-        # Broad on purpose: transport error, timeout, model not pulled --
-        # from the run's point of view these are one situation, no answer
-        # for this comment.
-        except Exception:  # noqa: BLE001
-            # Deliberately the same answer as unparseable output below: hand
-            # back the stand-in. That is not a silent downgrade, because the
-            # stand-in stamps itself `fake-llm`, and cmd_run refuses to archive
-            # a fake-stamped nugget when a real extractor was configured -- it
-            # counts the batch as degraded and leaves it queued for the next
-            # run. So a timeout costs one comment's place in this run and
-            # nothing in the archive, which is the whole point of having the
-            # guard. Raising here would instead end the run and lose every
-            # extraction done before it.
-            return FakeLLM().extract(body)
-        obj = _parse_json_object(raw)
-        if obj is not None:
-            insight = str(obj.get("insight") or body.strip()[:200])
-            category = obj.get("category")
-            if category not in ALLOWED_CATEGORIES:
-                category = "pain_point"  # mirror extractor.extract's coercion rule
-            return NuggetDraft(
-                extracted_insight=insight, category=category, model=self._model
-            )
-        return FakeLLM().extract(body)  # deterministic fallback: dead model != dead run
-
-
 @dataclass
 class IdeaDraft:
     """Structured synthesis output from the synthesizer LLM."""
@@ -247,6 +167,9 @@ class IdeaDraft:
     title: str
     problem_statement: str
     proposed_solution: str
+    #: WHO wrote it: the model's name, or "fake-synth" for the stand-in. The
+    #: same stamp NuggetDraft and CriticDraft carry.
+    model: str = ""
 
 
 @runtime_checkable
@@ -271,58 +194,8 @@ class FakeSynthesizerLLM:
             proposed_solution=(
                 "Build a focused tool that addresses: " + joined[:200]
             ),
+            model=self.name,
         )
-
-
-class OllamaSynthesizerLLM:
-    """Live synthesizer (§37.10). Falls back to the Fake behavior on malformed
-    output so a bad model response never kills a nightly run."""
-
-    SYNTH_SYSTEM = (
-        "You frame product ideas from clustered user-pain nuggets. Reply with ONLY "
-        "a JSON object: {\"title\": str, \"problem_statement\": str, "
-        "\"proposed_solution\": str}."
-    )
-
-    def __init__(self, model: str = "claude-opus-4-7", client=None):
-        self._model = model
-        self._client = client
-
-    def _complete(self, system: str, user: str) -> str:
-        resp = self._ensure_client().chat(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return _chat_content(resp)
-
-    @property
-    def name(self):
-        return self._model
-
-    def _ensure_client(self):
-        if self._client is None:
-            from ollama import Client
-            self._client = Client()
-        return self._client
-
-    def synthesize(self, nuggets: List[Nugget]) -> IdeaDraft:
-        corpus = "\n".join(
-            f"{i + 1}. [{n.platform}] {n.extracted_insight}" for i, n in enumerate(nuggets)
-        )
-        obj = _parse_json_object(self._complete(self.SYNTH_SYSTEM, corpus))
-        if obj is not None and all(
-            isinstance(obj.get(k), str) and obj.get(k)
-            for k in ("title", "problem_statement", "proposed_solution")
-        ):
-            return IdeaDraft(
-                title=obj["title"],
-                problem_statement=obj["problem_statement"],
-                proposed_solution=obj["proposed_solution"],
-            )
-        return FakeSynthesizerLLM().synthesize(nuggets)
 
 
 @dataclass
@@ -369,32 +242,124 @@ class FakeCriticLLM:
                            model=self.name)
 
 
-class OllamaCriticLLM:
-    """Live critic (§37.10). Clamps subscores to the 1-10 rubric; competition is
-    None unless the model explicitly supplies a number (R29: never fabricate).
-    Falls back to the Fake behavior on malformed output."""
+def _clamp_1_10(value) -> Optional[float]:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(10.0, max(1.0, f))
 
-    CRITIC_SYSTEM = (
-        "You score product ideas. Reply with ONLY a JSON object: "
-        '{"demand_signal": <1-10>, "feasibility": <1-10>'
-        ', "competition": <1-10 or null if you did not check>}.'
-    )
 
-    def __init__(self, model: str = "claude-opus-4-7", client=None):
+# ── live agents ─────────────────────────────────────────────────────────────
+# Every live agent, whichever provider serves it, follows one failure rule:
+# the call is bounded by a timeout, any error or unusable reply is COUNTED and
+# its reason kept, and the deterministic stand-in answers under its own name.
+#
+# That rule used to live only in the Groq agents. The Ollama twins were written
+# before it and had none of it: no counter (so the synthesizer's "never archive
+# a stand-in" check could not fire for them), no `try` (an Ollama error ended
+# the whole run), and no timeout (a stalled generation held the run open). A
+# job's prompt and parsing now live in a role mixin, written once; the two
+# providers differ only in how they make one call.
+
+
+def _describe(exc) -> str:
+    """`TimeoutError: read timed out` — the type matters as much as the text."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+class _Agent:
+    """Failure accounting shared by every live agent."""
+
+    #: Seconds before one call is abandoned. Subclasses set their own.
+    TIMEOUT_S = 180.0
+
+    def __init__(self, model, client=None, timeout=None):
         self._model = model
         self._client = client
+        self._timeout = self.TIMEOUT_S if timeout is None else timeout
+        #: Set when a call fell back to the deterministic stand-in, so a caller
+        #: can tell "the model wrote this" from "the model was unreachable".
+        self.last_error = None
+        #: How many calls fell back, and why. A failure degrades quality
+        #: without failing anything, which is exactly the silent degradation
+        #: the run summary exists to catch — `cmd_run` reports this.
+        self.fallbacks = 0
+        self.fallback_reasons = []
+        #: Calls lost specifically to an exhausted rate limit, and the longest
+        #: reset the server reported. A caller reads these to decide whether to
+        #: STOP — see GroqRateLimited on why a quota exhaustion must not be
+        #: treated as an ordinary fallback. Always 0 for a provider with no
+        #: quota (Ollama).
+        self.rate_limited = 0
+        self.retry_after = None
 
     @property
     def name(self):
         return self._model
 
+    def _complete(self, system, user, temperature):
+        raise NotImplementedError
+
+    def _obj(self, system, user, temperature=0.4):
+        """The parsed reply object, or None having recorded why.
+
+        Broad on purpose: transport error, timeout, model not pulled, a 5xx —
+        from the run's point of view these are one situation, no answer for
+        this call. A rate-limit exhaustion is recorded on `rate_limited` as
+        well, because the caller must be able to tell "one call failed, we
+        substituted" from "the quota is gone and everything after this is a
+        substitution". The second is a run that should not continue.
+        """
+        self.last_error = None
+        try:
+            raw = self._complete(system, user, temperature)
+        except GroqRateLimited as exc:
+            self.rate_limited += 1
+            # Keep the LONGEST reset seen: several agents share one key, and
+            # the caller should wait out the worst of them, not the first.
+            if exc.retry_after is not None:
+                self.retry_after = max(self.retry_after or 0.0, float(exc.retry_after))
+            self._note_fallback(str(exc))
+            return None
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            self._note_fallback(_describe(exc))
+            return None
+        obj = _parse_json_object(raw)
+        if obj is None:
+            self._note_fallback("malformed reply (not a JSON object)")
+        return obj
+
+    def _reject(self, reason):
+        """A reply that parsed but failed the role's output check."""
+        self._note_fallback(reason)
+        return None
+
+    def _note_fallback(self, reason):
+        self.last_error = reason
+        self.fallbacks += 1
+        # Keep a bounded sample: 400 identical rate-limit lines say no more
+        # than the first one, and the run summary has to stay readable.
+        if reason not in self.fallback_reasons and len(self.fallback_reasons) < 5:
+            self.fallback_reasons.append(reason)
+
+
+class _OllamaAgent(_Agent):
+    """One call to a local Ollama model.
+
+    Temperature is accepted and NOT sent: Ollama roles have always run on the
+    model's own sampling settings, and this refactor changes no default. The
+    roles block (plan step S4) makes it a setting.
+    """
+
     def _ensure_client(self):
         if self._client is None:
-            from ollama import Client
-            self._client = Client()
+            from ollama import Client  # lazy import: mock mode needs no package
+            self._client = Client(timeout=self._timeout)
         return self._client
 
-    def _complete(self, system: str, user: str) -> str:
+    def _complete(self, system, user, temperature=None):
         resp = self._ensure_client().chat(
             model=self._model,
             messages=[
@@ -404,30 +369,141 @@ class OllamaCriticLLM:
         )
         return _chat_content(resp)
 
+
+class _ExtractorRole:
+    EXTRACT_SYSTEM = (
+        "You classify developer-pain comments. Reply with ONLY a JSON object: "
+        '{"category": <one of pain_point|feature_request|workaround|complaint|question>, '
+        '"insight": "<one-sentence distilled insight>"}.'
+    )
+
+    def extract(self, comment_body: str) -> NuggetDraft:
+        body = comment_body or ""
+        obj = self._obj(self.EXTRACT_SYSTEM, body, temperature=0.2)
+        if obj is not None:
+            insight = str(obj.get("insight") or body.strip()[:200])
+            category = obj.get("category")
+            if category not in ALLOWED_CATEGORIES:
+                category = "pain_point"  # mirror extractor.extract's coercion rule
+            return NuggetDraft(
+                extracted_insight=insight, category=category, model=self._model
+            )
+        # The stand-in names itself, so the row records what actually ran, and
+        # cmd_run refuses to archive a fake-stamped nugget when a real
+        # extractor was configured: the batch stays queued for the next run.
+        return FakeLLM().extract(body)
+
+
+#: The opening the stand-in synthesizer gives every solution. A model reply
+#: that opens with it is restating the problem, not proposing anything.
+_STANDIN_SOLUTION = "build a focused tool that addresses"
+
+
+class _SynthesizerRole:
+    SYNTH_SYSTEM = ""  # set per provider class
+
+    def synthesize(self, nuggets: List[Nugget]) -> IdeaDraft:
+        corpus = "\n".join(
+            "%d. [%s] %s" % (i + 1, n.platform, n.extracted_insight)
+            for i, n in enumerate(nuggets)
+        )
+        obj = self._obj(self.SYNTH_SYSTEM, corpus)
+        if obj is not None:
+            fields = {k: obj.get(k) for k in ("title", "problem_statement", "proposed_solution")}
+            if not all(isinstance(v, str) and v.strip() for v in fields.values()):
+                self._reject("reply is missing title, problem_statement or proposed_solution")
+            elif self._restates(fields["problem_statement"], fields["proposed_solution"]):
+                self._reject("proposed_solution restates the problem instead of proposing")
+            else:
+                return IdeaDraft(
+                    title=fields["title"].strip(),
+                    problem_statement=fields["problem_statement"].strip(),
+                    proposed_solution=fields["proposed_solution"].strip(),
+                    model=self._model,
+                )
+        return FakeSynthesizerLLM().synthesize(nuggets)
+
+    @staticmethod
+    def _restates(problem: str, solution: str) -> bool:
+        """The output check (SPADE-style, one assertion): the failure the
+        synthesizer prompt exists to prevent, caught when it happens anyway."""
+        s = solution.strip().lower()
+        return s.startswith(_STANDIN_SOLUTION) or s == problem.strip().lower()
+
+
+class _CriticRole:
+    CRITIC_SYSTEM = (
+        "You score product ideas. Reply with ONLY a JSON object: "
+        '{"demand_signal": <1-10>, "feasibility": <1-10>'
+        ', "competition": <1-10 or null if you did not check>}.'
+    )
+
     def score(self, idea: Idea) -> CriticDraft:
         payload = json.dumps({
             "title": idea.title,
             "supporting_nuggets": len(idea.supporting_nuggets),
             "problem_statement": idea.problem_statement,
         })
-        obj = _parse_json_object(self._complete(self.CRITIC_SYSTEM, payload))
+        obj = self._obj(self.CRITIC_SYSTEM, payload, temperature=0.2)
         if obj is not None:
             demand = _clamp_1_10(obj.get("demand_signal"))
             feasibility = _clamp_1_10(obj.get("feasibility"))
-            if demand is not None and feasibility is not None:
+            if demand is None or feasibility is None:
+                self._reject("reply has no usable demand_signal / feasibility")
+            else:
                 raw_comp = obj.get("competition")
+                # R29: competition stays None unless the model supplied a number.
                 comp = None if raw_comp in (None, "", "unchecked") else _clamp_1_10(raw_comp)
-                return CriticDraft(demand_signal=demand, feasibility=feasibility, competition=comp,
-                                   model=self._model)
+                return CriticDraft(demand_signal=demand, feasibility=feasibility,
+                                   competition=comp, model=self._model)
         return FakeCriticLLM().score(idea)
 
 
-def _clamp_1_10(value) -> Optional[float]:
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return min(10.0, max(1.0, f))
+class OllamaLLM(_ExtractorRole, _OllamaAgent):
+    """Live extractor via Ollama (§37.10)."""
+
+    #: Seconds before one comment is abandoned. There was no timeout at all,
+    #: which did not matter while the extractor was the stub: it returned
+    #: instantly and never touched the network. With a real local model the
+    #: shape changes completely -- measured on this machine, a 500-char comment
+    #: takes ~15s and a 3,000-char one ~29s, and nothing bounds the tail. One
+    #: pathological comment then holds the whole run open forever, and a run
+    #: that never ends is worse than a comment that never gets extracted: the
+    #: next scheduled tick stands down behind it, so the pipeline stops.
+    #:
+    #: 180s is six times the measured worst case, so it fires on a stall
+    #: rather than on a slow-but-working generation.
+    TIMEOUT_S = 180.0
+
+    def __init__(self, model: str = "claude-sonnet-4-6", client=None,
+                 timeout: float = TIMEOUT_S):
+        super().__init__(model, client=client, timeout=timeout)
+
+
+class OllamaSynthesizerLLM(_SynthesizerRole, _OllamaAgent):
+    """Live synthesizer via Ollama (§37.10)."""
+
+    SYNTH_SYSTEM = (
+        "You frame product ideas from clustered user-pain nuggets. Reply with ONLY "
+        "a JSON object: {\"title\": str, \"problem_statement\": str, "
+        "\"proposed_solution\": str}."
+    )
+    #: Longer than the extractor's: the prompt is up to max_nuggets_per_idea
+    #: insights (~2k tokens) and the reply is three fields, not one line.
+    TIMEOUT_S = 300.0
+
+    def __init__(self, model: str = "claude-opus-4-7", client=None, timeout=None):
+        super().__init__(model, client=client, timeout=timeout)
+
+
+class OllamaCriticLLM(_CriticRole, _OllamaAgent):
+    """Live critic via Ollama (§37.10). Clamps subscores to the 1-10 rubric;
+    competition is None unless the model explicitly supplies a number (R29)."""
+
+    TIMEOUT_S = 180.0
+
+    def __init__(self, model: str = "claude-opus-4-7", client=None, timeout=None):
+        super().__init__(model, client=client, timeout=timeout)
 
 
 # ── Groq ────────────────────────────────────────────────────────────────────
@@ -671,36 +747,21 @@ class GroqClient:
         return ranked + extra
 
 
-class _GroqAgent:
-    """Shared plumbing: lazy client, one completion, JSON in / JSON out."""
+class _GroqAgent(_Agent):
+    """One call to Groq: lazy client, JSON in / JSON out."""
 
-    def __init__(self, model, client=None, api_key=None, base_url=None):
-        self._model = model
-        self._client = client
+    #: The transport's own default; it also retries 429s and 5xx inside this.
+    TIMEOUT_S = 60.0
+
+    def __init__(self, model, client=None, api_key=None, base_url=None, timeout=None):
+        super().__init__(model, client=client, timeout=timeout)
         self._api_key = api_key
         self._base_url = base_url
-        #: Set when a call fell back to the deterministic stand-in, so a caller
-        #: can tell "the model wrote this" from "the model was unreachable".
-        self.last_error = None
-        #: How many calls fell back, and why. A rate limit degrades quality
-        #: without failing anything, which is exactly the silent degradation
-        #: the run summary exists to catch — `cmd_run` reports this.
-        self.fallbacks = 0
-        self.fallback_reasons = []
-        #: Calls lost specifically to an exhausted rate limit, and the longest
-        #: reset the server reported. A caller reads these to decide whether to
-        #: STOP — see GroqRateLimited on why a quota exhaustion must not be
-        #: treated as an ordinary fallback.
-        self.rate_limited = 0
-        self.retry_after = None
-
-    @property
-    def name(self):
-        return self._model
 
     def _ensure_client(self):
         if self._client is None:
-            self._client = GroqClient(api_key=self._api_key, base_url=self._base_url)
+            self._client = GroqClient(api_key=self._api_key, base_url=self._base_url,
+                                      timeout=self._timeout)
         return self._client
 
     def _complete(self, system, user, temperature=0.4):
@@ -712,71 +773,19 @@ class _GroqAgent:
         )
         return _chat_content(resp)
 
-    def _obj(self, system, user, temperature=0.4):
-        """The parsed object, or None having recorded why on `last_error`.
 
-        A rate-limit exhaustion is recorded on `rate_limited` as well, because
-        the caller must be able to tell "one call failed, we substituted"
-        from "the quota is gone and everything after this is a substitution".
-        The second is not a degraded run, it is a run that should not have
-        continued.
-        """
-        self.last_error = None
-        try:
-            obj = _parse_json_object(self._complete(system, user, temperature))
-        except GroqRateLimited as exc:
-            self.rate_limited += 1
-            # Keep the LONGEST reset seen: several agents share one key, and
-            # the caller should wait out the worst of them, not the first.
-            if exc.retry_after is not None:
-                self.retry_after = max(self.retry_after or 0.0, float(exc.retry_after))
-            self._note_fallback(str(exc))
-            return None
-        except GroqError as exc:
-            self._note_fallback(str(exc))
-            return None
-        if obj is None:
-            self._note_fallback("malformed reply (not a JSON object)")
-        return obj
-
-    def _note_fallback(self, reason):
-        self.last_error = reason
-        self.fallbacks += 1
-        # Keep a bounded sample: 400 identical rate-limit lines say no more
-        # than the first one, and the run summary has to stay readable.
-        if reason not in self.fallback_reasons and len(self.fallback_reasons) < 5:
-            self.fallback_reasons.append(reason)
-
-
-class GroqLLM(_GroqAgent):
-    """Live extractor via Groq. Falls back to the deterministic stand-in on an
-    unreachable model or a malformed reply — a bad response never kills a run.
+class GroqLLM(_ExtractorRole, _GroqAgent):
+    """Live extractor via Groq.
 
     The default is the 20b model, not the 120b one: the extractor runs once per
     comment, so it is the only role where model choice is a throughput decision.
     """
 
-    EXTRACT_SYSTEM = OllamaLLM.EXTRACT_SYSTEM
-
     def __init__(self, model="openai/gpt-oss-20b", **kw):
         super().__init__(model, **kw)
 
-    def extract(self, comment_body: str) -> NuggetDraft:
-        body = comment_body or ""
-        obj = self._obj(self.EXTRACT_SYSTEM, body, temperature=0.2)
-        if obj is not None:
-            insight = str(obj.get("insight") or body.strip()[:200])
-            category = obj.get("category")
-            if category not in ALLOWED_CATEGORIES:
-                category = "pain_point"  # mirror extractor.extract's coercion rule
-            return NuggetDraft(
-                extracted_insight=insight, category=category, model=self._model
-            )
-        # The stand-in names itself, so the row records what actually ran.
-        return FakeLLM().extract(body)
 
-
-class GroqSynthesizerLLM(_GroqAgent):
+class GroqSynthesizerLLM(_SynthesizerRole, _GroqAgent):
     """Live synthesizer via Groq.
 
     The prompt is the whole point of this class. The deterministic stand-in
@@ -807,49 +816,13 @@ class GroqSynthesizerLLM(_GroqAgent):
     def __init__(self, model="openai/gpt-oss-120b", **kw):
         super().__init__(model, **kw)
 
-    def synthesize(self, nuggets: List[Nugget]) -> IdeaDraft:
-        corpus = "\n".join(
-            "%d. [%s] %s" % (i + 1, n.platform, n.extracted_insight)
-            for i, n in enumerate(nuggets)
-        )
-        obj = self._obj(self.SYNTH_SYSTEM, corpus)
-        if obj is not None and all(
-            isinstance(obj.get(k), str) and obj.get(k).strip()
-            for k in ("title", "problem_statement", "proposed_solution")
-        ):
-            return IdeaDraft(
-                title=obj["title"].strip(),
-                problem_statement=obj["problem_statement"].strip(),
-                proposed_solution=obj["proposed_solution"].strip(),
-            )
-        return FakeSynthesizerLLM().synthesize(nuggets)
 
-
-class GroqCriticLLM(_GroqAgent):
+class GroqCriticLLM(_CriticRole, _GroqAgent):
     """Live critic via Groq. Clamps subscores to the 1-10 rubric; competition
     stays None unless the model supplies a number (R29: never fabricate)."""
 
-    CRITIC_SYSTEM = OllamaCriticLLM.CRITIC_SYSTEM
-
     def __init__(self, model="openai/gpt-oss-120b", **kw):
         super().__init__(model, **kw)
-
-    def score(self, idea: Idea) -> CriticDraft:
-        payload = json.dumps({
-            "title": idea.title,
-            "supporting_nuggets": len(idea.supporting_nuggets),
-            "problem_statement": idea.problem_statement,
-        })
-        obj = self._obj(self.CRITIC_SYSTEM, payload, temperature=0.2)
-        if obj is not None:
-            demand = _clamp_1_10(obj.get("demand_signal"))
-            feasibility = _clamp_1_10(obj.get("feasibility"))
-            if demand is not None and feasibility is not None:
-                raw_comp = obj.get("competition")
-                comp = None if raw_comp in (None, "", "unchecked") else _clamp_1_10(raw_comp)
-                return CriticDraft(demand_signal=demand, feasibility=feasibility,
-                                   competition=comp, model=self._model)
-        return FakeCriticLLM().score(idea)
 
 
 # ── model provenance ────────────────────────────────────────────────────────

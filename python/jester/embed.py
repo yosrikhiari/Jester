@@ -42,9 +42,17 @@ class OllamaEmbedding:
 
     dim: int = 768
 
-    def __init__(self, model: str = "nomic-embed-text", client=None):
+    #: Seconds before one embed call is abandoned. Generous on purpose: a
+    #: `reembed` hands over whole batches, and a slow batch is not a stall.
+    #: The point is only that the bound is finite; there was none. A timeout
+    #: raises like any other embed failure, which the archivist already turns
+    #: into "defer this batch" rather than a dead run.
+    TIMEOUT_S = 600.0
+
+    def __init__(self, model: str = "nomic-embed-text", client=None, timeout=None):
         self._model = model
         self._client = client
+        self._timeout = self.TIMEOUT_S if timeout is None else timeout
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         resp = self._ensure_client().embed(model=self._model, input=list(texts))
@@ -53,7 +61,7 @@ class OllamaEmbedding:
     def _ensure_client(self):
         if self._client is None:
             from ollama import Client  # lazy import
-            self._client = Client()
+            self._client = Client(timeout=self._timeout)
         return self._client
 
 
