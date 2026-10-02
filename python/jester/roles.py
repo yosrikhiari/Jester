@@ -346,5 +346,17 @@ def resolve_role(cfg, role, env=None) -> RoleSettings:
     )
 
 
+def embedding_model_of(cfg) -> str:
+    """The embedding model every reader must agree on: the client that makes
+    vectors, the archivist's same-model guard (R32), and the cluster record.
+    Before roles existed they all read `embedding_model`; now a `roles:`
+    block can set it, and one of them reading the old key would compare
+    vectors from one model against a corpus tagged with another."""
+    try:
+        return resolve_role(cfg, "embedding").model or getattr(cfg, "embedding_model", "")
+    except RoleError:
+        return getattr(cfg, "embedding_model", "")
+
+
 def resolve_all(cfg, env=None) -> dict:
     return {role: resolve_role(cfg, role, env) for role in ROLES}

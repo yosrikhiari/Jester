@@ -660,7 +660,9 @@ def cluster_archive(
     label_clusters(clusters, labeller or select_labeller(cfg))
 
     by_key = rows_by_key(rows)
-    model = getattr(cfg, "embedding_model", "") if not fake else "fake (hash)"
+    from jester.roles import embedding_model_of
+
+    model = embedding_model_of(cfg) if not fake else "fake (hash)"
     payloads = []
     for c in clusters:
         stats = cluster_stats(c, by_key)

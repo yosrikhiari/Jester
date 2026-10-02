@@ -31,13 +31,16 @@ class Archivist:
         self.deferred = []
 
     def run(self, nuggets: List[Nugget]) -> List[Nugget]:
+        from jester.roles import embedding_model_of
+
+        configured = embedding_model_of(self.config)
         corpus = meta_get(self.db, "corpus_embedding_model")
-        if corpus is not None and corpus != self.config.embedding_model:
+        if corpus is not None and corpus != configured:
             raise ModelMismatch(
-                f"corpus embedded with {corpus!r}, config requires {self.config.embedding_model!r}"
+                f"corpus embedded with {corpus!r}, config requires {configured!r}"
             )
         if corpus is None:
-            meta_set(self.db, "corpus_embedding_model", self.config.embedding_model)
+            meta_set(self.db, "corpus_embedding_model", configured)
 
         self.near_misses = []
         self.deferred = []

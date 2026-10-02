@@ -40,22 +40,42 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 | Layer | Stack | Role |
 |-------|-------|------|
 | **Ingestion** | Go, CloakBrowser (stealth Chromium) | Scrapes via documented APIs or a headless browser; deposits raw comments into a SQLite handoff queue |
-| **Processing** | Python, Ollama / Groq | Specialised agents — extractor, synthesizer, critic, labeller, archivist — each with its own provider, model and thresholds |
+| **Processing** | Python, Ollama / Groq / any OpenAI-compatible server | Five model jobs (extractor, synthesizer, critic, labeller, embedding), each with its own provider, model and generation settings in one `roles:` block |
 | **Storage** | SQLite, Qdrant, ClickHouse | SQLite for pipeline state; Qdrant for semantic dedup (0.87 cosine) and cluster search; ClickHouse for the queryable problem-signal archive |
 | **Console** | Python stdlib HTTP, vanilla JS | The operator UI at `:8619` — no build step, ships inside the Python package |
 | **Orchestration** | Docker Compose | One command for the stack; profiles add the scraping browser, local models and the archive |
 
-## LLM Agent Chain
+## Model jobs
 
-Each agent is independently configurable (provider, model, temperature, token budget):
+Five jobs call a model. Each one is set separately in the `roles:` block of `thresholds.yaml`:
 
-1. **Extractor** — pulls structured pain points out of raw forum comments
-2. **Synthesizer** — clusters related pain points and proposes product ideas
-3. **Critic** — scores and challenges each idea on demand, feasibility and competition
-4. **Labeller** — categorises and tags for console filtering
-5. **Archivist** — deduplicates against the existing corpus by vector similarity
+1. **Extractor**: turns one comment into a nugget (a pain point and its category). One call per comment.
+2. **Synthesizer**: turns a thread's nuggets into one product idea (problem and proposed solution). One call per thread chunk.
+3. **Critic**: scores each idea 1 to 10 on demand, feasibility and competition. One call per idea, plus re-scores.
+4. **Labeller**: names each group of similar comments in `jester cluster`. Follows the synthesizer unless set on its own.
+5. **Embedding**: turns text into vectors for duplicate detection and search (Ollama or the offline stand-in).
 
-Providers: **Ollama** (fully offline) and **Groq** (cloud, OpenAI-compatible).
+The archivist files nuggets and refuses to mix vectors from two embedding models; it calls no chat model.
+
+Per job you can set the provider, the model, `temperature`, `top_p`, `top_k`, `presence_penalty`, `seed`, `think` (qwen3 thinking, or gpt-oss reasoning effort), `json_mode`, `num_ctx`, `keep_alive`, `timeout_s` and `max_retries`. Providers are **Ollama** (local), **Groq** (hosted, free tier) and any **OpenAI-compatible server** declared under `providers:` (a local LM Studio or llama.cpp server, or the AgentOps gateway).
+
+```yaml
+roles:
+  critic:
+    provider: groq
+    model: openai/gpt-oss-120b
+    temperature: 0.2
+providers:
+  agentops:
+    kind: openai
+    base_url: http://localhost:8080/v1
+```
+
+- `jester models` prints what each job resolves to and which line set every value; `jester models --diff config-live` compares two profiles.
+- `--role critic=ollama:qwen3:8b` on `run`, `treat`, `cycle`, `cluster`, `resynth` or `rescore` overrides one job for one run.
+- The console's **Agent models** card edits the same block and has a **test** button that makes one real call per job.
+- When a model does not answer, its job falls back to a deterministic stand-in that signs its output with its own name, and nothing it wrote is archived as real: a nugget stays queued, an idea is saved unscored (`needs_score`) and re-scored later.
+- Groq quota blocks are kept per model, so one model running out pauses only the jobs that use it.
 
 ## Problem signals — a second, deterministic pipeline
 
@@ -182,7 +202,7 @@ Set provider keys in `.env` (documented in `.env.example`).
 All tuning lives in `config/`:
 
 - **`sources.yaml`** — the 130 sources: 44 Discourse forums, 33 subreddits, 16 real-estate portals, 10 GitHub repos, 8 Lemmy communities, 6 Stack Exchange sites, 6 podcasts, 3 Hacker News feeds, 3 Steam apps, 1 YouTube channel
-- **`thresholds.yaml`** — per-agent provider/model, scraping depth per platform, dedup cosine threshold, prefilter rules
+- **`thresholds.yaml`** — the model jobs (`roles:` and `providers:`, see [Model jobs](#model-jobs)), scraping depth per platform, dedup cosine threshold, prefilter rules
 - **`scraper.yaml`** — browser stealth settings, request delays, proxy configuration
 - **`signal_rules.yaml`** — the problem-signal rule set: scope, search phrases, scoring families and thresholds
 
@@ -192,7 +212,7 @@ All tuning lives in `config/`:
 .
 ├── python/              # Pipeline, CLI, agents, console server
 │   └── jester/
-│       ├── agents/      # Extractor, synthesizer, critic, labeller, archivist
+│       ├── agents/      # Extractor, synthesizer, critic, labeller, archivist (dedup)
 │       ├── console/     # Operator console: API + the static UI it serves
 │       ├── signals/     # Problem-signal collector, rules, ClickHouse, digest
 │       ├── journal/     # Research -> experiment -> article, with gated states
