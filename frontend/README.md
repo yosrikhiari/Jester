@@ -1,32 +1,21 @@
-# React + TypeScript + Vite
+# frontend/ — React + TypeScript + Vite scaffold (F-10)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+**Status: scaffold, not the shipped UI.** The operator console that ships
+with Jester is served by Python at `:8619` from
+`python/jester/console/static/` (vanilla JS, no build step, travels with the
+package). This directory is a Vite + React 19 shell kept for a future port:
+tokens + base CSS are live, the App shell is a placeholder, and components
+port from `inspiration/design-system-revision/`.
 
-Currently, two official plugins are available:
+**Commands** (Node 24; `npm ci --ignore-scripts` per the Dockerfile):
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm run dev      # :5173 with hot reload
+npm run lint     # oxlint (react + typescript rules, hooks as errors)
+npm run build    # tsc -b && vite build — CI runs lint + build on every push
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+**Promotion criteria** (when this stops being a scaffold): real routes that
+mirror the console's `/api/*` surface, `vitest` + Testing Library coverage
+for them, and the dead-code rule — no stylesheet may ship selectors its own
+`tsx` does not use (that is what F-10 pruned from `src/App.css`).
