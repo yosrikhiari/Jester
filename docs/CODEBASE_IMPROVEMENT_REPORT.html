@@ -24,7 +24,8 @@ table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; d
 th,td { border:1px solid var(--border); padding:.5rem .6rem; text-align:left; vertical-align:top; overflow-wrap: break-word; }
 th { background:var(--code); }
 code { background:var(--code); padding:.1rem .35rem; border-radius:4px; font-size:.88em; overflow-wrap: break-word; }
-pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; } pre code { background:none; padding:0; }
+pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; }
+pre code { background:none; padding:0; }
 .mermaid { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:1rem 0; overflow-x:auto; }
 .meta { color:var(--muted); font-size:.9rem; }
 .skip { position:absolute; left:-9999px; top:0; background:var(--focus); color:#fff; padding:.5rem 1rem; z-index:100; border-radius:0 0 6px 0; }
@@ -35,7 +36,7 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<p class="meta">Jester — Codebase Analysis, Optimization &amp; Improvement Report · 2026-10-14 · Branch impl/report-fixes · <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
+<p class="meta">Jester — Codebase Analysis, Optimization &amp; Improvement Report · 2026-10-14 · Branch fix/sonar-js-promises · <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
 <main id="main">
 <h1 id="jester-codebase-analysis-optimization-improvement-report">Jester — Codebase Analysis, Optimization &amp; Improvement Report</h1>
 <p><strong>Date:</strong> 2026-10-14 · <strong>Commit audited:</strong> <code>7aef02c</code> · <strong>Scope:</strong> repo-wide audit, no production code changed
@@ -695,8 +696,8 @@ go version; Get-Item go/*.exe | Select-Object Name, Length
 </ol>
 <hr />
 <h2 id="appendix-c-implementation-status-branch-implreport-fixes-2026-10-14">Appendix C — Implementation status (branch <code>impl/report-fixes</code>, 2026-10-14)</h2>
-<p>All 12 findings implemented in roadmap order. Nothing committed; review the
-diff on <code>impl/report-fixes</code> vs <code>main</code>.</p>
+<p>All 12 findings implemented in roadmap order (see Appendix E for what happened
+next: review, merges, and gate fixes). Original branch: <code>impl/report-fixes</code>.</p>
 <table>
 <thead>
 <tr>
@@ -816,6 +817,77 @@ offline treat defer. <code>load_env</code> now uses presence (<code>key not in o
 matching its documented "existing env wins" rule; pinned by
 <code>test_explicitly_emptied_key_is_not_backfilled</code>. Without this fix the journeys
 above cannot archive a single nugget on any machine whose <code>.env</code> sets the URL.</p>
+<hr />
+<h2 id="appendix-e-what-was-done-and-what-is-left-2026-10-14-living-section">Appendix E — What was done and what is left (2026-10-14, living section)</h2>
+<h3 id="done-since-the-audit">Done since the audit</h3>
+<table>
+<thead>
+<tr>
+<th>When (UTC)</th>
+<th>What</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>11:01</td>
+<td>12 sliced commits pushed as <code>impl/report-fixes</code> (F-01…F-12 in roadmap order, minimal diffs); PR #54 opened, CI + gate green except below</td>
+<td>PR #54</td>
+</tr>
+<tr>
+<td>11:32</td>
+<td>PR #54 <strong>merged</strong> to <code>main</code></td>
+<td>merge commit <code>96935ff</code></td>
+</tr>
+<tr>
+<td>11:3x</td>
+<td>Gate failed on #54: coverage 79.8% (&lt; 80) + S2068 hardcoded dev password in <code>clickhouse.py</code></td>
+<td>SonarCloud PR check</td>
+</tr>
+<tr>
+<td>11:3x–12:18</td>
+<td>Fixed in code (not excluded): guard now refuses <em>unconfigured</em> passwords on remote hosts instead of comparing against a literal; ~30 behavioral tests closed the coverage gap (review commands, batch paths, reembed fallbacks, signals views, batch edge cases, Go WAL test)</td>
+<td>PR #65, new coverage 100%, security A</td>
+</tr>
+<tr>
+<td>12:18</td>
+<td>PR #65 <strong>merged</strong></td>
+<td>merge commit <code>ad47043</code></td>
+</tr>
+<tr>
+<td>12:33–12:42</td>
+<td>All 10 open Dependabot PRs merged (#55–#64: ollama 0.6.3, qdrant-client 1.19.1, pyyaml 6.0.3, pytest-cov 7.1.0, tzdata 2026.5, react 19.3.0, node-26 types, oxlint 1.87.0, plugin-react 6.1.2); 3 needed hand-resolved lock/pin merges, each validated (<code>npm ci</code> + lint + build) before merging</td>
+<td>main history</td>
+</tr>
+<tr>
+<td>12:42</td>
+<td>Full suite re-run in an isolated venv with the merged pins: <strong>1,555 passed, 0 failed</strong> (CI installs from the unchanged lockfile, so it never exercises the new pins — the venv closed that gap)</td>
+<td>local run</td>
+</tr>
+<tr>
+<td>12:4x</td>
+<td>Main-branch gate failed on <strong>reliability</strong> (C): 17 <code>S9383</code> floating promises in shipped <code>app.js</code>, all inside the 21-day new-code window</td>
+<td>SonarCloud main gate</td>
+</tr>
+<tr>
+<td>13:02</td>
+<td>Fixed with a <code>pin()</code> helper (logs rejections, no toast storms) applied at exactly the 17 sites; <code>node --check</code> clean</td>
+<td>PR #66 (this branch)</td>
+</tr>
+</tbody>
+</table>
+<p>Corrections to earlier sections: F-09's <code>.exe</code> files were never tracked (gitignored locals, §8 overstated it); the <code>rescore_per_run</code> registry gap pre-dated this work (registered alongside the new knob in <code>jester-setup.md</code> §4.3.1).</p>
+<h3 id="what-is-left-prioritized">What is left (prioritized)</h3>
+<ol>
+<li><strong>Merge PR #66</strong> — clears the main-branch reliability gate. Nothing else blocks it (CI + Sonar green).</li>
+<li><strong>Measure before promoting.</strong> <code>extractor_batch_size: 4</code> on a config copy + a real treat: compare token use and trivial-share against the legacy path (the eval gate in §8). The code is ready; only measurement promotes it from hypothesis to default.</li>
+<li><strong>Label ~200 dedup pairs</strong> from the real archive and run <code>jester dedup-sweep</code>. That decides whether 0.87 survives — the whole F-06 payoff.</li>
+<li><strong>Regenerate <code>pylock.toml</code> on Linux.</strong> The merged pip bumps (ollama, qdrant-client, …) only changed <code>requirements.txt</code>; Docker and CI still install the old lock, so the bumps are documentation until the lock regenerates.</li>
+<li><strong>Pre-existing JS debt (outside every gate window):</strong> ~33 more S9383 in <code>app.js</code>, the S2871 sort-without-compare, unlabeled inputs in the console HTML. The <code>pin()</code> pattern from #66 is the template; a JS test runner (F-10/F-12) is the real fix.</li>
+<li><strong>Slow-burn items from §8:</strong> image-digest pinning (Dependabot now tracks), non-root Python/Go images (<code>gosu</code> design), <code>/metrics</code> + OTel spans, per-category dedup thresholds.</li>
+<li><strong>Unchanged open questions from §11:</strong> TikTok adapter scoping, Reddit commercial-access decision, ToS counsel review before any scrape scale-up.</li>
+</ol>
+<p>Net position: every finding has landed behind a green gate; what remains is measurement, one merge, and previously known debt.</p>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
 <script>window.addEventListener("DOMContentLoaded", function () { if (window.mermaid) { mermaid.initialize({ startOnLoad: true, theme: "neutral" }); } });</script>
