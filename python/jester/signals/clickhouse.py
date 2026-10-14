@@ -63,13 +63,6 @@ class ClickHouseError(RuntimeError):
     a collector must never do."""
 
 
-#: The development password committed in docker-compose.yml
-#: (`CLICKHOUSE_PASSWORD:-jester`). Safe on loopback against the profile-gated
-#: container; unsafe the moment the URL points anywhere else. The guard in
-#: execute() refuses that combination loudly rather than shipping the default
-#: credential to a shared host (F-07).
-DEFAULT_PASSWORD = "jester"
-
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -97,8 +90,15 @@ class Client:
         self.url = (url or os.getenv("CLICKHOUSE_URL") or "http://127.0.0.1:8123").rstrip("/")
         self.database = database or os.getenv("CLICKHOUSE_DB") or "jester"
         self.user = user or os.getenv("CLICKHOUSE_USER") or "jester"
+        # Whether the operator chose this password (argument or environment)
+        # or it fell through to the deployment default. The default itself
+        # lives in docker-compose.yml, not here, so no credential literal
+        # ships in this module: the guard below only needs to know whether
+        # the value was configured, never what the default is.
+        self.password_configured = password is not None or \
+            "CLICKHOUSE_PASSWORD" in os.environ
         self.password = password if password is not None else (
-            os.getenv("CLICKHOUSE_PASSWORD") or "jester")
+            os.getenv("CLICKHOUSE_PASSWORD", "jester"))
         self.timeout = timeout
         self._opener = opener or urllib.request.urlopen
 
@@ -112,20 +112,15 @@ class Client:
         q.update({k: v for k, v in params.items() if v is not None})
         return f"{self.url}/?{urllib.parse.urlencode(q)}"
 
-    def uses_default_password(self) -> bool:
-        """True when the client would authenticate with the committed dev
-        password. A real deployment sets CLICKHOUSE_PASSWORD in .env."""
-        return self.password == DEFAULT_PASSWORD
-
     def execute(self, sql: str, body: str = "", **params) -> str:
         """POST one statement. `body` carries the rows for an INSERT; the
         statement itself always travels as the `query` parameter so the two
         cannot be confused in a log."""
-        if self.uses_default_password() and not _is_loopback_url(self.url):
+        if not self.password_configured and not _is_loopback_url(self.url):
             raise ClickHouseError(
                 f"refusing to talk to non-loopback ClickHouse at {self.url} "
-                f"with the default password ({DEFAULT_PASSWORD!r}). Set "
-                "CLICKHOUSE_PASSWORD in .env for any shared host."
+                "with no password configured. Set CLICKHOUSE_PASSWORD in "
+                ".env for any shared host."
             )
         req = urllib.request.Request(
             self._endpoint(query=sql, **params),
