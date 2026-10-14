@@ -63,6 +63,24 @@ class ClickHouseError(RuntimeError):
     a collector must never do."""
 
 
+#: The development password committed in docker-compose.yml
+#: (`CLICKHOUSE_PASSWORD:-jester`). Safe on loopback against the profile-gated
+#: container; unsafe the moment the URL points anywhere else. The guard in
+#: execute() refuses that combination loudly rather than shipping the default
+#: credential to a shared host (F-07).
+DEFAULT_PASSWORD = "jester"
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _is_loopback_url(url: str) -> bool:
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _LOOPBACK_HOSTS
+
+
 class Client:
     """A ClickHouse HTTP connection's worth of settings and two methods.
 
@@ -94,10 +112,21 @@ class Client:
         q.update({k: v for k, v in params.items() if v is not None})
         return f"{self.url}/?{urllib.parse.urlencode(q)}"
 
+    def uses_default_password(self) -> bool:
+        """True when the client would authenticate with the committed dev
+        password. A real deployment sets CLICKHOUSE_PASSWORD in .env."""
+        return self.password == DEFAULT_PASSWORD
+
     def execute(self, sql: str, body: str = "", **params) -> str:
         """POST one statement. `body` carries the rows for an INSERT; the
         statement itself always travels as the `query` parameter so the two
         cannot be confused in a log."""
+        if self.uses_default_password() and not _is_loopback_url(self.url):
+            raise ClickHouseError(
+                f"refusing to talk to non-loopback ClickHouse at {self.url} "
+                f"with the default password ({DEFAULT_PASSWORD!r}). Set "
+                "CLICKHOUSE_PASSWORD in .env for any shared host."
+            )
         req = urllib.request.Request(
             self._endpoint(query=sql, **params),
             data=(body or "").encode("utf-8"),
