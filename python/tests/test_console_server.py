@@ -224,3 +224,11 @@ def test_main_defaults_and_flags_reach_serve(monkeypatch):
     srv.main(["--port", "1234", "--host", "0.0.0.0", "--signals-db", "/tmp/other.db"])
     assert seen["port"] == 1234 and seen["host"] == "0.0.0.0"
     assert seen["signals_db"] == "/tmp/other.db"
+
+
+def test_every_request_leaves_one_stderr_line(console, capsys):
+    """F-11: the access log. Docker captures stderr, so a silent console is
+    an undebuggable one; one line per request names method, path, status."""
+    _get(console, "/api/config")
+    err = capsys.readouterr().err
+    assert "GET" in err and "/api/config" in err and "200" in err and "ms" in err

@@ -4,11 +4,15 @@ Serves the static operator UI at / and a JSON API under /api/*.
 Run: python -m jester.console --db data/jester.db [--config config] [--port 8619]
 """
 import argparse
+import hmac
 import json
 import mimetypes
 import os
 import re
+import sys
+import time
 import traceback
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
@@ -40,6 +44,31 @@ _STATIC_TYPES = {
 #: a whitelist rather than an escape: the id reaches a response body, so
 #: the safe move is to refuse anything unexpected, not to sanitise it.
 _THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
+
+
+#: Environment variable carrying the operator token. When set (non-empty),
+#: every mutating POST under /api/* must present it as
+#: `Authorization: Bearer <token>`. GETs stay open so a dashboard can poll
+#: without holding a secret; writes are what need the guard. Compared with
+#: hmac.compare_digest so the check itself does not leak the token bytewise.
+TOKEN_ENV = "JESTER_CONSOLE_TOKEN"
+
+
+def _console_token() -> str:
+    """The required bearer token, or "" when auth is disabled (local use)."""
+    return os.environ.get(TOKEN_ENV, "")
+
+
+def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
+    """True when no token is configured, or the request presents it."""
+    want = _console_token()
+    if not want:
+        return True
+    got = (handler.headers.get("Authorization") or "").strip()
+    scheme, _, credential = got.partition(" ")
+    if scheme.lower() != "bearer" or not credential:
+        return False
+    return hmac.compare_digest(credential.strip(), want)
 
 
 def _api(args):
@@ -106,6 +135,7 @@ class Handler(BaseHTTPRequestHandler):
     def _guard(self, route):
         """A route crash must answer with JSON, not drop the socket: the console
         is the only surface the operator has, and a dead fetch says nothing."""
+        self._t0 = time.time()
         try:
             route()
         except (BrokenPipeError, ConnectionResetError):
@@ -259,6 +289,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_post(self):
         path = self.path.split("?")[0]
+        # Server-level guards run before any body is parsed: a rejected write
+        # must not depend on the body being well-formed, and some ConsoleAPI
+        # methods predate the --read-only flag, so the layer that owns the
+        # socket enforces it for every POST rather than trusting each route.
+        if bool(getattr(self.args, "read_only", False)):
+            self._json({"ok": False, "error": "this console is read-only"}, 403)
+            return
+        if not _is_authorized(self):
+            self._json({"ok": False, "error": "missing or invalid console token"}, 401)
+            return
         try:
             body = self._read_json()
         except ValueError as exc:
@@ -383,12 +423,32 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("expected a JSON object")
         return parsed
 
-    def log_message(self, *a):  # quiet
-        pass
+    def log_message(self, *a):
+        """One stderr line per request (F-11): method, path, status, size,
+        wall time. Docker captures stderr, so this is the console's access
+        log; stdout stays for the startup line and deliberate prints."""
+        try:
+            dt_ms = (time.time() - getattr(self, "_t0", time.time())) * 1000.0
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            sys.stderr.write(f"{stamp} console {self.command} {self.path} "
+                             f"{a[0] % a[1:] if len(a) > 1 else (a[0] if a else '')} "
+                             f"{dt_ms:.0f}ms\n")
+        except Exception:  # noqa: BLE001 - logging must never break serving
+            pass
 
 
 def serve(args):
     Handler.args = args
+    if (str(getattr(args, "host", "")) == "0.0.0.0"
+            and not _console_token()
+            and not bool(getattr(args, "read_only", False))):
+        # Binding every interface with open writes is how a local-operator
+        # console becomes somebody else's scheduler. This stays a warning
+        # rather than a refusal so existing Docker setups keep booting; set
+        # JESTER_CONSOLE_TOKEN (or --read-only for viewing) to silence it.
+        print("jester console WARNING: listening on 0.0.0.0 with no "
+              f"{TOKEN_ENV} set — any host that can reach this port can run "
+              "pipeline mutations via POST /api/*.")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"jester console: http://{args.host}:{args.port}/  (db={args.db} config={args.config})")
     server.serve_forever()
