@@ -22,6 +22,43 @@ func TestSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestJournalModeEnvOptIn(t *testing.T) {
+	// F-02: DELETE by default (bind-mount safe), WAL when
+	// JESTER_SQLITE_JOURNAL_MODE says so — mirroring Python's store.
+	journalModeOf := func(t *testing.T, path string) string {
+		t.Helper()
+		st, err := Open(path)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer st.Close()
+		var mode string
+		if err := st.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+			t.Fatalf("pragma: %v", err)
+		}
+		return mode
+	}
+
+	if got := journalMode(); got != "DELETE" {
+		t.Fatalf("default journalMode=%q want DELETE", got)
+	}
+	if mode := journalModeOf(t, t.TempDir()+"/default.db"); mode != "delete" {
+		t.Fatalf("default file mode=%q want delete", mode)
+	}
+
+	t.Setenv("JESTER_SQLITE_JOURNAL_MODE", "wal")
+	if got := journalMode(); got != "WAL" {
+		t.Fatalf("opt-in journalMode=%q want WAL", got)
+	}
+	if mode := journalModeOf(t, t.TempDir()+"/wal.db"); mode != "wal" {
+		t.Fatalf("opt-in file mode=%q want wal", mode)
+	}
+
+	t.Setenv("JESTER_SQLITE_JOURNAL_MODE", "off")
+	if got := journalMode(); got != "DELETE" {
+		t.Fatalf("invalid journalMode=%q want DELETE fallback", got)
+	}
+}
 func TestEnqueueAndDedup(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {
