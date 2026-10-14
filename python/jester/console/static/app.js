@@ -3698,12 +3698,12 @@ $('#signals-facets').addEventListener('click', e => {
   const k = b.dataset.sfacet;
   SIG[k] = SIG[k] === b.dataset.value ? '' : b.dataset.value;
   SIG.offset = 0;
-  loadSignals();
+  pin(loadSignals());
 });
 function clearSignalFilters() {
   Object.assign(SIG, { audience: '', community: '', kind: '', mode: '', outcome: '', q: '', queue: '', offset: 0 });
   $('#signals-q').value = '';
-  loadSignals();
+  pin(loadSignals());
 }
 $('#signals-active').addEventListener('click', e => {
   const drop = e.target.closest('[data-sfacet-drop]');
