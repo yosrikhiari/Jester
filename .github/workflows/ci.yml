@@ -104,6 +104,16 @@ jobs:
         run: |
           python -m pytest python/tests -q             --cov=jester --cov-report=xml:coverage.xml --cov-report=term:skip-covered
 
+      # Advisory first: reports known vulnerabilities without turning the
+      # build red, so the first run establishes the baseline rather than
+      # blocking on it. Promote to a hard gate (remove continue-on-error)
+      # once the baseline is triaged (F-08).
+      - name: Dependency audit (advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install --quiet pip-audit
+          python -m pip_audit --desc || echo "::notice::pip-audit reported findings; see the log."
+
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-python
@@ -124,6 +134,19 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: go build ./...
       - run: go test ./... -coverprofile=coverage.out -covermode=count
+      # F-12: the cross-language contract test is gated on JESTER_CONTRACT_DB
+      # (a Python-created database), so the default `go test ./...` skips it.
+      # This step creates that database with the stdlib sqlite3 through the
+      # real open_db (migrations included) and runs the gated tests against
+      # it — the F-03 indexes and F-02 pragmas ship in that file, so this is
+      # also what proves the two sides still agree on the schema.
+      - name: Contract tests against a Python-created database
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: |
+          db="$RUNNER_TEMP/contract.db"
+          python3 -c "from jester.store import open_db; open_db('$db').close(); print('contract db ready')"
+          JESTER_CONTRACT_DB="$db" go test ./internal/store/ -run 'Contract|StoredComment' -v
       - name: Coverage, as a number a person can read
         run: go tool cover -func=coverage.out | tail -1
       - uses: actions/upload-artifact@v4
@@ -131,6 +154,25 @@ jobs:
           name: coverage-go
           path: go/coverage.out
           retention-days: 1
+
+  frontend:
+    # F-10: the scaffold builds and lints on every push, so template drift
+    # (dead CSS, stale README, broken tsc) fails here instead of rotting.
+    name: Frontend — lint and build the scaffold
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run build
 
   sonar:
     # NOT called "SonarCloud". SonarCloud's own automatic analysis posts a
