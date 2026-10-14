@@ -160,3 +160,32 @@ def test_live_role_rate_limit_stops_without_extra_calls():
     assert _LimitedClient.calls == 1
     assert llm.rate_limited == 1
     assert [d.model for d in drafts] == [FakeLLM.name, FakeLLM.name]
+
+
+def test_live_role_batch_bad_category_coerced_bad_item_retried():
+    """An item with a usable insight but unknown category is coerced (not
+    dropped); an item with no insight breaks the batch into per-item
+    retries through the same single path."""
+
+    class _ScriptedClient:
+        def __init__(self, script):
+            self._script = list(script)
+            self.calls = 0
+
+        def chat(self, **kw):
+            self.calls += 1
+            return {"message": {"content": self._script[self.calls - 1]}}
+
+    llm = OllamaLLM(model="test-model", client=_ScriptedClient([
+        json.dumps({"items": [
+            {"category": "not-a-category", "insight": "coerced insight"},
+            {"category": "pain_point", "insight": "   "}]}),
+        '{"category": "pain_point", "insight": "first again"}',
+        '{"category": "question", "insight": "second again"}',
+    ]))
+    drafts = llm.extract_batch(["first pain", "second pain"])
+    assert [(d.category, d.extracted_insight, d.model) for d in drafts] == [
+        ("pain_point", "first again", "test-model"),
+        ("question", "second again", "test-model"),
+    ]
+    assert llm.calls == 3 and llm.fallbacks == 1
