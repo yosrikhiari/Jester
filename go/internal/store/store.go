@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -213,6 +214,17 @@ type Store struct {
 	db *sql.DB
 }
 
+// journalMode mirrors Python's store._journal_mode: DELETE by default (safe
+// over the Windows bind-mounted volume), WAL when JESTER_SQLITE_JOURNAL_MODE
+// says so (local disk or the isolated Docker volume). Both sides must agree;
+// the variable is the agreement.
+func journalMode() string {
+	if strings.ToUpper(strings.TrimSpace(os.Getenv("JESTER_SQLITE_JOURNAL_MODE"))) == "WAL" {
+		return "WAL"
+	}
+	return "DELETE"
+}
+
 // Open opens (creating if needed) the SQLite db at path and ensures schema and
 // schema_version match config.SchemaVersion.
 func Open(path string) (*Store, error) {
@@ -220,15 +232,19 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Rollback journal (DELETE), not WAL — matches the Python side. The DB is
-	// shared with the Python pipeline across processes (sometimes containers)
-	// over a bind-mounted volume where WAL's -wal/-shm sidecars cannot be
-	// arbitrated reliably, surfacing as "unable to open database file". Forcing
-	// DELETE here keeps both sides on one mode and drops the sidecars entirely;
-	// busy_timeout absorbs brief writer locks.
+	// Rollback journal (DELETE) by default, not WAL — matches the Python side.
+	// The DB is shared with the Python pipeline across processes (sometimes
+	// containers) over a bind-mounted volume where WAL's -wal/-shm sidecars
+	// cannot be arbitrated reliably, surfacing as "unable to open database
+	// file". Forcing DELETE here keeps both sides on one mode and drops the
+	// sidecars entirely; busy_timeout absorbs brief writer locks.
+	//
+	// F-02: JESTER_SQLITE_JOURNAL_MODE=wal opts into WAL where the file lives
+	// on a local disk or the isolated Docker volume, and the timeout is now
+	// 15 s (was 5 s) so the queue claim rides out the worker's enqueue.
 	for _, pragma := range []string{
-		"PRAGMA journal_mode=DELETE",
-		"PRAGMA busy_timeout=5000",
+		"PRAGMA journal_mode=" + journalMode(),
+		"PRAGMA busy_timeout=15000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
