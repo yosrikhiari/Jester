@@ -19,7 +19,7 @@ pytest-cov>=7.1.0
 tzdata>=2024.1
 
 # Live Ollama backend (s37.16) - the installed SDK returns pydantic responses.
-ollama>=0.4
+ollama>=0.6.3
 
 # Groq needs no package: it is an OpenAI-compatible JSON POST served over
 # urllib from the standard library (see jester/llm.py). Put GROQ_API_KEY in
