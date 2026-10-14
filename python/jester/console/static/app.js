@@ -212,6 +212,15 @@ async function api(path, body) {
 }
 
 // ── toasts ──────────────────────────────────────────────────────────────
+// Fire-and-forget with a paper trail. api() itself never rejects, so a
+// rejection here is a transport/DOM-level surprise — log it rather than
+// letting it die as an unhandled rejection (S9383), but don't toast: these
+// call sites re-render on their own cadence and a toast per failed poll
+// would bury the page. Callees still report their own API errors via toast.
+function pin(promise) {
+  Promise.resolve(promise).catch(err => console.error('[console]', err));
+}
+
 function toast(msg, tone = 'ok') {
   const el = document.createElement('div');
   el.className = `toast toast--${tone}`;
@@ -1516,8 +1525,8 @@ async function loadClusters() {
   if (!CLUSTERS.some(c => c.id === CL_SEL)) CL_SEL = null;
   renderClusters();
   const first = CL_SEL ?? visibleClusters()[0]?.id;
-  if (first != null) selectCluster(first);
-  resumeDrafts();
+  if (first != null) pin(selectCluster(first));
+  pin(resumeDrafts());
 }
 
 // A draft started before a reload is still running on the server; its job
@@ -1527,7 +1536,7 @@ async function resumeDrafts() {
   for (const j of (res.jobs || [])) {
     const m = /^cluster-idea:(\d+)$/.exec(j.kind || '');
     if (m && j.status === 'running' && !CL_DRAFTING[Number(m[1])]) {
-      followDraft(Number(m[1]), j.id, new Date(String(j.started_at).replace(' ', 'T') + 'Z').getTime());
+      pin(followDraft(Number(m[1]), j.id, new Date(String(j.started_at).replace(' ', 'T') + 'Z').getTime()));
     }
   }
 }
@@ -1630,7 +1639,7 @@ async function startDraft(el) {
     toast(res.detail ? res.error + ' — ' + res.detail : res.error, 'bad');
     return;
   }
-  followDraft(cid, res.job_id);
+  pin(followDraft(cid, res.job_id));
 }
 
 async function saveDraft(el) {
@@ -1684,7 +1693,7 @@ document.addEventListener('keydown', e => {
   if (!rows.length) return;
   const at = rows.findIndex(c => c.id === CL_SEL);
   const next = rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))];
-  if (next && next.id !== CL_SEL) { e.preventDefault(); selectCluster(next.id); }
+  if (next && next.id !== CL_SEL) { e.preventDefault(); pin(selectCluster(next.id)); }
 });
 
 // ── queue ───────────────────────────────────────────────────────────────
@@ -2207,9 +2216,12 @@ $('#posts-q').addEventListener('input', e => {
   POSTS.q = e.target.value.trim();
   POSTS.offset = 0;
   POSTS.open = null;
-  loadPosts();
+  pin(loadPosts());
 });
-$('#posts-back').addEventListener('click', () => { POSTS.open = null; loadPosts(); });
+$('#posts-back').addEventListener('click', () => {   POSTS.open = null;
+
+  pin(loadPosts());
+});
 $('[data-page="posts"]').addEventListener('click', e => {
   const view = e.target.closest('[data-post-view]');
   if (view) { POSTS.view = view.dataset.postView; POSTS.shown = POST_SHOWN; renderPostDetail(); return; }
@@ -2217,9 +2229,9 @@ $('[data-page="posts"]').addEventListener('click', e => {
   if (sort) { POSTS.sort = sort.dataset.postSort; renderPostDetail(); return; }
   if (e.target.closest('[data-post-more]')) { POSTS.shown = Infinity; renderPostDetail(); return; }
   const row = e.target.closest('tr[data-post]');
-  if (row) { openPost(row.dataset.post); return; }
+  if (row) { pin(openPost(row.dataset.post)); return; }
   const pg = e.target.closest('button[data-page-post]');
-  if (pg) { POSTS.offset = Number(pg.dataset.pagePost); loadPosts(); }
+  if (pg) { POSTS.offset = Number(pg.dataset.pagePost); pin(loadPosts()); }
 });
 
 async function loadNuggets() {
@@ -3569,7 +3581,7 @@ async function loadScraper() {
   SCRAPER.data = d;
   if (!unsaved) SCRAPER.pick = scraperRegistered(d);
   renderScraper();
-  if (d.job && SCRAPER.following !== d.job.id) followScraper(d.job.id, d.job.started_at);
+  if (d.job && SCRAPER.following !== d.job.id) pin(followScraper(d.job.id, d.job.started_at));
 }
 
 /* "hackernews-hiring 0 new → hackernews 41 new, 2 buyer" out of the CLI's
@@ -3615,12 +3627,12 @@ async function followScraper(jobId, startedAt) {
       const j = res.job;
       if (j.status === 'done') {
         toast('jobs scraper: ' + scraperSummary(j.result?.output || []));
-        loadSignals();
+        pin(loadSignals());
         return;
       }
       if (j.status === 'error') {
         toast('jobs scraper failed: ' + firstLine(j.error), 'bad');
-        loadSignals();
+        pin(loadSignals());
         return;
       }
     }
@@ -3643,7 +3655,7 @@ $('#scraper-run').addEventListener('click', async () => {
     return;
   }
   toast('jobs scraper started — it takes a minute or two');
-  followScraper(res.job_id);
+  pin(followScraper(res.job_id));
 });
 
 $('#scraper-state').addEventListener('click', async e => {
@@ -3653,7 +3665,7 @@ $('#scraper-state').addEventListener('click', async e => {
   const res = await api('/api/schedule/refresh', {});
   toast(res.ok === false ? 'not updated: ' + (res.error || 'unknown error') : res.detail,
         res.ok === false ? 'bad' : 'ok');
-  loadScraper();
+  pin(loadScraper());
 });
 $('#scraper-mode').addEventListener('click', e => {
   const b = e.target.closest('[data-scraper-mode]');
@@ -3705,7 +3717,7 @@ $('#signals-active').addEventListener('click', e => {
   if (e.target.closest('[data-sfacet-clear]')) { clearSignalFilters(); return; }
   if (e.target.closest('[data-sfacet-queue]')) {
     Object.assign(SIG, { queue: '1', offset: 0 });
-    loadSignals();
+    pin(loadSignals());
   }
 });
 $('#signals-body').addEventListener('click', e => {
@@ -3723,13 +3735,13 @@ $('#signals-body').addEventListener('click', e => {
       b.setAttribute('aria-pressed', String(b.dataset.soutcome === MARK.pick)));
     return;
   }
-  if (e.target.closest('[data-smark-save]')) { saveMark(); return; }
+  if (e.target.closest('[data-smark-save]')) { pin(saveMark()); return; }
   if (e.target.closest('[data-smark-cancel]')) closeMark();
 });
 $('#signals-body').addEventListener('keydown', e => {
   if (!e.target.closest('.sig-mark')) return;
   if (e.key === 'Escape') { e.preventDefault(); closeMark(); }
-  if (e.key === 'Enter' && e.target.classList.contains('sig-mark__note')) { e.preventDefault(); saveMark(); }
+  if (e.key === 'Enter' && e.target.classList.contains('sig-mark__note')) { e.preventDefault(); pin(saveMark()); }
 });
 $('#signals-pager').addEventListener('click', e => {
   const b = e.target.closest('[data-spage]');
