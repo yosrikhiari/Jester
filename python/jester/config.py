@@ -172,6 +172,12 @@ class Thresholds:
     #: backlog in days without starving new ideas of the free-tier quota.
     #: 0 turns re-scoring off.
     rescore_per_run: int = 1
+    #: Comments per extractor model call (F-05). 1 is the legacy behaviour —
+    #: one call per comment — so shipped profiles change nothing until this is
+    #: raised. Higher values spend one enumerated-prompt call per chunk and
+    #: fall back to per-comment calls on any malformed batch reply, with the
+    #: eval/known_good|bad.md gate deciding whether the saving is worth it.
+    extractor_batch_size: int = 1
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -194,6 +200,7 @@ class Thresholds:
         "export_rows_per_file": (100, 1000000),
         "ingest_timeout_seconds": (0, 86400),
         "rescore_per_run": (0, 1000),
+        "extractor_batch_size": (1, 50),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -224,6 +231,7 @@ class Thresholds:
         "export_rows_per_file": int,
         "ingest_timeout_seconds": int,
         "rescore_per_run": int,
+        "extractor_batch_size": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,
