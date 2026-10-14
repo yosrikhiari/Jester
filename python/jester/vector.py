@@ -95,6 +95,12 @@ class UnavailableVectorStore:
     def upsert(self, unique_key: str, text: str, payload: dict) -> None:
         raise self._exc
 
+    def upsert_many(self, items) -> int:
+        raise self._exc
+
+    def search_scored_many(self, texts, limit: int = 5):
+        raise self._exc
+
     def count(self) -> int:
         raise self._exc
 
@@ -194,6 +200,40 @@ class VectorStore:
             )
         )
 
+    def upsert_many(self, items) -> int:
+        """One embed call + one upsert call for many points (F-06).
+
+        `items` is [(unique_key, text, payload), ...]. Returns the point
+        count. Raises on ANY failure — the caller (reembed) falls back to
+        per-item upserts so one bad row cannot fail a whole chunk. Deliberately
+        NOT used by the archivist: its per-nugget loop is a dedup decision
+        stream where each search must see the previous upserts, and batching
+        that would change what counts as a duplicate.
+        """
+        items = list(items)
+        if not items:
+            return 0
+        if self.force_fail:
+            raise RuntimeError("simulated Qdrant upsert failure")
+        vecs = self.embed.embed([text for _, text, _ in items])
+        if len(vecs) != len(items):
+            raise RuntimeError(
+                f"embedder returned {len(vecs)} vectors for {len(items)} texts")
+        _with_retry(
+            lambda: self.client.upsert(
+                self.collection,
+                points=[
+                    models.PointStruct(
+                        id=abs(hash(key)) % (2**63),
+                        vector=vec,
+                        payload={**payload, "unique_key": key},
+                    )
+                    for (key, _text, payload), vec in zip(items, vecs)
+                ],
+            )
+        )
+        return len(items)
+
     def search(self, text: str, threshold: float):
         vec = self.embed.embed([text])[0]
         resp = self.client.query_points(
@@ -210,3 +250,38 @@ class VectorStore:
             lambda: self.client.query_points(self.collection, query=vec, limit=limit)
         )
         return [(p.score, p.payload.get("unique_key")) for p in resp.points]
+
+    def search_scored_many(self, texts, limit: int = 5):
+        """One embed call + one batch query for many lookups (F-06).
+
+        Returns [[(score, unique_key), ...], ...] aligned with `texts`.
+        Falls back to per-text queries when the client predates
+        query_batch_points; raises like search_scored on transport failure.
+        """
+        texts = list(texts)
+        if not texts:
+            return []
+        vecs = self.embed.embed(texts)
+        batch_points = getattr(self.client, "query_batch_points", None)
+
+        def _do():
+            if callable(batch_points):
+                from qdrant_client import models as _models
+                resp = self.client.query_batch_points(
+                    self.collection,
+                    requests=[_models.QueryRequest(query=v, limit=limit,
+                                                   with_payload=True)
+                              for v in vecs],
+                )
+                out = []
+                for r in resp:
+                    pts = r.points if hasattr(r, "points") else r
+                    out.append([(p.score, p.payload.get("unique_key"))
+                                for p in pts])
+                return out
+            return [[(p.score, p.payload.get("unique_key")) for p in
+                     self.client.query_points(
+                         self.collection, query=v, limit=limit).points]
+                    for v in vecs]
+
+        return _with_retry(_do)
