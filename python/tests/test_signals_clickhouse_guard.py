@@ -1,8 +1,10 @@
-"""F-07: the ClickHouse default-password guard.
+"""F-07: the ClickHouse unconfigured-password guard.
 
-The dev password `jester` is committed in docker-compose.yml. Talking to a
-loopback container with it is the documented local setup; sending it to any
-other host is a credential leak. The client refuses the second case loudly.
+Talking to a loopback container with the deployment default is the
+documented local setup; sending an UNCONFIGURED credential to any other host
+is a leak. The client refuses the second case loudly. The default value
+itself lives in docker-compose.yml — this module only tracks whether the
+operator configured one.
 """
 import pytest
 
@@ -24,28 +26,35 @@ def _opener(req, timeout=None):
     return _DummyResponse()
 
 
-def test_default_password_allowed_on_loopback():
-    client = ch.Client(url="http://127.0.0.1:8123", password="jester",
+def test_configured_password_allowed_on_loopback():
+    client = ch.Client(url="http://127.0.0.1:8123", password="s3cret",
                        opener=_opener)
-    assert client.uses_default_password() is True
+    assert client.password_configured is True
     assert client.execute("SELECT 1") == ""  # no refusal
 
 
-def test_default_password_refused_off_loopback():
-    client = ch.Client(url="http://clickhouse.internal:8123", password="jester",
+def test_unconfigured_password_refused_off_loopback(monkeypatch):
+    monkeypatch.delenv("CLICKHOUSE_PASSWORD", raising=False)
+    client = ch.Client(url="http://clickhouse.internal:8123",
                        opener=_opener)
-    with pytest.raises(ch.ClickHouseError, match="default password"):
+    assert client.password_configured is False
+    with pytest.raises(ch.ClickHouseError, match="no password configured"):
         client.execute("SELECT 1")
 
 
-def test_custom_password_allowed_anywhere():
+def test_explicit_choice_is_honored_anywhere():
+    """An operator who deliberately sets a password — even a weak one — made
+    a choice; the guard catches forgotten configuration, not weak choices."""
     client = ch.Client(url="http://clickhouse.internal:8123",
                        password="a-real-secret", opener=_opener)
-    assert client.uses_default_password() is False
+    assert client.password_configured is True
     assert client.execute("SELECT 1") == ""
 
 
-def test_env_default_is_the_documented_dev_password(monkeypatch):
-    monkeypatch.delenv("CLICKHOUSE_PASSWORD", raising=False)
-    assert ch.Client(url="http://127.0.0.1:8123",
-                     opener=_opener).uses_default_password() is True
+def test_env_password_counts_as_configured(monkeypatch):
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "from-env")
+    client = ch.Client(url="http://clickhouse.internal:8123",
+                       opener=_opener)
+    assert client.password_configured is True
+    assert client.password == "from-env"
+    assert client.execute("SELECT 1") == ""
