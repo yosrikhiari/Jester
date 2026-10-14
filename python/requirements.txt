@@ -16,7 +16,7 @@ pytest>=8.0
 pytest-cov>=5.0
 
 # ZoneInfo needs an IANA database; Windows ships none (s37.13 quota day-keys).
-tzdata>=2024.1
+tzdata>=2026.5
 
 # Live Ollama backend (s37.16) - the installed SDK returns pydantic responses.
 ollama>=0.4
