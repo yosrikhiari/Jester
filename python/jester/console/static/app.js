@@ -2298,6 +2298,7 @@ const KNOB_HELP = {
   critic_web_rate_limit: 'critic web calls per minute',
   critic_web_daily_budget: 'critic web calls per day',
   embedding_model: 'model name passed to the embedding provider',
+  extractor_batch_size: 'comments per extractor model call; 1 = one call each (legacy), higher spends one call per chunk',
   competitor_search_provider: 'verifies competition before scoring (M2.3/D-1); none keeps it unchecked',
   llm_provider: 'default backend for the chat roles — fake (deterministic), ollama (local daemon) or groq (hosted). Override per role under Agent models.',
   embedding_provider: 'fake (deterministic) or ollama (local daemon)',
@@ -2312,7 +2313,7 @@ let CFG_BASE = {};
 const KNOB_GROUPS = [
   ['Fetch', 'how much the worker walks and how politely', ['max_threads_per_source', 'max_threads_per_platform', 'max_comments_per_thread', 'min_comments_per_thread', 'max_reviews_per_app', 'realestate_detail_per_page', 'request_delay_ms', 'ingest_timeout_seconds']],
   ['Pre-filter', 'what is dropped before any model sees it', ['prefilter_min_chars', 'prefilter_max_chars', 'prefilter_min_words', 'prefilter_max_emoji', 'prefilter_max_mentions', 'min_upvotes']],
-  ['Archive & synthesis', 'dedup and how ideas are formed', ['dedup_threshold', 'max_nuggets_per_idea', 'good_idea_min']],
+  ['Archive & synthesis', 'dedup and how ideas are formed', ['dedup_threshold', 'max_nuggets_per_idea', 'good_idea_min', 'extractor_batch_size']],
   ['Critic web step', 'competition checks and their budget', ['competitor_search_provider', 'competitor_ttl_days', 'critic_web_rate_limit', 'critic_web_daily_budget']],
   ['Providers & output', 'backends and what a run leaves behind', ['llm_provider', 'embedding_provider', 'export_after_run', 'export_rows_per_file']],
 ];

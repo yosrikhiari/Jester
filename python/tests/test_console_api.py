@@ -16,7 +16,10 @@ def api(tmp_path):
 def test_overview_shape(api):
     o = api.overview()
     assert o["ok"] and {"counts", "quota", "prompt_versions"} <= set(o)
-    assert o["prompt_versions"] == {"extractor": 1, "synthesizer": 1, "critic": 1,
+    # extractor 2 = the batch prompt joined the single-comment one (F-05);
+    # the single prompt is unchanged. This pins the CURRENT versions so an
+    # accidental prompt edit fails loudly instead of shifting scores silently.
+    assert o["prompt_versions"] == {"extractor": 2, "synthesizer": 1, "critic": 1,
                                     "labeller": 1}
 
 

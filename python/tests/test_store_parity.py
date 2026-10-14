@@ -85,13 +85,29 @@ def test_r31_rollback_journal_and_busy_timeout_on_file_dbs(tmp_path):
 
 
 def test_go_store_opens_with_the_same_journal_mode(tmp_path):
-    """Parity is only real if it is checked against Go's actual source."""
+    """Parity is only real if it is checked against Go's actual source.
+
+    F-02 changed the contract both sides share: DELETE by default (safe over
+    the bind mount), WAL opt-in via JESTER_SQLITE_JOURNAL_MODE, 15 s busy
+    timeout. This pins the agreement — same variable, same default, same
+    timeout — so one side cannot drift without failing loudly.
+    """
+    from jester.store import BUSY_TIMEOUT_MS, JOURNAL_MODE_ENV, _journal_mode
+
     go_store = (
         Path(__file__).resolve().parents[2] / "go" / "internal" / "store" / "store.go"
     )
     src = go_store.read_text(encoding="utf-8", errors="replace")
-    assert "PRAGMA journal_mode=DELETE" in src
-    assert "PRAGMA busy_timeout=5000" in src
+    assert JOURNAL_MODE_ENV in src, (
+        f"Go no longer reads {JOURNAL_MODE_ENV}: the journal-mode agreement broke"
+    )
+    assert '"DELETE"' in src, "Go lost the DELETE default"
+    assert '"WAL"' in src, "Go lost the WAL opt-in"
+    assert f"busy_timeout={BUSY_TIMEOUT_MS}" in src.replace(" ", ""), (
+        "Go and Python disagree on busy_timeout"
+    )
+    assert BUSY_TIMEOUT_MS == 15000
+    assert _journal_mode() == "DELETE"  # default unchanged without the env var
 
 
 def test_retention_skips_and_logs_when_write_lock_held(tmp_path, capsys):

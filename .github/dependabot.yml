@@ -1,0 +1,17 @@
+# F-07: track floating Docker tags, pip, and npm weekly so `latest` stops
+# drifting silently. Version bumps land as PRs; digests are pinned at merge
+# time once CI resolves them, rather than fabricated by hand.
+version: 2
+updates:
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"

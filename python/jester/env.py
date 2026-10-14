@@ -4,9 +4,13 @@ Deliberately stdlib-only. The alternative is python-dotenv, which would be the
 project's first runtime dependency added for four lines of parsing, and the
 console has to boot on a machine where `pip install` has not been re-run.
 
-Values already present in the real environment WIN over the file. A shell that
-exported GROQ_API_KEY for one command is making a deliberate override, and a
-dotfile silently outranking it is the kind of thing that costs an afternoon.
+Values already present in the real environment WIN over the file — presence,
+not truthiness. A shell that exported GROQ_API_KEY for one command is making
+a deliberate override, and a dotfile silently outranking it is the kind of
+thing that costs an afternoon. The same holds for an explicitly emptied key:
+`JESTER_QDRANT_URL=` in the environment selects per-database local vector
+mode, and must not be backfilled from the file (an empty value is a choice,
+not a gap).
 """
 import os
 from pathlib import Path
@@ -64,7 +68,7 @@ def load_env(root=None, *, override=False) -> dict:
             # missing key surfaces as a clear "no API key" error downstream.
             break
         for key, value in parse_env(text).items():
-            if override or not os.environ.get(key):
+            if override or key not in os.environ:
                 os.environ[key] = value
                 applied[key] = value
         break

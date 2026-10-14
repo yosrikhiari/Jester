@@ -14,7 +14,7 @@ DEFAULT_CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "config")
 
 from jester.agents.archivist import Archivist
 from jester.agents.critic import Critic, rescore_pending, row_to_idea
-from jester.agents.extractor import extract
+from jester.agents.extractor import extract, extract_batch
 from jester.agents.synthesizer import Synthesizer
 from jester.competitors import CompetitorChecker
 from jester.config import load_config
@@ -74,6 +74,15 @@ from jester.vector import (
     VectorStore,
 )
 from jester.worker import ingest as worker_ingest
+from jester.cli_review import (
+    _parse_eval_line,
+    _score,
+    cmd_eval,
+    cmd_list,
+    cmd_mark,
+    cmd_runs,
+    cmd_show,
+)
 
 
 def collection_for(db_path: str, base: str = "nuggets") -> str:
@@ -490,26 +499,13 @@ def cmd_run(args):
     # to tell which batch to leave queued for them.
     batch_of = {}
     extraction_stopped = "extractor" in paused
-    for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
-        if extraction_stopped:
-            # Out of quota: every batch not reached stays queued, its comments
-            # off the skip-list, for a run with allowance left.
-            degraded_batches.add(batch_id)
-            continue
-        limited_before = int(getattr(llm, "rate_limited", 0) or 0)
-        produced = extract(
-            [c],
-            llm,
-            platform=platform,
-            thread_id=thread_id,
-            source_url=source,
-            run_id=args.run,
-        )
-        if int(getattr(llm, "rate_limited", 0) or 0) > limited_before:
-            # The synthesizer's brake, for the extractor: one exhaustion after
-            # the transport's own retries is enough, and every comment after it
-            # would spend a refused request before falling back.
-            extraction_stopped = True
+    batch_size = max(1, int(getattr(cfg.thresholds, "extractor_batch_size", 1) or 1))
+
+    def _file_produced(produced, batch_id):
+        """Archive-or-defer triage for one group's nuggets. Shared by the
+        legacy and batched paths so the two cannot disagree on what a
+        stand-in-stamped row means."""
+        nonlocal degraded
         for n in produced:
             if extractor_provider != "fake" and n.extractor_model == FakeLLM.name:
                 # R29/R40: the model was asked and did not answer — most often
@@ -523,6 +519,73 @@ def cmd_run(args):
                 continue
             batch_of[n.unique_key] = batch_id
             nuggets.append(n)
+
+    def _note_quota(limited_before):
+        """The synthesizer's brake, for the extractor: one exhaustion after
+        the transport's own retries is enough, and every comment after it
+        would spend a refused request before falling back."""
+        nonlocal extraction_stopped
+        if int(getattr(llm, "rate_limited", 0) or 0) > limited_before:
+            extraction_stopped = True
+
+    if batch_size > 1:
+        # F-05: one model call per chunk of same-thread comments. Groups are
+        # consecutive runs (the queue is already thread-ordered) capped at
+        # batch_size; empty bodies are dropped here so `produced` aligns 1:1
+        # with the chunk for batch_of attribution.
+        groups = []
+        for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
+            if not ((c.get("body") or c.get("text") or "").strip()):
+                continue
+            if (groups and groups[-1][0] == (platform, source, thread_id)
+                    and len(groups[-1][1]) < batch_size):
+                groups[-1][1].append((batch_id, c))
+            else:
+                groups.append(((platform, source, thread_id), [(batch_id, c)]))
+        for (platform, source, thread_id), items in groups:
+            if extraction_stopped:
+                # Out of quota: every batch not reached stays queued, its
+                # comments off the skip-list, for a run with allowance left.
+                for bid, _c in items:
+                    degraded_batches.add(bid)
+                continue
+            limited_before = int(getattr(llm, "rate_limited", 0) or 0)
+            produced = extract_batch(
+                [c for _, c in items],
+                llm,
+                platform=platform,
+                thread_id=thread_id,
+                source_url=source,
+                run_id=args.run,
+                batch_size=batch_size,
+            )
+            _note_quota(limited_before)
+            if len(produced) == len(items):
+                for (bid, _c), n in zip(items, produced):
+                    _file_produced([n], bid)
+            else:  # never misattribute: fall back to one call per comment
+                for bid, c in items:
+                    _file_produced(extract(
+                        [c], llm, platform=platform, thread_id=thread_id,
+                        source_url=source, run_id=args.run), bid)
+    else:
+        for (platform, source, thread_id, _fp, batch_id), c in zip(meta, comments):
+            if extraction_stopped:
+                # Out of quota: every batch not reached stays queued, its comments
+                # off the skip-list, for a run with allowance left.
+                degraded_batches.add(batch_id)
+                continue
+            limited_before = int(getattr(llm, "rate_limited", 0) or 0)
+            produced = extract(
+                [c],
+                llm,
+                platform=platform,
+                thread_id=thread_id,
+                source_url=source,
+                run_id=args.run,
+            )
+            _note_quota(limited_before)
+            _file_produced(produced, batch_id)
 
     # R37: tag triviality pre-archive. Floor, not gate — nothing is filtered.
     for n in nuggets:
@@ -779,162 +842,6 @@ def cmd_run(args):
     }
 
 
-def _parse_eval_line(line):
-    """Parse `title | demand | feasibility | [competition]`; competition optional (imputed)."""
-    if line.strip().startswith("#") or not line.strip():
-        return None
-    parts = [p.strip() for p in line.split("|")]
-    if len(parts) < 3:
-        return None
-    title = parts[0]
-    try:
-        demand = float(parts[1])
-        feasibility = float(parts[2])
-    except ValueError:
-        return None
-    competition = (
-        float(parts[3])
-        if len(parts) > 3 and parts[3] not in ("", "-", "unchecked")
-        else None
-    )
-    return title, demand, feasibility, competition
-
-
-def cmd_eval(args):
-    cfg = load_config(args.config)
-    gate = cfg.thresholds.good_idea_min
-    failures = 0
-    checks = 0
-    for path, expect_pass in ((args.good, True), (args.bad, False)):
-        if not path:
-            continue
-        for line in Path(path).read_text().splitlines():
-            parsed = _parse_eval_line(line)
-            if not parsed:
-                continue
-            checks += 1
-            _title, demand, feasibility, competition = parsed
-            overall = compute_overall(demand, feasibility, competition)
-            ok = (overall >= gate) == expect_pass
-            if not ok:
-                failures += 1
-                print(f"FAIL [{path}] {_title}: overall={overall:.1f} (gate={gate})")
-    if failures:
-        print(f"eval FAILED: {failures}/{checks} mismatched")
-        sys.exit(1)
-    print(f"eval OK: {checks} cases passed (gate={gate})")
-
-
-def cmd_mark(args):
-    db = open_db(args.db)
-    row = get_idea(db, args.id)
-    if not row:
-        print(f"idea #{args.id} not found")
-        sys.exit(1)
-    idea = row_to_idea(row)
-    idea.status = args.status
-    update_idea(db, idea)
-    print(f"idea #{args.id} -> status={args.status}")
-
-
-def _score(value) -> str:
-    """One subscore for display. An unscored idea has none to format."""
-    return "unscored" if value is None else f"{value:.1f}"
-
-
-def cmd_show(args):
-    """R26: one-idea detail view — the no-SQL half of the review loop."""
-    db = open_db(args.db)
-    row = get_idea(db, args.id)
-    if not row:
-        print(f"idea #{args.id} not found")
-        sys.exit(1)
-    comp = (
-        "unchecked" if not row["competition_checked"] else _score(row["competition"])
-    )
-    print(f"IDEA #{row['id']}: {row['title']}  [{row['status']}]")
-    print(
-        f"  overall={_score(row['overall'])}  demand={_score(row['demand_signal'])}  "
-        f"feasibility={_score(row['feasibility'])}  competition={comp}"
-    )
-    if row["needs_score"]:
-        print("  needs_score: the critic did not answer last time; "
-              "a later run re-scores it")
-    if row["competitor_notes"]:
-        print(f"  competitor notes: {row['competitor_notes']}")
-    print(f"  problem: {row['problem_statement'] or '-'}")
-    print(f"  solution: {row['proposed_solution'] or '-'}")
-    keys = json.loads(row["supporting_nuggets"] or "[]")
-    print(f"  supporting nuggets ({len(keys)}):")
-    for k in keys:
-        n = nugget_by_key(db, k)
-        if n is None:
-            # Golden gate (R48) prevents this; render honestly if it ever happens.
-            print(f"    MISSING citation: {k}")
-            continue
-        print(f"    - {k}")
-        print(f"      [{n['category']}] {n['platform']}  {n['source_url']}")
-        print(f"      {n['extracted_insight']}")
-
-
-def cmd_list(args):
-    db = open_db(args.db)
-    rows = list_nuggets(db)
-    for r in rows:
-        print(f"[{r['category']}] {r['platform']} :: {r['unique_key']}")
-        print(f"    {r['extracted_insight']}")
-    print(f"total: {len(rows)} nuggets")
-
-    ideas = list_ideas(db)
-    # §3.3 comparability: warn when scores span multiple critic models.
-    critic_models = {i["critic_model"] for i in ideas if i["critic_model"]}
-    if len(critic_models) > 1:
-        print(
-            f"archive spans {len(critic_models)} critic models - "
-            "scores are not directly comparable across them"
-        )
-    for i in ideas:
-        comp = (
-            "unchecked" if not i["competition_checked"] else _score(i["competition"])
-        )
-        print(
-            f"IDEA #{i['id']}: {i['title']}  "
-            f"overall={_score(i['overall'])}  "
-            f"demand={_score(i['demand_signal'])} "
-            f"feasibility={_score(i['feasibility'])} "
-            f"competition={comp}  status={i['status']}"
-            + ("  needs_score" if i["needs_score"] else "")
-        )
-    print(f"total: {len(ideas)} idea(s)")
-
-
-def cmd_runs(args):
-    db = open_db(args.db)
-    rows = get_runs(db)
-    print(f"last {len(rows)} run(s):")
-    for r in rows:
-        # Partial rows (crashed/reaped runs) may hold NULLs — render honestly.
-        act = r["duration_actual_s"]
-        exp = r["duration_expected_s"]
-        dur = (
-            f"dur={'-' if act is None else f'{act:.1f}s'}"
-            f"/exp={'-' if exp is None else f'{exp:.1f}s'}"
-        )
-        posts = "-" if r["n_posts"] is None else r["n_posts"]
-        line = (
-            f"{r['started_at']}  {r['run_id']}  {r['status']}  "
-            f"kept={r['n_nuggets_kept']} ideas={r['n_ideas']}  "
-            f"{dur}  origin={r['origin']}  posts={posts}"
-        )
-        if r["platform_counts"]:
-            line += f"  platforms={r['platform_counts']}"
-        if r["prefilter_funnel"]:
-            line += f"  filter={r['prefilter_funnel']}"
-        if r["top_near_misses"]:
-            line += f"  near={r['top_near_misses']}"
-        if r["floor_flags"]:
-            line += f"  flags={r['floor_flags']}"
-        print(line)
 
 
 def cmd_retention(args):
@@ -1938,6 +1845,43 @@ def cmd_doctor(args):
     print(f"doctor OK: {checks} check(s) clean")
 
 
+def cmd_dedup_sweep(args):
+    """F-06: calibrate the dedup cosine threshold over a labelled pair file.
+
+    Advisory, never mutating: prints the P/R/F1 table and names the best-F1
+    threshold next to the configured one. Promoting a new threshold is a
+    config edit after reading the table, not something this command does.
+    """
+    from jester.dedup_sweep import default_thresholds, load_pairs, sweep
+    from jester.embed import select_embedding
+
+    pairs, skipped = load_pairs(args.pairs)
+    minimum = int(getattr(args, "min_pairs", 20) or 0)
+    if len(pairs) < minimum:
+        print(f"dedup-sweep: only {len(pairs)} usable pair(s) "
+              f"(minimum {minimum}) — label more before trusting the table")
+    cfg = load_config(args.config)
+    embed = select_embedding(cfg.thresholds)
+    print(f"embedding backend: {type(embed).__name__} "
+          f"(dim {getattr(embed, 'dim', '?')})")
+    result = sweep(pairs, embed,
+                   default_thresholds(cfg.thresholds.dedup_threshold))
+    print(f"pairs: {result['n_pairs']}  skipped lines: {skipped}")
+    print(" thr |    P |    R |   F1 | tp fp fn tn")
+    for r in result["rows"]:
+        mark = " *" if r == result["best"] else "  "
+        print(f"{r['threshold']:.2f}{mark}| {r['precision']:.2f} | "
+              f"{r['recall']:.2f} | {r['f1']:.2f} | "
+              f"{r['tp']} {r['fp']} {r['fn']} {r['tn']}")
+    best = result["best"]
+    current = round(float(cfg.thresholds.dedup_threshold), 2)
+    if best is not None:
+        print(f"best F1: {best['threshold']:.2f} (configured: {current:.2f})")
+        if best["threshold"] != current:
+            print("to adopt it: set dedup_threshold in config/thresholds.yaml "
+                  "and re-run this sweep to confirm")
+
+
 def cmd_reembed(args):
     """§3.2 v3.5 #4 recovery: re-attempt vector persistence for flagged nuggets."""
     db = open_db(args.db)
@@ -1976,6 +1920,26 @@ def cmd_reembed(args):
         print(f"embedding backend: {type(_emb).__name__} "
               f"(dim {getattr(_emb, 'dim', '?')})")
     ok = failed = 0
+    # F-06: one embed + one upsert call per chunk instead of two calls per
+    # row. A chunk failure falls back to the legacy per-row loop so one bad
+    # row cannot fail the whole chunk — same per-row accounting as before.
+    upsert_many = getattr(vector, "upsert_many", None)
+    rows = list(rows)
+    if callable(upsert_many):
+        pending = list(rows)
+        rows = []
+        for i in range(0, len(pending), 64):
+            chunk = pending[i:i + 64]
+            try:
+                upsert_many([(r["unique_key"], r["raw_text"] or "", {})
+                             for r in chunk])
+            except Exception:
+                rows.extend(chunk)  # per-row retry below, with its own errors
+                continue
+            for r in chunk:
+                mark_reembedded(db, r["unique_key"],
+                                f"emb:{abs(hash(r['unique_key'])) % (2**63)}")
+                ok += 1
     for row in rows:
         key = row["unique_key"]
         try:
@@ -3736,6 +3700,18 @@ def main(argv=None):
              "not comparable",
     )
     re_.set_defaults(func=cmd_reembed)
+
+    ds = sub.add_parser(
+        "dedup-sweep",
+        help="calibrate the dedup cosine threshold over a labelled pair file "
+             "(advisory: prints P/R/F1, changes nothing)",
+    )
+    ds.add_argument("--pairs", required=True,
+                    help="JSONL file of {a, b, same} pairs (see jester/dedup_sweep.py)")
+    ds.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    ds.add_argument("--min-pairs", type=int, default=20,
+                    help="warn when fewer usable pairs than this")
+    ds.set_defaults(func=cmd_dedup_sweep)
 
     cl = sub.add_parser(
         "cluster",

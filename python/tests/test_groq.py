@@ -351,5 +351,17 @@ def test_override_flag_lets_the_file_win(tmp_path, monkeypatch):
     assert os.environ["K"] == "from-file"
 
 
+def test_explicitly_emptied_key_is_not_backfilled(tmp_path, monkeypatch):
+    """Presence wins, not truthiness: `JESTER_QDRANT_URL=` in the environment
+    selects per-database local vector mode, and the dotfile must not refill
+    it behind the operator's back."""
+    (tmp_path / ".env").write_text("K=from-file\n")
+    monkeypatch.setenv("K", "")
+    import os
+    applied = load_env(tmp_path)
+    assert os.environ["K"] == ""
+    assert "K" not in applied
+
+
 def test_missing_dotenv_is_not_an_error(tmp_path):
     assert load_env(tmp_path) == {}

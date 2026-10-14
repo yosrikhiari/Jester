@@ -19,6 +19,27 @@ from jester.models import Idea, Nugget
 SCHEMA_VERSION = 1
 
 
+#: Milliseconds a connection waits on a locked database before raising
+#: SQLITE_BUSY. Raised from 5 s (F-02): the queue claim races the worker's
+#: enqueue on every treat, and 5 s was tight enough to abort runs that a
+#: slightly longer wait would have ridden out.
+BUSY_TIMEOUT_MS = 15000
+
+#: Environment variable selecting the SQLite journal mode. Default DELETE
+#: preserves the documented bind-mount behaviour (WAL's -wal/-shm sidecars
+#: cannot be arbitrated reliably over a Windows bind-mounted volume). Set
+#: `JESTER_SQLITE_JOURNAL_MODE=wal` where the database lives on a local disk
+#: or the isolated Docker volume — readers stop blocking writers there, which
+#: is the contention the overview page feels most. Anything else falls back
+#: to DELETE rather than failing the open.
+JOURNAL_MODE_ENV = "JESTER_SQLITE_JOURNAL_MODE"
+
+
+def _journal_mode() -> str:
+    want = os.environ.get(JOURNAL_MODE_ENV, "delete").strip().upper()
+    return "WAL" if want == "WAL" else "DELETE"
+
+
 class SchemaVersionError(Exception):
     pass
 
@@ -266,6 +287,25 @@ _ADD_COLUMNS = [
 ]
 
 
+#: Hot-path read indexes (F-03). Every one of these columns is filtered or
+#: ordered by the console overview, the queue claim, or the ideas list on
+#: every request, and none of them had a declarative index — only
+#: `nuggets.unique_key` (UNIQUE) did, plus one ad-hoc CREATE INDEX in the
+#: console. Applied idempotently after _ADD_COLUMNS, so the columns exist
+#: first; each statement is attempted individually and OperationalError is
+#: tolerated exactly like the column ALTERs (a legacy table missing a column
+#: keeps working, just without that index until it is migrated).
+_ADD_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_ingest_batch_status ON ingest_batch(status, kind)",
+    "CREATE INDEX IF NOT EXISTS idx_ingest_batch_thread ON ingest_batch(thread_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nuggets_platform ON nuggets(platform, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_nuggets_run ON nuggets(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_nuggets_thread ON nuggets(thread_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ideas_status_overall ON ideas(status, overall)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_status_started ON runs(status, started_at)",
+]
+
+
 _TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", re.S)
 _ALTER_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.I)
 
@@ -393,20 +433,26 @@ def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-    db = sqlite3.connect(path, timeout=5.0)
-    # Rollback journal (DELETE), NOT WAL. The database is shared between the
-    # console server and the ingestion worker — separate processes, sometimes
-    # separate containers — over a Windows bind-mounted volume. WAL requires
-    # the -wal/-shm sidecars, which that filesystem cannot create/arbitrate
-    # reliably under concurrent access, surfacing as
+    db = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000.0)
+    # Rollback journal (DELETE) by default, NOT WAL. The database is shared
+    # between the console server and the ingestion worker — separate
+    # processes, sometimes separate containers — over a Windows bind-mounted
+    # volume. WAL requires the -wal/-shm sidecars, which that filesystem
+    # cannot create/arbitrate reliably under concurrent access, surfacing as
     # "OperationalError: unable to open database file". The default rollback
     # journal uses a single -journal file with ordinary locking and avoids the
     # sidecars entirely; busy_timeout absorbs brief writer locks.
+    #
+    # F-02 opt-in: JESTER_SQLITE_JOURNAL_MODE=wal selects WAL on databases
+    # that live on a local disk or the isolated Docker volume (see
+    # docker-compose.yml: the throwaway archive already avoids the bind
+    # mount). WAL mode is persistent — once set it survives reopen — so both
+    # the Python and Go sides read the same variable and default identically.
     try:
-        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute(f"PRAGMA journal_mode={_journal_mode()}")
     except sqlite3.OperationalError:
         pass
-    db.execute("PRAGMA busy_timeout=5000")
+    db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     if not migrate:
         db.row_factory = sqlite3.Row
         return db
@@ -419,6 +465,11 @@ def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
             db.execute(stmt)
         except sqlite3.OperationalError:
             pass  # already present
+    for stmt in _ADD_INDEXES:
+        try:
+            db.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # legacy shape without the column: index comes with migration
     existing = db.execute(
         "SELECT value FROM meta WHERE key='schema_version'"
     ).fetchone()

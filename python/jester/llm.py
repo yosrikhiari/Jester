@@ -41,13 +41,22 @@ ALLOWED_CATEGORIES = {
 
 # §37.15 reproducibility (v3.8 #2/v3.7 #4): bump when a prompt or the rubric
 # changes so runs.models_used can diff a score shift back to its cause.
-PROMPT_VERSIONS = {"extractor": 1, "synthesizer": 1, "critic": 1, "labeller": 1}
+# extractor 2 = the batch prompt (F-05) joined the single-comment one; the
+# single prompt itself is unchanged, so legacy runs still compare.
+PROMPT_VERSIONS = {"extractor": 2, "synthesizer": 1, "critic": 1, "labeller": 1}
 RUBRIC_VERSION = 1
 
 
 @runtime_checkable
 class ExtractorLLM(Protocol):
     def extract(self, comment_body: str) -> NuggetDraft: ...
+
+    def extract_batch(self, bodies: List[str]) -> List[NuggetDraft]:
+        """One call for many comments. The default loops over extract(), so
+        any existing implementation keeps working; live roles override it
+        with a single enumerated prompt (F-05). Length of the reply always
+        equals length of `bodies`."""
+        return [self.extract(b) for b in bodies]
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -145,6 +154,9 @@ class FakeLLM:
             category=category,
             model=self.name,
         )
+
+    def extract_batch(self, bodies: List[str]) -> List[NuggetDraft]:
+        return [self.extract(b) for b in bodies]
 
 
 @dataclass
@@ -397,6 +409,14 @@ class _ExtractorRole:
         '{"category": <one of pain_point|feature_request|workaround|complaint|question>, '
         '"insight": "<one-sentence distilled insight>"}.'
     )
+    EXTRACT_BATCH_SYSTEM = (
+        "You classify developer-pain comments. The user message holds N comments "
+        "as a JSON array of strings. Reply with ONLY a JSON object shaped like "
+        '{"items": [{"category": <one of pain_point|feature_request|workaround|'
+        "complaint|question>, "
+        '"insight": "<one-sentence distilled insight>"}]} with EXACTLY N items '
+        "in the same order: item i describes comment i and no other."
+    )
 
     def extract(self, comment_body: str) -> NuggetDraft:
         body = comment_body or ""
@@ -413,6 +433,51 @@ class _ExtractorRole:
         # cmd_run refuses to archive a fake-stamped nugget when a real
         # extractor was configured: the batch stays queued for the next run.
         return FakeLLM().extract(body)
+
+    def extract_batch(self, bodies: List[str]) -> List[NuggetDraft]:
+        """One model call for up to a chunk of comments (F-05).
+
+        Falls back to per-comment extract() — which itself falls back to the
+        named stand-in — on ANY shape problem: transport failure, malformed
+        JSON, wrong item count, or a bad item. A batch reply is cheaper but
+        less trustworthy than N single replies, so validation is strict and
+        the fallback preserves the legacy per-comment accounting (including
+        `rate_limited`, which the caller's quota brake reads).
+        """
+        bodies = [b or "" for b in bodies]
+        if len(bodies) == 1:
+            return [self.extract(bodies[0])]
+        limited_before = int(getattr(self, "rate_limited", 0) or 0)
+        obj = self._obj(self.EXTRACT_BATCH_SYSTEM, json.dumps(bodies),
+                        temperature=0.2)
+        if int(getattr(self, "rate_limited", 0) or 0) > limited_before:
+            # Quota exhausted by the batch call itself: retrying per comment
+            # would spend N refused requests before the caller's brake trips.
+            # The legacy path stops after one refusal; match it by standing
+            # in directly, under the stand-in's own name.
+            return [FakeLLM().extract(b) for b in bodies]
+        items = obj.get("items") if isinstance(obj, dict) else None
+        if isinstance(items, list) and len(items) == len(bodies) and all(
+                isinstance(it, dict) for it in items):
+            drafts = []
+            for body, it in zip(bodies, items):
+                insight = it.get("insight")
+                if not isinstance(insight, str) or not insight.strip():
+                    break
+                category = it.get("category")
+                if category not in ALLOWED_CATEGORIES:
+                    category = "pain_point"
+                drafts.append(NuggetDraft(
+                    extracted_insight=insight.strip(), category=category,
+                    model=self._model))
+            else:
+                return drafts
+            self._reject("batch reply has an unusable item; retrying per comment")
+        elif obj is not None:
+            self._reject("batch reply is not an N-item list; retrying per comment")
+        # obj is None (transport failure / rate limit) already recorded its
+        # own fallback reason inside _obj; do not double-count it here.
+        return [self.extract(b) for b in bodies]
 
 
 #: The opening the stand-in synthesizer gives every solution. A model reply

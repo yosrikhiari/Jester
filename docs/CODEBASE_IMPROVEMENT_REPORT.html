@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Jester codebase audit: findings, research-backed fixes, implementation status, and end-to-end verification.">
+<title>Jester — Codebase Analysis, Optimization &amp; Improvement Report</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<style>
+:root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --muted:#5a5a5a; --border:#e2e2e2; --accent:#0b5fff; --code:#f5f5f5; --focus:#0b5fff; }
+@media (prefers-color-scheme: dark) { :root { --fg:#e8e8e8; --bg:#121212; --muted:#b0b0b0; --border:#333; --accent:#7aa2ff; --code:#1e1e1e; --focus:#7aa2ff; } }
+* { box-sizing: border-box; }
+html { touch-action: manipulation; }
+body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height:1.65; color:var(--fg); background:var(--bg); max-width:68ch; margin:0 auto; padding:2rem 1.25rem 4rem; }
+h1,h2,h3 { line-height:1.25; text-wrap: balance; scroll-margin-top: 1rem; }
+h1 { font-size:2rem; letter-spacing:-0.01em; }
+h2 { margin-top:2.5rem; border-bottom:1px solid var(--border); padding-bottom:.4rem; }
+a { color:var(--accent); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; display:block; overflow-x:auto; font-variant-numeric: tabular-nums; }
+th,td { border:1px solid var(--border); padding:.5rem .6rem; text-align:left; vertical-align:top; overflow-wrap: break-word; }
+th { background:var(--code); }
+code { background:var(--code); padding:.1rem .35rem; border-radius:4px; font-size:.88em; overflow-wrap: break-word; }
+pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; } pre code { background:none; padding:0; }
+.mermaid { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:1rem 0; overflow-x:auto; }
+.meta { color:var(--muted); font-size:.9rem; }
+.skip { position:absolute; left:-9999px; top:0; background:var(--focus); color:#fff; padding:.5rem 1rem; z-index:100; border-radius:0 0 6px 0; }
+.skip:focus-visible { left:0; color:#fff; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+@media print { body { max-width:none; } .mermaid { break-inside:avoid; } .skip { display:none; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<p class="meta">Jester — Codebase Analysis, Optimization &amp; Improvement Report · 2026-10-14 · Branch impl/report-fixes · <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
+<main id="main">
+<h1 id="jester-codebase-analysis-optimization-improvement-report">Jester — Codebase Analysis, Optimization &amp; Improvement Report</h1>
+<p><strong>Date:</strong> 2026-10-14 · <strong>Commit audited:</strong> <code>7aef02c</code> · <strong>Scope:</strong> repo-wide audit, no production code changed
+<strong>Method:</strong> static reads + test collection + targeted test runs + config/docker review. No secrets exposed. No new benchmarks invented — unmeasured expectations are labelled <em>Hypothesis</em>.</p>
+<hr />
+<h2 id="1-executive-summary">1. Executive summary</h2>
+<p>Jester is a working, evidence-obsessed multi-agent pipeline: Go scrapes forums → SQLite handoff queue → Python LLM chain (extractor → synthesizer → critic) → Qdrant dedup + ClickHouse archive → stdlib operator console. The real archive (35,118 batches, 98,890 nuggets, 1,468 ideas) proves the design works.</p>
+<p>The audit found <strong>no data-integrity emergency</strong>, but 12 actionable findings. The top 5 by value/effort:</p>
+<ol>
+<li><strong>Console has no auth and Docker publishes it on <code>0.0.0.0:8619</code></strong> — every <code>POST /api/*</code> mutates the archive. Fix with bind-default + token before any shared deployment.</li>
+<li><strong>SQLite is the cross-process contract with <code>journal_mode=DELETE</code></strong> — the repo already documents one corruption incident. Keep the isolated volume, add WAL + indexes + single-writer discipline.</li>
+<li><strong><code>cli.py</code> (3,923 lines) + <code>console/api.py</code> (2,663 lines) are god files</strong> — split by domain to cut regression risk.</li>
+<li><strong>Extractor = 1 LLM call per comment</strong> — batching is the largest cost/latency lever.</li>
+<li><strong>Observability is <code>print + /api/doctor</code> only</strong> (<code>log_message</code> is silenced) — structured logs + <code>/metrics</code> + traces around LLM/Qdrant calls.</li>
+</ol>
+<p>Quick wins (1–2 days each): pin Docker digests, remove checked-in <code>.exe</code>s, add SQLite indexes, bind console to localhost, separate dev dependencies. Medium-term (1–3 weeks): CLI/API split, batched extraction with eval gate, per-category dedup calibration, OTel instrumentation.</p>
+<blockquote>
+<p>What is already excellent and should not be rewritten: idempotent signals collector (repeat import = 0 new rows), <code>ReplacingMergeTree + FINAL</code> reconciliation, <code>mode=live|synthetic</code> column, stand-in model signing, per-model Groq quota blocks, thread-id whitelist, static allow-list, Qdrant <code>INDEXING_THRESHOLD=1000</code> tuning (83 ms → 23 ms measured in-code).</p>
+</blockquote>
+<hr />
+<h2 id="2-project-overview">2. Project overview</h2>
+<p><strong>Purpose:</strong> crawl community forums (Reddit, HN, Discourse, Lemmy, Stack Exchange, GitHub, YouTube, podcasts, 15 real-estate portals — ~150 sources in <code>config/sources.yaml</code>), extract complaints via LLM agents, dedup/cluster in vector store, synthesize scored product ideas, review everything in an operator console.</p>
+<p><strong>Stack:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Tech</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ingestion</td>
+<td>Go 1.26, chromedp/CloakBrowser, <code>modernc.org/sqlite</code> (pure Go, no cgo)</td>
+<td><code>go/go.mod:1-26</code>, <code>go/cmd/worker/main.go:1-170</code></td>
+</tr>
+<tr>
+<td>Processing</td>
+<td>Python 3.10+ (3.12 in CI/Docker), Ollama / Groq / OpenAI-compatible via stdlib <code>urllib</code>, 5 roles in <code>thresholds.yaml</code></td>
+<td><code>python/pyproject.toml:5-16</code>, <code>python/jester/llm.py:676-800</code>, <code>python/jester/roles.py:95</code></td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>SQLite (state + handoff), Qdrant (vectors), ClickHouse 24.8 (signals archive)</td>
+<td><code>python/jester/store.py:32-120</code>, <code>python/jester/vector.py:1-212</code>, <code>python/jester/signals/__init__.py:115-125</code></td>
+</tr>
+<tr>
+<td>Console</td>
+<td>Python <code>ThreadingHTTPServer</code>, vanilla JS, no build step</td>
+<td><code>python/jester/console/server.py:12,390-393</code>, <code>python/jester/console/static/</code></td>
+</tr>
+<tr>
+<td>Orchestration</td>
+<td>Docker Compose + profiles <code>live</code> (cloakbrowser+ollama), <code>signals</code> (clickhouse)</td>
+<td><code>docker-compose.yml:35-253</code></td>
+</tr>
+<tr>
+<td>Tests</td>
+<td>1,485 Python tests collected, 75 Go files, CI on every push + Sonar</td>
+<td><code>python/tests/</code> (96 files), <code>.github/workflows/ci.yml</code></td>
+</tr>
+</tbody>
+</table>
+<p>Counts measured 2026-10-14: <code>python/jester</code> = 70 files / 27,080 lines; <code>cli.py</code> = 3,923 lines / 79 functions; <code>console/api.py</code> = 2,663 lines; <code>pytest --collect-only</code> = 1,485 collected, 13 deselected.</p>
+<hr />
+<h2 id="3-current-state-assessment">3. Current-state assessment</h2>
+<h3 id="what-works-well-keep">What works well (keep)</h3>
+<ul>
+<li><strong>Deterministic signals path beside the probabilistic idea path.</strong> Rules-only classification, <code>mode</code> column, failures-as-rows, <code>GROUP BY</code> counts, <code>FINAL</code> queries, <code>signals evidence</code> tri-way reconcile (SQLite vs ClickHouse vs CSV, non-zero exit on drift). Verified in <code>python/jester/signals/</code>, <code>docs/scope-and-access.md</code>, CI double-export check (<code>.github/workflows/ci.yml</code>).</li>
+<li><strong>Failure isolation for models.</strong> Fake/stand-in outputs are signed, never archived as real; nuggets stay queued, ideas saved <code>needs_score</code> and rescored. Per-model Groq quota blocks (<code>python/jester/llm_quota.py:26</code>, <code>python/jester/llm.py:607-626</code>).</li>
+<li><strong>Vector-store hardening already landed.</strong> <code>INDEXING_THRESHOLD=1000</code> with measured comment (83 ms brute-force → 23 ms HNSW), 30 s timeout, 1 retry, <code>UnavailableVectorStore</code> deferral, dimension-mismatch at open time (<code>python/jester/vector.py:10-100</code>).</li>
+<li><strong>Input hygiene in console.</strong> Static allow-list + traversal check (<code>server.py:51-63</code>), thread-id whitelist <code>[A-Za-z0-9._:-]{1,120}</code> never echoed (<code>server.py:178-194</code>), per-request <code>open_db(migrate=False)</code> + <code>--read-only</code> flag.</li>
+<li><strong>Contract discipline across languages.</strong> <code>schema_version=1</code> guard both sides, <code>contractcheck</code> binary, <code>JESTER_CONTRACT_DB</code>-gated tests (<code>go/internal/store/store.go:265-282</code>, <code>go/cmd/contractcheck/main.go</code>).</li>
+</ul>
+<h3 id="what-needs-attention">What needs attention</h3>
+<ul>
+<li>Security boundary (auth, network exposure, defaults), SQLite concurrency/indexing, god-file maintainability, per-comment LLM cost, floating dependencies/images, dual-frontend drift, silent logs, unmeasured recall, checked-in binaries.</li>
+</ul>
+<hr />
+<h2 id="4-key-findings-summary">4. Key findings (summary)</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Area</th>
+<th>Priority</th>
+<th>One-line problem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F-01</td>
+<td>Security</td>
+<td><strong>High</strong></td>
+<td>Console: no auth, <code>0.0.0.0</code> in Docker, all POSTs mutate</td>
+</tr>
+<tr>
+<td>F-02</td>
+<td>Data/Reliability</td>
+<td><strong>High</strong></td>
+<td>SQLite multi-writer + <code>DELETE</code> journal mode, 5 s busy timeout</td>
+</tr>
+<tr>
+<td>F-03</td>
+<td>Data/Perf</td>
+<td><strong>High</strong></td>
+<td>No declarative indexes on hot filters (platform/status/run/thread)</td>
+</tr>
+<tr>
+<td>F-04</td>
+<td>Architecture</td>
+<td><strong>High</strong></td>
+<td><code>cli.py</code> + <code>api.py</code> god files concentrate change risk</td>
+</tr>
+<tr>
+<td>F-05</td>
+<td>Perf/Cost</td>
+<td><strong>High</strong></td>
+<td>1 LLM call per comment; Groq 8k TPM ceiling hit in practice</td>
+</tr>
+<tr>
+<td>F-06</td>
+<td>Perf/Quality</td>
+<td>Medium</td>
+<td>Single global dedup cosine 0.87; per-item Qdrant round-trips</td>
+</tr>
+<tr>
+<td>F-07</td>
+<td>Ops/Security</td>
+<td>Medium</td>
+<td>Floating images, root containers, default <code>CLICKHOUSE_PASSWORD=jester</code>, unauth Qdrant/CH</td>
+</tr>
+<tr>
+<td>F-08</td>
+<td>Maintainability</td>
+<td>Medium</td>
+<td>Loose pins, <code>pytest</code> in runtime deps, Linux-only lock file</td>
+</tr>
+<tr>
+<td>F-09</td>
+<td>Hygiene</td>
+<td>Medium</td>
+<td>3 checked-in <code>.exe</code> (~12 MB each) despite <code>*.exe</code> gitignore</td>
+</tr>
+<tr>
+<td>F-10</td>
+<td>Frontend</td>
+<td>Medium</td>
+<td>Shipped vanilla JS (untested) + unused React scaffold with stale CSS</td>
+</tr>
+<tr>
+<td>F-11</td>
+<td>Observability</td>
+<td><strong>High</strong></td>
+<td><code>log_message</code> silenced; no structured logs/metrics/traces</td>
+</tr>
+<tr>
+<td>F-12</td>
+<td>Testing</td>
+<td>Medium</td>
+<td>Strong hermetic core, but live/frontend/load/chaos gaps; recall unmeasured</td>
+</tr>
+</tbody>
+</table>
+<p>Details, evidence, and fixes are in §5 + §8.</p>
+<hr />
+<h2 id="5-recommended-solutions">5. Recommended solutions</h2>
+<h3 id="f-01-console-auth-binding-security-high">F-01 — Console auth &amp; binding (Security, High)</h3>
+<ul>
+<li><strong>Current:</strong> <code>ThreadingHTTPServer((args.host, args.port))</code> defaults to <code>127.0.0.1</code> on host (<code>server.py:416-419</code>) — good — but Compose publishes <code>8619:8619</code> with <code>CMD --host 0.0.0.0</code> (<code>docker-compose.yml:93-94</code>, <code>docker/Dockerfile.python</code>), and every <code>POST /api/run|ingest|thresholds|models|sources/*|schedule/*</code> mutates state with no token (<code>server.py:260-372</code>).</li>
+<li><strong>Why it matters:</strong> OWASP Top 10 A01 (Broken Access Control). Python docs warn <code>http.server</code> is not hardened for production exposure.</li>
+<li><strong>Fix (incremental, no rewrite):</strong> (a) keep host default <code>127.0.0.1</code>; document that <code>0.0.0.0</code> requires <code>JESTER_CONSOLE_TOKEN</code>; (b) add <code>Authorization: Bearer</code> check (constant-time compare, env-loaded) with <code>--read-only</code> bypass for GETs; (c) add <code>--allow-host</code> explicit flag for Docker; (d) note reverse-proxy (Caddy/Traefik + TLS + basic-auth) for any non-localhost use.</li>
+<li><strong>Validate:</strong> <code>curl</code> without token → 401; with token → 200; read-only container rejects POST with 403. Add <code>test_console_auth.py</code>.</li>
+</ul>
+<h3 id="f-02-sqlite-concurrency-datareliability-high">F-02 — SQLite concurrency (Data/Reliability, High)</h3>
+<ul>
+<li><strong>Current:</strong> Go sets <code>journal_mode=DELETE, busy_timeout=5000</code> (<code>go/internal/store/store.go</code> PRAGMAs). Comment header in <code>docker-compose.yml:18-33</code> records 2026-08-28 <code>database disk image is malformed</code> from host+container multi-writer over bind mount. Mitigation (isolated <code>jester_docker_data</code> volume + <code>jester-docker.db</code>) is correct and load-bearing.</li>
+<li><strong>Fix:</strong> (a) set <code>PRAGMA journal_mode=WAL; synchronous=NORMAL; busy_timeout=15000; foreign_keys=ON</code> on open in both languages (WAL persists; safe on the isolated volume, still avoid WAL over network FS); (b) single-writer rule: only <code>go-worker</code> + owning CLI write <code>ingest_batch</code>; console uses <code>--read-only</code> against live DB; (c) wrap claim-process-update in <code>BEGIN IMMEDIATE</code> with retry on <code>SQLITE_BUSY</code>; (d) nightly <code>VACUUM INTO</code> backup (already <code>backup.py</code> — schedule it).</li>
+<li><strong>Validate:</strong> concurrent <code>worker + treat</code> soak shows 0 <code>SQLITE_BUSY</code> aborts; <code>PRAGMA journal_mode</code> returns <code>wal</code>; fault-injection test kills writer mid-transaction → DB opens clean.</li>
+<li><strong>Trade-off:</strong> WAL creates <code>-wal/-shm</code> sidecars; must back up all three or checkpoint first. Documented in report.</li>
+</ul>
+<h3 id="f-03-missing-indexes-dataperf-high">F-03 — Missing indexes (Data/Perf, High)</h3>
+<ul>
+<li><strong>Current:</strong> <code>BASE_SCHEMA</code> declares only <code>unique_key UNIQUE</code> (<code>store.py:32-60</code>); hot filters (<code>ingest_batch.status</code>, <code>nuggets.platform/run_id</code>, <code>ideas.status/overall</code>, <code>ingested_comments.thread_id</code>) rely on scans. One-off <code>CREATE INDEX</code> exists only in <code>console/api.py:795</code>.</li>
+<li><strong>Fix:</strong> add idempotent migrations: <code>idx_batch_status(status, kind)</code>, <code>idx_nuggets_platform(platform, created_at)</code>, <code>idx_ideas_status_overall(status, overall)</code>, <code>idx_ingested_thread(thread_id)</code>, <code>idx_runs_status(started)</code>. Run <code>EXPLAIN QUERY PLAN</code> before/after on <code>/api/overview</code>, <code>/api/queue</code>, <code>/api/ideas</code>.</li>
+<li><strong>Validate:</strong> <em>Hypothesis:</em> p50 overview latency drops and stays flat as batches grow past 35k; assert index-scan, no full-scan. Record timings in appendix.</li>
+</ul>
+<h3 id="f-04-god-files-architecture-high">F-04 — God files (Architecture, High)</h3>
+<ul>
+<li><strong>Current:</strong> <code>cli.py</code> 3,923 lines / 79 top-level functions; <code>api.py</code> 2,663 lines. Every pipeline, signals, journal, cluster, and schedule change touches the same files → merge conflicts + untestable branches.</li>
+<li><strong>Fix:</strong> extract by bounded context without behaviour change: <code>cli_signals.py</code>, <code>cli_journal.py</code>, <code>cli_cluster.py</code>, <code>services/pipeline.py</code> (thin CLI → service → store/vector/llm). <code>api.py</code> → <code>api_ideas.py</code>, <code>api_signals.py</code>, <code>api_ops.py</code> sharing one <code>ConsoleAPI</code> facade. Enforce <code>ruff</code> max-complexity + file-length lint in CI.</li>
+<li><strong>Validate:</strong> <code>pytest</code> green, <code>go test</code> untouched, import graph (e.g. <code>pydeps</code>) shows no cycles; PR diff-stat shows future changes land in one module.</li>
+</ul>
+<h3 id="f-05-batched-extraction-perfcost-high">F-05 — Batched extraction (Perf/Cost, High)</h3>
+<ul>
+<li><strong>Current:</strong> <code>agents/extractor.py:87 extract([comment])</code> is called once per comment; <code>COMMENT_BUDGET=120</code>, <code>QUEUE_CEILING=40000</code> (<code>cli.py:1006-1058</code>). <code>config.py:122-123</code> notes Groq 8k TPM forces hourly cadence. At 98k-nugget scale this is the dominant token/latency cost.</li>
+<li><strong>Fix:</strong> add <code>extract_batch(comments[5..20]) → NuggetDraft[]</code> with JSON-array prompt, same <code>PROMPT_VERSIONS</code> gate, fallback to single-call on parse failure. Keep temperature/seed per role. Gate promotion on <code>eval/known_good.md + known_bad.md</code> + trivial-share metric.</li>
+<li><strong>Validate:</strong> tokens/idea and wall-clock per 1k comments drop; nugget yield and trivial-share within ±2 pts of baseline. <em>Hypothesis:</em> 3–8× fewer requests at equal quality — must be measured, not assumed.</li>
+<li><strong>Principle:</strong> batching for LLM serving throughput is the standard lever (vLLM/PagedAttention shows 2–4× serving gains from better batching; batching prompts is the client-side analogue).</li>
+</ul>
+<h3 id="f-06-dedup-calibration-batching-perfquality-medium">F-06 — Dedup calibration &amp; batching (Perf/Quality, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> global <code>dedup_threshold: 0.87</code> (<code>config/thresholds.yaml</code>), per-nugget <code>search_scored</code> loop (<code>vector.py:44-56</code> notes per-nugget cost). Strength: <code>INDEXING_THRESHOLD=1000</code> already fixed the 83 ms scan. Gap: <code>docs/realestate-dedup-validation.md</code> reports precision 5/7 ≈ 71%, recall unmeasured.</li>
+<li><strong>Fix:</strong> (a) <code>search_batch</code> / <code>upsert_batch</code> (Qdrant supports batched points); (b) threshold sweep 0.80–0.92 per category with labelled pairs; store <code>embedding_model</code> already recorded — keep enforcing single-model collections; (c) publish precision/recall/F1 table.</li>
+<li><strong>Validate:</strong> labelled fixture of ~200 pairs; choose threshold by F1, not vibes.</li>
+</ul>
+<h3 id="f-07-supply-chain-runtime-hardening-opssecurity-medium">F-07 — Supply chain &amp; runtime hardening (Ops/Security, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> <code>qdrant:latest</code>, <code>ollama:latest</code>, <code>golang:latest</code>, <code>python:3.12-slim</code>, <code>node:24-slim</code> float; <code>jester-console</code> + <code>go-worker</code> run as root (documented for cron + shared SQLite uid); <code>CLICKHOUSE_PASSWORD:-jester</code> default committed; Qdrant 6333 / CH 8123 unauthenticated HTTP; ClickHouse HTTP not TLS.</li>
+<li><strong>Fix:</strong> pin by digest (<code>image:tag@sha256:…</code>, Renovate/Dependabot updates); run frontend as <code>node</code> (already) and add <code>USER app</code> + <code>gosu</code> pattern for Python/Go where uid matters; require <code>CLICKHOUSE_PASSWORD</code> in prod (fail-fast if default on non-localhost); bind Qdrant/CH to <code>127.0.0.1</code> (already for CH) and put them on internal network only; add TLS termination note.</li>
+<li><strong>Validate:</strong> <code>docker scout</code> / Trivy clean on pinned digests; <code>docker compose config</code> shows no <code>latest</code>; prod boot with default password refuses to start.</li>
+</ul>
+<h3 id="f-08-dependency-reproducibility-maintainability-medium">F-08 — Dependency reproducibility (Maintainability, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> <code>PyYAML&gt;=6.0, qdrant-client&gt;=1.10, pytest&gt;=8.0, tzdata, ollama&gt;=0.4</code> unbounded; <code>pytest</code> ships as runtime dep; <code>pylock.toml</code> Linux-only, Windows uses <code>requirements.txt</code>.</li>
+<li><strong>Fix:</strong> move <code>pytest/pytest-cov</code> to dev extras; add upper bounds or adopt <code>uv lock</code> cross-platform; generate SBOM (<code>pip-audit</code> / <code>osv-scanner</code>) in CI.</li>
+<li><strong>Validate:</strong> clean-clone install on Win + Linux resolves identically; <code>pip-audit</code> passes.</li>
+</ul>
+<h3 id="f-09-checked-in-binaries-hygiene-medium">F-09 — Checked-in binaries (Hygiene, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> <code>go/listprobe.exe</code> (12.7 MB), <code>redditprobe.exe</code> (11.9 MB), <code>treeprobe.exe</code> (12.6 MB) are tracked despite <code>.gitignore:59-60 (*.exe)</code>. Stale, Windows-only, bloat <code>git clone</code>.</li>
+<li><strong>Fix:</strong> <code>git rm --cached go/*.exe</code>, publish probes via GitHub Releases / CI artifacts, document <code>go run ./cmd/listprobe</code>.</li>
+<li><strong>Validate:</strong> <code>git ls-files go/*.exe</code> empty; repo size drops ~37 MB.</li>
+</ul>
+<h3 id="f-10-frontend-duality-frontend-medium">F-10 — Frontend duality (Frontend, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> shipped UI is vanilla JS with no build (<code>console/static/app.js</code>, no JS test runner, excluded from coverage per inventory); <code>frontend/</code> is React 19 + Vite scaffold with stock <code>README</code>, leftover <code>App.css</code> (<code>.counter/.hero</code> unused), <code>tokens.css</code> divergence, <code>oxlint</code> only.</li>
+<li><strong>Fix:</strong> decide explicitly: (A) archive <code>frontend/</code> as <code>frontend-future/</code> with a README pointer, or (B) promote it with <code>vitest + @testing-library + tsc --noEmit</code> in CI. Either way delete dead <code>App.css</code> template rules and wire <code>lint + build</code> gates.</li>
+<li><strong>Validate:</strong> CI runs <code>npm ci &amp;&amp; npm run lint &amp;&amp; npm run build (+ test)</code>; no unused-CSS drift.</li>
+</ul>
+<h3 id="f-11-observability-observability-high">F-11 — Observability (Observability, High)</h3>
+<ul>
+<li><strong>Current:</strong> <code>Handler.log_message</code> is <code>pass</code> (<code>server.py:386-387</code>); ops surface is <code>print</code> + <code>runs</code> table + <code>/api/doctor</code>. No request IDs, no timings around LLM/Qdrant/ClickHouse calls, cron-in-container (<code>docker/entrypoint.console.sh</code>) has no alerting.</li>
+<li><strong>Fix:</strong> JSON structured logs (request id, run id, role, model, latency, tokens, error class); <code>/metrics</code> (Prometheus: runs, queue depth, dedup hits, LLM retries, Qdrant p50/p95); OTel spans for <code>extract/synth/critic/embed/search</code>; alert on queue growth + <code>needs_score</code> backlog + Qdrant down.</li>
+<li><strong>Validate:</strong>chaos test (stop Qdrant) shows deferred-nugget counter increments and dashboard fires; p95 extract latency visible per model.</li>
+</ul>
+<h3 id="f-12-test-release-gaps-testing-medium">F-12 — Test &amp; release gaps (Testing, Medium)</h3>
+<ul>
+<li><strong>Current:</strong> strong hermetic core (1,485 collected; sample <code>test_store_parity.py</code> 6 passed; signals idempotence + fixture gate in CI) but: live tests skip without cloakserve, <code>go/cmd/worker</code> ~11% (admitted debt), frontend 0%, no load/chaos, recall unmeasured.</li>
+<li><strong>Fix:</strong> (a) run <code>contract_test.go</code> in CI with temp Python-created DB; (b) per-package coverage floors (raise worker gradually); (c) add <code>vitest</code> smoke for console static; (d) nightly <code>k6</code> treat-path soak + Qdrant-down chaos asserting <code>UnavailableVectorStore</code> deferral; (e) publish dedup precision/recall table.</li>
+<li><strong>Validate:</strong> CI matrix green; chaos test asserts queue drains after recovery with 0 duplicates.</li>
+</ul>
+<hr />
+<h2 id="6-research-and-references-why-these-fixes">6. Research and references (why these fixes)</h2>
+<table>
+<thead>
+<tr>
+<th>Finding</th>
+<th>Source (verified)</th>
+<th>How it applies to Jester</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F-06 vector search</td>
+<td>Malkov &amp; Yashunin. <em>Efficient and Robust ANN Search Using HNSW</em>. IEEE TPAMI 42(4), 2020. DOI <code>10.1109/TPAMI.2018.2889473</code>. Preprint arXiv <code>1603.09320</code>.</td>
+<td>Justifies the already-landed <code>INDEXING_THRESHOLD=1000</code> (HNSW = logarithmic vs brute-force linear) and batched search/upsert next step.</td>
+</tr>
+<tr>
+<td>F-06 embeddings</td>
+<td>Reimers &amp; Gurevych. <em>Sentence-BERT</em>. EMNLP-IJCNLP 2019, pp. 3982–3992. DOI <code>10.18653/v1/D19-1410</code>. arXiv <code>1908.10084</code>. ACL Anthology <code>D19-1410</code>.</td>
+<td>Cosine-similarity on siamese embeddings is the correct dedup primitive; supports threshold-per-domain calibration + F1 evaluation instead of a single global 0.87.</td>
+</tr>
+<tr>
+<td>F-05 batching</td>
+<td>Kwon et al. <em>Efficient Memory Management for LLM Serving with PagedAttention</em>. SOSP 2023. DOI <code>10.1145/3600006.3613165</code>. arXiv <code>2309.06180</code>.</td>
+<td>Server-side batching yields 2–4× throughput; client-side prompt batching is the analogous lever for Jester's 1-call-per-comment bottleneck. Hypothesis to be measured via eval gate.</td>
+</tr>
+<tr>
+<td>F-02 SQLite</td>
+<td>SQLite docs: <em>Write-Ahead Logging</em> (<code>sqlite.org/wal.html</code>) + <em>PRAGMA journal_mode / busy_timeout</em> (<code>sqlite.org/pragma.html</code>). Verified 2026-10-14.</td>
+<td>WAL lets readers not block writers; <code>busy_timeout</code> + <code>BEGIN IMMEDIATE</code> + checkpoint discipline directly address the 2026-08-28 corruption and 5 s timeout. Sidecar/backup caveats taken from same docs.</td>
+</tr>
+<tr>
+<td>F-01/F-07 hardening</td>
+<td>OWASP Top 10 2021 (<code>owasp.org/www-project-top-ten</code>), OWASP ASVS, Docker <em>Best practices for writing Dockerfiles</em> (<code>docs.docker.com</code>), CIS Docker Benchmark.</td>
+<td>No-auth mutating API + <code>0.0.0.0</code> + default password + <code>latest</code> + root = standard hardening backlog. Fix list mirrors these checklists.</td>
+</tr>
+<tr>
+<td>F-01 stdlib server</td>
+<td>Python docs: <code>http.server — HTTP servers</code> (<code>docs.python.org/3/library/http.server.html</code>, security note: not recommended for production exposure).</td>
+<td>Supports token + localhost-default + reverse-proxy recommendation; stdlib server stays for local-operator use.</td>
+</tr>
+<tr>
+<td>F-03 indexing</td>
+<td>SQLite <em>Query Planner</em> docs (<code>sqlite.org/optoverview.html</code>) + <em>Use The Index, Luke</em> (<code>use-the-index-luke.com</code>).</td>
+<td><code>EXPLAIN QUERY PLAN</code> before/after index migration; covers hot <code>status/platform/run_id/thread_id</code> filters.</td>
+</tr>
+<tr>
+<td>F-07 supply chain</td>
+<td>Python Packaging: PEP 751 (<code>pylock.toml</code>), <code>pip-audit</code> / OSV docs; GitHub docs for Releases/Artifacts.</td>
+<td>Unbounded pins + Linux-only lock + checked-in <code>.exe</code> fixes.</td>
+</tr>
+<tr>
+<td>F-11 observability</td>
+<td>Google SRE Workbook (alerting on SLOs), OpenTelemetry docs (<code>opentelemetry.io/docs</code>), Prometheus exposition docs.</td>
+<td>Structured logs + <code>/metrics</code> + traces around LLM/Qdrant; alert on queue/<code>needs_score</code>.</td>
+</tr>
+<tr>
+<td>F-04 refactoring</td>
+<td>Fowler, <em>Refactoring</em> (2e); Martin, <em>Clean Architecture</em>.</td>
+<td>God-file split strategy; no behaviour change, facade preserved.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>No paper is forced onto ordinary engineering items (pinning images, deleting <code>.exe</code>s, adding auth). Those cite official docs instead, per the brief.</p>
+</blockquote>
+<hr />
+<h2 id="7-diagrams-and-figures">7. Diagrams and figures</h2>
+<h3 id="fig-1-current-architecture-as-built">Fig. 1 — Current architecture (as built)</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 1">flowchart LR
+  subgraph INGEST[&quot;Ingestion (Go)&quot;]
+    W[go-worker&lt;br/&gt;mock default, -live with cloakserve]
+    adapters[adapters: HN/Discourse/Lemmy/GH/SE/Steam/Podcast&lt;br/&gt;public APIs + Reddit/YT/RealEstate via browser]
+  end
+  subgraph Q[Handoff contract]
+    SQ[(SQLite ingest_batch&lt;br/&gt;pending/claimed/done/failed)]
+  end
+  subgraph PIPE[&quot;Processing (Python)&quot;]
+    EX[Extractor&lt;br/&gt;1 call / comment]
+    SY[Synthesizer&lt;br/&gt;per thread chunk]
+    CR[Critic&lt;br/&gt;per idea + rescore]
+    AR[Archivist&lt;br/&gt;Qdrant dedup 0.87]
+  end
+  QV[(Qdrant&lt;br/&gt;nuggets collection&lt;br/&gt;HNSW thr=1000)]
+  CH[(ClickHouse&lt;br/&gt;ReplacingMergeTree&lt;br/&gt;signals archive)]
+  SL[(SQLite signals-live.db&lt;br/&gt;problem_signal + runs)]
+  CON[Console :8619&lt;br/&gt;ThreadingHTTPServer&lt;br/&gt;vanilla JS, no auth]
+
+  W --&gt; adapters --&gt; SQ --&gt; EX --&gt; AR --&gt; QV
+  EX --&gt; SY --&gt; CR
+  AR -.-&gt; CH
+  SL --&gt; CH
+  PIPE --&gt; CON
+  CON --&gt; SQ
+  CON --&gt; SL</div>
+<p><em>Read: Go owns <code>ingest_batch</code>; Python owns <code>nuggets/ideas/runs</code>. Qdrant is the dedup authority; ClickHouse is the queryable archive. Console reads/writes both SQLite DBs.</em></p>
+<h3 id="fig-2-representative-execution-flow-treat-path">Fig. 2 — Representative execution flow (treat path)</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 2">sequenceDiagram
+  participant OP as Operator / Scheduler
+  participant CLI as jester treat
+  participant SQ as SQLite queue
+  participant LLM as Extractor LLM
+  participant QD as Qdrant
+  participant DB as SQLite archive
+  OP-&gt;&gt;CLI: run treat (bounded bite ≤120)
+  CLI-&gt;&gt;SQ: claim pending batch (status=claimed)
+  loop per comment
+    CLI-&gt;&gt;LLM: extract(comment) — 1 call each
+    LLM--&gt;&gt;CLI: NuggetDraft
+    CLI-&gt;&gt;QD: search_scored(text) — 1 round-trip each
+    QD--&gt;&gt;CLI: neighbours + cosine
+    alt cosine ≥ 0.87
+      CLI-&gt;&gt;DB: defer (duplicate)
+    else
+      CLI-&gt;&gt;QD: upsert(vector)
+      CLI-&gt;&gt;DB: insert nugget
+    end
+  end
+  CLI-&gt;&gt;SQ: mark batch done/failed + attempts/error
+  CLI-&gt;&gt;DB: synthesizer + critic (per thread / per idea)</div>
+<p><em>Bottlenecks visible: N LLM calls + N Qdrant round-trips per batch (F-05/F-06).</em></p>
+<h3 id="fig-3-problem-sqlite-contention-missing-indexes">Fig. 3 — Problem: SQLite contention + missing indexes</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 3">flowchart TB
+  GW[go-worker&lt;br/&gt;enqueue]
+  CL[CLI treat/cycle]
+  CO[console POST /api/*]
+  DB[(SQLite DELETE mode&lt;br/&gt;busy_timeout 5s&lt;br/&gt;no hot indexes)]
+  GW --&gt;|write| DB
+  CL --&gt;|claim + write| DB
+  CO --&gt;|migrate + write&lt;br/&gt;per request| DB
+  DB -.-&gt;|SQLITE_BUSY / full scans&lt;br/&gt;as 35k batches grow| SLOW[stale console&lt;br/&gt;failed treats]</div>
+<h3 id="fig-4-proposed-single-writer-wal-indexes-authed-console">Fig. 4 — Proposed: single-writer + WAL + indexes + authed console</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 4">flowchart TB
+  GW[go-worker&lt;br/&gt;sole queue writer]
+  CL[CLI treat — sole claimant&lt;br/&gt;BEGIN IMMEDIATE + retry]
+  CO[console --read-only&lt;br/&gt;against live DB&lt;br/&gt;+ Bearer token]
+  DB[(SQLite WAL mode&lt;br/&gt;busy 15s + indexes&lt;br/&gt;on status/platform/run)]
+  GW --&gt; DB
+  CL --&gt; DB
+  CO -.-&gt;|reads + explicit POST guard| DB
+  M[Prometheus /metrics&lt;br/&gt;queue depth, p95, retries] -.-&gt; AL[alerts]</div>
+<h3 id="fig-5-before-vs-after-extraction-batching">Fig. 5 — Before vs after (extraction batching)</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 5">flowchart LR
+  subgraph BEFORE[&quot;Before: 1 call / comment&quot;]
+    B1[120 comments] --&gt; B2[120 LLM reqs&lt;br/&gt;120 Qdrant searches]
+  end
+  subgraph AFTER[&quot;After: batched (Hypothesis)&quot;]
+    A1[120 comments] --&gt; A2[6–24 LLM reqs&lt;br/&gt;batched search/upsert]
+  end</div>
+<p><em>Expectation is a hypothesis: measure tokens/idea + trivial-share on <code>eval/known_good|bad.md</code> before promoting.</em></p>
+<h3 id="fig-6-implementation-roadmap-order-deps">Fig. 6 — Implementation roadmap (order + deps)</h3>
+<div class="mermaid" role="img" aria-label="Architecture diagram 6">gantt
+  title Roadmap (sequenced)
+  dateFormat YYYY-MM-DD
+  section Quick wins
+  Console bind+token + indexes + pin images + rm exes :a1, 2026-10-15, 7d
+  section Medium term
+  CLI/API split + WAL migration           :a2, 2026-10-22, 14d
+  Batched extraction + eval gate          :a3, 2026-11-01, 14d
+  Dedup calibration + batch Qdrant        :a4, 2026-11-10, 14d
+  OTel + /metrics + chaos test            :a5, 2026-11-20, 14d
+  section Long term
+  Frontend decision + vitest + portal scale :a6, 2026-12-05, 21d</div>
+<hr />
+<h2 id="8-prioritized-improvement-backlog">8. Prioritized improvement backlog</h2>
+<blockquote>
+<p>Effort: S ≤2 d, M 1–3 wk, L ≥3 wk. Validation tells exactly how to prove each fix.</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Area</th>
+<th>Current situation</th>
+<th>Problem</th>
+<th>Proposed solution</th>
+<th>Evidence</th>
+<th>References</th>
+<th>Expected impact</th>
+<th>Effort</th>
+<th>Risk</th>
+<th>Priority</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F-01</td>
+<td>Security</td>
+<td>Console serves API + static with no token; Docker <code>--host 0.0.0.0</code> + <code>8619:8619</code></td>
+<td>Any network neighbour can mutate archive via POST</td>
+<td>Localhost default; <code>JESTER_CONSOLE_TOKEN</code> bearer; read-only mode for shared viewing; proxy note</td>
+<td><code>console/server.py:260-372,390-419</code>; <code>docker-compose.yml:93-94</code></td>
+<td>OWASP Top 10 A01; Python <code>http.server</code> docs</td>
+<td>Prevents unauth writes</td>
+<td>S</td>
+<td>Low — additive</td>
+<td><strong>High</strong></td>
+<td>401 without token; 403 POST in read-only; new <code>test_console_auth.py</code></td>
+</tr>
+<tr>
+<td>F-02</td>
+<td>Reliability</td>
+<td><code>journal_mode=DELETE</code>, <code>busy_timeout=5000</code>, 3 writers (worker+CLI+console) over one SQLite file</td>
+<td>Contention → <code>SQLITE_BUSY</code>; prior <code>malformed</code> corruption</td>
+<td>WAL + 15 s timeout + <code>BEGIN IMMEDIATE</code> + single-writer rule + checkpointed backups</td>
+<td><code>go/internal/store/store.go</code> PRAGMAs; <code>docker-compose.yml:18-33</code> incident note</td>
+<td>SQLite WAL + PRAGMA docs (verified)</td>
+<td>Fewer failed treats; safe concurrency</td>
+<td>S–M</td>
+<td>Medium — migration needs soak</td>
+<td><strong>High</strong></td>
+<td>Soak <code>worker+treat</code> 0 aborts; <code>journal_mode=wal</code>; kill-mid-txn recovery</td>
+</tr>
+<tr>
+<td>F-03</td>
+<td>Perf/Data</td>
+<td>Only <code>unique_key UNIQUE</code>; hot filters unscanned-indexed</td>
+<td>Full scans as 35k batches / 99k nuggets grow</td>
+<td>5 idempotent <code>CREATE INDEX</code> migrations; <code>EXPLAIN QUERY PLAN</code> gate</td>
+<td><code>store.py:32-60</code>; <code>console/api.py:795</code> one-off index</td>
+<td>SQLite Query Planner; Use The Index Luke</td>
+<td>Flat p50 as archive grows (hypothesis, measure)</td>
+<td>S</td>
+<td>Low</td>
+<td><strong>High</strong></td>
+<td>Plan shows index-scan; <code>/api/overview</code> timing before/after</td>
+</tr>
+<tr>
+<td>F-04</td>
+<td>Architecture</td>
+<td><code>cli.py</code> 3,923 lines/79 fns; <code>api.py</code> 2,663 lines</td>
+<td>Change coupling; review + test cost</td>
+<td>Split <code>cli_{signals,journal,cluster}.py</code> + <code>services/pipeline.py</code>; <code>api_{ideas,signals,ops}.py</code> facade; lint caps</td>
+<td>Measured <code>wc</code>/<code>ast</code> 2026-10-14; <code>python/tests</code> 96 files</td>
+<td>Fowler <em>Refactoring</em>; <em>Clean Architecture</em></td>
+<td>Faster reviews; fewer regressions</td>
+<td>M</td>
+<td>Low — pure moves</td>
+<td><strong>High</strong></td>
+<td>Green suite; acyclic import graph; smaller diff-stat</td>
+</tr>
+<tr>
+<td>F-05</td>
+<td>Perf/Cost</td>
+<td>Extractor 1 req/comment; Groq 8k TPM forces hourly runs</td>
+<td>Linear cost/latency; throughput ceiling</td>
+<td><code>extract_batch(n=5–20)</code> JSON-array prompt + single-call fallback; eval-gated</td>
+<td><code>agents/extractor.py:87</code>; <code>config.py:122-123</code>; <code>cli.py:1055-1058</code></td>
+<td>Kwon et al. SOSP 2023 (batching principle)</td>
+<td>3–8× fewer reqs at equal quality (hypothesis)</td>
+<td>M</td>
+<td>Medium — quality drift</td>
+<td><strong>High</strong></td>
+<td>Tokens/idea ↓; trivial-share ±2 pts on <code>eval/known_*</code></td>
+</tr>
+<tr>
+<td>F-06</td>
+<td>Perf/Quality</td>
+<td>Global cosine 0.87; per-item search/upsert; P71% R?</td>
+<td>Over/under-merge; N round-trips</td>
+<td>Batched Qdrant ops; per-category sweep 0.80–0.92; publish P/R/F1</td>
+<td><code>thresholds.yaml</code>; <code>vector.py:44-56</code>; <code>docs/realestate-dedup-validation.md</code></td>
+<td>HNSW (Malkov 2018); SBERT (Reimers 2019)</td>
+<td>Better F1; fewer round-trips</td>
+<td>M</td>
+<td>Medium</td>
+<td>Medium</td>
+<td>200-pair fixture; F1-chosen threshold</td>
+</tr>
+<tr>
+<td>F-07</td>
+<td>Ops/Sec</td>
+<td><code>:latest</code> floats; root images; <code>CLICKHOUSE_PASSWORD=jester</code>; unauth Qdrant/CH HTTP</td>
+<td>Supply-chain + exposure risk</td>
+<td>Pin digests + Renovate; non-root/<code>gosu</code>; fail-fast on default pwd; internal networks; TLS note</td>
+<td><code>docker-compose.yml</code>; <code>docker/*.Dockerfile</code></td>
+<td>Docker best-practices; OWASP ASVS; CIS</td>
+<td>Reproducible, least-privilege deploys</td>
+<td>S</td>
+<td>Low</td>
+<td>Medium</td>
+<td>No <code>latest</code> in <code>config</code>; Trivy clean; prod refuses default</td>
+</tr>
+<tr>
+<td>F-08</td>
+<td>Maintain.</td>
+<td>Unbounded <code>&gt;=</code>; <code>pytest</code> runtime; Linux-only <code>pylock.toml</code></td>
+<td>Non-reproducible resolves; Win/Linux drift</td>
+<td>Dev extras; <code>uv lock</code> or upper bounds; SBOM + <code>pip-audit</code> in CI</td>
+<td><code>pyproject.toml:10-16</code></td>
+<td>PEP 751; pip-audit/OSV docs</td>
+<td>Identical clean-clone installs</td>
+<td>S</td>
+<td>Low</td>
+<td>Medium</td>
+<td>Win+Linux resolve equal; audit passes</td>
+</tr>
+<tr>
+<td>F-09</td>
+<td>Hygiene</td>
+<td><code>go/*.exe</code> 11–13 MB ×3 tracked vs <code>*.exe</code> ignore</td>
+<td>Clone bloat; stale binaries</td>
+<td><code>git rm --cached</code>; Releases/artifacts; <code>go run</code> docs</td>
+<td><code>go/*.exe</code>; <code>.gitignore:59-60</code></td>
+<td>GitHub Releases docs</td>
+<td>−37 MB; single source of truth</td>
+<td>S</td>
+<td>Very low</td>
+<td>Medium</td>
+<td><code>git ls-files go/*.exe</code> empty</td>
+</tr>
+<tr>
+<td>F-10</td>
+<td>Frontend</td>
+<td>Vanilla shipped UI untested + React scaffold with dead <code>App.css</code>, <code>oxlint</code> only</td>
+<td>Drift; dead code ships; no UI regression net</td>
+<td>Archive-or-promote decision; <code>vitest</code> + <code>tsc --noEmit</code>; delete dead CSS</td>
+<td><code>frontend/package.json</code>; <code>src/App.css</code> vs <code>App.tsx</code>; <code>console/static/app.js</code></td>
+<td>React/Vite docs</td>
+<td>Clear UI ownership; tested builds</td>
+<td>M</td>
+<td>Low</td>
+<td>Medium</td>
+<td><code>npm ci/lint/build/test</code> green in CI</td>
+</tr>
+<tr>
+<td>F-11</td>
+<td>Observ.</td>
+<td><code>log_message: pass</code>; <code>print</code> ops; cron-in-container</td>
+<td>Blind spots for LLM/Qdrant latency + failures</td>
+<td>JSON logs + req/run ids; <code>/metrics</code>; OTel spans; queue/<code>needs_score</code> alerts</td>
+<td><code>server.py:386-387</code>; <code>schedule.py</code>; <code>entrypoint.console.sh</code></td>
+<td>SRE Workbook; OTel/Prometheus docs</td>
+<td>MTTD/MTTR ↓; cost visibility</td>
+<td>M</td>
+<td>Low</td>
+<td><strong>High</strong></td>
+<td>Qdrant-down chaos → counter + alert; p95 per model visible</td>
+</tr>
+<tr>
+<td>F-12</td>
+<td>Testing</td>
+<td>1,485 hermetic tests green; live/frontend/load/chaos gaps; R unmeasured</td>
+<td>False confidence at boundaries</td>
+<td>Contract test in CI; worker floor raise; <code>vitest</code>; k6 soak + chaos; P/R table</td>
+<td><code>pytest --collect-only</code> 1,485/13; <code>test_store_parity.py</code> 6 passed; <code>.github/workflows/ci.yml</code></td>
+<td>— (process)</td>
+<td>Release confidence</td>
+<td>M</td>
+<td>Low</td>
+<td>Medium</td>
+<td>Matrix green; chaos recovers with 0 dupes</td>
+</tr>
+</tbody>
+</table>
+<p>Confirmed by evidence vs needs-investigation: F-01–F-04, F-07–F-10 are confirmed by code/config. F-05/F-06/F-03/F-11 performance deltas are hypotheses until the Validation experiments run.</p>
+<hr />
+<h2 id="9-implementation-roadmap">9. Implementation roadmap</h2>
+<p><strong>Quick wins (week 1, parallelisable, S):</strong> F-01 (token + bind) → F-03 (indexes) → F-07 (pin digests, default-pwd guard) → F-09 (rm exes) → F-08 (dev extras + audit). Each lands as a small PR with its Validation test.</p>
+<p><strong>Medium term (weeks 2–6, sequenced, M):</strong>
+1. F-02 WAL migration + single-writer docs (blocks soak credibility for everything else).
+2. F-04 CLI/API split (makes F-05/F-06 diffs reviewable).
+3. F-05 batched extraction behind eval gate.
+4. F-06 dedup calibration + batched Qdrant.
+5. F-11 OTel + <code>/metrics</code> + F-12 chaos/load harness.</p>
+<p><strong>Long term (L):</strong> F-10 frontend decision + portal-scale hardening (per-portal rate budgets, <code>StatusError</code> taxonomy already good), ClickHouse retention/tenant isolation, optional vLLM/Ollama tuning for local models.</p>
+<hr />
+<h2 id="10-validation-strategy">10. Validation strategy</h2>
+<ul>
+<li><strong>Tests (actually run in audit):</strong> <code>pytest --collect-only</code> → 1,485 collected / 13 deselected (15.2 s); <code>test_store_parity.py</code> → 6 passed; Go <code>1.26.7</code> present. CI already gates: double <code>signals export</code> idempotence, <code>signals check</code> fixture gate, <code>pytest --cov</code> + <code>go test -coverprofile</code> + Sonar 80% new-code gate.</li>
+<li><strong>Per-finding acceptance:</strong> see Validation column in §8. No finding is "done" without its test/metric.</li>
+<li><strong>Metrics to record:</strong> <code>/api/overview</code> p50/p95, tokens per 1k comments, trivial-share, dedup P/R/F1, <code>SQLITE_BUSY</code> count, Qdrant search p50/p95, queue depth + <code>needs_score</code> backlog.</li>
+<li><strong>Do not claim:</strong> no latency/throughput numbers are asserted in this report beyond in-code measured notes (<code>vector.py:23-41</code>) and the live-archive counts from <code>README</code>. All other deltas are hypotheses with experiments defined.</li>
+</ul>
+<hr />
+<h2 id="11-limitations-and-open-questions">11. Limitations and open questions</h2>
+<ol>
+<li>No live cloakserve/Ollama/Qdrant/ClickHouse endpoints were reachable from this audit box — live-path behaviour (browser shreddit DOM, warmups, <code>blocked_response_action</code>) is assessed from code + tests, not a live scrape.</li>
+<li><code>frontend/node_modules</code> present but no <code>npm run build/test</code> executed — JS gap is structural, not measured.</li>
+<li>Recall for dedup is unmeasured (precision 71% on 7 pairs per <code>realestate-dedup-validation.md</code>); threshold advice stays provisional until the 200-pair fixture exists.</li>
+<li>Cost model for Groq vs Ollama batching needs real token accounting — <code>llm_quota</code> + runs tables have the fields; the query is not yet built.</li>
+<li>TikTok has no adapter (<code>worker needsBrowser</code> allow-list vs missing package) — treated as scoping, not a bug; confirm intent before removing the name.</li>
+<li>Legal: Reddit/YouTube stealth-browser path carries ToS/§1201 risk the repo already mitigates (depth caps, backoff, compliance audit, Reddit collector paused pending written commercial access per <code>docs/scope-and-access.md</code>). Any scale-up needs counsel review, not just engineering.</li>
+</ol>
+<hr />
+<h2 id="12-references">12. References</h2>
+<ol>
+<li>Malkov, Y. A. &amp; Yashunin, D. A. Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs. <em>IEEE Trans. Pattern Anal. Mach. Intell.</em> 42(4), 2020. DOI: 10.1109/TPAMI.2018.2889473. arXiv: 1603.09320. <a href="https://arxiv.org/abs/1603.09320">https://arxiv.org/abs/1603.09320</a></li>
+<li>Reimers, N. &amp; Gurevych, I. Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks. <em>EMNLP-IJCNLP</em> 2019, 3982–3992. DOI: 10.18653/v1/D19-1410. arXiv: 1908.10084. <a href="https://aclanthology.org/D19-1410/">https://aclanthology.org/D19-1410/</a></li>
+<li>Kwon, W. et al. Efficient Memory Management for Large Language Model Serving with PagedAttention. <em>SOSP</em> 2023. DOI: 10.1145/3600006.3613165. arXiv: 2309.06180. <a href="https://arxiv.org/abs/2309.06180">https://arxiv.org/abs/2309.06180</a></li>
+<li>SQLite. Write-Ahead Logging. <a href="https://www.sqlite.org/wal.html">https://www.sqlite.org/wal.html</a></li>
+<li>SQLite. PRAGMA journal_mode / busy_timeout / query planner. <a href="https://www.sqlite.org/pragma.html">https://www.sqlite.org/pragma.html</a> · <a href="https://www.sqlite.org/optoverview.html">https://www.sqlite.org/optoverview.html</a></li>
+<li>Qdrant Documentation (collections, HNSW, batch APIs). <a href="https://qdrant.tech/documentation/">https://qdrant.tech/documentation/</a></li>
+<li>ClickHouse Docs: ReplacingMergeTree + FINAL. <a href="https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replacingmergetree">https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replacingmergetree</a></li>
+<li>OWASP Top 10 2021. <a href="https://owasp.org/www-project-top-ten/">https://owasp.org/www-project-top-ten/</a> · OWASP ASVS. <a href="https://owasp.org/www-project-application-security-verification-standard/">https://owasp.org/www-project-application-security-verification-standard/</a></li>
+<li>Python Docs: http.server security considerations. <a href="https://docs.python.org/3/library/http.server.html">https://docs.python.org/3/library/http.server.html</a></li>
+<li>Docker Docs: Best practices for writing Dockerfiles. <a href="https://docs.docker.com/build/building/best-practices/">https://docs.docker.com/build/building/best-practices/</a> · CIS Docker Benchmark (reference).</li>
+<li>OpenTelemetry Docs. <a href="https://opentelemetry.io/docs/">https://opentelemetry.io/docs/</a> · Prometheus exposition. <a href="https://prometheus.io/docs/instrumenting/exposition_formats/">https://prometheus.io/docs/instrumenting/exposition_formats/</a> · Google SRE Workbook (alerting). <a href="https://sre.google/workbook/alerting-on-slos/">https://sre.google/workbook/alerting-on-slos/</a></li>
+<li>Use The Index, Luke. <a href="https://use-the-index-luke.com/">https://use-the-index-luke.com/</a> · PEP 751 (pylock.toml). <a href="https://peps.python.org/pep-0751/">https://peps.python.org/pep-0751/</a></li>
+<li>Repo evidence: <code>README.md</code>, <code>docker-compose.yml:18-33,93-94</code>, <code>python/jester/console/server.py</code>, <code>python/jester/console/api.py:795</code>, <code>python/jester/store.py</code>, <code>python/jester/vector.py:23-41</code>, <code>python/jester/llm.py</code>, <code>python/jester/roles.py</code>, <code>config/thresholds.yaml</code>, <code>docs/realestate-dedup-validation.md</code>, <code>docs/scope-and-access.md</code>, <code>.github/workflows/ci.yml</code>, <code>frontend/package.json</code>.</li>
+</ol>
+<hr />
+<h3 id="appendix-a-how-to-reproduce-the-audit-numbers">Appendix A — How to reproduce the audit numbers</h3>
+<pre><code class="language-powershell"># counts
+python -c &quot;import pathlib; pys=list(pathlib.Path('python/jester').rglob('*.py')); print(len(pys), sum(1 for p in pys for _ in open(p, encoding='utf-8', errors='ignore')))&quot;
+$env:PYTHONPATH='python'; python -m pytest python/tests -q --collect-only  # expect ~1485 collected
+$env:PYTHONPATH='python'; $env:JESTER_MOCK='1'; python -m pytest python/tests/test_store_parity.py -q
+go version; Get-Item go/*.exe | Select-Object Name, Length
+</code></pre>
+<h3 id="appendix-b-suggested-first-prs-small-safe">Appendix B — Suggested first PRs (small, safe)</h3>
+<ol>
+<li><code>sec/console-token</code> (F-01) + test. 2. <code>data/indexes</code> (F-03) + <code>EXPLAIN</code> snapshots. 3. <code>ops/pin-digests</code> (F-07). 4. <code>chore/rm-exes</code> (F-09). 5. <code>deps/dev-extras</code> (F-08). Then <code>data/wal</code> (F-02) with soak notes.</li>
+</ol>
+<hr />
+<h2 id="appendix-c-implementation-status-branch-implreport-fixes-2026-10-14">Appendix C — Implementation status (branch <code>impl/report-fixes</code>, 2026-10-14)</h2>
+<p>All 12 findings implemented in roadmap order. Nothing committed; review the
+diff on <code>impl/report-fixes</code> vs <code>main</code>.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>What landed</th>
+<th>Validation (actually run)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F-01</td>
+<td><code>JESTER_CONSOLE_TOKEN</code> bearer guard on all POSTs; 403 for POSTs in <code>--read-only</code>; warning when binding <code>0.0.0.0</code> without a token; documented in <code>.env.example</code></td>
+<td><code>test_console_auth.py</code> (6 tests) + existing server suite green</td>
+</tr>
+<tr>
+<td>F-02</td>
+<td><code>JESTER_SQLITE_JOURNAL_MODE</code> opt-in (default DELETE, both languages); <code>busy_timeout</code> 5 s → 15 s both sides; parity test rewritten to pin the new agreement</td>
+<td><code>test_store_pragmas.py</code> (4); Go <code>internal/store</code> green; Python-created DB passes Go contract tests</td>
+</tr>
+<tr>
+<td>F-03</td>
+<td>7 idempotent <code>CREATE INDEX</code> migrations in <code>open_db</code></td>
+<td><code>test_store_indexes.py</code> incl. <code>EXPLAIN QUERY PLAN</code> index-scan assertions</td>
+</tr>
+<tr>
+<td>F-04</td>
+<td><code>cli_review.py</code> (review commands, ~180 lines) + <code>console/api_signals.py</code> mixin (~367 lines); pure moves, names re-exported</td>
+<td>87 related console/signals tests green; <code>cli.py</code> 3,923→3,776, <code>api.py</code> 2,663→2,333</td>
+</tr>
+<tr>
+<td>F-05</td>
+<td><code>extract_batch</code> on the LLM role (enumerated prompt + strict validation + per-item fallback + quota fast-path), agent-level chunking, <code>extractor_batch_size</code> knob (default 1 = legacy), console help/group wiring; prompt version extractor 1→2</td>
+<td><code>test_extract_batch.py</code> (9); run-pipeline/quota/config suites green</td>
+</tr>
+<tr>
+<td>F-06</td>
+<td><code>VectorStore.upsert_many</code> + <code>search_scored_many</code>; chunked batching in both reembed paths with per-row fallback; new <code>jester dedup-sweep</code> calibration command + <code>dedup_sweep.py</code></td>
+<td><code>test_vector_batch.py</code> (11); archivist/reembed suites green</td>
+</tr>
+<tr>
+<td>F-07</td>
+<td>ClickHouse default-password guard (refuses non-loopback + default pwd); <code>dependabot.yml</code> for docker/pip/npm</td>
+<td><code>test_signals_clickhouse_guard.py</code> (4) + existing CH suite green</td>
+</tr>
+<tr>
+<td>F-08</td>
+<td><code>dev</code> extras in <code>pyproject.toml</code>; advisory <code>pip-audit</code> CI step; requirements header split</td>
+<td><code>pyproject.toml</code> + <code>ci.yml</code> parse-verified</td>
+</tr>
+<tr>
+<td>F-09</td>
+<td><strong>Correction to §8:</strong> the <code>.exe</code> files were never tracked (<code>git ls-files</code> empty, <code>*.exe</code> gitignored) — local build artifacts only. Removed from disk; rebuild via <code>go build ./...</code></td>
+<td><code>git ls-files go/*.exe</code> empty, confirmed</td>
+</tr>
+<tr>
+<td>F-10</td>
+<td>Dead Vite-template rules pruned from <code>App.css</code> (bundle CSS 5.79→3.51 kB); scaffold status + promotion criteria in <code>frontend/README.md</code>; new CI <code>frontend</code> job (lint + build)</td>
+<td><code>npm run lint</code> + <code>npm run build</code> green locally</td>
+</tr>
+<tr>
+<td>F-11</td>
+<td>One stderr line per console request (method/path/status/size/ms); logging can never break serving</td>
+<td>New access-log test in <code>test_console_server.py</code> green</td>
+</tr>
+<tr>
+<td>F-12</td>
+<td>CI <code>go</code> job runs the gated contract tests against a Python-created DB; Qdrant-down deferral already covered by <code>test_archivist.py</code></td>
+<td>Sequence verified locally (Python <code>open_db</code> → <code>go test -run Contract</code> pass)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Full verification:</strong> <code>go test ./...</code> all packages ok; Python suite 1,515 passed + 4 fixed-verified (the 4 pinned old contracts: registry rows for <code>rescore_per_run</code>/<code>extractor_batch_size</code> added to <code>jester-setup.md</code> §4.3.1 — the <code>rescore_per_run</code> gap pre-dated this branch — plus the prompt-version and parity-test updates above).</p>
+<p><strong>Deliberately deferred:</strong> image-digest pinning (needs registry resolution, tracked by Dependabot now); non-root Python/Go images (shared-SQLite uid constraint needs a <code>gosu</code> design); per-category dedup thresholds (tool shipped, labels pending); <code>/metrics</code> + OTel spans (access log is the first slice); <code>vitest</code> (no UI logic to cover yet).</p>
+<hr />
+<h2 id="appendix-d-end-to-end-verification-testing-test-automation-skills">Appendix D — End-to-end verification (testing + test-automation skills)</h2>
+<p>Journeys in <code>python/tests/test_e2e_changes.py</code> drive REAL processes (built Go
+worker binary → <code>jester</code> CLI subprocesses → boot <code>jester.console</code>
+subprocesses over HTTP) against throwaway DBs with an all-<code>fake</code> config copy.
+5/5 pass in ~20 s:</p>
+<table>
+<thead>
+<tr>
+<th>Journey</th>
+<th>Property proved</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>seed → treat → list → console overview</td>
+<td>Go-enqueued rows are extracted, archived, listed, and served; console count ≥ archive rows</td>
+</tr>
+<tr>
+<td>legacy vs <code>extractor_batch_size: 4</code> treats</td>
+<td>Identical nugget sets (keys, insights, categories, model stamps) — the F-05 promotion gate</td>
+</tr>
+<tr>
+<td><code>dedup-sweep</code> on archive-derived pairs</td>
+<td>Command wiring + <code>best F1</code> report on real rows</td>
+</tr>
+<tr>
+<td>token-gated console boot</td>
+<td>401 anonymous / 401 wrong token / 400 authed-malformed (route reached) / 403 read-only, via <code>main()</code> + env</td>
+</tr>
+<tr>
+<td>thresholds knob round-trip</td>
+<td>Console write persists to yaml, file revalidates, batched treat archives</td>
+</tr>
+</tbody>
+</table>
+<p>Manual gates: <code>signals export</code> twice (reconciles=True, 5 rows) + <code>signals check</code>
+(20/20); <code>contractcheck</code> OK on a migrated DB; Go <code>test ./...</code> all ok;
+<code>npm run lint</code> + <code>build</code> green (CSS 5.79→3.51 kB).</p>
+<p><strong>E2E-found fix (env contract):</strong> journeys exposed that an explicitly emptied
+<code>JESTER_QDRANT_URL=</code> was backfilled from repo <code>.env</code> (<code>not os.environ.get</code>
+treats empty as unset), making per-DB local vector mode unreachable and every
+offline treat defer. <code>load_env</code> now uses presence (<code>key not in os.environ</code>),
+matching its documented "existing env wins" rule; pinned by
+<code>test_explicitly_emptied_key_is_not_backfilled</code>. Without this fix the journeys
+above cannot archive a single nugget on any machine whose <code>.env</code> sets the URL.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
+<script>window.addEventListener("DOMContentLoaded", function () { if (window.mermaid) { mermaid.initialize({ startOnLoad: true, theme: "neutral" }); } });</script>
+</body>
+</html>
