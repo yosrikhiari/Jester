@@ -61,13 +61,6 @@ window.JESTER_MOCK = {
       { name: 'Reddit API', note: 'no credentials — the browser path is used instead', state: 'off' },
       { name: 'Go worker', note: 'go 1.22', state: 'ok' },
     ],
-    actions: [
-      { label: 'Run pipeline', kind: 'primary' },
-      { label: 'Ingest sources' },
-      { label: 'Export CSV' },
-    ],
-    moreActions: ['Requeue failed', 'Re-embed backlog', 'Smoke check', 'Retention sweep'],
-    actionsNote: 'Fetching needs the Go worker and cloakserve on :9222 — those actions appear once both are reachable.',
   },
 
   /* ── Runs ledger ──────────────────────────────────────────────────── */

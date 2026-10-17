@@ -244,6 +244,9 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .btn--danger{background:transparent;color:var(--bad);border-color:var(--line-strong)}
 .btn--danger:hover:not([disabled]){background:var(--bad-bg);border-color:var(--bad)}
 .btn--sm{padding:5px 10px;font-size:var(--fs-sm);gap:var(--s-2)}
+.btn--accent{background:var(--surface);color:var(--ink);border-color:var(--accent)}
+.btn--accent:hover:not([disabled]){background:var(--accent-soft)}
+.btn--icon{padding:7px 9px;font-size:var(--fs-sm)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-ctrl);overflow:hidden;background:var(--surface)}
 .seg button{
   border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-sm);
@@ -480,9 +483,34 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
       </div>
     </div>
     <div class="card">
-      <h3>Actions</h3>
-      <div class="row" id="quick-actions"></div>
-      <p class="xs" id="actions-note" style="margin-block-end:0"></p>
+      <div class="row" style="margin-block-end:var(--s-5)">
+        <h3 style="margin:0">Actions</h3>
+        <button class="btn btn--ghost btn--icon row-end" id="qa-help" title="what these do" aria-expanded="false">?</button>
+      </div>
+      <div class="row" id="quick-actions">
+        <button class="btn btn--primary">run pipeline</button>
+        <button class="btn btn--accent" title="Fetch the enabled sources through cloakserve">ingest sources</button>
+        <button class="btn">run with live models</button>
+        <button class="btn" title="Write the archive as CSV, split by content type and origin">export CSV</button>
+        <details class="menu">
+          <summary class="btn btn--ghost">more</summary>
+          <div class="menu-list">
+            <button class="btn btn--ghost btn--sm">ingest (worker mock)</button>
+            <button class="btn btn--ghost btn--sm">requeue failed</button>
+            <button class="btn btn--ghost btn--sm">reembed backlog</button>
+            <button class="btn btn--ghost btn--sm">smoke check</button>
+            <button class="btn btn--ghost btn--sm">seed fixture</button>
+            <button class="btn btn--ghost btn--sm">migrate schema</button>
+            <button class="btn btn--ghost btn--sm">retention sweep</button>
+          </div>
+        </details>
+      </div>
+      <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
+        <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
+        the whole loop: fetch those sources with the Go worker, extract, archive and synthesize.
+        <b>ingest</b> does the fetch half on its own; the pipeline still processes anything already queued.
+        Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear once both are reachable.
+      </p>
     </div>
   </section>
 
@@ -752,6 +780,13 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
   }
   themeBtns.forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme)));
 
+  /* actions help toggle — mirrors app.js#qa-help */
+  $('#qa-help').addEventListener('click', () => {
+    const t = $('#qa-help-text');
+    t.classList.toggle('hidden');
+    $('#qa-help').setAttribute('aria-expanded', String(!t.classList.contains('hidden')));
+  });
+
   /* ── small builders ─────────────────────────────────────────────── */
   function spark(nums) {
     if (!nums) return '<span class="spark--empty" aria-hidden="true"></span>';
@@ -805,12 +840,6 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
       `<div class="irow ${i.state === 'ok' ? '' : i.state}"><span class="led" aria-hidden="true"></span>` +
       `<span><b>${esc(i.name)}</b><span class="why">${esc(i.note)}</span></span></div>`
     ).join('');
-    $('#quick-actions').innerHTML =
-      o.actions.map(a => `<button class="btn ${a.kind === 'primary' ? 'btn--primary' : ''}" type="button">${esc(a.label)}</button>`).join('') +
-      `<details class="menu"><summary class="btn btn--ghost">More</summary><div class="menu-list">` +
-      o.moreActions.map(a => `<button class="btn btn--ghost btn--sm" type="button">${esc(a)}</button>`).join('') +
-      `</div></details>`;
-    $('#actions-note').textContent = o.actionsNote;
   }
 
   /* ── runs ───────────────────────────────────────────────────────── */
