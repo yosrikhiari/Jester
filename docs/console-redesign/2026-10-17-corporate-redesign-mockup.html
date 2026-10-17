@@ -247,6 +247,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .btn--accent{background:var(--surface);color:var(--ink);border-color:var(--accent)}
 .btn--accent:hover:not([disabled]){background:var(--accent-soft)}
 .btn--icon{padding:7px 9px;font-size:var(--fs-sm)}
+.chip--sm{padding:2px 6px;font-size:var(--fs-xs)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-ctrl);overflow:hidden;background:var(--surface)}
 .seg button{
   border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-sm);
@@ -342,7 +343,7 @@ input,select{
 input:hover,select:hover{border-color:var(--ink-soft)}
 input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
 input::placeholder{color:var(--ink-soft)}
-input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
+input[type="checkbox"]{inline-size:20px;block-size:20px;accent-color:var(--accent);margin:0}
 .formgrid{display:grid;grid-template-columns:170px minmax(220px,1fr) 190px auto;gap:var(--s-4);align-items:end}
 
 /* ── banners, evidence, infra, meter ──────────────────────────────── */
@@ -583,7 +584,7 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
     <div class="hero">
       <div>
         <h1 data-eyebrow="Setup">Sources</h1>
-        <p>The curated ingest list the live worker walks, grouped by platform. Within a run the worker takes the least recently fetched first, so a depth ceiling spreads across the list instead of re-walking the top of it.</p>
+        <p>The curated ingest list the live worker walks. Within a run it takes the least recently fetched first, so the depth ceiling spreads across the list instead of re-walking the top.</p>
       </div>
     </div>
     <div class="card">
@@ -614,7 +615,7 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
     </div>
     <div class="card card--flush">
       <div class="card-head">
-        <h3>Curated list</h3>
+        <h3>Curated sources</h3>
         <span class="pill" id="src-count">—</span>
         <span class="row-end xs mono" id="src-path"></span>
       </div>
@@ -882,9 +883,9 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
       `<tr>` +
       `<td><input type="checkbox" ${r.on ? 'checked' : ''} aria-label="Include ${esc(r.name)}"></td>` +
       `<td>${esc(r.name)}</td>` +
-      `<td>${esc(r.kind)}</td>` +
-      `<td class="mono">${esc(r.target)}</td>` +
-      `<td class="xs">${esc(r.fetch)}</td>` +
+      `<td><span class="chip">${esc(r.kind)}</span></td>` +
+      `<td class="mono" title="${esc(r.target)}">${esc(r.target)}</td>` +
+      `<td><span class="chip chip--sm">${esc(r.fetch)}</span></td>` +
       `<td class="xs">${esc(r.last)}</td>` +
       `<td>${pill(r.status, r.status)}</td>` +
       `<td style="text-align:end"><button class="btn btn--sm" type="button">Edit</button></td>` +
