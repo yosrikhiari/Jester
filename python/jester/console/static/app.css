@@ -41,6 +41,7 @@ html[data-theme="light"]{
   --line:#E4E4E8; --line-strong:#D8D8DE;
   --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#B3362F; --bell:var(--accent);
   --ok:#1F7A4C; --ok-bg:#E3F3EA; --warn:#8A6100; --warn-bg:#FAF0D2; --bad:#B3362F; --bad-bg:#FBE6E4;
+  --lav:#6E70B8;
   --queued:#8E8E98; --running:#A9362F; --done:#1F7A4C; --failed:#B3362F; --requeued:#44444C;
   --plum-ink:#A9362F; --coral-ink:#A9362F;
   --done-ink:#1F7A4C; --running-ink:#A9362F; --failed-ink:#A9362F;
@@ -59,6 +60,7 @@ html[data-theme="dark"]{
   --accent:#E0645C; --accent-soft:#3A201E; --accent-line:#52302E; --accent-text:#F08C85;
   --nav:#0B0B0D; --nav-ink:#E9E9EE; --nav-muted:#9A9AA6; --nav-line:#1E1E23;
   --ok:#5AC48C; --ok-bg:#16302387; --warn:#E0B341; --warn-bg:#3A3014; --bad:#EF7D75; --bad-bg:#3D1F1D;
+  --lav:#8E90D8;
   --queued:#8E8E98; --running:#F08C85; --done:#5AC48C; --failed:#EF7D75; --requeued:#D0D0D8;
   --plum-ink:#F08C85; --coral-ink:#F08C85;
   --done-ink:#7BD6A3; --running-ink:#F08C85; --failed-ink:#F08C85;
@@ -568,6 +570,18 @@ pre{
 .grp-label{color:var(--ink)}
 .grp--2 .grp-label{color:var(--ink-2)}
 .grp-meta{color:var(--ink-mute);font-weight:400;margin-inline-start:auto}
+/* platform-band tints: opt-in via data-tint on tr.grp, --g supplied by the
+   renderer (adapting the reference's grouped sources table) */
+.grp[data-tint] > td{background:color-mix(in srgb,var(--g) 9%,var(--surface));border-block-start:1px solid var(--line)}
+.grp-dot{display:inline-block;inline-size:8px;block-size:8px;border-radius:50%;background:var(--g);flex:none}
+/* fixed row menu (adapting the reference's sources actions menu) */
+.menu{position:fixed;z-index:60;min-inline-size:160px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);box-shadow:var(--shadow-pop)}
+.menu button{display:flex;align-items:center;width:100%;min-height:30px;padding:0 10px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font-size:var(--fs-sm);text-align:left;cursor:pointer}
+.menu button:hover,.menu button:focus-visible{background:var(--surface-2);outline:none}
+.menu .menu--danger{color:var(--bad)}
+/* sources: client-side search + status filter row */
+.src-tools{display:flex;gap:var(--s-4);align-items:center;flex-wrap:wrap;padding:var(--s-6) var(--s-7)}
+.src-tools input{max-inline-size:340px}
 
 /* â”€â”€ queue mix â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .qmix{display:grid;grid-template-columns:minmax(7rem,auto) minmax(4rem,1fr) minmax(14rem,auto);align-items:center;gap:var(--s-4)}

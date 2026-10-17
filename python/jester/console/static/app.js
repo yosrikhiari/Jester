@@ -66,12 +66,13 @@ function groupBy(items, keyFn) {
 
 /** A foldable header row spanning the whole table.
  *  `depth` 1 is a platform, 2 a community inside it. */
-function groupRow({ key, depth = 1, label, meta = '', count, span }) {
+function groupRow({ key, depth = 1, label, meta = '', count, span, tint }) {
   const shut = FOLDED.has(key);
-  return `<tr class="grp grp--${depth}${shut ? ' is-shut' : ''}" data-fold="${esc(key)}">
+  return `<tr class="grp grp--${depth}${shut ? ' is-shut' : ''}" data-fold="${esc(key)}"${tint ? ` data-tint style="--g:${esc(tint)}"` : ''}>
     <td colspan="${span}">
       <button type="button" class="grp-btn" aria-expanded="${!shut}">
         <span class="grp-caret" aria-hidden="true">${shut ? '▸' : '▾'}</span>
+        ${tint ? '<span class="grp-dot" aria-hidden="true"></span>' : ''}
         <span class="grp-label">${label}</span>
         <span class="pill pill--sm tone-neutral">${esc(count.toLocaleString())}</span>
         ${meta ? `<span class="xs grp-meta">${meta}</span>` : ''}
@@ -541,16 +542,6 @@ function healthTag(s) {
     title="${esc(s.health_reason || '')}">${esc(label)}</span>`;
 }
 
-/** Parking is OFFERED, never applied. A barren source may be barren because
- *  the site was down for a week, and a console that quietly switches sources
- *  off leaves the operator with a shrinking list and no idea why. */
-function parkButton(s) {
-  if (!s.enabled || s.health !== 'barren') return '';
-  return `<button class="btn btn--sm" data-park
-    title="${esc(s.health_reason || '')} — pause it until you say otherwise"
-    aria-label="Park ${esc(s.name)}">park</button>`;
-}
-
 const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
   youtube: 'YouTube', tiktok: 'TikTok', stackexchange: 'Stack Exchange',
@@ -574,6 +565,81 @@ function renderPlatformOptions(platformKinds, gaps = {}) {
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
 
+//: Client-side view state for the search field and status segments on the
+//: sources list. Both filter what is already loaded; neither needs a round
+//: trip, and neither invents a state the server does not report — quiet and
+//: unmeasured sources simply stay under "all".
+const SRC_STATES = {
+  all: () => true,
+  producing: s => s.enabled && s.health === 'producing',
+  barren: s => s.enabled && s.health === 'barren',
+  paused: s => !s.enabled,
+};
+let SRC_QUERY = '', SRC_STATE = 'all';
+//: Platform band colours, cycled in platform-sort order (matches the
+//: adaptation reference's grouped sources table).
+const SRC_TINTS = ['var(--accent)', 'var(--ok)', 'var(--warn)', 'var(--lav)', 'var(--ink-soft)'];
+//: name → source, so the row menu can act without re-walking the DOM.
+const SRC_BY_NAME = new Map();
+//: Shared fixed-position menu for the sources rows: copy link / park / remove.
+//: Park keeps the real visibility rule — only an enabled, barren source is
+//: offered parking, because a barren source may just be a site that was down
+//: for a week, and a menu that quietly offers to switch everything off would
+//: leave the operator with a shrinking list and no idea why.
+const SRC_MENU = document.createElement('div');
+SRC_MENU.className = 'menu';
+SRC_MENU.setAttribute('role', 'menu');
+SRC_MENU.hidden = true;
+document.body.appendChild(SRC_MENU);
+let SRC_MENU_BTN = null;
+function closeSrcMenu(refocus) {
+  SRC_MENU.hidden = true;
+  if (SRC_MENU_BTN) {
+    SRC_MENU_BTN.setAttribute('aria-expanded', 'false');
+    if (refocus) SRC_MENU_BTN.focus();
+    SRC_MENU_BTN = null;
+  }
+}
+function openSrcMenu(btn) {
+  const name = btn.closest('tr').dataset.name;
+  const s = SRC_BY_NAME.get(name);
+  if (!s) return;
+  const wasOpen = SRC_MENU_BTN === btn;
+  closeSrcMenu();
+  if (wasOpen) return;
+  SRC_MENU_BTN = btn;
+  btn.setAttribute('aria-expanded', 'true');
+  SRC_MENU.innerHTML =
+    `<button type="button" role="menuitem" data-scopy="${esc(s.url)}">copy link</button>` +
+    (s.enabled && s.health === 'barren'
+      ? `<button type="button" role="menuitem" data-park-name="${esc(name)}" title="${esc(s.health_reason || '')}">park</button>`
+      : '') +
+    `<button type="button" role="menuitem" class="menu--danger" data-del-name="${esc(name)}">remove</button>`;
+  SRC_MENU.hidden = false;
+  const r = btn.getBoundingClientRect();
+  SRC_MENU.style.top = `${Math.max(8, Math.min(r.bottom + 4, window.innerHeight - SRC_MENU.offsetHeight - 8))}px`;
+  SRC_MENU.style.left = `${Math.max(8, r.right - SRC_MENU.offsetWidth)}px`;
+  SRC_MENU.querySelector('button').focus();
+}
+async function copySrcLink(url) {
+  try { await navigator.clipboard.writeText(url); toast('link copied', 'ok'); }
+  catch { toast('could not reach the clipboard', 'bad'); }
+}
+async function parkSource(name) {
+  const res = await api('/api/sources/update', { name, enabled: false });
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  toast(`${name} parked — re-enable it any time with the switch`, 'ok');
+  loadSources();
+}
+async function deleteSource(name, btn) {
+  if (!confirm(`Remove "${name}" from the source list?`)) return;
+  const req = () => api('/api/sources/delete', { name });
+  const res = await (btn ? busy(btn, req) : req());
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  toast(`removed ${name}`, 'ok');
+  loadSources();
+}
+
 //: The last /api/sources response, so folding a platform open or shut is a
 //: re-render rather than a round trip — and so a fold survives one.
 let SOURCES_RES = { sources: [] };
@@ -594,35 +660,58 @@ function renderSources() {
   renderNav();
 
   $('#src-path').textContent = res.path || '';
-  $('#src-count').textContent = `${COUNTS.sources} enabled / ${list.length} total`;
 
   const order = { hackernews: 0, reddit: 1, discourse: 2, stackexchange: 3,
                   github: 4, lemmy: 5, steam: 6, podcast: 7, youtube: 8, tiktok: 9,
                   realestate: 10 };
   const sorted = [...list].sort((a, b) =>
     (order[a.platform] ?? 9) - (order[b.platform] ?? 9) || a.name.localeCompare(b.name));
+  SRC_BY_NAME.clear();
+  for (const s of sorted) SRC_BY_NAME.set(s.name, s);
+
+  const q = SRC_QUERY.trim().toLowerCase();
+  const keep = s =>
+    (SRC_STATE === 'all' || SRC_STATES[SRC_STATE](s)) &&
+    (!q || `${s.name} ${s.url} ${s.kind || ''}`.toLowerCase().includes(q));
+
+  // Segment counts always cover the whole list, so the numbers do not move
+  // under a filter that is already applied.
+  $('#src-fil').innerHTML = Object.keys(SRC_STATES).map(k =>
+    `<button type="button" aria-pressed="${SRC_STATE === k}" data-sfil="${k}">` +
+    `${k} ${list.filter(SRC_STATES[k]).length}</button>`).join('');
 
   // Grouped by platform, because that is how the list is actually reasoned
   // about — "is Reddit still carrying this corpus" is one glance, not a scroll
-  // through 91 rows. The sort above already clusters them; the headers make
-  // the clusters countable and foldable.
+  // through 91 rows. A platform with no matching rows is omitted entirely, and
+  // its band counts only what is visible, so the band never lies about what is
+  // on screen.
   const byPlatform = groupBy(sorted, s => s.platform || 'unknown');
-  $('#src-body').innerHTML = [...byPlatform].map(([platform, rows]) => {
+  let visibleCount = 0; let rendered = '';
+  [...byPlatform].forEach(([platform, rows]) => {
+    const shown = rows.filter(keep);
+    if (!shown.length) return;
+    visibleCount += shown.length;
     const key = `src:${platform}`;
-    const on = rows.filter(r => r.enabled).length;
-    const queued = rows.reduce((t, r) => t + Number(r.state?.total_queued || 0), 0);
-    const barren = rows.filter(r => r.enabled && r.health === 'barren').length;
+    const on = shown.filter(r => r.enabled).length;
+    const queued = shown.reduce((t, r) => t + Number(r.state?.total_queued || 0), 0);
+    const barren = shown.filter(r => r.enabled && r.health === 'barren').length;
     const meta = [
-      on === rows.length ? 'all enabled' : `${on} enabled`,
+      on === shown.length ? 'all enabled' : `${on} enabled`,
       queued ? `${queued.toLocaleString()} comment(s) queued` : '',
       barren ? `${barren} barren` : '',
     ].filter(Boolean).join(' · ');
-    const head = groupRow({
-      key, depth: 1, span: 8, count: rows.length, meta: esc(meta),
+    rendered += groupRow({
+      key, depth: 1, span: 8, count: shown.length, meta: esc(meta),
       label: esc(PLATFORM_LABEL[platform] || platform),
-    });
-    return head + (FOLDED.has(key) ? '' : rows.map(sourceRow).join(''));
-  }).join('') || emptyRow(8, 'No sources yet — add one above.');
+      tint: SRC_TINTS[(order[platform] ?? 5) % 5],
+    }) + (FOLDED.has(key) ? '' : shown.map(sourceRow).join(''));
+  });
+  const filtering = SRC_STATE !== 'all' || q !== '';
+  $('#src-count').textContent = filtering
+    ? `${visibleCount} of ${list.length} shown`
+    : `${COUNTS.sources} enabled / ${list.length} total`;
+  $('#src-body').innerHTML = rendered
+    || emptyRow(8, filtering ? 'No sources match the search or filter.' : 'No sources yet — add one above.');
   /** How the worker reaches this source, and whether it can right now. A
    *  Reddit source read "quiet" for 26 days while cloakserve was down; the
    *  page never said the fetch was impossible. */
@@ -652,7 +741,7 @@ function renderSources() {
       <td>${fetchCell(s)}</td>
       <td>${fetchedCell(s.state)}</td>
       <td>${status}</td>
-      <td class="row-actions">${parkButton(s)}<button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
+      <td class="row-actions"><button class="btn btn--sm" data-smenu aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${esc(s.name)}">⋯</button></td>
     </tr>`;
   }
 
@@ -675,7 +764,8 @@ function renderSources() {
     notes.push(`<span class="chip">quiet list</span> ${barren.length} enabled source(s)
       (${esc(barren.map(s => s.name).join(', '))}) have been walked
       ${res.park_after_barren_visits || 3}+ times and never queued a comment. Each one still
-      costs a rotation slot every run — “park” pauses it without removing it.`);
+      costs a rotation slot every run — the row’s “⋯” menu has “park” to
+      pause it without removing it.`);
   }
   const gaps = res.platform_gaps || {};
   for (const [p, why] of Object.entries(gaps)) {
@@ -698,24 +788,45 @@ $('#src-body').addEventListener('change', async e => {
   loadSources();
 });
 
-$('#src-body').addEventListener('click', async e => {
-  const park = e.target.closest('button[data-park]');
-  if (park) {
-    const name = park.closest('tr').dataset.name;
-    const res = await api('/api/sources/update', { name, enabled: false });
-    if (res.ok === false) { toast(res.error, 'bad'); return; }
-    toast(`${name} parked — re-enable it any time with the switch`, 'ok');
-    loadSources();
-    return;
-  }
+$('#src-body').addEventListener('click', e => {
+  const menuBtn = e.target.closest('button[data-smenu]');
+  if (menuBtn) { openSrcMenu(menuBtn); return; }
   const btn = e.target.closest('button[data-delete]');
   if (!btn) return;
-  const name = btn.closest('tr').dataset.name;
-  if (!confirm(`Remove "${name}" from the source list?`)) return;
-  const res = await busy(btn, () => api('/api/sources/delete', { name }));
-  if (res.ok === false) { toast(res.error, 'bad'); return; }
-  toast(`removed ${name}`, 'ok');
-  loadSources();
+  deleteSource(btn.closest('tr').dataset.name, btn);
+});
+
+// Row-menu item dispatch, plus close on outside click. The button that opened
+// the menu is skipped here — its own row handler above already toggles it.
+document.addEventListener('click', e => {
+  if (SRC_MENU.hidden) return;
+  if (e.target.closest('button[data-smenu]')) return;
+  if (!SRC_MENU.contains(e.target)) { closeSrcMenu(); return; }
+  const copy = e.target.closest('[data-scopy]');
+  if (copy) { const url = copy.dataset.scopy; closeSrcMenu(true); copySrcLink(url); return; }
+  const park = e.target.closest('[data-park-name]');
+  if (park) { const name = park.dataset.parkName; closeSrcMenu(); parkSource(name); return; }
+  const del = e.target.closest('[data-del-name]');
+  if (del) { const name = del.dataset.delName; closeSrcMenu(true); deleteSource(name, null); }
+});
+document.addEventListener('keydown', e => {
+  if (SRC_MENU.hidden) return;
+  const items = [...SRC_MENU.querySelectorAll('button')];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); closeSrcMenu(true); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); (items[(i + 1) % items.length] || items[0]).focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); (items[(i - 1 + items.length) % items.length] || items[0]).focus(); }
+});
+
+$('#src-q').addEventListener('input', e => {
+  SRC_QUERY = e.target.value;
+  renderSources();
+});
+$('#src-fil').addEventListener('click', e => {
+  const b = e.target.closest('[data-sfil]');
+  if (!b) return;
+  SRC_STATE = b.dataset.sfil;
+  renderSources();
 });
 
 $('#src-form').addEventListener('submit', async e => {
