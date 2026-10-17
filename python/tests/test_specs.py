@@ -25,6 +25,7 @@ from jester.specs import (
     _robots_disallows,
     activate_spec,
     approve_spec,
+    cmd_specs,
     extract_listing,
     extract_thread,
     mark_drifted,
@@ -343,3 +344,140 @@ def test_specs_max_samples_is_registered():
     assert t.specs_max_samples == 5
     assert Thresholds._RANGES["specs_max_samples"] == (3, 50)
     assert Thresholds._EDITABLE["specs_max_samples"] is not None
+
+
+# ---- the CLI journey (cmd_specs drives everything) ---------------------------
+
+class _NS:
+    """"argparse.Namespace carrying spec_cli's defaults, overridable."""
+
+    def __init__(self, action, **kw):
+        base = dict(spec=None, file=None, url=None, name=None, limit=5,
+                    reason="", actor="operator", actor_kind=None,
+                    db=None, config=None)
+        base.update(kw)
+        self.action = action
+        for k, v in base.items():
+            setattr(self, k, v)
+
+
+@pytest.fixture()
+def cli_env(tmp_path, monkeypatch):
+    """A temp archive + config + the fixture pages behind the runner's URL."""
+    db_cmd = str(tmp_path / "cmd.db")
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "thresholds.yaml").write_text(
+        "llm_provider: fake\nspecs_max_samples: 5\n", encoding="utf-8")
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(json.dumps(SPEC), encoding="utf-8")
+    monkeypatch.setattr(specs, "_http_opener",
+                        lambda: (lambda url: _pages()[url]))
+    return {"db": db_cmd, "config": str(cfg_dir), "file": str(spec_file)}
+
+
+def test_cli_journey_end_to_end(cli_env, capsys):
+    db, cfg, file = cli_env["db"], cli_env["config"], cli_env["file"]
+    ns = _NS("propose", db=db, config=cfg, file=file, url=LIST_URL)
+    assert cmd_specs(ns) == 0
+    sid = json.loads(capsys.readouterr().out.strip())["spec_id"]
+    assert sid.startswith("SP-")
+
+    def act(action, **kw):
+        rc = cmd_specs(_NS(action, db=db, config=cfg, spec=sid, **kw))
+        out = capsys.readouterr().out
+        assert rc == 0
+        return out
+
+    got = act("validate")
+    assert "validated on" in got
+    assert '"status": "approved"' in act("approve", reason="looks right")
+    assert '"status": "active"' in act("activate")
+    run_out = act("run", limit=2)
+    assert '"ok": true' in run_out and f'"source": "spec:{sid}"' in run_out
+    assert act("list").count(sid) >= 1
+    assert '"status": "active"' in act("show")
+    # the deposits really are enqueue_batch rows with spec provenance
+    cur = dbcur = None
+    import sqlite3 as _sq
+
+    d = _sq.connect(db)
+    try:
+        n = d.execute("SELECT COUNT(*) FROM ingest_batch WHERE source=?",
+                      (f"spec:{sid}",)).fetchone()[0]
+    finally:
+        d.close()
+    assert n == 2
+
+
+def test_cli_refuses_wrong_order_drift_and_dead_specs(cli_env, capsys):
+    from jester.store import open_db
+    from jester.specs import propose_spec
+
+    db, cfg, file = cli_env["db"], cli_env["config"], cli_env["file"]
+    ns = _NS("propose", db=db, config=cfg, file=file, url=LIST_URL)
+    cmd_specs(ns)
+    capsys.readouterr()
+    sid = open_db(db).execute(
+        "SELECT spec_id FROM extraction_specs").fetchone()[0]
+
+    # approving BEFORE validation is a refusal...
+    with pytest.raises(SpecError, match="only 'validated'"):
+        cmd_specs(_NS("approve", db=db, spec=sid))
+    # ...and so is drifting an UNPROVEN spec (it has no samples yet)
+    with pytest.raises(SpecError, match="only a proven spec can drift"):
+        cmd_specs(_NS("drift", db=db, spec=sid, reason="premature"))
+    # a spec pushed through the gate to active, then hand-drifted, is dead
+    d = open_db(db)
+    prop = propose_spec(d, name="second", platform=SPEC["platform"],
+                        base_url=LIST_URL, spec=SPEC, actor_kind="agent",
+                        actor="cli-bot")
+    d.close()
+    sid2 = prop["spec_id"]
+    def act(action, which, **kw):
+        rc = cmd_specs(_NS(action, db=db, config=cfg, spec=which, **kw))
+        out = capsys.readouterr().out
+        assert rc == 0
+        return out
+    act("validate", sid2)
+    act("approve", sid2, reason="fine")
+    assert '"status": "active"' in act("activate", sid2)
+    assert '"status": "drifted"' in act("drift", sid2, reason="hand-drift")
+    with pytest.raises(SpecError, match="only an 'active' spec runs"):
+        cmd_specs(_NS("run", db=db, spec=sid2))
+
+
+def test_cli_propose_model_uses_the_specifier_client(cli_env, capsys,
+                                                     monkeypatch):
+    db, cfg = cli_env["db"], cli_env["config"]
+
+    def _specifier(c):
+        class _Stub:
+            def chat(self, system, history, tools):
+                return types.SimpleNamespace(text=json.dumps(SPEC))
+        return _Stub()
+
+    monkeypatch.setattr(specs, "select_specifier_client", _specifier)
+    assert cmd_specs(_NS("propose-model", db=db, config=cfg,
+                         url=LIST_URL)) == 0
+    out = capsys.readouterr().out
+    sid, status = out.strip().split()
+    assert status == "proposed" and sid.startswith("SP-")
+
+    def _junk(c):
+        class _Junk:
+            def chat(self, system, history, tools):
+                return types.SimpleNamespace(text="ok")
+        return _Junk()
+
+    monkeypatch.setattr(specs, "select_specifier_client", _junk)
+    with pytest.raises(SpecError, match="did not return a spec"):
+        cmd_specs(_NS("propose-model", db=db, config=cfg, url=LIST_URL))
+
+
+def test_cli_list_empty_and_unknown_action(cli_env, capsys):
+    db, cfg = cli_env["db"], cli_env["config"]
+    assert cmd_specs(_NS("list", db=db, config=cfg)) == 0
+    assert "0 spec(s)" in capsys.readouterr().out
+    with pytest.raises(SpecError, match="unknown action"):
+        cmd_specs(_NS("teleport", db=db, config=cfg))

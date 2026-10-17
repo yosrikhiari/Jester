@@ -7,6 +7,7 @@ decisions and append-only in its effects: every test asserts nothing was
 deleted, re-pointed or rewritten, only that events landed.
 """
 from datetime import datetime, timedelta, timezone
+import types
 
 
 def _now() -> datetime:
@@ -22,6 +23,7 @@ from jester.maintenance import (
     check_drift,
     check_queues,
     check_stale_nuggets,
+    cmd_maintenance,
     event_rows,
     maintenance_pass,
     queue_counts,
@@ -203,6 +205,49 @@ def test_events_carry_actor_and_round_trip(db):
     assert row["actor_kind"] == "scheduler" and row["actor"] == "maintenance"
     assert row["inputs"]["needs_score"] == 1
     assert row.get("event_id", "").startswith("ME-")
+
+
+# ---- the CLI + guard branches --------------------------------------------------
+
+def test_cmd_maintenance_runs_and_prints(tmp_path, capsys, monkeypatch):
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "thresholds.yaml").write_text(
+        "llm_provider: fake\n", encoding="utf-8")
+    db_path = tmp_path / "cli.db"  # cmd opens migrate=True: schema appears
+    ns = types.SimpleNamespace(db=str(db_path), config=str(config_dir))
+
+    import jester.maintenance as mmod
+
+    # the pass is stubbed, but through the REAL append so the ledger row
+    # lands exactly the way the CLI would leave it
+    monkeypatch.setattr(mmod, "maintenance_pass",
+                        lambda cfg, d: [mmod._append_event(
+                            d, kind="queues", actor_kind="scheduler",
+                            actor="maintenance", reason="test pass",
+                            inputs={"needs_reembed": 0, "needs_score": 1},
+                            outcome={"note": "test"})])
+    assert cmd_maintenance(ns) == 0
+    out = capsys.readouterr().out
+    assert "maintenance: 1 event(s) appended" in out
+    assert "ME-" in out and "queues" in out
+    # the schema really appeared beside the run
+    con = open_db(str(db_path), migrate=False)
+    assert con.execute(
+        "SELECT COUNT(*) FROM maintenance_events").fetchone()[0] == 1
+    con.close()
+
+
+def test_append_event_refuses_an_unknown_kind_and_bad_batch_json(db):
+    with pytest.raises(ValueError, match="unknown maintenance kind"):
+        _append_event(db, kind="deletion", actor_kind="scheduler",
+                      actor="maintenance", reason="no", inputs={}, outcome={})
+    # unreadable/truncated batch JSON reads as an EMPTY batch (R55)
+    from jester.maintenance import _batch_comments
+
+    assert _batch_comments('{"comments": [') == 0      # truncated write
+    assert _batch_comments("null") == 0                # Go's empty slice
+    assert _batch_comments('["x", "y"]') == 2
 
 
 def test_registry_rows_for_maintenance_keys():

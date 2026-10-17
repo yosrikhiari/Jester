@@ -1,11 +1,13 @@
 """Model roles: which provider and model each job uses, and how it is called.
 
-Five jobs call a model: the extractor (once per comment), the synthesizer
+Seven jobs call a model: the extractor (once per comment), the synthesizer
 (once per thread chunk), the critic (once per idea), the labeller (once per
-cluster) and the embedding model (once per text). This module is the ONE
-place that decides, for each of them, the provider, the model and every
-generation setting. The pipeline, the console and the run record all ask
-`resolve_role`, so they cannot disagree.
+cluster), the embedding model (once per text), the CHAT page's interviewer
+(once per chat round, autonomous curation §5 S3) and the SPECIFIER (once per
+extraction-spec proposal, §5 S6). This module is the ONE place that decides,
+for each of them, the provider, the model and every generation setting. The
+pipeline, the console and the run record all ask `resolve_role`, so they
+cannot disagree.
 
 Where a value comes from, highest first:
 

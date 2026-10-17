@@ -664,7 +664,8 @@ def cmd_specs(args) -> int:
                                    base_url=args.url or "",
                                    spec=spec, actor_kind=kind,
                                    actor=args.actor, reason=args.reason)
-                print(json.dumps(row, ensure_ascii=False, indent=2, default=str)[:400])
+                print(json.dumps(row, ensure_ascii=False, indent=2,
+                                 default=str))
                 return 0
             if action == "propose-model":
                 cfg = load_thresholds(_config_path(args.config))
