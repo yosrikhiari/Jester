@@ -93,6 +93,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 .row-between{display:flex;justify-content:space-between;align-items:center;gap:var(--s-4)}
 .stack{display:flex;flex-direction:column;gap:var(--s-4)}
 .truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skip{
+  position:absolute;inset-block-start:-60px;inset-inline-start:8px;z-index:60;
+  background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:var(--r-sm);font-weight:500;
+}
+.skip:focus{inset-block-start:8px}
 
 /* â”€â”€ shell: side nav + column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-block-size:100vh}
@@ -236,6 +241,10 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .btn--primary:hover:not([disabled]),button.primary:hover{background:var(--ink);opacity:.9}
 .btn--accent{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .btn--accent:hover:not([disabled]){background:var(--accent);opacity:.92}
+.actions-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s-3)}
+.actions-grid .btn{justify-content:flex-start}
+.actions-grid .ah{grid-column:1/-1;font-weight:500;color:var(--ink-mute);font-size:var(--fs-xs);margin-block-start:var(--s-2)}
+.actions-grid .ah:first-child{margin-block-start:0}
 .btn--secondary{background:var(--surface);color:var(--ink);border-color:var(--line-strong)}
 .btn--ghost{background:transparent;color:var(--ink-mute);border-color:transparent}
 .btn--ghost:hover:not([disabled]){background:var(--surface-3);color:var(--ink)}

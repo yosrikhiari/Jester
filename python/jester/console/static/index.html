@@ -14,6 +14,8 @@
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
+
 <div class="shell">
 <nav class="nav" aria-label="Sections">
   <a class="brand" href="#overview">
@@ -61,26 +63,23 @@
         <h3 style="margin:0">Actions</h3>
         <button class="btn btn--ghost btn--icon row-end" id="qa-help" title="what these do" aria-expanded="false">?</button>
       </div>
-      <div class="row" id="quick-actions">
-        <button class="btn btn--primary" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
-        <button class="btn btn--accent hidden" id="btn-ingest-live"
+      <div class="actions-grid" id="quick-actions">
+        <b class="ah">Run</b>
+        <button class="btn btn--primary btn--sm" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
+        <button class="btn btn--accent btn--sm hidden" id="btn-ingest-live"
                 data-act="/api/ingest" data-live="1" data-run-prefix="ingest"
                 title="Fetch the enabled sources through cloakserve">⇣ ingest sources</button>
-        <button class="btn hidden" id="btn-live-models"
+        <button class="btn btn--sm hidden" id="btn-live-models"
                 data-act="/api/run" data-live-models="1" data-run-prefix="live-models">▶ run with live models</button>
-        <button class="btn" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
-        <details class="menu">
-          <summary class="btn btn--ghost">⋯ more</summary>
-          <div class="menu-list">
-            <button class="btn btn--ghost btn--sm hidden" id="btn-ingest-mock" data-act="/api/ingest" data-run-prefix="ingest-mock">ingest (worker mock)</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/requeue">requeue failed</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/reembed">reembed backlog</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/smoke">smoke check</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/seed-mock">seed fixture</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/migrate">migrate schema</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
-          </div>
-        </details>
+        <button class="btn btn--sm" data-act="/api/smoke">smoke check</button>
+        <b class="ah">Repair</b>
+        <button class="btn btn--sm" data-act="/api/requeue">requeue failed</button>
+        <button class="btn btn--sm" data-act="/api/reembed">reembed backlog</button>
+        <button class="btn btn--sm" data-act="/api/migrate">migrate schema</button>
+        <b class="ah">Data</b>
+        <button class="btn btn--sm" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
+        <button class="btn btn--sm" data-act="/api/seed-mock">seed fixture</button>
+        <button class="btn btn--danger btn--sm" data-act="/api/retention">retention sweep</button>
       </div>
       <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
         <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
