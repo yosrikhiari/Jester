@@ -250,12 +250,15 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .chip--sm{padding:2px 6px;font-size:var(--fs-xs)}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r-ctrl);overflow:hidden;background:var(--surface)}
 .seg button{
-  border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-sm);
-  padding:6px 12px;cursor:pointer;font-weight:500;white-space:nowrap;
+  position:relative;border:0;background:transparent;color:var(--ink-mute);font-size:var(--fs-xs);
+  font-weight:500;padding:4px 10px;cursor:pointer;white-space:nowrap;z-index:1;
   transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease);
 }
-.seg button:hover{color:var(--ink)}
-.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.seg button:not(:last-child){border-inline-end:1px solid var(--line-strong)}
+.seg button:first-child{border-start-start-radius:var(--r-ctrl);border-end-start-radius:var(--r-ctrl)}
+.seg button:last-child{border-start-end-radius:var(--r-ctrl);border-end-end-radius:var(--r-ctrl)}
+.seg button:hover:not([aria-pressed="true"]){background:var(--surface-2);color:var(--ink)}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);z-index:2}
 .menu{position:relative;display:inline-block}
 .menu>summary{list-style:none;cursor:pointer}
 .menu>summary::-webkit-details-marker{display:none}
