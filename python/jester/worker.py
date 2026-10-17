@@ -109,6 +109,15 @@ def worker_argv(
         run_id,
     ]
     names = [str(n).strip() for n in (only or []) if str(n).strip()]
+    if not names and live:
+        # The deterministic allocator (design §5 S5) gets a say ONLY on live
+        # fetches, only with no explicit --only, and it can only SHRINK the
+        # walk list to its ranked/probed names. An explicit list always
+        # overrides the plan entirely, and any scheduler failure here degenerates
+        # to the legacy full walk (alloc_names returns None).
+        from jester.scheduler import alloc_names
+
+        names = alloc_names(config_dir, db_path) or []
     if names:
         # One flag, comma-joined: the worker resolves names against
         # sources.yaml and fails loudly on one it does not know, so a typo

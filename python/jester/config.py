@@ -193,6 +193,13 @@ class Thresholds:
     #: apply/reject/revert endpoints stay usable either way, because a
     #: proposal on file still needs its disposition.
     chat_enabled: bool = False
+    #: Deterministic source allocation (design §5 S5). On a live fetch the
+    #: run may walk top-yield sources every run and probe zero-yield ones in
+    #: a rotation, instead of walking everything at flat depth. It can only
+    #: SHRINK a run's walk list — caps are never raised.
+    scheduler_enabled: bool = False
+    #: How many of a source's most recent batch events the yield score reads.
+    scheduler_window_batches: int = 30
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -218,6 +225,7 @@ class Thresholds:
         "extractor_batch_size": (1, 50),
         "chat_max_rounds": (1, 12),
         "chat_proposal_ttl_hours": (0.25, 720.0),
+        "scheduler_window_batches": (1, 500),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -252,6 +260,8 @@ class Thresholds:
         "chat_max_rounds": int,
         "chat_proposal_ttl_hours": float,
         "chat_enabled": _as_bool,
+        "scheduler_enabled": _as_bool,
+        "scheduler_window_batches": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,
