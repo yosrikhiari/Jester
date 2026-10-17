@@ -108,8 +108,8 @@ button,input,select{font:inherit;color:inherit}
 .nav{
   position:sticky;inset-block-start:0;block-size:100vh;overflow-y:auto;
   display:flex;flex-direction:column;gap:2px;
-  padding:var(--s-7) var(--s-5);border-inline-end:1px solid var(--line);background:var(--bg);
-}
+  padding:var(--s-7) var(--s-5);border-inline-end:1px solid var(--line);background:var(--bg);scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
 .brand{display:flex;align-items:center;gap:10px;padding:var(--s-2) var(--s-4) var(--s-7);min-inline-size:0}
 .brandmark{
   inline-size:28px;block-size:28px;border-radius:var(--r-ctrl);flex:none;
@@ -281,7 +281,8 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .score{font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-h2)}
 
 /* ── tables ───────────────────────────────────────────────────────── */
-.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tablewrap{overflow-x:auto;scrollbar-width:none}
+.tablewrap::-webkit-scrollbar{display:none}
 table{inline-size:100%;border-collapse:collapse;font-size:var(--fs-body)}
 th{
   text-align:start;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.06em;
