@@ -20,7 +20,12 @@ Three invariants, all guarded in tests/test_edits.py:
    source fields), evidence tables (`ingested_comments`, `ingest_batch`),
    run records (`runs`, `meta`) and everything outside the target table are
    structurally unreachable: a payload key outside its kind's column set is
-   refused at proposal time, before any SQL exists.
+   refused at proposal time, before any SQL exists. Config edits are the
+   second arm of the same allow-list: they target `thresholds.yaml` /
+   `sources.yaml` and route through the audited config writers
+   (`config.save_thresholds` / `sources.save_sources`), so the registry
+   constraints and the atomic-write guarantees those modules already own
+   keep applying.
 
 3. Applies are drift-checked. apply_edit recomputes the pre-image from the
    live rows and refuses to proceed when the proposal's description no
@@ -39,6 +44,10 @@ Canonical JSON shapes (the tests pin these):
                               re-score the linked ideas" is TWO proposals,
                               each with its own diff, confirm and undo.
 
+Config targets (thresholds.yaml / sources.yaml) share the proposal and
+edit_log rows with a FLAT image shape — target_keys = [key-or-source-name],
+images {"<key>": <value>} — because a config file has no row keys.
+
 `edit_proposals` is the one table here whose rows receive status UPDATEs
 (proposed → applied | rejected | expired) — working state, like
 `ingest_batch`. The audit record of a proposal's life is the edit_log row
@@ -54,7 +63,17 @@ import secrets
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
+from jester.config import (
+    ConfigError,
+    Thresholds,
+    coerce_thresholds_patch,
+    load_thresholds,
+    save_thresholds,
+)
+from jester.sources import load_sources, save_sources
 
 EDITS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS edit_log (
@@ -108,6 +127,13 @@ CREATE TABLE IF NOT EXISTS signal_rule_proposals (
 
 ACTOR_KINDS = ("chat", "human", "agent", "scheduler")
 STATUS_VALUES = ("proposed", "applied", "rejected", "expired")
+
+#: Config-file targets: proposals whose target_table is one of these are
+#: applied/reverted through the audited config mutators
+#: (config.save_thresholds, sources.save_sources) instead of row UPDATEs.
+#: coerce_thresholds_patch refuses unknown or out-of-range keys, so a
+#: proposal can never introduce a key the §4.3.1 registry does not describe.
+CONFIG_TARGETS = ("thresholds.yaml", "sources.yaml")
 
 #: The tables a v1 edit kind may touch, each with its key column and the
 #: per-kind writable column sets. The applier composes its SET clause only
@@ -470,6 +496,398 @@ def expire_proposals(db: sqlite3.Connection, *, ttl_hours: float,
     return cur.rowcount
 
 
+# ── config-file proposals (the second arm of the allow-list) ────────────
+
+#: Family roles for staged signal rules. Mirrored from
+#: signals/filters.py::load_rules ON PURPOSE: the proposal boundary must not
+#: open an import path into the deterministic acceptance path it regulates.
+#: If that rule set changes shape, update both — the tests tie them together.
+SIGNAL_RULE_ROLES = ("buyer_required", "buyer_boost", "pain_marker", "negative")
+
+_MISSING = object()
+
+
+def propose_threshold(
+    db: sqlite3.Connection,
+    *,
+    key: str,
+    value: Any,
+    config_dir: str,
+    actor_kind: str = "chat",
+    actor: str,
+    reason: str = "",
+    models_used: Any = None,
+    now: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Mint a thresholds.yaml change proposal, registry-validated.
+
+    `key` must be an editable scalar threshold (mapping keys are edited by
+    hand — a chat proposes what a human can verify at a glance) and `value`
+    must pass `coerce_thresholds_patch`, which enforces the _RANGES registry
+    the same way the console's own settings writer does.
+    """
+    _check_actor(actor_kind, actor)
+    key = (key or "").strip()
+    if not key:
+        raise EditError("key must be a non-empty threshold name")
+    caster = Thresholds._EDITABLE.get(key)
+    if caster is None:
+        raise EditError(f"'{key}' is not an editable threshold")
+    if caster is dict:
+        raise EditError(f"'{key}' is a mapping key; edit config/thresholds.yaml by hand")
+    current = load_thresholds(Path(config_dir) / "thresholds.yaml")
+    try:
+        coerced = coerce_thresholds_patch({key: value}, current)
+    except ConfigError as exc:
+        raise EditError(str(exc)) from None
+    return _store_proposal(
+        db,
+        edit_kind="set_threshold",
+        target_table="thresholds.yaml",
+        target_keys=[key],
+        payload={"key": key, "value": coerced[key]},
+        diff={"before": {key: getattr(current, key)}, "after": {key: coerced[key]}},
+        affected={"thresholds.yaml": 1},
+        downstream={},
+        actor_kind=actor_kind,
+        actor=actor,
+        reason=reason,
+        models_used=models_used,
+        now=now,
+    )
+
+
+def propose_source_toggle(
+    db: sqlite3.Connection,
+    *,
+    source: str,
+    enabled: bool,
+    config_dir: str,
+    actor_kind: str = "chat",
+    actor: str,
+    reason: str = "",
+    models_used: Any = None,
+    now: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Mint a sources.yaml enable/disable proposal for an EXISTING source.
+
+    A chat never adds sources in v1 — adding a source is operator work with
+    spec review attached (design §5 S6). It also never proposes a toggle to
+    the state the source is already in.
+    """
+    _check_actor(actor_kind, actor)
+    name = (source or "").strip()
+    if not name:
+        raise EditError("source must be a non-empty name")
+    srcs = load_sources(Path(config_dir) / "sources.yaml")
+    match = [s for s in srcs if s.name == name]
+    if not match:
+        raise EditError(f"source {name!r} is not in sources.yaml")
+    old, new = bool(match[0].enabled), bool(enabled)
+    if old == new:
+        raise EditError(
+            f"source {name!r} is already {'enabled' if new else 'disabled'}"
+        )
+    return _store_proposal(
+        db,
+        edit_kind="toggle_source",
+        target_table="sources.yaml",
+        target_keys=[name],
+        payload={"source": name, "enabled": new},
+        diff={"before": {name: old}, "after": {name: new}},
+        affected={"sources.yaml": 1},
+        downstream={},
+        actor_kind=actor_kind,
+        actor=actor,
+        reason=reason,
+        models_used=models_used,
+        now=now,
+    )
+
+
+def propose_signal_rule(
+    db: sqlite3.Connection,
+    *,
+    family: Dict[str, Any],
+    justification: str = "",
+    actor_kind: str = "chat",
+    actor: str,
+    models_used: Any = None,
+    now: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stage a drafted signal family for HUMAN promotion — nothing else.
+
+    Writes only the signal_rule_proposals staging table. The acceptance path
+    reads config/signal_rules.yaml and changes to it run through the 20-case
+    fixture gate; a staged family reaches that file exclusively when a human
+    promotes it by hand. This function never writes there.
+    """
+    _check_actor(actor_kind, actor)
+    if not isinstance(family, dict):
+        raise EditError("family must be an object with name/role/weight/phrases")
+    name = str(family.get("name", "")).strip()
+    if not name or len(name) > 80:
+        raise EditError("family name must be 1–80 characters")
+    role = str(family.get("role", "")).strip()
+    if role not in SIGNAL_RULE_ROLES:
+        raise EditError(f"role must be one of {', '.join(SIGNAL_RULE_ROLES)}")
+    weight = family.get("weight")
+    if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+        raise EditError("weight must be a number")
+    if role == "negative" and weight >= 0:
+        raise EditError("a negative family must have weight < 0")
+    if role != "negative" and not 0 < weight <= 1:
+        raise EditError("non-negative families need 0 < weight <= 1")
+    phrases = family.get("phrases")
+    if not isinstance(phrases, (list, tuple)) or not phrases:
+        raise EditError("phrases must be a non-empty list")
+    cleaned: List[str] = []
+    for raw in phrases[:30]:
+        phrase = str(raw).strip()
+        if not phrase or len(phrase) > 120:
+            raise EditError("each phrase must be 1–120 characters")
+        if not any(phrase.lower() == c.lower() for c in cleaned):
+            cleaned.append(phrase)
+    note = (str(justification).strip() or None)
+    if note:
+        note = note[:600]
+    rule_id = _mint("R")
+    db.execute(
+        "INSERT INTO signal_rule_proposals(id, created_utc, actor_kind, actor, "
+        "payload_json, justification, models_used, status) "
+        "VALUES(?,?,?,?,?,?,?, 'proposed')",
+        (
+            rule_id, now or _utcnow(), actor_kind, actor,
+            json.dumps({"name": name, "role": role, "weight": weight,
+                        "phrases": cleaned}),
+            note, _models_used_json(models_used),
+        ),
+    )
+    db.commit()
+    return _rule_row(db, rule_id)
+
+
+def _rule_row(db: sqlite3.Connection, rule_id: str) -> Optional[Dict[str, Any]]:
+    row = db.execute(
+        "SELECT * FROM signal_rule_proposals WHERE id=?", (rule_id,)
+    ).fetchone()
+    return _rule_dict(row) if row else None
+
+
+def _rule_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    d = {k: row[k] for k in row.keys()}
+    for jk in ("payload_json", "models_used"):
+        if isinstance(d.get(jk), str):
+            try:
+                d["payload" if jk == "payload_json" else jk] = json.loads(d[jk])
+            except (TypeError, ValueError):
+                pass
+    return d
+
+
+def signal_rule_rows(
+    db: sqlite3.Connection, *, status: str = "proposed", limit: int = 50
+) -> List[Dict[str, Any]]:
+    """Staging-table reads for the console and the tools."""
+    ensure_edits_schema(db)
+    rows = db.execute(
+        "SELECT * FROM signal_rule_proposals WHERE status=? ORDER BY rowid DESC LIMIT ?",
+        (status, limit),
+    ).fetchall()
+    return [_rule_dict(r) for r in rows]
+
+
+def _store_proposal(
+    db: sqlite3.Connection,
+    *,
+    edit_kind: str,
+    target_table: str,
+    target_keys: Sequence[str],
+    payload: Dict[str, Any],
+    diff: Dict[str, Any],
+    affected: Dict[str, int],
+    downstream: Dict[str, Any],
+    actor_kind: str,
+    actor: str,
+    reason: str = "",
+    models_used: Any = None,
+    now: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared INSERT for SQL and config proposals; returns the parsed row."""
+    proposal_id = _mint("P")
+    db.execute(
+        "INSERT INTO edit_proposals(proposal_id, created_utc, actor_kind, actor, "
+        "edit_kind, target_table, target_keys, payload_json, diff_json, "
+        "affected_json, downstream_json, reason, models_used, status) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, 'proposed')",
+        (
+            proposal_id, now or _utcnow(), actor_kind, actor, edit_kind,
+            target_table, json.dumps(list(target_keys)), json.dumps(payload),
+            json.dumps(diff), json.dumps(affected), json.dumps(downstream),
+            _reason_text(reason), _models_used_json(models_used),
+        ),
+    )
+    db.commit()
+    return proposal_row(db, proposal_id)
+
+
+def _apply_config_edit(
+    db: sqlite3.Connection,
+    prop: Dict[str, Any],
+    *,
+    stamp: str,
+    actor_kind: str,
+    actor: str,
+    config_dir: Optional[str],
+) -> Dict[str, Any]:
+    """Apply a config-target proposal through the audited config writers.
+
+    Drift-checked like every apply: the live value must still be what the
+    proposal's before-image recorded, or the mutator refuses. The file write
+    and the log insert both happen inside the edit lock, so two racing
+    appliers cannot both transition the proposal.
+    """
+    if not config_dir:
+        raise EditError(
+            f"applying {prop['target_table']} edits needs config_dir at apply time"
+        )
+    with _EDIT_LOCK:
+        prop = proposal_row(db, prop["proposal_id"]) or prop
+        if prop["status"] != "proposed":
+            raise EditError(
+                f"proposal {prop['proposal_id']} is {prop['status']}; "
+                "only 'proposed' can be applied"
+            )
+        key = list(prop["target_keys"])[0]
+        diff = prop["diff_json"]
+        before_val, after_val = diff["before"][key], diff["after"][key]
+        if prop["edit_kind"] == "set_threshold":
+            path = Path(config_dir) / "thresholds.yaml"
+            current = load_thresholds(path)
+            if getattr(current, key, _MISSING) is _MISSING:
+                raise StaleProposal(f"thresholds.yaml lost the key '{key}'")
+            if getattr(current, key) != before_val:
+                raise StaleProposal(
+                    f"thresholds.yaml '{key}' changed since the proposal was built"
+                )
+            try:
+                applied = coerce_thresholds_patch({key: after_val}, current)[key]
+            except ConfigError as exc:
+                raise StaleProposal(f"'{key}' is no longer a valid value: {exc}") from None
+            save_thresholds(str(path), {key: applied})
+        elif prop["edit_kind"] == "toggle_source":
+            path = Path(config_dir) / "sources.yaml"
+            srcs = load_sources(path)
+            match = [s for s in srcs if s.name == key]
+            if not match:
+                raise StaleProposal(
+                    f"source {key!r} left sources.yaml since the proposal was built"
+                )
+            if bool(match[0].enabled) != bool(before_val):
+                raise StaleProposal(
+                    f"sources.yaml '{key}' changed since the proposal was built"
+                )
+            match[0].enabled = bool(after_val)
+            save_sources(str(path), srcs)
+            applied = bool(after_val)
+        else:
+            raise EditError(f"unknown config edit kind {prop['edit_kind']!r}")
+        edit_id = _mint("E")
+        db.execute(
+            "INSERT INTO edit_log(id, created_utc, actor_kind, actor, tool_name, "
+            "edit_kind, target_table, target_keys, before_json, after_json, "
+            "reason, models_used, proposal_id, reverts_edit, outcome) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?, NULL, 'applied')",
+            (
+                edit_id, stamp, actor_kind, actor, "apply_edit",
+                prop["edit_kind"], prop["target_table"],
+                json.dumps(list(prop["target_keys"])),
+                json.dumps({key: before_val}), json.dumps({key: applied}),
+                prop.get("reason"),
+                json.dumps(prop["models_used"]) if prop.get("models_used") else None,
+                prop["proposal_id"],
+            ),
+        )
+        db.execute(
+            "UPDATE edit_proposals SET status='applied', decided_utc=?, edit_id=? "
+            "WHERE proposal_id=?",
+            (stamp, edit_id, prop["proposal_id"]),
+        )
+        db.commit()
+    return {
+        "ok": True,
+        "edit_id": edit_id,
+        "proposal_id": prop["proposal_id"],
+        "affected": {prop["target_table"]: 1},
+        "downstream": {},
+    }
+
+
+def _revert_config(
+    db: sqlite3.Connection,
+    orig: sqlite3.Row,
+    *,
+    stamp: str,
+    actor_kind: str,
+    actor: str,
+    reason: str = "",
+    config_dir: Optional[str],
+) -> str:
+    """Restore a config proposal's before-value; returns the new edit id.
+
+    Runs inside the caller's _EDIT_LOCK, after the same-shape guards
+    (not-a-revert, not-already-reverted) have passed in revert_edit.
+    """
+    if not config_dir:
+        raise EditError(
+            f"reverting {orig['target_table']} edits needs config_dir at revert time"
+        )
+    key = json.loads(orig["target_keys"])[0]
+    before_map = json.loads(orig["before_json"])
+    after_map = json.loads(orig["after_json"])
+    if key not in after_map:
+        raise StaleProposal(f"edit {orig['id']} carries no after-image for '{key}'")
+    if orig["edit_kind"] == "set_threshold":
+        path = Path(config_dir) / "thresholds.yaml"
+        current = load_thresholds(path)
+        if getattr(current, key, _MISSING) is _MISSING:
+            raise StaleProposal(f"thresholds.yaml lost the key '{key}'")
+        if getattr(current, key) != after_map[key]:
+            raise StaleProposal(
+                f"thresholds.yaml '{key}' changed since edit {orig['id']} was applied"
+            )
+        save_thresholds(str(path), {key: before_map[key]})
+    elif orig["edit_kind"] == "toggle_source":
+        srcs = load_sources(Path(config_dir) / "sources.yaml")
+        match = [s for s in srcs if s.name == key]
+        if not match:
+            raise StaleProposal(
+                f"source {key!r} left sources.yaml since edit {orig['id']} was applied"
+            )
+        if bool(match[0].enabled) != bool(after_map[key]):
+            raise StaleProposal(
+                f"sources.yaml '{key}' changed since edit {orig['id']} was applied"
+            )
+        match[0].enabled = bool(before_map[key])
+        save_sources(Path(config_dir) / "sources.yaml", srcs)
+    else:
+        raise EditError(f"cannot revert config kind {orig['edit_kind']!r}")
+    revert_id = _mint("E")
+    db.execute(
+        "INSERT INTO edit_log(id, created_utc, actor_kind, actor, tool_name, "
+        "edit_kind, target_table, target_keys, before_json, after_json, "
+        "reason, models_used, proposal_id, reverts_edit, outcome) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?, NULL, ?, 'applied')",
+        (
+            revert_id, stamp, actor_kind, actor, "revert_edit",
+            "revert", orig["target_table"], orig["target_keys"],
+            json.dumps(after_map), json.dumps(before_map),
+            _reason_text(reason), None, orig["id"],
+        ),
+    )
+    return revert_id
+
+
 # ── apply + revert ───────────────────────────────────────────────────────
 
 def _expire_one(db: sqlite3.Connection, proposal_id: str, now: Optional[str]) -> None:
@@ -489,6 +907,7 @@ def apply_edit(
     actor: str,
     ttl_hours: Optional[float] = None,
     now: Optional[str] = None,
+    config_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Apply a proposal exactly as validated, and write the audit row.
 
@@ -497,6 +916,8 @@ def apply_edit(
     changed since it was built, which raises StaleProposal after zero
     writes. The log row keeps the PROPOSER in `models_used`/proposal actor
     and the APPLIER as actor: both sides of a confirmation flow, honestly.
+    Config-file targets (thresholds.yaml / sources.yaml) apply through the
+    audited config writers and need `config_dir` passed in.
     """
     ensure_edits_schema(db)
     _check_actor(actor_kind, actor)
@@ -512,6 +933,11 @@ def apply_edit(
             )
     if prop["status"] != "proposed":
         raise EditError(f"proposal {proposal_id} is {prop['status']}; only 'proposed' can be applied")
+    if prop["target_table"] in CONFIG_TARGETS:
+        return _apply_config_edit(
+            db, prop, stamp=stamp, actor_kind=actor_kind, actor=actor,
+            config_dir=config_dir,
+        )
     edit_kind, table = prop["edit_kind"], prop["target_table"]
     keys = list(prop["target_keys"]) if isinstance(prop["target_keys"], list) else json.loads(prop["target_keys"])
     norm = prop["payload_json"] if isinstance(prop["payload_json"], dict) else json.loads(prop["payload_json"])
@@ -621,12 +1047,15 @@ def revert_edit(
     actor: str,
     reason: str = "",
     now: Optional[str] = None,
+    config_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Undo a logged edit by writing the inverse as a NEW edit_log row.
 
     Refuses: unknown id; reverting a revert (apply the change forward again
     instead); an edit already reverted; an edit whose post-image no longer
-    matches the live rows (StaleProposal — the world moved on).
+    matches the live values (StaleProposal — the world moved on). Config
+    targets (thresholds.yaml / sources.yaml) revert through the same audited
+    mutators, so a config file keeps a single writer.
     """
     ensure_edits_schema(db)
     _check_actor(actor_kind, actor)
@@ -643,40 +1072,48 @@ def revert_edit(
         ).fetchone()
         if already:
             raise EditError(f"edit {edit_id} was already reverted by {already[0]}")
-        before_map = json.loads(orig["before_json"])
-        after_map = json.loads(orig["after_json"])
-        table = orig["target_table"]
-        keys = json.loads(orig["target_keys"])
-        rows = _fetch_rows(db, table, keys)
-        for row in rows:
-            k = str(_cell(row, WRITABLE[table]["key"]))
-            for col, expected in after_map.get(k, {}).items():
-                got = _cell(row, col)
-                if got != expected:
-                    raise StaleProposal(
-                        f"{table}.{k}.{col} is {got!r}; edit {edit_id} set {expected!r}"
-                    )
         stamp = now or _utcnow()
-        revert_id = _mint("E")
-        db.execute(
-            "INSERT INTO edit_log(id, created_utc, actor_kind, actor, tool_name, "
-            "edit_kind, target_table, target_keys, before_json, after_json, "
-            "reason, models_used, proposal_id, reverts_edit, outcome) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?, NULL, ?, 'applied')",
-            (
-                revert_id, stamp, actor_kind, actor, "revert_edit", "revert",
-                table, json.dumps(keys), json.dumps(before_map),
-                json.dumps(before_map), _reason_text(reason), None, edit_id,
-            ),
-        )
-        for k in keys:
-            image = before_map[str(k)]
-            key_col = WRITABLE[table]["key"]
-            sets = ", ".join(f"{c}=?" for c in image)
-            val = int(k) if key_col == "id" else k
-            db.execute(
-                f"UPDATE {table} SET {sets} WHERE {key_col}=?", (*image.values(), val)
+        if orig["target_table"] in CONFIG_TARGETS:
+            revert_id = _revert_config(
+                db, orig, stamp=stamp, actor_kind=actor_kind, actor=actor,
+                reason=reason, config_dir=config_dir,
             )
+        else:
+            before_map = json.loads(orig["before_json"])
+            after_map = json.loads(orig["after_json"])
+            table = orig["target_table"]
+            keys = json.loads(orig["target_keys"])
+            rows = _fetch_rows(db, table, keys)
+            for row in rows:
+                k = str(_cell(row, WRITABLE[table]["key"]))
+                for col, expected in after_map.get(k, {}).items():
+                    got = _cell(row, col)
+                    if got != expected:
+                        raise StaleProposal(
+                            f"{table}.{k}.{col} is {got!r}; edit {edit_id} set {expected!r}"
+                        )
+            revert_id = _mint("E")
+            db.execute(
+                "INSERT INTO edit_log(id, created_utc, actor_kind, actor, tool_name, "
+                "edit_kind, target_table, target_keys, before_json, after_json, "
+                "reason, models_used, proposal_id, reverts_edit, outcome) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?, NULL, ?, 'applied')",
+                (
+                    revert_id, stamp, actor_kind, actor, "revert_edit", "revert",
+                    # Images OF the revert itself: before it, the rows held
+                    # the original edit's after-values; after, the originals.
+                    table, json.dumps(keys), json.dumps(after_map),
+                    json.dumps(before_map), _reason_text(reason), None, edit_id,
+                ),
+            )
+            for k in keys:
+                image = before_map[str(k)]
+                key_col = WRITABLE[table]["key"]
+                sets = ", ".join(f"{c}=?" for c in image)
+                val = int(k) if key_col == "id" else k
+                db.execute(
+                    f"UPDATE {table} SET {sets} WHERE {key_col}=?", (*image.values(), val)
+                )
         db.commit()
     return {"ok": True, "revert_id": revert_id, "reverted": edit_id}
 
