@@ -169,6 +169,10 @@ extractor_provider: ollama
 # edits and config changes; the console applies/reverts them as a human.
 chat_max_rounds: 6
 chat_proposal_ttl_hours: 72
+# The chat's kill switch. Until this is true the console's chat routes
+# refuse to start a turn; applies/rejects/reverts stay usable because a
+# proposal on file still needs its human disposition.
+chat_enabled: false
 
 models:
   extractor: qwen3:8b

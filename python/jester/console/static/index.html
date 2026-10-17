@@ -216,6 +216,37 @@
     <div id="search-body" class="stack"></div>
   </section>
 
+  <section data-page="chat" hidden>
+    <div class="hero">
+      <div>
+        <h1 data-eyebrow="Curation">Chat</h1>
+        <p>
+          A bounded assistant over this archive. It can READ the archive and
+          it can PROPOSE changes — nothing it asks for happens without your
+          Apply below, and every Apply can be Reverted.
+        </p>
+        <p id="chat-state" class="xs"></p>
+      </div>
+    </div>
+    <div class="chat-grid">
+      <!-- Sessions: the whole transcript is its own insert-only database
+           beside the archive. Picking one re-opens it read-only. -->
+      <aside class="chat-sessions" aria-label="Sessions">
+        <button id="chat-new" class="primary" style="inline-size:100%">＋ new session</button>
+        <div id="chat-sessions" class="stack xs"></div>
+      </aside>
+      <div class="stack">
+        <div id="chat-transcript" class="chat-transcript stack" aria-live="polite"></div>
+        <div class="row">
+          <textarea id="chat-input" rows="2" autocomplete="off"
+            placeholder="e.g. search my archive for comments about slow exports and propose a relabel"></textarea>
+          <button id="chat-send" class="primary">send</button>
+        </div>
+        <div id="chat-pending" class="stack"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── clusters ─────────────────────────────────────────────────── -->
   <section data-page="clusters" hidden>
     <div class="hero">

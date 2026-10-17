@@ -254,6 +254,8 @@ const PAGES = [
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
+  // The chat is an operator surface, not archive data: its own group.
+  { group: 'Curation', id: 'chat', label: 'Chat', icon: '☰', load: loadChat },
   // Its own group: this is a task deliverable with its own database, its
   // own rules and its own reviewer, not another view of Jester's archive.
   { group: 'the collector', id: 'signals', label: 'Problem signals', icon: '◎',
@@ -3766,3 +3768,184 @@ $('#signals-q').addEventListener('input', () => {
 // Fetch the counts on boot regardless of which page is opening.
 if ((location.hash.slice(1) || 'overview') !== 'overview') refreshCounts();
 go(location.hash.slice(1) || 'overview', { push: false });
+
+// ── chat: the model proposes; you confirm ───────────────────────────────
+// Every transcript line is server text: rendered with textContent only, so
+// an archive comment cannot inject markup into the page. The model HAS no
+// apply path — the buttons below are the only ones, and they run as
+// actor='human' console actions on the server (see console/api_chat.py).
+
+let CHAT_SESSION = null;   // S-... of the open transcript (null = new)
+let CHAT_TIMER = null;
+
+const CHAT_ROLE_LABEL = { user: 'you', chat: 'chat', 'system-note': 'note' };
+
+async function loadChat() {
+  const res = await api('/api/chat/sessions');
+  const box = $('#chat-sessions');
+  if (!res.ok) { box.textContent = res.error || 'sessions unavailable'; return; }
+  box.innerHTML = '';
+  for (const s of res.sessions) {
+    const b = document.createElement('button');
+    b.className = 'chat-session' + (s.session_id === CHAT_SESSION ? ' is-open' : '');
+    b.append(
+      Object.assign(document.createElement('span'), { textContent: s.title || '(empty turn)' }),
+      Object.assign(document.createElement('span'),
+        { className: 'xs', textContent: `${s.messages} msg · ${ago(s.created_utc)}` }),
+    );
+    b.onclick = () => openChatSession(s.session_id);
+    box.appendChild(b);
+  }
+  if (CHAT_SESSION) await openChatSession(CHAT_SESSION);
+}
+
+async function openChatSession(id) {
+  CHAT_SESSION = id;
+  const res = await api('/api/chat/session?id=' + encodeURIComponent(id));
+  if (!res.ok) { toast(res.error || 'unknown session', 'bad'); CHAT_SESSION = null; return; }
+  pin(loadChat());
+  renderChat(res);
+}
+
+function renderChat(res) {
+  const body = $('#chat-transcript');
+  body.innerHTML = '';
+  for (const m of res.messages) {
+    const row = document.createElement('div');
+    row.className = 'chat-msg chat-msg--' + m.role;
+    row.append(
+      Object.assign(document.createElement('span'), { className: 'who', textContent: CHAT_ROLE_LABEL[m.role] || m.role }),
+      Object.assign(document.createElement('span'), { className: 'text', textContent: m.content }),
+    );
+    body.appendChild(row);
+  }
+  body.scrollTop = body.scrollHeight;
+
+  const pending = $('#chat-pending');
+  pending.innerHTML = '';
+  const reverted = new Set(
+    res.edits.filter(e => e.edit_kind === 'revert').map(e => e.reverts_edit));
+  const openEdits = res.edits
+    .filter(e => e.edit_kind !== 'revert' && e.outcome === 'applied' && !reverted.has(e.id));
+
+  for (const p of res.pending) {
+    pending.appendChild(chatProposalCard(p));
+  }
+  for (const e of openEdits) {
+    pending.appendChild(chatEditCard(e));
+  }
+  if (!res.pending.length && !openEdits.length) {
+    pending.innerHTML = '<p class="xs">nothing waiting on you</p>';
+  }
+  $('#chat-state').textContent =
+    'the model proposes only; apply/reject below run as YOU. ' +
+    'chat_max_rounds bounds every turn; a proposal expires after ' +
+    'chat_proposal_ttl_hours.';
+}
+
+function chatProposalCard(p) {
+  const card = document.createElement('div');
+  card.className = 'chat-proposal';
+  const head = document.createElement('div');
+  head.className = 'chat-proposal-head';
+  head.textContent = `proposed · ${p.edit_kind} · by ${p.actor} · ${p.created_utc}`;
+  card.appendChild(head);
+  const diff = document.createElement('pre');
+  diff.textContent = JSON.stringify(p.diff_json, null, 2);
+  card.appendChild(diff);
+  const row = document.createElement('div');
+  row.className = 'row';
+  const apply = document.createElement('button');
+  apply.className = 'primary';
+  apply.textContent = 'apply';
+  apply.onclick = async () => {
+    if (!confirm(`Apply ${p.edit_kind} to the archive?`)) return;
+    const res = await api('/api/chat/apply', { proposal_id: p.proposal_id });
+    toast(res.ok ? 'applied (revertable in this list)'
+                 : ('apply refused: ' + (res.error || 'why?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  const reject = document.createElement('button');
+  reject.textContent = 'reject';
+  reject.onclick = async () => {
+    if (!confirm('Reject this proposal?')) return;
+    const res = await api('/api/chat/reject', { proposal_id: p.proposal_id });
+    toast(res.ok ? 'rejected' : ('refused: ' + (res.error || '?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  row.append(apply, reject);
+  card.appendChild(row);
+  return card;
+}
+
+function chatEditCard(e) {
+  const card = document.createElement('div');
+  card.className = 'chat-proposal';
+  const head = document.createElement('div');
+  head.className = 'chat-proposal-head';
+  head.textContent = `applied · ${e.edit_kind} · by ${e.actor} · ${e.created_utc}`;
+  card.appendChild(head);
+  const diff = document.createElement('pre');
+  diff.textContent = JSON.stringify(e.after_json, null, 2);
+  card.appendChild(diff);
+  const row = document.createElement('div');
+  row.className = 'row';
+  const revert = document.createElement('button');
+  revert.textContent = 'revert';
+  revert.onclick = async () => {
+    if (!confirm('Revert this edit? The undo is itself a new edit_log row.')) return;
+    const res = await api('/api/chat/revert', { edit_id: e.id });
+    toast(res.ok ? 'reverted' : ('refused: ' + (res.error || '?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  row.appendChild(revert);
+  card.appendChild(row);
+  return card;
+}
+
+async function sendChat() {
+  const input = $('#chat-input');
+  const text = (input.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  const send = $('#chat-send');
+  send.disabled = true;
+  const res = await api('/api/chat', { text, session_id: CHAT_SESSION });
+  if (!res.ok) {
+    toast(res.error || 'chat refused', 'bad');
+    send.disabled = false;
+    return;
+  }
+  toast('thinking… the transcript opens when the turn lands', 'ok');
+  pollChatJob(res.job_id);
+}
+
+function pollChatJob(jobId, attempt = 0) {
+  if (attempt > 900) { // ~13.5 minutes at 900ms; a turn cannot outlive 12 rounds
+    toast('chat turn timed out polling; check the Jobs page', 'bad');
+    $('#chat-send').disabled = false;
+    return;
+  }
+  CHAT_TIMER = setTimeout(async () => {
+    const res = await api('/api/job/' + jobId);
+    const job = res.job || {};
+    if (res.ok && job.status === 'done') {
+      $('#chat-send').disabled = false;
+      const out = job.result || {};
+      if (out.session_id) CHAT_SESSION = out.session_id;
+      toast('chat: turn ready' + (out.proposals && out.proposals.length ? ` (+${out.proposals.length} proposal(s))` : ''), 'ok');
+      await loadChat();
+    } else if (res.ok && job.status === 'error') {
+      toast('chat turn failed: ' + (job.error || 'see Jobs'), 'bad');
+      $('#chat-send').disabled = false;
+    } else if (res.ok) {
+      pollChatJob(jobId, attempt + 1);
+    } else {
+      toast(res.error || 'lost the job', 'bad');
+      $('#chat-send').disabled = false;
+    }
+  }, 900);
+}
+
+$('#chat-send').onclick = sendChat;
+$('#chat-new').onclick = () => { CHAT_SESSION = null; $('#chat-transcript').innerHTML = ''; $('#chat-pending').innerHTML = '<p class="xs">nothing waiting on you</p>'; pin(loadChat()); };

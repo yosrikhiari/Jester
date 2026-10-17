@@ -113,7 +113,10 @@ _CHOICES = {
 }
 
 
-class ConsoleAPI(ApiSignalsMixin):
+from jester.console.api_chat import ChatAPI
+
+
+class ConsoleAPI(ApiSignalsMixin, ChatAPI):
     def __init__(self, db_path: str, config_dir: str | None = None,
                  signals_db: str | None = None, read_only: bool = False):
         self.repo_root = Path(__file__).resolve().parents[3]

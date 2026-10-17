@@ -187,6 +187,12 @@ class Thresholds:
     #: refuses it. Enforced lazily at apply time (the proposal is marked
     #: expired, never deleted); every refusal is visible in the trace.
     chat_proposal_ttl_hours: float = 72.0
+    #: The chat's kill switch. OFF by design: the console's chat routes stay
+    #: closed until the operator turns them on, so an archive never answers
+    #: to a model nobody asked for. Send/receive endpoints only — the human
+    #: apply/reject/revert endpoints stay usable either way, because a
+    #: proposal on file still needs its disposition.
+    chat_enabled: bool = False
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -245,6 +251,7 @@ class Thresholds:
         "extractor_batch_size": int,
         "chat_max_rounds": int,
         "chat_proposal_ttl_hours": float,
+        "chat_enabled": _as_bool,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

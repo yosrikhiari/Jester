@@ -175,6 +175,16 @@ class Handler(BaseHTTPRequestHandler):
         if path in routes:
             self._json(routes[path]())
             return
+        if path == "/api/chat/sessions":
+            self._json(api.chat_sessions())
+            return
+        if path == "/api/chat/session":
+            # One transcript, by session id. Malformed ids answer 400 the
+            # same way /api/post does: never echoed back.
+            sid = parse_qs(query).get("id", [""])[0]
+            res = api.chat_session(sid)
+            self._json(res, 200 if res.get("ok") else 404)
+            return
         if path == "/api/trends":
             self._json(api.trends(parse_qs(query).get("days", [7])[0]))
             return
@@ -399,6 +409,20 @@ class Handler(BaseHTTPRequestHandler):
                 body.get("patch") or {}, body.get("profile")),
             "/api/models/test": lambda: api.test_role(
                 str(body.get("role", "")), body.get("profile")),
+            # The chat: a turn runs as a background job (one at a time, like
+            # everything else); apply/reject/revert are the HUMAN decisions
+            # on what the model proposed. The gate (chat_enabled) lives in
+            # chat_start; these three stay usable after the flag goes off.
+            "/api/chat": lambda: api.chat_start(
+                body.get("text", ""), body.get("session_id")),
+            "/api/chat/apply": lambda: api.chat_apply(
+                str(body.get("proposal_id", ""))),
+            "/api/chat/reject": lambda: api.chat_reject(
+                str(body.get("proposal_id", "")),
+                reason=str(body.get("reason", ""))),
+            "/api/chat/revert": lambda: api.chat_revert(
+                str(body.get("edit_id", "")),
+                reason=str(body.get("reason", ""))),
         }
         if path in simple:
             self._json(simple[path]())
