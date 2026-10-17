@@ -1644,11 +1644,13 @@ class ConsoleAPI(ApiSignalsMixin):
                 for p in self._profiles()
             ],
             "roles": list(CARD_ROLES),
-            # Fully resolved, per job, with `source` naming the line behind
-            # every value (jester.roles.RoleSettings).
-            "resolved": {role: {**r.as_record(), "models": list(r.models),
-                                "source": dict(r.source)}
-                         for role, r in resolved.items()},
+            # Fully resolved, per card job (CARD_ROLES), with `source` naming
+            # the line behind every value (jester.roles.RoleSettings). The
+            # assistant roles (chat, specifier) resolve on their own pages.
+            "resolved": {role: {**resolved[role].as_record(),
+                                "models": list(resolved[role].models),
+                                "source": dict(resolved[role].source)}
+                         for role in CARD_ROLES},
             # What this profile's `roles:` block itself sets, per job: the
             # Advanced fields show these as values and the rest as defaults.
             "own": {role: dict((t.roles or {}).get(role) or {}) for role in CARD_ROLES},
