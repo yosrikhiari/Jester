@@ -192,7 +192,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .hero h1:not([data-eyebrow])::before{display:none}
 .hero p{margin:var(--s-2) 0 0;color:var(--ink-mute);max-inline-size:68ch}
 .hero p.xs{font-size:var(--fs-xs);margin-block-start:var(--s-2)}
-.hero .row-end{align-self:flex-end}
+.hero .row-end{align-self:flex-end;gap:var(--s-4)}
 
 /* ── surfaces ─────────────────────────────────────────────────────── */
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:var(--s-6);min-inline-size:0}
@@ -407,6 +407,7 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
   .health{padding:5px 8px}
   main,.topbar{padding-inline:var(--s-6)}
   main{padding-block:var(--s-6) var(--s-9)}
+  .hero .row-end{inline-size:100%;margin-inline-start:0}
   .formgrid{grid-template-columns:1fr}
 }
 @media (max-width:600px){
@@ -463,7 +464,32 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
         <h1 data-eyebrow="Pipeline">Overview</h1>
         <p>Archive and pipeline at a glance.</p>
       </div>
+      <div class="row row-end" id="quick-actions" role="group" aria-label="Pipeline actions">
+        <button class="btn btn--primary">run pipeline</button>
+        <button class="btn btn--accent" title="Fetch the enabled sources through cloakserve">ingest sources</button>
+        <button class="btn">run with live models</button>
+        <button class="btn" title="Write the archive as CSV, split by content type and origin">export CSV</button>
+        <details class="menu">
+          <summary class="btn btn--ghost">more</summary>
+          <div class="menu-list">
+            <button class="btn btn--ghost btn--sm">ingest (worker mock)</button>
+            <button class="btn btn--ghost btn--sm">requeue failed</button>
+            <button class="btn btn--ghost btn--sm">reembed backlog</button>
+            <button class="btn btn--ghost btn--sm">smoke check</button>
+            <button class="btn btn--ghost btn--sm">seed fixture</button>
+            <button class="btn btn--ghost btn--sm">migrate schema</button>
+            <button class="btn btn--ghost btn--sm">retention sweep</button>
+          </div>
+        </details>
+        <button class="btn btn--ghost btn--icon" id="qa-help" title="what these do" aria-expanded="false">?</button>
+      </div>
     </div>
+    <p class="xs hidden" id="qa-help-text" style="margin:0">
+      <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
+      the whole loop: fetch those sources with the Go worker, extract, archive and synthesize.
+      <b>ingest</b> does the fetch half on its own; the pipeline still processes anything already queued.
+      Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear once both are reachable.
+    </p>
     <div id="ov-banner" class="stack"></div>
     <div class="kpis kpis--4" id="kpis"></div>
     <div class="grid">
@@ -481,36 +507,6 @@ input[type="checkbox"]{inline-size:auto;accent-color:var(--accent);margin:0}
         <h3>Infrastructure</h3>
         <div class="infra" id="infra"></div>
       </div>
-    </div>
-    <div class="card">
-      <div class="row" style="margin-block-end:var(--s-5)">
-        <h3 style="margin:0">Actions</h3>
-        <button class="btn btn--ghost btn--icon row-end" id="qa-help" title="what these do" aria-expanded="false">?</button>
-      </div>
-      <div class="row" id="quick-actions">
-        <button class="btn btn--primary">run pipeline</button>
-        <button class="btn btn--accent" title="Fetch the enabled sources through cloakserve">ingest sources</button>
-        <button class="btn">run with live models</button>
-        <button class="btn" title="Write the archive as CSV, split by content type and origin">export CSV</button>
-        <details class="menu">
-          <summary class="btn btn--ghost">more</summary>
-          <div class="menu-list">
-            <button class="btn btn--ghost btn--sm">ingest (worker mock)</button>
-            <button class="btn btn--ghost btn--sm">requeue failed</button>
-            <button class="btn btn--ghost btn--sm">reembed backlog</button>
-            <button class="btn btn--ghost btn--sm">smoke check</button>
-            <button class="btn btn--ghost btn--sm">seed fixture</button>
-            <button class="btn btn--ghost btn--sm">migrate schema</button>
-            <button class="btn btn--ghost btn--sm">retention sweep</button>
-          </div>
-        </details>
-      </div>
-      <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
-        <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
-        the whole loop: fetch those sources with the Go worker, extract, archive and synthesize.
-        <b>ingest</b> does the fetch half on its own; the pipeline still processes anything already queued.
-        Fetching needs the Go toolchain and cloakserve on :9222 — those buttons appear once both are reachable.
-      </p>
     </div>
   </section>
 
