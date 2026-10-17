@@ -190,6 +190,28 @@ tbody tr.sel td{background:var(--accent-soft)}
 .fold{transition:transform .12s;transform:rotate(90deg)}[aria-expanded=false] .fold{transform:none}
 .band .btn{padding:0 6px 0 0;font-weight:500;height:auto}
 @media(max-width:1100px){.split:not(.nodet) .hd-open{display:revert}}
+
+/* sources: grouped table (tinted bands, repeated headers, expandable rows, outlined chips, yield dots) */
+:root{--lav:#6e70b8}:root[data-theme=dark]{--lav:#8e90d8}
+.gb{display:flex;align-items:center;gap:10px;padding:6px 10px;background:color-mix(in srgb,var(--g) 11%,var(--surface));border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.gb .dot{width:8px;height:8px;border-radius:50%;background:var(--g);flex:none}.gb b{font-weight:500}
+.gb .nb{min-width:22px;padding:0 6px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-size:12px;text-align:center;line-height:18px;color:var(--muted)}
+.gb .gm{color:var(--muted);font-size:12.5px}
+#stable{table-layout:fixed;min-width:1020px}#stable td{vertical-align:middle}
+#stable .gband>td{padding:0;border:0}
+#stable .colh th{background:none;font-weight:400;border-bottom:1px solid var(--line-soft)}
+#stable tr.open>td{background:var(--accent-soft)}
+#stable .subrow>td{padding:0;background:var(--bg)}
+.sub{margin:8px 14px 14px 64px;border:1px solid var(--line-soft);border-radius:var(--r-m);background:var(--surface);overflow:hidden;max-width:560px}
+.sub table th,.sub table td{padding:8px 14px}
+.xp{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-s);background:none;color:var(--muted);cursor:pointer;vertical-align:middle}.xp:hover{background:var(--sunk);color:var(--ink)}
+.oc{--c:var(--ok);display:inline-block;margin:0 4px 4px 0;padding:0 8px;line-height:20px;border-radius:var(--r-s);font-size:12px;color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent);border:1px solid color-mix(in srgb,var(--c) 35%,transparent)}
+.oc.c1{--c:var(--lav)}.oc.c2{--c:var(--accent-text)}
+.dots{display:inline-flex;gap:3px}.dots i{width:6px;height:6px;border-radius:50%;background:var(--line)}.dots i.f{background:var(--ok)}
+.tfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12.5px}
+.pager{display:flex;gap:2px;align-items:center}.pager button{min-width:28px;height:28px;padding:0 6px;border:1px solid transparent;border-radius:var(--r-s);background:none;color:var(--muted);cursor:pointer}.pager button:hover{background:var(--sunk)}.pager button[aria-current=page]{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
+.menu{position:fixed;z-index:25;min-width:160px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);box-shadow:0 6px 24px rgba(0,0,0,.12)}
+.menu button{display:flex;align-items:center;width:100%;height:30px;padding:0 10px;border:0;border-radius:var(--r-s);background:none;font-size:13px;text-align:left;cursor:pointer}.menu button:hover,.menu button:focus-visible{background:var(--sunk)}.menu .danger{color:var(--bad)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -362,10 +384,10 @@ tbody tr.sel td{background:var(--accent-soft)}
     <label class="field" style="max-width:340px"><span class="sr">Link</span><input id="surl" placeholder="Paste a link. The platform is detected from it."></label>
     <label class="field" style="max-width:200px;min-width:140px"><span class="sr">Name</span><input id="sname" placeholder="Name (optional)"></label>
     <button class="btn accent" id="sadd">Add source</button></div>
+  <div class="tools"><label class="field" style="max-width:420px"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search sources</span><input id="ssq" type="search" placeholder="Search sources, targets, keywords"></label><div class="seg" role="group" aria-label="Status" id="sfil"></div></div>
   <p class="legend" id="shint"></p>
-  <div class="panel tw"><table>
-    <thead><tr><th>On</th><th>Name</th><th>Kind</th><th>Target</th><th>Fetch</th><th>Fetched</th><th>Status</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
-  <p class="legend" id="scount" style="margin-top:10px"></p>
+  <div class="panel"><div class="tw"><table id="stable"><colgroup><col style="width:72px"><col><col style="width:104px"><col style="width:22%"><col style="width:84px"><col style="width:140px"><col style="width:84px"><col style="width:120px"><col style="width:52px"></colgroup><tbody id="sbody"></tbody></table></div>
+    <div class="tfoot"><span id="scount"></span><span class="pager" id="spager" role="group" aria-label="Pages"></span></div></div>
 </div></section>
 
 <!-- DOCTOR -->
@@ -592,21 +614,58 @@ const src=[
  {p:'Real estate',rows:[{n:'Central two-bed lets',k:'listings',t:'listings.example/central-2br',f:'browser',l:'4 h ago',q:'+240 listings',h:'ok',on:1}]}];
 const HL={ok:['ok','Producing'],barren:['warn','Nothing yet'],off:['','Paused']};
 const folded=new Set();
+const EXTRA={'r/selfhosted':[['backup','self-host*','migrat*'],5],'r/devops':[['score ≥ 20'],4],'r/dataengineering':[['flair: Discussion'],2],'Ask HN':[['restore','backup'],4],'Self-hosted forum':[['backup','reverse proxy'],5],'Proxmox forum':[['backup'],0],'c/selfhosted':[['power','homelab'],3],'Central two-bed lets':[['2 bed','central'],5]};
+src.forEach(g=>g.rows.forEach(r=>{const x=EXTRA[r.n];r.w=x?x[0]:[];r.y=x?x[1]:0}));
+const GC=['var(--accent)','var(--ok)','var(--warn)','var(--lav)','var(--faint)'],sopen=new Set();let sfil='all';
+const sstate=s=>s.on?s.h:'off',CHEV='<svg class="icon fold" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+const visits=s=>{const b=s.h==='barren'||s.l==='never'?0:parseInt((s.q.match(/\d+/)||[0])[0]);return[['This cycle',b],['Previous cycle',Math.round(b*.7)],['Two cycles ago',Math.round(b*1.2)]]};
+const menu=document.createElement('div');menu.className='menu';menu.id='smenu';menu.setAttribute('role','menu');menu.hidden=true;document.body.appendChild(menu);
+let mbtn=null;
+function closeMenu(f){menu.hidden=true;if(mbtn){mbtn.setAttribute('aria-expanded','false');if(f)mbtn.focus();mbtn=null}}
 function renderSources(){
-  const barren=[];let tot=0,on=0;
-  $('#sbody').innerHTML=src.map((g,gi)=>{if(!g.rows.length)return'';const op=!folded.has(g.p);
-    const row=g.rows.map((s,ri)=>{tot++;if(s.on)on++;if(s.on&&s.h==='barren')barren.push(s.n);const [c,lab]=s.on?HL[s.h]:HL.off;
-      return `<tr><td><input type="checkbox" class="chk" data-on="${gi}-${ri}"${s.on?' checked':''} aria-label="Enable ${s.n}"></td><td class="mono">${s.n}</td><td><span class="tag">${s.k}</span></td><td class="mono">${s.t}</td><td><span class="tag">${s.f}</span></td><td>${s.l}<span class="sub2">${s.q}</span></td><td><span class="pill ${c}">${lab}</span></td>
-      <td style="white-space:nowrap">${s.on&&s.h==='barren'?`<button class="btn sm ghost" data-park="${gi}-${ri}">Park</button>`:''}<button class="btn sm ghost danger" data-rm="${gi}-${ri}">Remove</button></td></tr>`}).join('');
-    return `<tr class="band"><td colspan="8"><button class="btn ghost" data-fold="${g.p}" aria-expanded="${op}"><svg class="icon fold" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>${g.p}<span class="cnt">${g.rows.length}</span></button></td></tr>${op?row:''}`}).join('');
-  $('#shint').innerHTML=(barren.length?`${barren.length} enabled source (${barren.join(', ')}) has been walked 3 or more times and never queued a comment. It still costs a rotation slot every run. Park pauses it without removing it. `:'')+'TikTok has no adapter and none is planned.';
-  $('#scount').textContent=`${on} of ${tot} sources shown are enabled. This mock lists a sample of the 115 in sources.yaml.`;
+  const q=($('#ssq').value||'').toLowerCase(),all=src.flatMap(g=>g.rows),cnt={all:all.length,ok:0,barren:0,off:0};all.forEach(s=>cnt[sstate(s)]++);
+  $('#sfil').innerHTML=[['all','All'],['ok','Producing'],['barren','Nothing yet'],['off','Paused']].map(x=>`<button aria-pressed="${sfil===x[0]}" data-sf="${x[0]}">${x[1]} ${cnt[x[0]]}</button>`).join('');
+  let shown=0;
+  const html=src.map((g,gi)=>{
+    const rows=g.rows.map((s,ri)=>[s,ri]).filter(([s])=>(sfil==='all'||sstate(s)===sfil)&&(s.n+s.t+s.w.join(' ')).toLowerCase().includes(q));
+    if(!rows.length)return'';shown+=rows.length;const op=!folded.has(g.p),on=g.rows.filter(s=>s.on).length;
+    const band=`<tr class="gband" style="--g:${GC[gi%5]}"><td colspan="9"><div class="gb"><button class="xp" data-fold="${g.p}" aria-expanded="${op}" aria-label="${op?'Fold':'Unfold'} ${g.p}">${CHEV}</button><span class="dot"></span><b>${g.p}</b><span class="nb">${g.rows.length}</span><span class="gm">${on===g.rows.length?'All enabled':on+' enabled'}</span><button class="btn sm ghost" data-gadd="${g.p}" aria-label="Add a ${g.p} source" style="margin-left:auto"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div></td></tr>`;
+    if(!op)return band;
+    const head=`<tr class="colh"><th><input type="checkbox" class="chk" data-gall="${gi}" aria-label="Enable all ${g.p} sources"></th><th>Source</th><th>Kind</th><th>Watching for</th><th>Fetch</th><th>Last fetched</th><th>Yield</th><th>Status</th><th><span class="sr">Actions</span></th></tr>`;
+    return band+head+rows.map(([s,ri])=>{const k=gi+'-'+ri,ex=sopen.has(s.n),[c,lab]=s.on?HL[s.h]:HL.off;
+      return `<tr class="${ex?'open':''}"><td style="white-space:nowrap"><button class="xp" data-xp="${s.n}" aria-expanded="${ex}" aria-label="Recent visits to ${s.n}">${CHEV}</button> <input type="checkbox" class="chk" data-on="${k}"${s.on?' checked':''} aria-label="Enable ${s.n}"></td>
+      <td class="tc"><b class="mono">${s.n}</b><span class="mono">${s.t}</span></td><td><span class="tag">${s.k}</span></td>
+      <td>${s.w.map((w,i)=>`<span class="oc c${i%3}">${w}</span>`).join('')||'<span class="sub2">No keywords</span>'}</td><td><span class="tag">${s.f}</span></td>
+      <td>${s.l}<span class="sub2">${s.q}</span></td><td><span class="dots" role="img" aria-label="Yield ${s.y} of 5">${[1,2,3,4,5].map(i=>`<i class="${i<=s.y?'f':''}"></i>`).join('')}</span></td>
+      <td><span class="pill ${c}">${lab}</span></td><td><button class="btn sm ghost" data-menu="${k}" aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${s.n}"><svg class="icon" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></td></tr>`
+      +(ex?`<tr class="subrow"><td colspan="9"><div class="sub">${s.l==='never'?'<p class="sub2" style="padding:12px 14px;margin:0">Not visited yet. It is next in line.</p>':`<table><thead><tr><th>Visit</th><th class="num">Queued</th><th>Result</th></tr></thead><tbody>${visits(s).map(v=>`<tr><td>${v[0]}</td><td class="num">${v[1]}</td><td><span class="pill ${v[1]?'ok':''}">${v[1]?'Queued':'Nothing new'}</span></td></tr>`).join('')}</tbody></table>`}</div></td></tr>`:'')}).join('')}).join('');
+  $('#sbody').innerHTML=html||`<tr><td colspan="9" class="empty"><h3>No sources match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" data-sclear>Clear filters</button></td></tr>`;
+  $$('[data-gall]').forEach(c=>{const g=src[c.dataset.gall],n=g.rows.filter(s=>s.on).length;c.checked=n===g.rows.length;c.indeterminate=n>0&&n<g.rows.length});
+  const barren=all.filter(s=>s.on&&s.h==='barren').map(s=>s.n);
+  $('#shint').innerHTML=(barren.length?`${barren.length} enabled source (${barren.join(', ')}) has been walked 3 or more times and never queued a comment. It still costs a rotation slot every run. Pause it from the row menu to keep it on the list.`:'')+' TikTok has no adapter and none is planned.';
+  $('#scount').textContent=`Showing ${shown} of 115 sources. This mock holds a sample.`;
+  $('#spager').innerHTML=['‹',1,2,3,'…',12,'›'].map(x=>`<button data-pg="${x}"${x===1?' aria-current="page"':''} aria-label="${typeof x==='number'?'Page '+x:x==='‹'?'Previous page':x==='›'?'Next page':'More pages'}">${x}</button>`).join('');
 }
+$('#ssq').oninput=renderSources;
+document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
+  if(t=g('[data-menu]')){const was=mbtn===t;closeMenu();if(was)return;const[a,b]=t.dataset.menu.split('-'),s=src[a].rows[b],r=t.getBoundingClientRect();mbtn=t;t.setAttribute('aria-expanded','true');
+    menu.innerHTML=`<button role="menuitem" data-toast="Link copied (mock)">Copy link</button>${s.on?`<button role="menuitem" data-park="${t.dataset.menu}">Pause source</button>`:''}<button role="menuitem" class="danger" data-rm="${t.dataset.menu}">Remove</button>`;
+    menu.hidden=false;menu.style.top=Math.min(r.bottom+4,innerHeight-menu.offsetHeight-8)+'px';menu.style.left=Math.max(8,r.right-menu.offsetWidth)+'px';menu.querySelector('button').focus();return}
+  if(!g('#smenu')||g('#smenu button'))closeMenu();
+  if(t=g('[data-xp]')){const k=t.dataset.xp;sopen.has(k)?sopen.delete(k):sopen.add(k);renderSources();$(`[data-xp="${k}"]`).focus()}
+  else if(t=g('[data-gall]')){const gr=src[t.dataset.gall];gr.rows.forEach(s=>s.on=t.checked?1:0);renderSources();toast((t.checked?'Enabled all ':'Paused all ')+gr.p+' sources (mock)')}
+  else if(t=g('[data-gadd]')){$('#splat').value=t.dataset.gadd;$('#surl').scrollIntoView({block:'center'});$('#surl').focus()}
+  else if(t=g('[data-sf]')){sfil=t.dataset.sf;renderSources()}
+  else if(g('[data-sclear]')){sfil='all';$('#ssq').value='';renderSources()}
+  else if(t=g('[data-pg]')){if(t.dataset.pg!=='1')toast('This mockup only has sample rows for page 1.')}
+});
+document.addEventListener('keydown',e=>{if(menu.hidden)return;const b=[...menu.querySelectorAll('button')],i=b.indexOf(document.activeElement);
+  if(e.key==='Escape'){e.preventDefault();closeMenu(1)}else if(e.key==='ArrowDown'){e.preventDefault();b[(i+1)%b.length].focus()}else if(e.key==='ArrowUp'){e.preventDefault();b[(i-1+b.length)%b.length].focus()}});
 const det=u=>/reddit\./.test(u)?'Reddit':/ycombinator/.test(u)?'Hacker News':/lemmy/.test(u)?'Lemmy':/stackexchange|serverfault|stackoverflow/.test(u)?'Stack Exchange':/discourse|forum\./.test(u)?'Discourse':null;
 $('#sadd').onclick=()=>{const u=$('#surl').value.trim(),pick=$('#splat').value;if(!u){toast('Paste a link first.');return}
   const p=pick==='auto'?det(u):pick;if(!p){toast('Could not detect the platform. Choose one from the list.');return}
   let g=src.find(x=>x.p===p);if(!g){g={p,rows:[]};src.push(g)}
-  g.rows.push({n:$('#sname').value.trim()||u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0],k:'source',t:u.replace(/^https?:\/\/(www\.)?/,''),f:'api',l:'never',q:'next in line',h:'ok',on:1});
+  g.rows.push({n:$('#sname').value.trim()||u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0],k:'source',t:u.replace(/^https?:\/\/(www\.)?/,''),f:'api',l:'never',q:'next in line',h:'ok',on:1,w:[],y:0});
   $('#surl').value=$('#sname').value='';renderSources();toast('Added to '+p+' (mock, sources.yaml not written)')};
 
 /* doctor */
