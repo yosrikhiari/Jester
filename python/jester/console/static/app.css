@@ -698,10 +698,10 @@ th[data-sort][aria-sort="descending"]::after{content:" â†“";color:var(--ink
 .pager{display:inline-flex;align-items:center;gap:var(--s-3);font-size:var(--fs-xs);color:var(--ink-mute);font-variant-numeric:tabular-nums}
 .pager .btn{padding:4px 8px}
 /* score bars */
-.sbar{display:inline-grid;grid-auto-flow:column;gap:4px;align-items:end;vertical-align:middle}
-.sbar i{display:block;inline-size:22px;block-size:16px;border-radius:4px;background:var(--surface-3);position:relative;overflow:hidden}
-.sbar i::after{content:"";position:absolute;inset-inline:0;inset-block-end:0;block-size:var(--v,0%);background:var(--ink);opacity:.8}
-.sbar i.hi::after{background:var(--ok)} .sbar i.lo::after{background:var(--bad)} .sbar i.na{background:repeating-linear-gradient(45deg,var(--surface-3) 0 3px,var(--surface) 3px 6px)}
+.sbar{display:inline-flex;gap:4px;align-items:center;vertical-align:middle}
+.sbar i{display:grid;place-items:center;inline-size:26px;block-size:24px;border-radius:var(--r-sm);background:var(--surface-2);color:var(--ink-2);font-size:11px;font-weight:500;font-variant-numeric:tabular-nums}
+.sbar i.hi{background:var(--ok-bg);color:var(--done-ink)} .sbar i.lo{background:var(--bad-bg);color:var(--failed-ink)}
+.sbar i.na{background:repeating-linear-gradient(45deg,var(--surface-3) 0 3px,var(--surface) 3px 6px)}
 /* facet rail */
 /* The rail collapses. It is a narrowing tool, not a permanent fixture: once
    you have picked r/smallbusiness you want the width back for the insights,

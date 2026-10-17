@@ -925,14 +925,14 @@ function renderIdeaFilter() {
     `<button data-f="${s}" aria-pressed="${IDEA_FILTER === s}">${esc(s)}` +
     `${s === 'all' ? ` <span class="num">${all}</span>` : IDEA_STATUS_COUNTS[s] ? ` <span class="num">${IDEA_STATUS_COUNTS[s]}</span>` : ''}</button>`).join('');
 }
-/** Three scores as three small bars; a missing competition check is hatched,
- *  not "3.0". "7.0 / 6.0 / unchecked" was unreadable at scan speed. */
+/** Three scores as three numbered tiles, after the reference's score pattern.
+ *  The real reading rule stands: demand and feasibility are "more is better"
+ *  and get the good/bad tint; competition is a reading, not a verdict, so it
+ *  stays neutral and an unchecked value stays a blank tile, not a fake 0. */
 function scoreBars(i) {
-  // Demand and feasibility are "more is better" and get the good/bad tint;
-  // competition is a reading, not a verdict, so it stays neutral.
   const cell = (v, ok, tint) => v === null || v === undefined || !ok
     ? '<i class="na" title="unchecked"></i>'
-    : `<i class="${tint ? (+v >= 7.5 ? 'hi' : +v < 4 ? 'lo' : '') : ''}" style="--v:${Math.max(4, Math.min(100, (+v / 10) * 100))}%" title="${num(v)}"></i>`;
+    : `<i class="${tint ? (+v >= 7.5 ? 'hi' : +v < 4 ? 'lo' : '') : ''}" title="${num(v)}">${num(v)}</i>`;
   return `<span class="sbar" title="demand ${num(i.demand_signal)} · feasibility ${num(i.feasibility)} · competition ${i.competition_checked ? num(i.competition) : 'unchecked'}">
     ${cell(i.demand_signal, true, true)}${cell(i.feasibility, true, true)}${cell(i.competition, i.competition_checked, false)}</span>`;
 }
