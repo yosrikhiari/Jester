@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-accent="red">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jester — redesign mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f6f7;--surface:#fff;--sunk:#efeff1;--line:#e4e4e8;--line-soft:#eeeef1;
+  --ink:#16161a;--ink-2:#44444c;--muted:#6a6a74;--faint:#8e8e98;
+  --nav:#17171b;--nav-ink:#e9e9ee;--nav-muted:#9a9aa6;--nav-line:#2a2a31;
+  --ok:#1f7a4c;--ok-bg:#e3f3ea;--warn:#8a6100;--warn-bg:#faf0d2;--bad:#b3362f;--bad-bg:#fbe6e4;
+  --r-s:6px;--r-m:8px;--r-l:12px;
+  --h-ctl:36px;--h-ctl-s:30px;
+  --shadow:0 1px 2px rgba(0,0,0,.04);
+  --font:"Lexend",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --nav-w:236px;
+}
+:root[data-accent=red]{--accent:#c8453d;--accent-ink:#fff;--accent-soft:#fbeceb;--accent-text:#a9362f}
+:root[data-accent=gold]{--accent:#b8860b;--accent-ink:#fff;--accent-soft:#faf3dc;--accent-text:#7d5a05}
+:root[data-accent=lavender]{--accent:#6e70b8;--accent-ink:#fff;--accent-soft:#ecedfa;--accent-text:#4f519c}
+:root[data-theme=dark]{
+  --bg:#101013;--surface:#18181c;--sunk:#222227;--line:#2c2c33;--line-soft:#232328;
+  --ink:#f2f2f5;--ink-2:#d0d0d8;--muted:#a0a0ac;--faint:#7e7e8a;
+  --nav:#0b0b0d;--nav-line:#1e1e23;
+  --ok:#5ac48c;--ok-bg:#16302387;--warn:#e0b341;--warn-bg:#3a3014;--bad:#ef7d75;--bad-bg:#3d1f1d;--shadow:none}
+:root[data-theme=dark][data-accent=red]{--accent:#e0645c;--accent-soft:#3a201e;--accent-text:#f08c85}
+:root[data-theme=dark][data-accent=gold]{--accent:#d4a02a;--accent-soft:#38301a;--accent-text:#e6bd5a}
+:root[data-theme=dark][data-accent=lavender]{--accent:#8e90d8;--accent-soft:#25263f;--accent-text:#aeb0f0}
+*{box-sizing:border-box}
+html{scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 14px/1.5 var(--font);-webkit-font-smoothing:antialiased;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+a{color:inherit;text-decoration:none}button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-s)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.skip{position:absolute;left:8px;top:-60px;background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:var(--r-s);z-index:50}
+.skip:focus{top:8px}
+.icon{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* shell */
+.shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh}
+.side{background:var(--nav);color:var(--nav-ink);position:sticky;top:0;height:100vh;padding:20px 12px;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:none}
+.side::-webkit-scrollbar{display:none}
+.brand{display:flex;gap:10px;align-items:center;padding:2px 8px 18px}
+.mark{width:30px;height:30px;border-radius:var(--r-m);background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:600}
+.brand b{font-weight:600;font-size:16px;display:block;line-height:1.1}
+.brand small{color:var(--nav-muted);font-size:12px}
+.grp{font-size:12px;color:var(--nav-muted);padding:16px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:0 10px;height:var(--h-ctl);border:0;background:none;border-radius:var(--r-m);color:var(--nav-muted);cursor:pointer;text-align:left;font-size:14px}
+.nav-item:hover{background:#ffffff0f;color:var(--nav-ink)}
+.nav-item[aria-current=page]{background:#ffffff17;color:#fff;box-shadow:inset 3px 0 0 var(--accent)}
+.nav-item .n{margin-left:auto;font-size:12px;font-variant-numeric:tabular-nums}
+.nav-item .n.new{background:var(--accent);color:var(--accent-ink);border-radius:99px;padding:0 7px;line-height:18px}
+.side .sp{flex:1;min-height:16px}
+.health{display:flex;gap:8px;align-items:center;padding:10px;border:1px solid var(--nav-line);border-radius:var(--r-m);font-size:12.5px;color:var(--nav-muted)}
+.led{width:8px;height:8px;border-radius:50%;background:#4cc38a;flex:none}.led.idle{background:#e0b341}.led.off{background:#ef7d75}
+
+main{min-width:0}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;align-items:center;gap:8px;padding:10px 32px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.crumb{color:var(--muted);font-size:13px;display:flex;gap:6px;align-items:center}
+.crumb b{color:var(--ink);font-weight:500}
+.grow{flex:1}
+.chip{display:inline-flex;gap:6px;align-items:center;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:99px;background:var(--surface);font-size:12.5px;color:var(--muted)}
+.chip code{font-family:ui-monospace,monospace;font-size:12px;color:var(--ink-2)}
+
+/* controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--h-ctl);padding:0 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);font-weight:500;font-size:14px;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--sunk)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}.btn.primary:hover{opacity:.9;background:var(--ink)}
+.btn.accent{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.accent:hover{background:var(--accent);opacity:.92}
+.btn.danger{color:var(--bad)}
+.btn.ghost{border-color:transparent;background:none;color:var(--muted)}.btn.ghost:hover{background:var(--sunk);color:var(--ink)}
+.btn.sm{height:var(--h-ctl-s);padding:0 10px;font-size:13px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.busy .icon{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.seg{display:inline-flex;padding:2px;background:var(--sunk);border-radius:var(--r-m)}
+.seg button{border:0;background:none;height:30px;padding:0 12px;border-radius:var(--r-s);font-size:13px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font-weight:500}
+.field{display:flex;align-items:center;gap:8px;height:var(--h-ctl);padding:0 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--faint);flex:1;min-width:200px}
+.field input{border:0;outline:0;background:none;flex:1;font:inherit;color:var(--ink);min-width:0}
+.field:focus-within{border-color:var(--accent)}
+
+/* page */
+.page{padding:28px 32px 72px;max-width:1240px}
+.head{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}
+h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:-.02em;font-weight:600}
+.lede{margin:6px 0 0;color:var(--muted);max-width:62ch}
+h2{margin:0;font-size:15px;font-weight:600}h3{margin:0;font-size:14px;font-weight:500}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--shadow)}
+.panel-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-soft)}
+.panel-h .btn{margin-left:auto}
+.panel-b{padding:16px 18px}
+
+.notice{display:flex;gap:12px;align-items:center;padding:12px 16px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:var(--r-m);background:var(--surface);margin-bottom:16px}
+.notice p{margin:0;color:var(--muted);font-size:13px}.notice .btn{margin-left:auto}
+
+/* KPI strip: one panel, dividers (not four cards) */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:16px}
+.kpi{padding:16px 20px;border-left:1px solid var(--line-soft)}.kpi:first-child{border-left:0}
+.kpi .k{font-size:13px;color:var(--muted)}
+.kpi .v{font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:12.5px;color:var(--faint);margin-top:2px}
+.up{color:var(--ok)!important}.warn-t{color:var(--warn)!important}
+
+.g2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:10px 12px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,monospace;font-size:13px}
+.bar{height:6px;border-radius:99px;background:var(--sunk);margin-top:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
+.bar.lg{height:8px}
+.ledger{margin:0;display:grid;grid-template-columns:1fr auto;gap:0}
+.ledger>*{padding:8px 0;border-bottom:1px solid var(--line-soft)}.ledger>*:nth-last-child(-n+2){border-bottom:0}
+.ledger dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}.ledger .z{color:var(--faint)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)}.row:last-child{border-bottom:0}.row small{margin-left:auto;color:var(--faint);font-size:12.5px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions .btn{justify-content:flex-start}
+.actions h3{grid-column:1/-1;color:var(--muted);font-weight:400;font-size:12.5px;margin-top:4px}.actions h3:first-child{margin-top:0}
+
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:99px;font-size:12px;font-weight:500;background:var(--sunk);color:var(--ink-2);white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.run{background:var(--accent-soft);color:var(--accent-text)}
+.pill.np::before{display:none}
+.tag{display:inline-block;padding:1px 8px;border-radius:var(--r-s);background:var(--sunk);font-size:12px;color:var(--ink-2)}
+
+
+/* tables — dark header (ref: Bankio), grouped bands (ref: Stacks/Craftboard) */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:500;font-size:12.5px;color:var(--muted);padding:9px 14px;background:var(--sunk);white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tbody tr.clk{cursor:pointer}tbody tr.clk:hover td{background:var(--bg)}
+tbody tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.band td{background:var(--bg);padding:8px 14px;font-weight:500;border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+.band .cnt{color:var(--faint);font-weight:400;margin-left:6px}
+.tc b{font-weight:500;display:block}.tc span{color:var(--muted);font-size:13px;display:block;max-width:56ch}
+.score{display:inline-flex;gap:4px}.score i{width:26px;height:24px;border-radius:var(--r-s);display:grid;place-items:center;font:500 12px var(--font);background:var(--sunk);color:var(--ink-2)}
+.score i.hi{background:var(--ok-bg);color:var(--ok)}.score i.lo{background:var(--bad-bg);color:var(--bad)}
+.legend{color:var(--faint);font-size:12.5px;margin:0 0 10px}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+
+/* posts */
+.split{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px;align-items:start}
+.plist{max-height:none}
+.post{display:grid;grid-template-columns:52px 1fr auto;gap:12px;width:100%;text-align:left;padding:14px 16px;border:0;border-bottom:1px solid var(--line-soft);background:none;cursor:pointer}
+.post:hover{background:var(--bg)}.post[aria-selected=true]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.post .sc b{display:block;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}.post .sc span{font-size:12px;color:var(--faint)}
+.post h3{line-height:1.35}
+.meta{display:flex;gap:4px 10px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-top:4px}.meta .kw{color:var(--accent-text)}
+.detail{position:sticky;top:76px}
+.detail .body{color:var(--ink-2);line-height:1.6;white-space:pre-line;margin:8px 0 0;max-width:64ch}
+.cm{padding:8px 12px;border-left:2px solid var(--line);margin-top:10px;color:var(--ink-2);font-size:13.5px}.cm small{display:block;color:var(--faint);font-size:12px}
+.dact{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.empty{padding:48px 24px;text-align:center;color:var(--muted)}.empty h3{color:var(--ink);margin-bottom:4px}.empty .btn{margin-top:14px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--r-m);opacity:0;pointer-events:none;transition:.2s;z-index:30;display:flex;gap:12px;align-items:center}
+.toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}.toast button{background:none;border:0;text-decoration:underline;cursor:pointer;color:inherit;padding:0}
+
+.view{display:none}.view.on{display:block}
+.mock{position:fixed;right:14px;bottom:14px;z-index:20;display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-size:12px;color:var(--muted);box-shadow:0 6px 24px rgba(0,0,0,.1)}
+.sw{width:18px;height:18px;border-radius:50%;border:2px solid var(--surface);outline:1px solid var(--line);cursor:pointer;padding:0}.sw[aria-pressed=true]{outline:2px solid var(--ink)}
+.toast.on~.mock{display:none}
+
+@media(max-width:1100px){.kpis{grid-template-columns:1fr 1fr}.kpi:nth-child(3){border-left:0}.kpi:nth-child(n+3){border-top:1px solid var(--line-soft)}.g2,.g3,.split{grid-template-columns:1fr}.detail{position:static}}
+@media(max-width:860px){
+  .shell{grid-template-columns:1fr}
+  .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:2px;padding:10px;overflow:visible}
+  .brand{padding:0 8px 0 4px;width:100%}.grp,.side .sp,.health{display:none}
+  .nav-item{width:auto;height:32px;padding:0 10px;font-size:13px}.nav-item[aria-current=page]{box-shadow:inset 0 -2px 0 var(--accent)}
+  .top,.page{padding-left:16px;padding-right:16px}h1{font-size:24px}.kv{grid-template-columns:100px 1fr}
+  .top{position:static}.mock{display:none}
+}
+
+/* merged content: only Jester tokens, no new colours */
+.notice.ok{border-left-color:var(--ok)}.notice.bad{border-left-color:var(--bad)}.notice b{font-weight:500}
+.kpis.k2{grid-template-columns:1fr 1fr}
+.kpi .spark{display:block;width:100%;max-width:120px;height:28px;margin-top:6px;fill:none;stroke:var(--accent);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.mix{display:flex;gap:1px;height:6px;border-radius:99px;overflow:hidden;background:var(--sunk);min-width:90px}.mix i{display:block;background:var(--accent)}
+.mixl{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:12.5px;margin-top:8px}.mixl i{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--accent);margin-right:6px}
+.sub2{display:block;color:var(--faint);font-size:12.5px}.dh{margin-top:18px}
+.split.nodet{grid-template-columns:minmax(0,1fr)}.split.nodet>.detail{display:none}.split:not(.nodet) .hd-open{display:none}
+tbody tr.sel td{background:var(--accent-soft)}
+.in{height:var(--h-ctl);padding:0 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);font:inherit}.in:focus{border-color:var(--accent)}
+.chk{width:16px;height:16px;accent-color:var(--accent)}
+.fix{display:flex;gap:12px;align-items:flex-start;padding:14px 18px;border-bottom:1px solid var(--line-soft)}.fix:last-child{border-bottom:0}.fix .led{margin-top:7px}.fix b{font-weight:500;display:block}.fix span.why{display:block;color:var(--muted);font-size:13px}.fix .btn{margin-left:auto}
+.res{padding:14px 18px;border-bottom:1px solid var(--line-soft)}.res:last-child{border-bottom:0}.res p{margin:4px 0 0;color:var(--muted);font-size:13px}.res .meta{margin:0 0 6px}
+.sim{display:inline-flex;align-items:center;gap:8px;margin-left:auto}.sim .bar{width:64px;margin:0}
+.fold{transition:transform .12s;transform:rotate(90deg)}[aria-expanded=false] .fold{transform:none}
+.band .btn{padding:0 6px 0 0;font-weight:500;height:auto}
+@media(max-width:1100px){.split:not(.nodet) .hd-open{display:revert}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="shell">
+<nav class="side" aria-label="Main">
+  <div class="brand"><div class="mark" aria-hidden="true">J</div><div><b>Jester</b><small>Local pipeline</small></div></div>
+  <div class="grp">Pipeline</div>
+  <button class="nav-item" data-go="overview" aria-current="page"><svg class="icon" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>Overview</button>
+  <button class="nav-item" data-go="runs"><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Runs<span class="n">214</span></button>
+  <button class="nav-item" data-go="queue"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Queue<span class="n">33,614</span></button>
+  <div class="grp">Archive</div>
+  <button class="nav-item" data-go="ideas"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10c1 1 1 2 1 3h6c0-1 0-2 1-3a6 6 0 0 0-4-10z"/></svg>Ideas<span class="n">1,321</span></button>
+  <button class="nav-item" data-go="stub:Nuggets"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3l8 5v8l-8 5-8-5V8z"/></svg>Nuggets<span class="n">31,818</span></button>
+  <button class="nav-item" data-go="posts"><svg class="icon" viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg>Posts<span class="n new" id="navNew">12 new</span></button>
+  <button class="nav-item" data-go="stub:Clusters"><svg class="icon" viewBox="0 0 24 24"><circle cx="7" cy="8" r="3"/><circle cx="17" cy="8" r="3"/><circle cx="12" cy="17" r="3"/></svg>Clusters</button>
+  <button class="nav-item" data-go="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search</button>
+  <div class="grp">Curation</div>
+  <button class="nav-item" data-go="stub:Chat"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 11h16M4 16h10"/></svg>Chat</button>
+  <div class="grp">Collector</div>
+  <button class="nav-item" data-go="stub:Problem signals"><svg class="icon" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Problem signals<span class="n">96</span></button>
+  <div class="grp">Setup</div>
+  <button class="nav-item" data-go="sources"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 16 0M8 12a4 4 0 0 1 8 0"/><circle cx="12" cy="12" r="1"/></svg>Sources<span class="n">115</span></button>
+  <button class="nav-item" data-go="stub:Config"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Config</button>
+  <button class="nav-item" data-go="stub:Schedule"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Schedule</button>
+  <button class="nav-item" data-go="doctor"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 6-8 12-8 12z"/></svg>Doctor<span class="n">3</span></button>
+  <div class="sp"></div>
+  <div class="health"><span class="led"></span>All services up. Next cycle 10:20.</div>
+</nav>
+
+<main id="content">
+<header class="top">
+  <div class="crumb" aria-label="Breadcrumb">Jester <span aria-hidden="true">/</span> <b id="crumb">Overview</b></div>
+  <div class="grow"></div>
+  <span class="chip">db <code>jester.db</code></span>
+  <span class="chip"><span class="led" style="background:var(--accent)"></span>Running · cycle-20260922T0920Z</span>
+  <button class="btn ghost sm" id="themeBtn" aria-label="Toggle dark mode"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  <button class="btn sm" id="refreshBtn"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Refresh</button>
+  <button class="btn primary sm" id="runBtn"><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run pipeline</button>
+</header>
+
+<!-- OVERVIEW -->
+<section id="overview" class="view on"><div class="page">
+  <div class="head"><div><h1>Overview</h1><p class="lede">Tuesday 22 Sep. Reddit is back after 26 days (30 comments from r/selfhosted this morning), so the 71,309 deferred nuggets are being archived.</p></div></div>
+
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div><b style="font-weight:500">7 nuggets are waiting to be re-embedded</b><p>Search works but results are incomplete until this clears, usually within a minute.</p></div>
+    <button class="btn sm" id="reembed">Re-embed now</button></div>
+
+  <div class="panel kpis">
+    <div class="kpi"><div class="k">Nuggets</div><div class="v">31,818</div><div class="d up">+2,938 today</div></div>
+    <div class="kpi"><div class="k">Ideas</div><div class="v">1,321</div><div class="d">None new in 14 cycles</div></div>
+    <div class="kpi"><div class="k">Pending batches</div><div class="v">33,614</div><div class="d warn-t">25,067 are real-estate listings</div></div>
+    <div class="kpi"><div class="k">Failed batches</div><div class="v">0</div><div class="d">7 in the re-embed backlog</div></div>
+  </div>
+
+  <div class="panel kpis k2">
+    <div class="kpi"><div class="k">Unprocessed</div><div class="v">412</div><div class="d">Fetched, not yet extracted</div></div>
+    <div class="kpi"><div class="k">Runs active</div><div class="v">1</div><div class="d">Started 10:12 by hand</div></div>
+  </div>
+
+  <div class="g2">
+    <div class="panel"><div class="panel-h"><h2>Current run</h2><span class="pill run">Running</span><button class="btn sm ghost" data-go="runs">Open log</button></div>
+      <div class="panel-b"><dl class="kv">
+        <dt>Run</dt><dd class="mono">cycle-20260922T082003Z</dd>
+        <dt>Started</dt><dd>10:12, 11 min ago</dd>
+        <dt>Phase</dt><dd>Archive → synthesize <span style="color:var(--faint)">(62%)</span><div class="bar lg" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Run progress"><i style="width:62%"></i></div></dd>
+        <dt>Kept / ideas</dt><dd>2,938 / none yet</dd>
+        <dt>Duration</dt><dd>112 s <span style="color:var(--faint)">(expected 2,443 s)</span></dd>
+        <dt>Flags</dt><dd><span class="pill warn">LOW_NUGGETS</span></dd></dl></div></div>
+    <div class="panel"><div class="panel-h"><h2>Quota today</h2><span class="chip" style="margin-left:auto">2026-09-22</span></div>
+      <div class="panel-b"><div class="mix" role="img" aria-label="Share of today’s fetches by platform" style="margin-bottom:10px"><i style="width:64.5%"></i><i style="width:29.7%;opacity:.7"></i><i style="width:2.9%;opacity:.5"></i><i style="width:2.1%;opacity:.35"></i><i style="width:.7%;opacity:.25"></i></div><dl class="ledger">
+        <dt>Reddit</dt><dd>30</dd><dt>Hacker News</dt><dd>1,204</dd><dt>Discourse</dt><dd>2,611</dd><dt>Lemmy</dt><dd>118</dd>
+        <dt>Stack Exchange</dt><dd>86</dd><dt>YouTube</dt><dd class="z">0</dd><dt>GitHub</dt><dd class="z">0</dd><dt>Steam</dt><dd class="z">0</dd></dl></div></div>
+  </div>
+
+  <div class="g3">
+    <div class="panel"><div class="panel-h"><h2>Infrastructure</h2></div><div class="panel-b" style="padding-top:6px;padding-bottom:6px">
+      <div class="row"><span class="led"></span>Ollama<small>8 models, native</small></div>
+      <div class="row"><span class="led"></span>cloakserve<small>:9222, Chrome 146</small></div>
+      <div class="row"><span class="led"></span>Qdrant<small>1.19, docker</small></div>
+      <div class="row"><span class="led idle"></span>Reddit API<small>No credentials</small></div>
+      <div class="row"><span class="led"></span>Go worker<small>go 1.22</small></div>
+      <p class="sub2" style="margin:8px 0 2px">Checked just now <button class="btn sm ghost" id="recheck">Re-check</button></p></div></div>
+    <div class="panel"><div class="panel-h"><h2>Quick actions</h2></div><div class="panel-b"><div class="actions">
+      <h3>Run</h3><button class="btn sm act">Run pipeline</button><button class="btn sm act">Live models</button><button class="btn sm act">Ingest</button><button class="btn sm act">Smoke check</button>
+      <h3>Repair</h3><button class="btn sm act">Requeue failed</button><button class="btn sm act">Re-embed backlog</button>
+      <h3>Data</h3><button class="btn sm act">Export CSV</button><button class="btn sm act danger">Retention sweep</button></div></div></div>
+    <div class="panel"><div class="panel-h"><h2>Reddit watches</h2><button class="btn sm ghost" data-go="posts">View posts</button></div>
+      <div class="tw"><table><tbody>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/selfhosted</b><span>backup, self-host*, migrat*</span></td><td class="num">8 new</td></tr>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/devops</b><span>score ≥ 20</span></td><td class="num">3 new</td></tr>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/dataengineering</b><span>flair: Discussion</span></td><td class="num">1 new</td></tr></tbody></table></div></div>
+  </div>
+</div></section>
+
+<!-- IDEAS -->
+<section id="ideas" class="view"><div class="page">
+  <div class="head"><div><h1>Ideas</h1><p class="lede">1,321 ideas, each scored by the critic. Open one to check its citations against the original comments.</p></div>
+    <button class="btn" data-toast="Resynthesis queued for all ideas (mock, not connected to a service)"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Resynthesize all</button></div>
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><div><b>No new ideas in 14 cycles</b><p>Open Runs to see what each cycle kept and why.</p></div><button class="btn sm" data-go="runs">Open runs</button></div>
+  <div class="tools">
+    <label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search ideas</span><input id="iq" type="search" placeholder="Search ideas, problems, sources"></label>
+    <div class="seg" role="group" aria-label="Show"><button aria-pressed="true" data-f="all">All</button><button aria-pressed="false" data-f="saved">Saved</button><button aria-pressed="false" data-f="discarded">Discarded</button></div>
+    <div class="seg" role="group" aria-label="Sort"><button aria-pressed="true" data-s="score">Score</button><button aria-pressed="false" data-s="new">Newest</button><button aria-pressed="false" data-s="ev">Evidence</button></div>
+  </div>
+  <p class="legend">Score columns: demand, feasibility, competition (higher is better; low competition scores high).</p>
+  <div class="split nodet" id="isplit"><div class="panel tw"><table>
+    <thead><tr><th style="min-width:300px">Idea</th><th class="hd-open">Platforms</th><th class="num">Evidence</th><th>Demand · Feasib. · Compet.</th><th>Status</th></tr></thead>
+    <tbody id="ibody"></tbody></table>
+    <div class="empty" id="iempty" hidden><h3>No ideas match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" id="iclear">Clear filters</button></div></div>
+  <aside class="panel detail" id="idetail" aria-live="polite"></aside></div>
+  <p class="legend" id="ishown" style="margin-top:10px"></p>
+</div></section>
+
+<!-- POSTS -->
+<section id="posts" class="view"><div class="page">
+  <div class="head"><div><h1>Posts</h1><p class="lede">Posts that matched a Reddit watch since the last cycle. Keep what is worth reading; dismissed posts are hidden, not deleted.</p></div>
+    <button class="btn" id="exportMd"><svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>Export kept as .md</button></div>
+  <div class="tools">
+    <label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search posts</span><input id="pq" type="search" placeholder="Search posts"></label>
+    <div class="seg" role="group" aria-label="State" id="pstate"></div>
+    <div class="seg" role="group" aria-label="Subreddit" id="psub"></div>
+  </div>
+  <div class="split">
+    <div class="panel plist" id="plist" role="listbox" aria-label="Posts"></div>
+    <aside class="panel detail" id="pdetail" aria-live="polite"></aside>
+  </div>
+</div></section>
+
+<!-- RUNS -->
+<section id="runs" class="view"><div class="page">
+  <div class="head"><div><h1>Runs</h1><p class="lede">The pipeline ledger. Origin tells a run you started from one the host scheduler started at 4am.</p></div>
+    <button class="btn accent" data-runnow><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run pipeline</button></div>
+  <div class="tools"><div class="seg" role="group" aria-label="Origin" id="rorigin"></div><span class="grow"></span><span class="legend" style="margin:0" id="rshown"></span></div>
+  <div class="split nodet" id="rsplit"><div class="panel tw"><table>
+    <thead><tr><th>Started</th><th>Status</th><th class="num">Kept / ideas</th><th class="num">Duration</th><th>Origin</th><th class="hd-open">Mix</th></tr></thead>
+    <tbody id="rbody"></tbody></table></div>
+    <aside class="panel detail" id="rdetail" aria-live="polite"></aside></div>
+</div></section>
+
+<!-- QUEUE -->
+<section id="queue" class="view"><div class="page">
+  <div class="head"><div><h1>Queue</h1><p class="lede">What has been scraped and not yet treated. Ingestion and treatment run on separate clocks, so a gap between them is normal.</p></div>
+    <button class="btn" data-toast="Treatment started (mock, not connected to a service)">Treat now</button></div>
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><div><b>Treatment is paused until 13:40</b><p>The hosted model is out of quota. Queued work keeps accumulating and nothing is lost.</p></div></div>
+  <div class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Where the waiting work came from</h2></div><div class="panel-b" id="qmix" style="padding-top:6px;padding-bottom:6px"></div></div>
+  <div class="tools"><div class="seg" role="group" aria-label="Kind" id="qkind"></div><div class="seg" role="group" aria-label="Status" id="qstat"></div></div>
+  <div class="split nodet" id="qsplit"><div class="panel tw"><table>
+    <thead><tr><th>Batch</th><th>Source</th><th class="num">Items</th><th>Queued</th><th>Status</th></tr></thead><tbody id="qbody"></tbody></table></div>
+    <aside class="panel detail" id="qdetail" aria-live="polite"></aside></div>
+  <p class="legend" id="qshown" style="margin-top:10px"></p>
+</div></section>
+
+<!-- SEARCH -->
+<section id="search" class="view"><div class="page">
+  <div class="head"><div><h1>Search</h1><p class="lede">Ask the archive. Results are nuggets ranked by similarity to your query.</p></div></div>
+  <div class="tools"><label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search the archive</span><input id="sq" type="search" placeholder="Try “backups fail silently”. Press / from anywhere."></label></div>
+  <div class="tools" id="sex"></div>
+  <div class="panel" id="sres"></div>
+  <p class="legend" id="scnt" style="margin-top:10px"></p>
+</div></section>
+
+<!-- SOURCES -->
+<section id="sources" class="view"><div class="page">
+  <div class="head"><div><h1>Sources</h1><p class="lede">The curated list the pipeline walks each cycle. Changes are written to sources.yaml immediately.</p></div></div>
+  <div class="tools"><label class="sr" for="splat">Platform</label>
+    <select class="in" id="splat"><option value="auto">Detect from link</option><option>Reddit</option><option>Hacker News</option><option>Discourse</option><option>Lemmy</option><option>Stack Exchange</option><option>Real estate</option></select>
+    <label class="field" style="max-width:340px"><span class="sr">Link</span><input id="surl" placeholder="Paste a link. The platform is detected from it."></label>
+    <label class="field" style="max-width:200px;min-width:140px"><span class="sr">Name</span><input id="sname" placeholder="Name (optional)"></label>
+    <button class="btn accent" id="sadd">Add source</button></div>
+  <p class="legend" id="shint"></p>
+  <div class="panel tw"><table>
+    <thead><tr><th>On</th><th>Name</th><th>Kind</th><th>Target</th><th>Fetch</th><th>Fetched</th><th>Status</th><th></th></tr></thead><tbody id="sbody"></tbody></table></div>
+  <p class="legend" id="scount" style="margin-top:10px"></p>
+</div></section>
+
+<!-- DOCTOR -->
+<section id="doctor" class="view"><div class="page">
+  <div class="head"><div><h1>Doctor</h1><p class="lede">Checks that the pipeline is not quietly doing less than it looks.</p></div></div>
+  <div class="panel" id="dfind" style="margin-bottom:16px"></div>
+  <div class="panel"><div class="panel-h"><h2>Eval gate</h2><span class="pill bad" id="ebadge">Fail</span><button class="btn sm" id="erun">Re-run</button></div>
+    <div class="panel-b"><p class="lede" style="margin:0 0 12px">Regression suite over the idea scorer. A failure blocks nothing, but it is loud.</p>
+      <dl class="kv"><dt>Gate</dt><dd>Idea scorer</dd><dt>Checks</dt><dd>3</dd><dt>Failures</dt><dd>1</dd></dl></div>
+    <div class="tw"><table><thead><tr><th>Case</th><th class="num">Overall</th><th>Verdict</th></tr></thead><tbody id="ebody"></tbody></table></div></div>
+</div></section>
+
+<!-- STUB -->
+<section id="stub" class="view"><div class="page">
+  <div class="head"><div><h1 id="stubT">Page</h1><p class="lede">This page is outside the scope of the mockup. Overview, Runs, Queue, Ideas, Posts, Search, Sources and Doctor are designed.</p></div></div>
+  <div class="panel empty"><h3>Not designed yet</h3><p>It will use the same table, filter and detail patterns as Ideas and Posts.</p><button class="btn" data-go="overview">Back to overview</button></div>
+</div></section>
+</main></div>
+
+<div class="toast" id="toast" role="status"><span id="tmsg"></span><button id="tundo" hidden>Undo</button></div>
+<div class="mock" aria-label="Mockup controls"><span>Accent</span>
+  <button class="sw" aria-pressed="true" data-acc="red" style="background:#c8453d" aria-label="Red"></button>
+  <button class="sw" aria-pressed="false" data-acc="gold" style="background:#b8860b" aria-label="Gold"></button>
+  <button class="sw" aria-pressed="false" data-acc="lavender" style="background:#6e70b8" aria-label="Lavender"></button></div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const root=document.documentElement;
+function toast(m,undo){$('#tmsg').textContent=m;const u=$('#tundo');u.hidden=!undo;u.onclick=()=>{undo&&undo();$('#toast').classList.remove('on')};$('#toast').classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>$('#toast').classList.remove('on'),4000)}
+
+/* navigation */
+function go(id){
+  let name=id;const stub=id.startsWith('stub:');if(stub){name=id.slice(5);id='stub';$('#stubT').textContent=name}
+  $$('.view').forEach(v=>v.classList.toggle('on',v.id===id));
+  $$('.nav-item').forEach(n=>n.removeAttribute('aria-current'));
+  const target=stub?'stub:'+name:id;const n=$(`.nav-item[data-go="${target}"]`);n&&n.setAttribute('aria-current','page');
+  $('#crumb').textContent=stub?name:{overview:'Overview',runs:'Runs',queue:'Queue',ideas:'Ideas',posts:'Posts',search:'Search',sources:'Sources',doctor:'Doctor'}[id];
+  window.scrollTo(0,0);
+}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-go]');if(t)go(t.dataset.go)});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('tr[data-go]'))go(e.target.dataset.go)});
+$('#themeBtn').onclick=()=>root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+$$('.sw').forEach(s=>s.onclick=()=>{root.dataset.accent=s.dataset.acc;$$('.sw').forEach(x=>x.setAttribute('aria-pressed',x===s))});
+
+/* mock actions with feedback */
+function busy(btn,label,done,ms=900){if(btn.disabled)return;const h=btn.innerHTML;btn.disabled=true;btn.classList.add('busy');setTimeout(()=>{btn.disabled=false;btn.classList.remove('busy');toast(done)},ms)}
+$('#runBtn').onclick=e=>toast('A cycle is already running. It will pick up new work when it finishes.');
+$('#refreshBtn').onclick=e=>busy(e.currentTarget,'','Refreshed just now (mock data)',600);
+$('#reembed').onclick=e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Re-embedding…';setTimeout(()=>{b.closest('.notice').remove();toast('Re-embed finished: 7 nuggets added to the archive (mock)')},1000)};
+$$('.act').forEach(b=>b.onclick=()=>{if(b.classList.contains('danger')&&!confirm('Run the retention sweep? Nuggets past their retention window will be deleted.'))return;toast(b.textContent+' started (mock, not connected to a service)')});
+$('#exportMd').onclick=()=>toast(posts.filter(p=>p.s==='kept').length+' kept posts would be exported (mock)');
+
+/* ideas */
+const ideas=[
+ {t:'Backup Drill Scheduler',d:'Self-hosters never test restores. Runs a monthly restore into a scratch VM and reports what broke.',p:['reddit','discourse'],n:14,th:3,sc:[8,7,5],st:'saved',o:3},
+ {t:'Pipeline Drift Ledger',d:'Data engineers lose hours to silent upstream schema changes. Diffs every source schema per run and pages the owner.',p:['reddit','hackernews'],n:22,th:5,sc:[9,6,3],st:'new',o:5},
+ {t:'Homelab Power Budget',d:'Meters per-device draw and price, and says which container costs the most per month.',p:['reddit'],n:9,th:2,sc:[6,8,5],st:'new',o:4},
+ {t:'On-call Handover Notes',d:'Pager rotations lose context at every handoff. Captures the shift’s incidents into a one-page brief.',p:['reddit','stackexchange'],n:11,th:4,sc:[7,8,4],st:'discarded',o:2},
+ {t:'Forum Migration Checker',d:'Discourse admins moving hosts break every embed and redirect. Crawls both and lists what changed.',p:['discourse'],n:6,th:1,sc:[5,9,6],st:'new',o:1}];
+const pc={saved:'ok',new:'',discarded:'bad'};
+let ifl='all',isort='score',isel=null;
+function renderIdeas(){
+  const q=$('#iq').value.toLowerCase();
+  let l=ideas.filter(i=>(ifl==='all'||i.st===ifl)&&(i.t+i.d+i.p.join(' ')).toLowerCase().includes(q));
+  l.sort((a,b)=>isort==='score'?b.sc[0]-a.sc[0]:isort==='ev'?b.n-a.n:b.o-a.o);
+  $('#ibody').innerHTML=l.map(i=>`<tr class="clk${ideas.indexOf(i)===isel?' sel':''}" tabindex="0" data-i="${ideas.indexOf(i)}"><td class="tc"><b>${i.t}</b><span>${i.d}</span></td><td class="hd-open">${i.p.map(x=>`<span class="tag">${x}</span>`).join(' ')}</td><td class="num">${i.n} nuggets<br><span style="color:var(--faint);font-size:12.5px">${i.th} thread${i.th>1?'s':''}</span></td><td><span class="score">${i.sc.map(s=>`<i class="${s>=7?'hi':s<=3?'lo':''}">${s}</i>`).join('')}</span></td><td><span class="pill ${pc[i.st]}">${i.st[0].toUpperCase()+i.st.slice(1)}</span></td></tr>`).join('');
+  $('#iempty').hidden=l.length>0;
+  $('#ishown').textContent=`Showing ${l.length} of 1,321 ideas, sorted by ${{score:'score',ev:'evidence',new:'newest'}[isort]}`;renderIdea();
+}
+$('#iq').oninput=renderIdeas;
+$$('[data-f]').forEach(b=>b.onclick=()=>{ifl=b.dataset.f;$$('[data-f]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderIdeas()});
+$$('[data-s]').forEach(b=>b.onclick=()=>{isort=b.dataset.s;$$('[data-s]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderIdeas()});
+$('#iclear').onclick=()=>{$('#iq').value='';ifl='all';$$('[data-f]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.f==='all'));renderIdeas()};
+
+/* posts */
+const posts=[
+ {id:1,sc:342,c:67,t:'Hardening security for public services: what am I missing?',sub:'r/selfhosted',u:'quietfox',ago:'2 h ago',kw:'self-host*',tag:'Help',src:'api',s:'new',
+  b:'I run Nextcloud, Immich and Vaultwarden behind Traefik with Authelia in front. Fail2ban on the host, Cloudflare tunnel, no ports open except 443. Is there anything obvious I’m missing before I let family use it?\n\nCurrently no WAF and I’ve never actually tried a restore from my backups…',
+  cm:[['u/restic_rob · 88','“Never tested a restore” is the whole answer. Schedule one. Everything else is decoration until that works.'],['u/zt_person · 41','Cloudflare tunnel + Authelia is fine. Add CrowdSec instead of fail2ban, it shares blocklists across your boxes.'],['u/nc_admin · 23','Watch the Nextcloud brute-force setting, it silently disables itself after an upgrade.']]},
+ {id:2,sc:128,c:31,t:'Migrated 40 containers from Portainer to plain compose. Notes.',sub:'r/selfhosted',u:'etulastrada',ago:'5 h ago',kw:'migrat*',src:'api',s:'new',b:'Wrote up what broke, what got simpler, and the script I used to export stacks.',cm:[['u/compose_cat · 30','Exporting stacks first saved me too. Keep the Portainer volumes until you’re sure.']]},
+ {id:3,sc:96,c:12,t:'Our restic backups were silently empty for 3 months',sub:'r/selfhosted',u:'dbwatcher',ago:'9 h ago',kw:'backup',tag:'Guide',src:'browser',s:'new',b:'A path change meant the job exited 0 with nothing to back up. Here is the check we added.',cm:[['u/restic_rob · 52','Alert on snapshot size, not on exit code.']]},
+ {id:4,sc:54,c:19,t:'How do you keep on-call handovers from losing context?',sub:'r/devops',u:'pager_pete',ago:'12 h ago',kw:'score ≥ 20',src:'api',s:'new',b:'We rotate weekly and every handover is a rushed Slack message. What works for you?',cm:[['u/sre_sam · 17','One-page template, filled in at the end of every shift.']]},
+ {id:5,sc:27,c:8,t:'Schema drift detection: anything better than dbt tests?',sub:'r/dataengineering',u:'lakehouse_lu',ago:'1 d ago',kw:'',tag:'Discussion',src:'api',s:'new',b:'Upstream teams rename columns without telling us. dbt tests catch it after the fact.',cm:[['u/de_dana · 9','Contract tests at the ingestion boundary.']]}];
+let pst='new',psub='all',psel=1;
+const subs=['all',...new Set(posts.map(p=>p.sub))];
+function renderPosts(){
+  const cnt=s=>posts.filter(p=>p.s===s).length;
+  $('#pstate').innerHTML=['new','kept','dismissed'].map(s=>`<button aria-pressed="${pst===s}" data-st="${s}">${s[0].toUpperCase()+s.slice(1)} ${cnt(s)}</button>`).join('');
+  $('#psub').innerHTML=subs.map(s=>`<button aria-pressed="${psub===s}" data-sb="${s}">${s==='all'?'All subreddits':s}</button>`).join('');
+  $('#navNew').textContent=cnt('new')?cnt('new')+' new':'';$('#navNew').hidden=!cnt('new');
+  const q=$('#pq').value.toLowerCase();
+  const l=posts.filter(p=>p.s===pst&&(psub==='all'||p.sub===psub)&&(p.t+p.b+p.u).toLowerCase().includes(q));
+  if(!l.find(p=>p.id===psel))psel=l[0]?.id;
+  $('#plist').innerHTML=l.length?l.map(p=>`<button class="post" role="option" aria-selected="${p.id===psel}" data-id="${p.id}"><div class="sc"><b>${p.sc}</b><span>${p.c} comments</span></div><div><h3>${p.t}</h3><div class="meta"><span>${p.sub}</span><span>u/${p.u}</span><span>${p.ago}</span>${p.kw?`<span class="kw">${p.kw}</span>`:''}${p.tag?`<span class="tag">${p.tag}</span>`:''}</div></div><span class="pill np">${p.src}</span></button>`).join('')
+   :`<div class="empty"><h3>${pst==='new'?'You’re all caught up':'Nothing here yet'}</h3><p>${pst==='new'?'New matches appear after the next cycle at 10:20.':pst==='kept'?'Keep a post and it will show up here.':'Dismissed posts will show up here.'}</p></div>`;
+  const p=posts.find(x=>x.id===psel);
+  $('#pdetail').innerHTML=p?`<div class="panel-h"><span class="tag">${p.sub}</span><span style="color:var(--muted);font-size:13px">${p.sc} points, ${p.c} comments</span><a class="btn sm ghost" href="#" onclick="return false">Open on Reddit</a></div>
+  <div class="panel-b"><h2 style="font-size:17px;line-height:1.35">${p.t}</h2><p class="body">${p.b}</p>${held(p)}<h3 style="margin-top:18px">Top comments</h3>${p.cm.map(c=>`<div class="cm"><small>${c[0]}</small>${c[1]}</div>`).join('')}
+  <div class="dact">${p.s==='new'?`<button class="btn accent" data-do="kept">Keep</button><button class="btn" data-do="dismissed">Dismiss</button>`:`<button class="btn" data-do="new">Move back to New</button>`}<button class="btn ghost">Add note</button><button class="btn ghost" style="margin-left:auto">Send to Coppler</button></div></div>`
+  :`<div class="empty"><h3>No post selected</h3><p>Select a post to read it and decide.</p></div>`;
+}
+$('#pq').oninput=renderPosts;
+document.addEventListener('click',e=>{
+  const a=e.target.closest('[data-st]');if(a){pst=a.dataset.st;renderPosts()}
+  const b=e.target.closest('[data-sb]');if(b){psub=b.dataset.sb;renderPosts()}
+  const c=e.target.closest('.post');if(c){psel=+c.dataset.id;renderPosts()}
+  const d=e.target.closest('[data-do]');if(d){const p=posts.find(x=>x.id===psel),prev=p.s;p.s=d.dataset.do;
+    const ids=posts.filter(x=>x.s===prev).map(x=>x.id);renderPosts();
+    toast(p.s==='kept'?'Kept':p.s==='dismissed'?'Dismissed':'Moved back to New',()=>{p.s=prev;psel=p.id;renderPosts()})}
+});
+/* ---- merged from the corporate redesign: runs, queue, search, sources, doctor, idea detail, thread coverage ---- */
+const cap=s=>s[0].toUpperCase()+s.slice(1),fmt=n=>Number(n).toLocaleString('en-US');
+const SH=[1,.7,.5,.35,.25],FL={LOW_NUGGETS:'nothing new'};
+const mixBar=m=>{const t=m.reduce((a,x)=>a+x[1],0);return `<div class="mix" role="img" aria-label="Platform mix">${m.map((x,n)=>`<i title="${x[0]} ${fmt(x[1])}" style="width:${(x[1]/t*100).toFixed(1)}%;opacity:${SH[n]||.2}"></i>`).join('')}</div>`};
+const mixLeg=m=>`<div class="mixl">${m.map((x,n)=>`<span><i style="opacity:${SH[n]||.2}"></i>${x[0]} ${fmt(x[1])}</span>`).join('')}</div>`;
+const spark=v=>{const mx=Math.max(...v,1),p=v.map((y,i)=>`${(i/(v.length-1)*120).toFixed(1)},${(24-y/mx*20).toFixed(1)}`).join(' ');return `<svg class="spark" viewBox="0 0 120 28" aria-hidden="true"><polyline points="${p}"/></svg>`};
+[[1820,2140,1960,2410,2655,2790,2938],[3,0,2,0,0,0,0],[30100,31200,31900,32400,33000,33300,33614],[0,0,2,1,0,0,0]].forEach((v,i)=>$$('#overview .kpis')[0].children[i].insertAdjacentHTML('beforeend',spark(v)));
+$('#recheck').onclick=e=>busy(e.currentTarget,'','Checked just now (mock)',600);
+$$('[data-runnow]').forEach(b=>b.onclick=()=>toast('A cycle is already running. It will pick up new work when it finishes.'));
+
+/* ideas: detail with citations */
+const cites=[[[1,'“Never tested a restore” is the whole answer.'],[1,'Alert on snapshot size, not on exit code.'],[0,'Most of us only find out at restore time.']],
+ [[1,'Upstream teams rename columns without telling us.'],[1,'Contract tests at the ingestion boundary.']],
+ [[1,'I have no idea which container costs the most.'],[0,'The NAS idles at 90 W.']],
+ [[1,'Every handover is a rushed Slack message.'],[1,'One-page template, filled in at the end of every shift.']],
+ [[1,'Every embed broke after we changed host.']]];
+function renderIdea(){
+  const i=ideas[isel];$('#isplit').classList.toggle('nodet',!i);const d=$('#idetail');if(!i){d.innerHTML='';return}
+  d.innerHTML=`<div class="panel-h"><h2>${i.t}</h2><span class="pill ${pc[i.st]}" style="margin-left:auto">${cap(i.st)}</span></div>
+  <div class="panel-b"><p class="body" style="margin:0;color:var(--ink-2);line-height:1.6">${i.d}</p>
+  <h3 class="dh">Scores</h3><dl class="kv" style="margin-top:8px"><dt>Demand</dt><dd>${i.sc[0]}</dd><dt>Feasibility</dt><dd>${i.sc[1]}</dd><dt>Competition</dt><dd>${i.sc[2]}</dd><dt>Evidence</dt><dd>${i.n} nuggets, ${i.th} thread${i.th>1?'s':''}</dd><dt>Platforms</dt><dd>${i.p.map(x=>`<span class="tag">${x}</span>`).join(' ')}</dd></dl>
+  <h3 class="dh">Citations</h3>${(cites[isel]||[]).map(c=>`<div class="row" style="align-items:flex-start"><span class="pill ${c[0]?'ok':'bad'}">${c[0]?'Found':'Missing'}</span><span class="cm" style="margin:0;padding:0;border:0">${c[1]}</span></div>`).join('')||'<p class="sub2">No citations kept.</p>'}
+  <h3 class="dh"><label for="istatus">Status</label></h3><select class="in" id="istatus" style="margin-top:8px">${['new','saved','discarded'].map(s=>`<option value="${s}"${s===i.st?' selected':''}>${cap(s)}</option>`).join('')}</select>
+  <div class="dact"><button class="btn accent" data-toast="Resynthesis queued (mock, not connected to a service)">Resynthesize</button><button class="btn ghost" data-close="idea">Close</button></div></div>`;
+}
+
+/* posts: how much of each thread the archive holds */
+const HD={1:[19,6],2:[18,4],3:[9,2],4:[11,3],5:[5,1]};
+function held(p){const h=HD[p.id];if(!h)return'';const w=p.c,n=w-h[0]-h[1],pc2=Math.round((h[0]+h[1])/w*100),f=v=>(v/w*100).toFixed(1);
+  return `<h3 class="dh">What the archive holds of the ${w} comments</h3><div class="mix" style="margin-top:8px;height:8px"><i style="width:${f(h[0])}%"></i><i style="width:${f(h[1])}%;opacity:.4"></i></div>
+  <div class="mixl"><span><i></i>${h[0]} signal</span><span><i style="opacity:.4"></i>${h[1]} flagged trivial</span><span><i style="background:var(--line)"></i>${n} never fetched</span></div>
+  ${pc2<50?`<p class="sub2" style="margin-top:8px;color:var(--warn)">${pc2}% held: a sample, not the thread. Treat counts as a lower bound.</p>`:''}`}
+
+/* runs */
+const RS={running:'run',completed:'ok',failed:'bad',queued:'warn'},PS={ok:'ok',running:'run',queued:'',failed:'bad'};
+const runs=[
+ {id:'cycle-20260922T082003Z',st:'running',o:'manual',ago:'11 min ago',posts:412,cm:9120,k:2938,i:0,dur:112,exp:2443,fl:['LOW_NUGGETS'],mix:[['Discourse',2611],['Hacker News',1204],['Lemmy',118],['Stack Exchange',86],['Reddit',30]],fun:[['Fetched',9120],['After prefilter',6410],['Kept as nuggets',2938]],ph:[['Fetch','ok','10:12'],['Treat','ok','10:14'],['Archive','running','10:19'],['Synthesize','queued','—']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b',Embed:'nomic-embed-text'}},
+ {id:'cycle-20260922T040001Z',st:'completed',o:'scheduled',ago:'6 h ago',posts:188,cm:2140,k:0,i:0,dur:641,exp:2400,fl:['LOW_NUGGETS'],mix:[['Hacker News',640],['Discourse',210]],fun:[['Fetched',2140],['After prefilter',990],['Kept as nuggets',0]],ph:[['Fetch','ok','04:00'],['Treat','ok','04:03'],['Archive','ok','04:09'],['Synthesize','ok','04:11']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}},
+ {id:'cycle-20260921T220001Z',st:'completed',o:'scheduled',ago:'12 h ago',posts:301,cm:6410,k:1204,i:0,dur:2190,exp:2400,fl:[],mix:[['Discourse',1900],['Hacker News',900]],fun:[['Fetched',6410],['After prefilter',3200],['Kept as nuggets',1204]],ph:[['Fetch','ok','22:00'],['Treat','ok','22:20'],['Archive','ok','22:41'],['Synthesize','ok','22:36']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}},
+ {id:'cycle-20260921T161502Z',st:'failed',o:'manual',ago:'18 h ago',posts:0,cm:0,k:0,i:0,dur:38,exp:2400,fl:[],mix:[],fun:[],ph:[['Fetch','failed','16:15']],mod:{},err:'Go worker exited with status 2: the browser on :9222 was unreachable.'},
+ {id:'cycle-20260921T100002Z',st:'completed',o:'scheduled',ago:'1 d ago',posts:356,cm:7880,k:1873,i:0,dur:2310,exp:2400,fl:[],mix:[['Discourse',2200],['Hacker News',1100],['Lemmy',130]],fun:[['Fetched',7880],['After prefilter',4100],['Kept as nuggets',1873]],ph:[['Fetch','ok','10:00'],['Treat','ok','10:22'],['Archive','ok','10:38'],['Synthesize','ok','10:38']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}}];
+let rsel=null,ro='all';
+const why=r=>r.st==='completed'&&!r.k?(r.fl.map(f=>FL[f]).find(Boolean)||'nothing fetched'):'';
+function renderRuns(){
+  const c={all:runs.length};runs.forEach(r=>c[r.o]=(c[r.o]||0)+1);
+  $('#rorigin').innerHTML=Object.keys(c).map(o=>`<button aria-pressed="${ro===o}" data-ro="${o}">${cap(o)} ${c[o]}</button>`).join('');
+  const l=runs.filter(r=>ro==='all'||r.o===ro);
+  $('#rshown').textContent=`Showing ${l.length} of 214 runs, newest first`;
+  $('#rbody').innerHTML=l.map(r=>`<tr class="clk${r.id===rsel?' sel':''}" tabindex="0" data-run="${r.id}"><td>${r.ago}<span class="sub2">${r.posts} posts · <span class="mono">${r.id.slice(6,22)}…</span></span></td>
+    <td><span class="pill ${RS[r.st]}">${cap(r.st)}</span></td><td class="num">${fmt(r.k)} / ${r.i}${why(r)?`<span class="sub2">${why(r)}</span>`:''}</td>
+    <td class="num">${fmt(r.dur)} s<span class="sub2">exp ${fmt(r.exp)} s</span></td><td><span class="tag">${r.o}</span></td>
+    <td class="hd-open">${r.mix.length?mixBar(r.mix):''}${r.fl.map(f=>`<span class="pill warn np" style="margin-top:6px">${FL[f]}</span>`).join(' ')}${r.err?'<span class="pill bad np">error</span>':''}</td></tr>`).join('')||`<tr><td colspan="6" class="empty">No ${ro} runs yet.</td></tr>`;
+  renderRun();
+}
+function renderRun(){
+  const r=runs.find(x=>x.id===rsel);$('#rsplit').classList.toggle('nodet',!r);const d=$('#rdetail');if(!r){d.innerHTML='';return}
+  d.innerHTML=`<div class="panel-h"><h2 class="mono" style="font-size:13px;word-break:break-all">${r.id}</h2><span class="pill ${RS[r.st]}" style="margin-left:auto">${cap(r.st)}</span></div>
+  <div class="panel-b"><dl class="kv"><dt>Started</dt><dd>${r.ago}</dd><dt>Posts / comments</dt><dd>${fmt(r.posts)} / ${fmt(r.cm)}</dd><dt>Kept / ideas</dt><dd>${fmt(r.k)} / ${r.i}${why(r)?' ('+why(r)+')':''}</dd><dt>Duration</dt><dd>${fmt(r.dur)} s <span style="color:var(--faint)">(expected ${fmt(r.exp)} s)</span></dd><dt>Origin</dt><dd>${r.o}</dd></dl>
+  ${r.mix.length?`<h3 class="dh">Platform mix</h3><div style="margin-top:8px">${mixBar(r.mix)}</div>${mixLeg(r.mix)}`:''}
+  ${r.fun.length?`<h3 class="dh">Prefilter funnel</h3><dl class="ledger">${r.fun.map(f=>`<dt>${f[0]}</dt><dd>${fmt(f[1])}</dd>`).join('')}</dl>`:''}
+  <h3 class="dh">Phases</h3>${r.ph.map(p=>`<div class="row"><span class="pill ${PS[p[1]]}">${cap(p[1])}</span>${p[0]}<small>${p[2]}</small></div>`).join('')}
+  ${Object.keys(r.mod).length?`<h3 class="dh">Models</h3><dl class="kv" style="margin-top:8px">${Object.entries(r.mod).map(m=>`<dt>${m[0]}</dt><dd class="mono">${m[1]}</dd>`).join('')}</dl>`:''}
+  ${r.err?`<div class="notice bad" style="margin:18px 0 0"><div><b>Run failed</b><p>${r.err}</p></div></div>`:''}
+  <div class="dact">${r.st==='failed'?'<button class="btn accent" data-toast="Run requeued (mock, not connected to a service)">Requeue</button>':''}<button class="btn ghost" data-close="run">Close</button></div></div>`;
+}
+
+/* queue */
+const QM=[['Real estate',25067],['Discourse',4112],['Hacker News',2884],['Lemmy',1551]],QC={comment:8547,listing:25067},QS={pending:33614,failed:0,done:4201};
+const cmt=(a,t,c)=>({a,t,c});
+const batches=[
+ {id:'b-48213',k:'comment',pl:'Discourse',src:'community thread: self-hosted backups',n:312,ago:'3 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('restic_rob','Found out at restore time that nothing had been written for weeks.','Pain point'),cmt('quiet_fox','Green dashboards, empty snapshots.','Pain point')]},
+ {id:'b-48214',k:'comment',pl:'Hacker News',src:'Ask HN: how do you test restores?',n:184,ago:'3 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('dbwatcher','We alert on snapshot size now, not on exit code.','Workaround')]},
+ {id:'b-48220',k:'comment',pl:'Lemmy',src:'c/selfhosted: power draw per container',n:96,ago:'5 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('lowwatt','No idea which service eats the most.','Pain point')]},
+ {id:'b-47102',k:'listing',pl:'Real estate',src:'listings: two-bed lets, central',n:240,ago:'1 d ago',st:'pending',run:'cycle-20260921T100002Z',cm:[]},
+ {id:'b-47090',k:'comment',pl:'Discourse',src:'community thread: reverse proxy rules',n:141,ago:'1 d ago',st:'done',run:'cycle-20260921T100002Z',cm:[cmt('nc_admin','Brute-force setting resets after upgrades.','Pain point')]}];
+let qk='comment',qs='pending',bsel=null;
+function renderQueue(){
+  $('#qmix').innerHTML=QM.map(m=>{const s=Math.round(m[1]/33614*100);return `<div class="row"><span class="tag" style="min-width:104px">${m[0]}</span><div class="bar lg" style="flex:1;margin:0"><i style="width:${s}%"></i></div><small style="min-width:92px;text-align:right">${fmt(m[1])} · ${s}%</small></div>`}).join('');
+  $('#qkind').innerHTML=[['comment','Comments'],['listing','Listings']].map(x=>`<button aria-pressed="${qk===x[0]}" data-qk="${x[0]}">${x[1]} ${fmt(QC[x[0]])}</button>`).join('');
+  $('#qstat').innerHTML=Object.keys(QS).map(s=>`<button aria-pressed="${qs===s}" data-qs="${s}">${cap(s)} ${fmt(QS[s])}</button>`).join('');
+  const l=batches.filter(b=>b.st===qs&&b.k===qk);
+  $('#qbody').innerHTML=l.map(b=>`<tr class="clk${b.id===bsel?' sel':''}" tabindex="0" data-batch="${b.id}"><td class="mono">${b.id}</td><td class="tc"><b>${b.pl}</b><span>${b.src}</span></td><td class="num">${fmt(b.n)}</td><td>${b.ago}</td><td><span class="pill ${b.st==='done'?'ok':b.st==='failed'?'bad':'warn'}">${cap(b.st)}</span></td></tr>`).join('')
+   ||`<tr><td colspan="5" class="empty"><h3>No ${qk} batches are ${qs}</h3><button class="btn sm" data-go="overview">Back to overview</button></td></tr>`;
+  $('#qshown').textContent=`${fmt(33614)} pending · ${QS.failed} failed · ${fmt(QS.done)} done. Showing the oldest ${l.length} in this view.`;
+  const b=batches.find(x=>x.id===bsel);$('#qsplit').classList.toggle('nodet',!b);const d=$('#qdetail');
+  d.innerHTML=b?`<div class="panel-h"><h2 class="mono" style="font-size:13px">${b.id}</h2><span class="pill ${b.st==='done'?'ok':'warn'}" style="margin-left:auto">${cap(b.st)}</span></div>
+  <div class="panel-b"><dl class="kv"><dt>Platform</dt><dd>${b.pl}</dd><dt>Source</dt><dd>${b.src}</dd><dt>Items</dt><dd>${fmt(b.n)}</dd><dt>Queued</dt><dd>${b.ago}</dd><dt>Run</dt><dd class="mono" style="word-break:break-all">${b.run}</dd></dl>
+  <h3 class="dh">${b.k==='listing'?'Contents':'Comments in this batch'}</h3>${b.cm.map(c=>`<div class="cm"><small>u/${c.a} · ${c.c}</small>${c.t}</div>`).join('')||'<p class="sub2" style="margin-top:8px">Listings are treated as whole records, so there is no comment list.</p>'}
+  <div class="dact"><button class="btn ghost" data-close="batch">Close</button></div></div>`:'';
+}
+
+/* search */
+const NG=[{pl:'Reddit',c:'Backups',a:'u/restic_rob',t:'3 days ago',s:.86,i:'Backups run green for months while writing nothing.',r:'A path change meant the job exited 0 with nothing to back up.'},
+ {pl:'Hacker News',c:'Data quality',a:'u/lakehouse_lu',t:'5 days ago',s:.78,i:'Upstream schema changes are found only after they break a report.',r:'dbt tests catch it after the fact.'},
+ {pl:'Discourse',c:'On-call',a:'u/pager_pete',t:'1 week ago',s:.71,i:'Context is lost at every on-call handover.',r:'Every handover is a rushed message in chat.'},
+ {pl:'Lemmy',c:'Homelab',a:'u/lowwatt',t:'2 weeks ago',s:.58,i:'Nobody knows which container costs the most to run.',r:'The NAS never really idles.'}];
+const EX=['backups fail silently','schema changes nobody announces','handover context lost'],RC=['restore test','cloudflare tunnel'];
+function renderSearch(){
+  $('#sex').innerHTML=EX.map(x=>`<button class="btn sm" data-q="${x}">${x}</button>`).join('')+'<span class="legend" style="margin:0 0 0 8px">Recent</span>'+RC.map(x=>`<button class="btn sm ghost" data-q="${x}">${x}</button>`).join('');
+  const w=$('#sq').value.toLowerCase().split(/\s+/).filter(x=>x.length>3);
+  const l=NG.filter(n=>!w.length||w.some(x=>(n.i+n.r+n.c).toLowerCase().includes(x)));
+  $('#sres').innerHTML=l.map(n=>`<div class="res"><div class="meta"><span class="tag">${n.pl}</span><span class="tag">${n.c}</span><span>${n.a}</span><span>${n.t}</span><span class="sim"><span class="bar"><i style="width:${Math.round(n.s*100)}%"></i></span>${n.s>=.8?'Strong':n.s>=.65?'Good':'Weak'} ${n.s.toFixed(2)}</span></div><b style="font-weight:500">${n.i}</b><p>${n.r}</p></div>`).join('')
+   ||'<div class="empty"><h3>No nuggets match</h3><p>Try fewer words, or start from one of the examples.</p></div>';
+  $('#scnt').textContent=`${l.length} of 31,818 nuggets, ranked by similarity (mock results)`;
+}
+$('#sq').oninput=renderSearch;
+
+/* sources */
+const src=[
+ {p:'Reddit',rows:[{n:'r/selfhosted',k:'subreddit',t:'r/selfhosted',f:'api',l:'12 min ago',q:'+8 comments',h:'ok',on:1},{n:'r/devops',k:'subreddit',t:'r/devops',f:'api',l:'12 min ago',q:'+3 comments',h:'ok',on:1},{n:'r/dataengineering',k:'subreddit',t:'r/dataengineering',f:'api',l:'12 min ago',q:'+1 comment',h:'ok',on:1}]},
+ {p:'Hacker News',rows:[{n:'Ask HN',k:'feed',t:'news.ycombinator.com/ask',f:'api',l:'25 min ago',q:'+22 comments',h:'ok',on:1}]},
+ {p:'Discourse',rows:[{n:'Self-hosted forum',k:'forum',t:'forum.example.org/c/selfhost',f:'api',l:'25 min ago',q:'+41 comments',h:'ok',on:1},{n:'Proxmox forum',k:'forum',t:'forum.example.com/proxmox',f:'api',l:'1 d ago',q:'nothing new, 4 visits',h:'barren',on:1}]},
+ {p:'Lemmy',rows:[{n:'c/selfhosted',k:'community',t:'lemmy.example/c/selfhosted',f:'api',l:'2 h ago',q:'+5 comments',h:'ok',on:1}]},
+ {p:'Real estate',rows:[{n:'Central two-bed lets',k:'listings',t:'listings.example/central-2br',f:'browser',l:'4 h ago',q:'+240 listings',h:'ok',on:1}]}];
+const HL={ok:['ok','Producing'],barren:['warn','Nothing yet'],off:['','Paused']};
+const folded=new Set();
+function renderSources(){
+  const barren=[];let tot=0,on=0;
+  $('#sbody').innerHTML=src.map((g,gi)=>{if(!g.rows.length)return'';const op=!folded.has(g.p);
+    const row=g.rows.map((s,ri)=>{tot++;if(s.on)on++;if(s.on&&s.h==='barren')barren.push(s.n);const [c,lab]=s.on?HL[s.h]:HL.off;
+      return `<tr><td><input type="checkbox" class="chk" data-on="${gi}-${ri}"${s.on?' checked':''} aria-label="Enable ${s.n}"></td><td class="mono">${s.n}</td><td><span class="tag">${s.k}</span></td><td class="mono">${s.t}</td><td><span class="tag">${s.f}</span></td><td>${s.l}<span class="sub2">${s.q}</span></td><td><span class="pill ${c}">${lab}</span></td>
+      <td style="white-space:nowrap">${s.on&&s.h==='barren'?`<button class="btn sm ghost" data-park="${gi}-${ri}">Park</button>`:''}<button class="btn sm ghost danger" data-rm="${gi}-${ri}">Remove</button></td></tr>`}).join('');
+    return `<tr class="band"><td colspan="8"><button class="btn ghost" data-fold="${g.p}" aria-expanded="${op}"><svg class="icon fold" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>${g.p}<span class="cnt">${g.rows.length}</span></button></td></tr>${op?row:''}`}).join('');
+  $('#shint').innerHTML=(barren.length?`${barren.length} enabled source (${barren.join(', ')}) has been walked 3 or more times and never queued a comment. It still costs a rotation slot every run. Park pauses it without removing it. `:'')+'TikTok has no adapter and none is planned.';
+  $('#scount').textContent=`${on} of ${tot} sources shown are enabled. This mock lists a sample of the 115 in sources.yaml.`;
+}
+const det=u=>/reddit\./.test(u)?'Reddit':/ycombinator/.test(u)?'Hacker News':/lemmy/.test(u)?'Lemmy':/stackexchange|serverfault|stackoverflow/.test(u)?'Stack Exchange':/discourse|forum\./.test(u)?'Discourse':null;
+$('#sadd').onclick=()=>{const u=$('#surl').value.trim(),pick=$('#splat').value;if(!u){toast('Paste a link first.');return}
+  const p=pick==='auto'?det(u):pick;if(!p){toast('Could not detect the platform. Choose one from the list.');return}
+  let g=src.find(x=>x.p===p);if(!g){g={p,rows:[]};src.push(g)}
+  g.rows.push({n:$('#sname').value.trim()||u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0],k:'source',t:u.replace(/^https?:\/\/(www\.)?/,''),f:'api',l:'never',q:'next in line',h:'ok',on:1});
+  $('#surl').value=$('#sname').value='';renderSources();toast('Added to '+p+' (mock, sources.yaml not written)')};
+
+/* doctor */
+const finds=[[1,'No ideas in 14 cycles','Nuggets are being kept, so the synthesizer may be rejecting everything it drafts.','Open Runs','data-go="runs"'],
+ [0,'Reddit has no API credentials','Reddit is fetched through the browser instead, which is slower.','Open Sources','data-go="sources"'],
+ [0,'7 nuggets are waiting to be re-embedded','Dedup and search skip them until this clears.','Re-embed now','data-toast="Re-embed started (mock, not connected to a service)"']];
+const evals=[['Specific pain, three threads of evidence',8,1,1],['Vague “AI assistant for everything”',2,0,0],['Real need, only one source',5,0,1]];
+function renderDoctor(){
+  $('#dfind').innerHTML=finds.map(f=>`<div class="fix"><span class="led ${f[0]?'off':'idle'}"></span><span><b>${f[1]}</b><span class="why">${f[2]}</span></span><button class="btn sm" ${f[4]}>${f[3]}</button></div>`).join('');
+  $('#ebody').innerHTML=evals.map(e=>`<tr><td class="tc"><b>${e[0]}</b></td><td class="num">${e[1]}</td><td><span class="pill ${e[2]?'ok':e[3]?'bad':''}">${e[2]?'Pass':'Fail'}${e[3]?'':' · expected'}</span></td></tr>`).join('');
+}
+$('#erun').onclick=e=>busy(e.currentTarget,'','Eval re-run finished: 1 failure (mock)',900);
+
+/* wiring */
+const CL={run(){rsel=null;renderRuns()},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()}};
+document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
+  if(t=g('[data-toast]'))toast(t.dataset.toast);
+  if(t=g('[data-close]'))CL[t.dataset.close]();
+  else if(t=g('[data-ro]')){ro=t.dataset.ro;renderRuns()}
+  else if(t=g('tr[data-run]')){rsel=t.dataset.run;renderRuns()}
+  else if(t=g('tr[data-batch]')){bsel=t.dataset.batch;renderQueue()}
+  else if(t=g('[data-qk]')){qk=t.dataset.qk;bsel=null;renderQueue()}
+  else if(t=g('[data-qs]')){qs=t.dataset.qs;bsel=null;renderQueue()}
+  else if(t=g('tr[data-i]')){isel=+t.dataset.i;renderIdeas()}
+  else if(t=g('[data-q]')){$('#sq').value=t.dataset.q;renderSearch()}
+  else if(t=g('[data-fold]')){const k=t.dataset.fold;folded.has(k)?folded.delete(k):folded.add(k);renderSources();$(`[data-fold="${k}"]`).focus()}
+  else if(t=g('[data-on]')){const[a,b]=t.dataset.on.split('-'),s=src[a].rows[b];s.on=t.checked?1:0;renderSources();$(`[data-on="${t.dataset.on}"]`).focus();toast((s.on?'Enabled ':'Paused ')+s.n+' (mock)')}
+  else if(t=g('[data-park]')){const[a,b]=t.dataset.park.split('-'),s=src[a].rows[b];s.on=0;renderSources();toast('Parked '+s.n+'. It stays on the list (mock)')}
+  else if(t=g('[data-rm]')){const[a,b]=t.dataset.rm.split('-').map(Number),s=src[a].rows.splice(b,1)[0];renderSources();toast('Removed '+s.n+' (mock)',()=>{src[a].rows.splice(b,0,s);renderSources()})}
+});
+document.addEventListener('change',e=>{if(e.target.id==='istatus'){ideas[isel].st=e.target.value;renderIdeas();$('#istatus').focus();toast('Status changed to '+cap(e.target.value)+' (mock)')}});
+document.addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===' ')&&e.target.matches('tr[data-i],tr[data-run],tr[data-batch]')){e.preventDefault();e.target.click()}
+  if(e.key==='/'&&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){e.preventDefault();go('search');$('#sq').focus()}
+});
+renderIdeas();renderPosts();renderRuns();renderQueue();renderSearch();renderSources();renderDoctor();
+</script>
+</body>
+</html>
