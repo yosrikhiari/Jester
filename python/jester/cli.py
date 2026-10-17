@@ -3665,6 +3665,11 @@ def main(argv=None):
 
     spec_cli(sub)
 
+    # S7: the maintenance pass likewise (parser + logic in maintenance.py).
+    from jester.maintenance import maintenance_cli
+
+    maintenance_cli(sub)
+
     ex = sub.add_parser(
         "export", help="write the archive as CSV by content type + origin"
     )

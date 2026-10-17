@@ -203,6 +203,11 @@ class Thresholds:
     #: Spec review gate (design §5 S6): how many pages validate_spec samples.
     #: At least 3 pages must each yield comments before a human may activate.
     specs_max_samples: int = 5
+    #: Maintenance (design §5 S7): the empty-batch rate jump that flags a
+    #: source as a drift suspect, and the age at which a clusterless nugget
+    #: gets flagged for review. Flags only — maintenance deletes nothing.
+    maintenance_null_rate_spike: float = 0.25
+    maintenance_stale_days: int = 90
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -230,6 +235,8 @@ class Thresholds:
         "chat_proposal_ttl_hours": (0.25, 720.0),
         "scheduler_window_batches": (1, 500),
         "specs_max_samples": (3, 50),
+        "maintenance_null_rate_spike": (0.01, 1.0),
+        "maintenance_stale_days": (7, 3650),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -267,6 +274,8 @@ class Thresholds:
         "scheduler_enabled": _as_bool,
         "scheduler_window_batches": int,
         "specs_max_samples": int,
+        "maintenance_null_rate_spike": float,
+        "maintenance_stale_days": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,
