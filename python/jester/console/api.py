@@ -1598,7 +1598,7 @@ class ConsoleAPI(ApiSignalsMixin):
         import yaml
 
         from jester.config import unused_settings
-        from jester.roles import BUILTIN_PROVIDERS, ROLES, SETTINGS, resolve_all
+        from jester.roles import BUILTIN_PROVIDERS, CARD_ROLES, SETTINGS, resolve_all
 
         try:
             path = self._resolve_profile(profile)
@@ -1643,7 +1643,7 @@ class ConsoleAPI(ApiSignalsMixin):
                  "llm_provider": load_config(str(p)).thresholds.llm_provider}
                 for p in self._profiles()
             ],
-            "roles": list(ROLES),
+            "roles": list(CARD_ROLES),
             # Fully resolved, per job, with `source` naming the line behind
             # every value (jester.roles.RoleSettings).
             "resolved": {role: {**r.as_record(), "models": list(r.models),
@@ -1651,7 +1651,7 @@ class ConsoleAPI(ApiSignalsMixin):
                          for role, r in resolved.items()},
             # What this profile's `roles:` block itself sets, per job: the
             # Advanced fields show these as values and the rest as defaults.
-            "own": {role: dict((t.roles or {}).get(role) or {}) for role in ROLES},
+            "own": {role: dict((t.roles or {}).get(role) or {}) for role in CARD_ROLES},
             "settings": list(SETTINGS),
             "providers": providers,
             "unused": unused_settings(raw),
@@ -1715,7 +1715,26 @@ class ConsoleAPI(ApiSignalsMixin):
                "model": r.model}
         started = time.perf_counter()
         try:
-            if role == "embedding":
+            if role == "chat":
+                # One real probe call through the chat's own client, so the
+                # console button means the same thing for the chat as for
+                # every other job: the MODEL answered.
+                from jester.chat.client import select_chat_client
+                from jester.chat.tools import manifest as chat_manifest
+                probe = select_chat_client(t).chat(
+                    "You are being tested from the Jester console. Reply with "
+                    'only the JSON {"text": "ok"} and no tool calls.',
+                    [{"role": "user", "content": "Say ok."}],
+                    chat_manifest(),
+                )
+                answered = r.kind == "fake" or bool(probe.text.strip())
+                out["sample"] = (probe.text or "").strip()[:200]
+                out["error"] = None if answered else "no text came back"
+            elif role == "specifier":
+                # Resolution-only until spec review ships (design §5 S6).
+                answered = None
+                out["error"] = "no scripted probe yet; the specifier serves spec review"
+            elif role == "embedding":
                 vectors = select_embedding(t).embed([self._TEST_COMMENT])
                 answered = bool(vectors and vectors[0])
                 out["sample"] = f"{len(vectors[0])}-dimension vector" if answered else ""

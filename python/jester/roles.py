@@ -28,7 +28,16 @@ import os
 from dataclasses import dataclass, field, fields
 from typing import Optional, Tuple
 
-ROLES = ("extractor", "synthesizer", "critic", "labeller", "embedding")
+ROLES = ("extractor", "synthesizer", "critic", "labeller", "embedding",
+         "chat", "specifier")
+#: The assistant roles are wired later: `chat` with the tool-loop session,
+#: `specifier` with the source-spec review (autonomous-curation S3/S6). They
+#: resolve like every other role; until their interfaces exist they simply
+#: have one provider/model resolution each.
+#: The roles the Agent models card configures (the pipeline jobs). Assistant
+#: roles (chat, specifier) are configured by their own features' settings,
+#: not as extra sliders on that card.
+CARD_ROLES = ROLES[:5]
 CHAT_ROLES = ROLES[:4]
 
 #: How a provider is spoken to. `openai` is any OpenAI-compatible chat
@@ -108,6 +117,12 @@ BUILTIN_SETTINGS = {
     ("synthesizer", "openai"): {"temperature": 0.4},
     ("critic", "openai"): {"temperature": 0.2},
     ("labeller", "openai"): {"temperature": 0.4},
+    # Chat turns can chain several tool rounds, each carrying search results;
+    # a local model gets double the default allowance on purpose.
+    ("chat", "ollama"): {"timeout_s": 600.0},
+    ("specifier", "ollama"): {"timeout_s": 600.0},
+    ("chat", "openai"): {"temperature": 0.2},
+    ("specifier", "openai"): {"temperature": 0.2},
 }
 BUILTIN_OPENAI = {"timeout_s": 60.0, "json_mode": True, "max_retries": 3}
 
@@ -123,6 +138,10 @@ BUILTIN_MODELS = {
     ("synthesizer", "groq"): "openai/gpt-oss-120b",
     ("critic", "groq"): "openai/gpt-oss-120b",
     ("labeller", "groq"): "openai/gpt-oss-120b",
+    ("chat", "ollama"): "qwen3:8b",
+    ("specifier", "ollama"): "qwen3:8b",
+    ("chat", "groq"): "openai/gpt-oss-120b",
+    ("specifier", "groq"): "openai/gpt-oss-120b",
 }
 
 #: Old-style keys, per role: (provider key, model attribute on Thresholds).
@@ -259,7 +278,13 @@ def _provider_block(cfg, name):
 def _legacy_provider(cfg, role):
     if role == "embedding":
         return getattr(cfg, "embedding_provider", "fake") or "fake", "embedding_provider"
-    key = _LEGACY[role][0]
+    key = _LEGACY.get(role)
+    if key is None:
+        # Assistant roles (chat, specifier) pre-date no legacy key: their
+        # provider resolves from a roles: block or roles.defaults, never a
+        # bare cfg key, and the model falls through to BUILTIN_MODELS.
+        return getattr(cfg, "llm_provider", "fake") or "fake", "llm_provider"
+    key = key[0]
     override = (getattr(cfg, key, "") or "").strip()
     if override:
         return override, key

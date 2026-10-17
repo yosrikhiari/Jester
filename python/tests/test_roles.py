@@ -59,12 +59,18 @@ def _row(r):
 
 def test_the_default_profile_resolves_as_it_ran_before():
     got = {role: _row(r) for role, r in resolve_all(_profile("config")).items()}
+    # chat/specifier join the table by design (autonomous-curation S3). With
+    # no roles: block they follow llm_provider — "fake" in the shipped config
+    # — so a chat resolves to the stand-in until the operator points it at a
+    # real model. No surprise quota burn from a chat nobody configured.
     assert got == {
         "extractor": ("ollama", "ollama", "qwen3:8b", None, None, 180.0, None),
         "synthesizer": ("groq", "openai", "openai/gpt-oss-120b", 0.4, True, 60.0, None),
         "critic": ("groq", "openai", "openai/gpt-oss-120b", 0.2, True, 60.0, None),
         "labeller": ("groq", "openai", "openai/gpt-oss-120b", 0.4, True, 60.0, None),
         "embedding": ("ollama", "ollama", "nomic-embed-text", None, None, 600.0, None),
+        "chat": ("fake", "fake", "", None, None, None, None),
+        "specifier": ("fake", "fake", "", None, None, None, None),
     }
 
 
@@ -76,6 +82,8 @@ def test_the_live_profile_resolves_everything_to_local_qwen():
         "critic": ("ollama", "ollama", "qwen3:8b", None, None, 180.0, None),
         "labeller": ("ollama", "ollama", "qwen3:8b", None, None, 300.0, None),
         "embedding": ("ollama", "ollama", "nomic-embed-text", None, None, 600.0, None),
+        "chat": ("ollama", "ollama", "qwen3:8b", None, None, 600.0, None),
+        "specifier": ("ollama", "ollama", "qwen3:8b", None, None, 600.0, None),
     }
 
 

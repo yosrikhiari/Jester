@@ -178,6 +178,15 @@ class Thresholds:
     #: fall back to per-comment calls on any malformed batch reply, with the
     #: eval/known_good|bad.md gate deciding whether the saving is worth it.
     extractor_batch_size: int = 1
+    #: Chat tool loop: how many model↔tool round trips ONE user turn may take
+    #: before the session stops and reports what it did anyway. A bound, not
+    #: a goal — a confused model burns quota and a proposal still waits for
+    #: its human.
+    chat_max_rounds: int = 6
+    #: How long a chat-minted proposal stays applyable before the console
+    #: refuses it. Enforced lazily at apply time (the proposal is marked
+    #: expired, never deleted); every refusal is visible in the trace.
+    chat_proposal_ttl_hours: float = 72.0
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -201,6 +210,8 @@ class Thresholds:
         "ingest_timeout_seconds": (0, 86400),
         "rescore_per_run": (0, 1000),
         "extractor_batch_size": (1, 50),
+        "chat_max_rounds": (1, 12),
+        "chat_proposal_ttl_hours": (0.25, 720.0),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -232,6 +243,8 @@ class Thresholds:
         "ingest_timeout_seconds": int,
         "rescore_per_run": int,
         "extractor_batch_size": int,
+        "chat_max_rounds": int,
+        "chat_proposal_ttl_hours": float,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

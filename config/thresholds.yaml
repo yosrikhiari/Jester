@@ -164,6 +164,12 @@ critic_provider: groq
 # runs it in ~12s with comparable output, so `models.extractor` is the knob if
 # throughput matters more than nuance.
 extractor_provider: ollama
+
+# Chat tool loop (autonomous-curation design §5 S3). The chat may propose
+# edits and config changes; the console applies/reverts them as a human.
+chat_max_rounds: 6
+chat_proposal_ttl_hours: 72
+
 models:
   extractor: qwen3:8b
   archivist: phi4-mini:3.8b
