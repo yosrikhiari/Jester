@@ -183,6 +183,11 @@ chat_enabled: false
 scheduler_enabled: false
 scheduler_window_batches: 30
 
+# Spec review gate (autonomous-curation design §5 S6): how many pages the
+# spec validator samples before a human may approve/activate an extraction
+# spec. At least 3 of them must each yield comments (range 3-50).
+specs_max_samples: 5
+
 models:
   extractor: qwen3:8b
   archivist: phi4-mini:3.8b

@@ -200,6 +200,9 @@ class Thresholds:
     scheduler_enabled: bool = False
     #: How many of a source's most recent batch events the yield score reads.
     scheduler_window_batches: int = 30
+    #: Spec review gate (design §5 S6): how many pages validate_spec samples.
+    #: At least 3 pages must each yield comments before a human may activate.
+    specs_max_samples: int = 5
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -226,6 +229,7 @@ class Thresholds:
         "chat_max_rounds": (1, 12),
         "chat_proposal_ttl_hours": (0.25, 720.0),
         "scheduler_window_batches": (1, 500),
+        "specs_max_samples": (3, 50),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -262,6 +266,7 @@ class Thresholds:
         "chat_enabled": _as_bool,
         "scheduler_enabled": _as_bool,
         "scheduler_window_batches": int,
+        "specs_max_samples": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

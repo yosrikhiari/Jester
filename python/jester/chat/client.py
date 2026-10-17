@@ -111,3 +111,20 @@ def select_chat_client(cfg):
     if r.kind == "ollama":
         return OllamaChatClient(model=r.model, settings=r)
     return FakeChatClient()
+
+
+def select_specifier_client(cfg):
+    """Same clients, specifier role (S6): proposes extraction specs.
+
+    One chat-shaped job, no tools, exactly one JSON object expected back.
+    Resolution is the same fall-through as chat — `roles.specifier`, then
+    `llm_provider`, then FAKE.
+    """
+    from jester.roles import resolve_role
+
+    r = resolve_role(cfg, "specifier")
+    if r.kind == "openai":
+        return GroqChatClient(model=r.model, settings=r)
+    if r.kind == "ollama":
+        return OllamaChatClient(model=r.model, settings=r)
+    return FakeChatClient()

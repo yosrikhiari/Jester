@@ -3659,6 +3659,12 @@ def main(argv=None):
     )
     sc.set_defaults(func=cmd_schedule)
 
+    # S6: agent-proposed extraction specs. The parser AND its command live in
+    # jester/specs.py; this one delegation line keeps cli.py out of the journey.
+    from jester.specs import spec_cli
+
+    spec_cli(sub)
+
     ex = sub.add_parser(
         "export", help="write the archive as CSV by content type + origin"
     )
