@@ -240,6 +240,29 @@ tbody tr.sel td{background:var(--accent-soft)}
 @media(max-width:860px){.shell:has(#runs.on){height:auto}.shell:has(#runs.on) main{display:block;overflow:visible}#runs.on>.page{display:block}#rsplit{height:min(70vh,640px)}}
 /* scrollbars hidden everywhere; scrolling itself still works (wheel, touch, keyboard) */
 *{scrollbar-width:none}*::-webkit-scrollbar{display:none}
+
+/* posts: same fixed-height layout as runs */
+.shell:has(#posts.on){height:100vh;height:100dvh;grid-template-rows:minmax(0,1fr)}
+.shell:has(#posts.on) main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shell:has(#posts.on) .top{flex:none}
+#posts.on{display:flex;flex-direction:column;flex:1;min-height:0}
+#posts.on>.page{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;padding-bottom:24px}
+#posts .head,#posts .tools{flex:none}
+#psplit{flex:1;min-height:0;align-items:stretch;grid-template-rows:minmax(0,1fr)}
+#plist{min-height:0;overflow:auto;overscroll-behavior:contain}
+.post>div{min-width:0}.post h3{overflow-wrap:anywhere}
+#psplit>.detail{position:static;max-height:none;overflow:hidden;min-height:0}
+#psplit:not(.nodet)>.detail{display:flex;flex-direction:column}
+#psplit>.detail .panel-h,#psplit>.detail .dfoot{flex:none}
+.drawer-only{display:none!important}
+@media(min-width:1101px){#psplit.nodet{grid-template-columns:minmax(0,1fr) 400px}#psplit.nodet>.detail{display:flex;flex-direction:column}}
+@media(max-width:1100px){.drawer-only{display:inline-flex!important}
+ #psplit:not(.nodet)>.detail{position:fixed;top:0;right:0;bottom:0;left:auto;width:min(440px,100%);max-height:none;z-index:15;padding-top:env(safe-area-inset-top,0px);border-radius:var(--r-l) 0 0 var(--r-l);box-shadow:0 0 40px rgba(0,0,0,.18)}
+ #psplit:not(.nodet)::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:14}
+ body:has(#posts.on #psplit:not(.nodet)){overflow:hidden}}
+@media(max-width:860px){.shell:has(#posts.on){height:auto}.shell:has(#posts.on) main{display:block;overflow:visible}#posts.on>.page{display:block}#psplit{height:min(70vh,640px)}}
+/* contain visually-hidden labels inside scrolling tables; let the Posts filter groups scroll instead of widening the page */
+.tw{position:relative}.seg button{flex:none;white-space:nowrap}#pstate,#psub{max-width:100%;overflow-x:auto}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -365,7 +388,7 @@ tbody tr.sel td{background:var(--accent-soft)}
     <div class="seg" role="group" aria-label="State" id="pstate"></div>
     <div class="seg" role="group" aria-label="Subreddit" id="psub"></div>
   </div>
-  <div class="split">
+  <div class="split nodet" id="psplit">
     <div class="panel plist" id="plist" role="listbox" aria-label="Posts"></div>
     <aside class="panel detail" id="pdetail" aria-live="polite"></aside>
   </div>
@@ -499,7 +522,7 @@ const posts=[
  {id:3,sc:96,c:12,t:'Our restic backups were silently empty for 3 months',sub:'r/selfhosted',u:'dbwatcher',ago:'9 h ago',kw:'backup',tag:'Guide',src:'browser',s:'new',b:'A path change meant the job exited 0 with nothing to back up. Here is the check we added.',cm:[['u/restic_rob · 52','Alert on snapshot size, not on exit code.']]},
  {id:4,sc:54,c:19,t:'How do you keep on-call handovers from losing context?',sub:'r/devops',u:'pager_pete',ago:'12 h ago',kw:'score ≥ 20',src:'api',s:'new',b:'We rotate weekly and every handover is a rushed Slack message. What works for you?',cm:[['u/sre_sam · 17','One-page template, filled in at the end of every shift.']]},
  {id:5,sc:27,c:8,t:'Schema drift detection: anything better than dbt tests?',sub:'r/dataengineering',u:'lakehouse_lu',ago:'1 d ago',kw:'',tag:'Discussion',src:'api',s:'new',b:'Upstream teams rename columns without telling us. dbt tests catch it after the fact.',cm:[['u/de_dana · 9','Contract tests at the ingestion boundary.']]}];
-let pst='new',psub='all',psel=1;
+let pst='new',psub='all',psel=1,pshow=false;
 const subs=['all',...new Set(posts.map(p=>p.sub))];
 function renderPosts(){
   const cnt=s=>posts.filter(p=>p.s===s).length;
@@ -511,19 +534,19 @@ function renderPosts(){
   if(!l.find(p=>p.id===psel))psel=l[0]?.id;
   $('#plist').innerHTML=l.length?l.map(p=>`<button class="post" role="option" aria-selected="${p.id===psel}" data-id="${p.id}"><div class="sc"><b>${p.sc}</b><span>${p.c} comments</span></div><div><h3>${p.t}</h3><div class="meta"><span>${p.sub}</span><span>u/${p.u}</span><span>${p.ago}</span>${p.kw?`<span class="kw">${p.kw}</span>`:''}${p.tag?`<span class="tag">${p.tag}</span>`:''}</div></div><span class="pill np">${p.src}</span></button>`).join('')
    :`<div class="empty"><h3>${pst==='new'?'You’re all caught up':'Nothing here yet'}</h3><p>${pst==='new'?'New matches appear after the next cycle at 10:20.':pst==='kept'?'Keep a post and it will show up here.':'Dismissed posts will show up here.'}</p></div>`;
-  const p=posts.find(x=>x.id===psel);
-  $('#pdetail').innerHTML=p?`<div class="panel-h"><span class="tag">${p.sub}</span><span style="color:var(--muted);font-size:13px">${p.sc} points, ${p.c} comments</span><a class="btn sm ghost" href="#" onclick="return false">Open on Reddit</a></div>
-  <div class="panel-b"><h2 style="font-size:17px;line-height:1.35">${p.t}</h2><p class="body">${p.b}</p>${held(p)}<h3 style="margin-top:18px">Top comments</h3>${p.cm.map(c=>`<div class="cm"><small>${c[0]}</small>${c[1]}</div>`).join('')}
-  <div class="dact">${p.s==='new'?`<button class="btn accent" data-do="kept">Keep</button><button class="btn" data-do="dismissed">Dismiss</button>`:`<button class="btn" data-do="new">Move back to New</button>`}<button class="btn ghost">Add note</button><button class="btn ghost" style="margin-left:auto">Send to Coppler</button></div></div>`
-  :`<div class="empty"><h3>No post selected</h3><p>Select a post to read it and decide.</p></div>`;
+  const p=posts.find(x=>x.id===psel);$('#psplit').classList.toggle('nodet',!pshow);
+  $('#pdetail').innerHTML=p?`<div class="panel-h"><span class="tag">${p.sub}</span><span style="color:var(--muted);font-size:13px">${p.sc} points, ${p.c} comments</span><a class="btn sm ghost" href="#" onclick="return false">Open on Reddit</a><button class="btn sm ghost drawer-only" data-close="post" aria-label="Close post" style="margin-left:0"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dbody"><h2 style="font-size:17px;line-height:1.35">${p.t}</h2><p class="body">${p.b}</p>${held(p)}<h3 style="margin-top:18px">Top comments</h3>${p.cm.map(c=>`<div class="cm"><small>${c[0]}</small>${c[1]}</div>`).join('')}
+  </div><div class="dfoot">${p.s==='new'?`<button class="btn accent" data-do="kept">Keep</button><button class="btn" data-do="dismissed">Dismiss</button>`:`<button class="btn" data-do="new">Move back to New</button>`}<button class="btn ghost">Add note</button><button class="btn ghost" style="margin-left:auto">Send to Coppler</button></div>`
+  :`<div class="dempty"><h3>No post selected</h3><p>Select a post to read it and decide.</p></div>`;
 }
 $('#pq').oninput=renderPosts;
 document.addEventListener('click',e=>{
   const a=e.target.closest('[data-st]');if(a){pst=a.dataset.st;renderPosts()}
   const b=e.target.closest('[data-sb]');if(b){psub=b.dataset.sb;renderPosts()}
-  const c=e.target.closest('.post');if(c){psel=+c.dataset.id;renderPosts()}
+  const c=e.target.closest('.post');if(c){psel=+c.dataset.id;pshow=true;renderPosts();if(matchMedia('(max-width:1100px)').matches){const x=$('#pdetail [data-close]');x&&x.focus()}}
   const d=e.target.closest('[data-do]');if(d){const p=posts.find(x=>x.id===psel),prev=p.s;p.s=d.dataset.do;
-    const ids=posts.filter(x=>x.s===prev).map(x=>x.id);renderPosts();
+    pshow=false;renderPosts();
     toast(p.s==='kept'?'Kept':p.s==='dismissed'?'Dismissed':'Moved back to New',()=>{p.s=prev;psel=p.id;renderPosts()})}
 });
 /* ---- merged from the corporate redesign: runs, queue, search, sources, doctor, idea detail, thread coverage ---- */
@@ -708,7 +731,7 @@ function renderDoctor(){
 $('#erun').onclick=e=>busy(e.currentTarget,'','Eval re-run finished: 1 failure (mock)',900);
 
 /* wiring */
-const CL={run(){const id=rsel;rsel=null;renderRuns();const r=$(`tr[data-run="${id}"]`);r&&r.focus({preventScroll:true})},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()}};
+const CL={run(){const id=rsel;rsel=null;renderRuns();const r=$(`tr[data-run="${id}"]`);r&&r.focus({preventScroll:true})},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()},post(){const id=psel;pshow=false;renderPosts();const b=$(`.post[data-id="${id}"]`);b&&b.focus({preventScroll:true})}};
 document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
   if(t=g('[data-toast]'))toast(t.dataset.toast);
   if(t=g('[data-close]'))CL[t.dataset.close]();
@@ -730,8 +753,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){e.preventDefault();go('search');$('#sq').focus()}
 });
 renderIdeas();renderPosts();renderRuns();renderQueue();renderSearch();renderSources();renderDoctor();
-document.addEventListener('click',e=>{if(e.target.id==='rsplit'&&rsel&&matchMedia('(max-width:1100px)').matches)CL.run()});
-document.addEventListener('keydown',e=>{if(e.key!=='Escape'||!menu.hidden)return;if($('#runs').classList.contains('on')&&rsel)CL.run();else if($('#queue').classList.contains('on')&&bsel)CL.batch();else if($('#ideas').classList.contains('on')&&isel!==null)CL.idea()});
+document.addEventListener('click',e=>{if(!matchMedia('(max-width:1100px)').matches)return;if(e.target.id==='rsplit'&&rsel)CL.run();else if(e.target.id==='psplit'&&pshow)CL.post()});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||!menu.hidden)return;if($('#runs').classList.contains('on')&&rsel)CL.run();else if($('#queue').classList.contains('on')&&bsel)CL.batch();else if($('#ideas').classList.contains('on')&&isel!==null)CL.idea();else if($('#posts').classList.contains('on')&&pshow)CL.post()});
 </script>
 </body>
 </html>
