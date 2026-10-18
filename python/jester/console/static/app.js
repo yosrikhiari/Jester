@@ -2118,7 +2118,7 @@ function pagerHTML(offset, size, total, key) {
 const POST_PAGE = 50;
 // view/sort/shown belong to the open post: which comments, in what order, and
 // how many before "show all". Reset each time a post is opened.
-const POSTS = { offset: 0, q: '', total: 0, open: null, view: 'signal', sort: 'top', shown: 0 };
+const POSTS = { offset: 0, q: '', total: 0, open: null, returnRow: null, view: 'signal', sort: 'top', shown: 0 };
 const POST_SHOWN = 20;
 
 async function loadPosts() {
@@ -2147,7 +2147,7 @@ async function loadPosts() {
       ? `${p.held} <span class="xs">of ${p.advertised}</span>`
       : `${p.held}`;
     const thin = p.advertised && p.held / p.advertised < 0.5;
-    return `<tr data-post="${esc(p.thread_id)}" style="cursor:pointer">
+    return `<tr data-post="${esc(p.thread_id)}" tabindex="0" style="cursor:pointer">
       <td><strong>${esc(p.title || '(untitled post)')}</strong>
         ${p.trivial ? `<div class="xs">${p.trivial} of ${p.held} flagged trivial</div>` : ''}</td>
       <td>${esc(p.community || p.platform || '—')}
@@ -2157,6 +2157,15 @@ async function loadPosts() {
       <td class="xs">${esc((p.created || '').slice(0, 10) || '—')}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="4">No posts match.</td></tr>`;
+
+  // Coming back from a post, hand focus to the row that opened it — the
+  // reference's close-and-restore-focus rule. Without it a keyboard
+  // operator is dropped on <body> and loses their place in the ledger.
+  if (POSTS.returnRow) {
+    const back = document.querySelector('#posts-body tr[data-post="' + CSS.escape(POSTS.returnRow) + '"]');
+    if (back) back.focus({ preventScroll: true });
+    POSTS.returnRow = null;
+  }
 }
 
 async function openPost(threadId) {
@@ -2169,6 +2178,10 @@ async function openPost(threadId) {
   POSTS.sort = 'top';
   POSTS.shown = POST_SHOWN;
   renderPostDetail();
+  // The opening view swap: move focus to the detail's back button so the
+  // operator is inside the view they opened, with a way out one Tab away
+  // (the reference focuses the detail's close affordance when it opens).
+  $('#posts-back').focus({ preventScroll: true });
 }
 
 // A comment the real extractor never touched: its "insight" is the raw text.
@@ -2338,6 +2351,7 @@ $('#posts-q').addEventListener('input', e => {
   POSTS.q = e.target.value.trim();
   POSTS.offset = 0;
   POSTS.open = null;
+  POSTS.returnRow = null; // filtering from inside a post: no row to hand focus back to
   pin(loadPosts());
 });
 $('#posts-back').addEventListener('click', () => {   POSTS.open = null;
@@ -2351,9 +2365,19 @@ $('[data-page="posts"]').addEventListener('click', e => {
   if (sort) { POSTS.sort = sort.dataset.postSort; renderPostDetail(); return; }
   if (e.target.closest('[data-post-more]')) { POSTS.shown = Infinity; renderPostDetail(); return; }
   const row = e.target.closest('tr[data-post]');
-  if (row) { pin(openPost(row.dataset.post)); return; }
+  if (row) { POSTS.returnRow = row.dataset.post; pin(openPost(row.dataset.post)); return; }
   const pg = e.target.closest('button[data-page-post]');
   if (pg) { POSTS.offset = Number(pg.dataset.pagePost); pin(loadPosts()); }
+});
+// Rows are tabbable now, so keyboard activation on them must exist too —
+// Enter or Space opens a post the same way a click does (reference rows
+// are buttons, which get this for free).
+$('[data-page="posts"]').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-post]')) {
+    e.preventDefault();
+    POSTS.returnRow = e.target.dataset.post;
+    pin(openPost(e.target.dataset.post));
+  }
 });
 
 async function loadNuggets() {
