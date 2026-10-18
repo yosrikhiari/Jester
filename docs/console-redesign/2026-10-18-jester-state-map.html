@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jester — the app as it stands</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f6f7;--surface:#fff;--sunk:#efeff1;--line:#e4e4e8;--line-soft:#eeeef1;
+  --ink:#16161a;--ink-2:#44444c;--muted:#6a6a74;--faint:#8e8e98;
+  --nav:#17171b;--nav-ink:#e9e9ee;--nav-muted:#9a9aa6;--nav-line:#2a2a31;
+  --ok:#1f7a4c;--ok-bg:#e3f3ea;--warn:#8a6100;--warn-bg:#faf0d2;--bad:#b3362f;--bad-bg:#fbe6e4;
+  --accent:#c8453d;--accent-ink:#fff;--accent-soft:#fbeceb;--accent-text:#a9362f;
+  --r-s:6px;--r-m:8px;--r-l:12px;--h-ctl:36px;
+  --shadow:0 1px 2px rgba(0,0,0,.04);
+  --font:"Lexend",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --nav-w:240px;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#101013;--surface:#18181c;--sunk:#222227;--line:#2c2c33;--line-soft:#232328;
+    --ink:#f2f2f5;--ink-2:#d0d0d8;--muted:#a0a0ac;--faint:#7e7e8a;
+    --nav:#0b0b0d;--nav-line:#1e1e23;
+    --ok:#5ac48c;--ok-bg:#16302387;--warn:#e0b341;--warn-bg:#3a3014;--bad:#ef7d75;--bad-bg:#3d1f1d;
+    --accent:#e0645c;--accent-soft:#3a201e;--accent-text:#f08c85;--shadow:none}
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 14px/1.55 var(--font);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-s)}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+
+/* shell */
+.shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh}
+.side{background:var(--nav);color:var(--nav-ink);position:sticky;top:0;height:100vh;padding:20px 12px 24px;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:none}
+.side::-webkit-scrollbar{display:none}
+.brand{display:flex;gap:10px;align-items:center;padding:2px 8px 18px}
+.mark{width:30px;height:30px;border-radius:var(--r-m);background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:600}
+.brand b{font-weight:600;font-size:16px;display:block;line-height:1.1}
+.brand small{color:var(--nav-muted);font-size:12px}
+.grp{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--nav-muted);padding:16px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:0 10px;height:var(--h-ctl);border:0;background:none;border-radius:var(--r-m);color:var(--nav-muted);cursor:pointer;text-align:left;font:inherit;font-size:14px}
+.nav-item:hover{background:#ffffff0f;color:var(--nav-ink)}
+.nav-item[aria-current=page]{background:#ffffff17;color:#fff;box-shadow:inset 3px 0 0 var(--accent)}
+.side .sp{flex:1;min-height:16px}
+.foot{padding:10px;font-size:11.5px;color:var(--nav-muted);line-height:1.5}
+
+main{min-width:0}
+.page{padding:32px 40px 80px;max-width:1160px}
+.head{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}
+h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:-.02em;font-weight:600}
+.lede{margin:6px 0 0;color:var(--muted);max-width:64ch}
+h2{margin:0;font-size:15px;font-weight:600}
+h3{margin:24px 0 10px;font-size:14px;font-weight:500}
+section{scroll-margin-top:16px;margin-bottom:40px}
+.crumb{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12.5px;flex-wrap:wrap}
+
+/* KPI strip */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:20px}
+.kpi{padding:16px 20px;border-left:1px solid var(--line-soft)}
+.kpi:first-child{border-left:0}
+.kpi .k{font-size:13px;color:var(--muted)}
+.kpi .v{font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:12.5px;color:var(--faint);margin-top:2px}
+
+/* panels */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--shadow)}
+.panel-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-soft)}
+.panel-h .grow{flex:1}
+.panel-b{padding:16px 18px}
+.panel-b>*:first-child{margin-top:0}
+.panel-b>*:last-child{margin-bottom:0}
+.note{display:flex;gap:10px;padding:10px 14px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:var(--r-m);background:var(--surface);color:var(--muted);font-size:13px;margin:14px 0 0}
+.note.ok{border-left-color:var(--ok)}
+.note p{margin:0}
+
+/* pills + chips */
+.pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:99px;font-size:12px;white-space:nowrap;font-weight:500}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.soft{background:var(--sunk);color:var(--muted)}
+.pill.acc{background:var(--accent-soft);color:var(--accent-text)}
+.m{display:inline-block;min-width:38px;text-align:center;padding:1px 7px;border-radius:var(--r-s);font-size:11.5px;font-family:ui-monospace,monospace;font-weight:600}
+.m.get{background:var(--sunk);color:var(--ink-2)}
+.m.post{background:var(--accent-soft);color:var(--accent-text)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr:last-child>td{border-bottom:0}
+td b{font-weight:500}
+td .mono,td code{font-size:12.5px;color:var(--ink-2)}
+.t-muted{color:var(--muted);font-size:12.5px}
+.nowrap{white-space:nowrap}
+
+/* code blocks */
+pre{background:var(--sunk);border:1px solid var(--line-soft);border-radius:var(--r-m);padding:12px 14px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:10px 0}
+pre .c{color:var(--faint)}
+
+/* two-col grids */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.g2 .panel{margin:0}
+
+/* nav list styling inside panels */
+ul.plain{margin:0;padding:0;list-style:none}
+ul.plain li{padding:7px 0;border-bottom:1px solid var(--line-soft);display:flex;gap:10px;align-items:baseline}
+ul.plain li:last-child{border-bottom:0}
+ul.plain .dot{color:var(--faint);flex:none}
+
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr}
+  .side{position:sticky;top:0;height:auto;flex-direction:row;align-items:center;gap:4px;overflow-x:auto;padding:10px 12px;z-index:5}
+  .brand{display:none}
+  .grp,.side .sp,.foot{display:none}
+  .nav-item{width:auto;height:32px;flex:none;font-size:13px}
+  .page{padding:20px 16px 64px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .kpi:nth-child(3){border-left:0}
+  .kpi{border-top:1px solid var(--line-soft)}
+  .kpi:nth-child(-n+2){border-top:0}
+  .g2{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <nav class="side" aria-label="Sections">
+    <div class="brand"><span class="mark">J</span><span><b>Jester</b><small>the app as it stands</small></span></div>
+    <div class="grp">Use it</div>
+    <a class="nav-item" href="#run">Run it today</a>
+    <a class="nav-item" href="#pages">Console pages</a>
+    <a class="nav-item" href="#keys">Keyboard &amp; chrome</a>
+    <div class="grp">Surface</div>
+    <a class="nav-item" href="#api">API endpoints</a>
+    <div class="grp">Under the hood</div>
+    <a class="nav-item" href="#engine">Engine</a>
+    <a class="nav-item" href="#data">Data &amp; config</a>
+    <div class="grp">Keeping it honest</div>
+    <a class="nav-item" href="#quality">Tests &amp; gates</a>
+    <a class="nav-item" href="#parked">Parked &amp; unwired</a>
+    <a class="nav-item" href="#boundaries">Working agreements</a>
+    <span class="sp"></span>
+    <div class="foot">Snapshot 2026-10-18 · branch <span class="mono">feat/ui-corporate-redesign</span><br>verified against the working tree</div>
+  </nav>
+
+  <main class="page">
+
+    <div class="head">
+      <div>
+        <h1>Jester — the app as it stands</h1>
+        <p class="lede">One file that says what the real application is today: how to run it, what every console page does and where its data comes from, the full HTTP API, the pipeline engine behind it, and where every byte of data and configuration lives. Everything here is measured against the working tree — nothing is aspirational.</p>
+      </div>
+      <div class="crumb"><span class="pill acc">snapshot · 2026-10-18</span></div>
+    </div>
+
+    <div class="panel"><div class="kpis">
+      <div class="kpi"><div class="k">Console pages</div><div class="v">14</div><div class="d">8 designed · 6 working, not designed</div></div>
+      <div class="kpi"><div class="k">HTTP endpoints</div><div class="v">50</div><div class="d">served by the console, all live</div></div>
+      <div class="kpi"><div class="k">CLI commands</div><div class="v">32</div><div class="d">one binary drives everything</div></div>
+      <div class="kpi"><div class="k">Gate tests</div><div class="v">7</div><div class="d">plus Go + eval gates</div></div>
+    </div></div>
+
+    <!-- ─────────────────────────── RUN IT ─────────────────────────── -->
+    <section id="run">
+      <div class="head"><h2>Run it today</h2><span class="pill soft">two entry points</span></div>
+      <div class="g2">
+        <div class="panel">
+          <div class="panel-h"><h2>Operator console</h2><span class="pill ok">http://localhost:8619</span></div>
+          <div class="panel-b">
+<pre>python -m jester.console --db data/jester.db --config config --port 8619</pre>
+            <p class="t-muted">Serves the static operator UI (<span class="mono">python/jester/console/static/</span>) at <span class="mono">/</span> and the JSON API under <span class="mono">/api/*</span>. The UI ships its own woff2 fonts, so it works on machines with no internet.</p>
+            <div class="note"><p><b>Auth:</b> GETs stay open so dashboards can poll. If <span class="mono">JESTER_CONSOLE_TOKEN</span> is set, every mutating POST needs <span class="mono">Authorization: Bearer …</span>. The console binds to localhost and serves only an allow-list of static file types.</p></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><h2>The six daily commands</h2><span class="pill soft">jester &lt;cmd&gt;</span></div>
+          <div class="panel-b">
+<pre># fetch the curated sources with the Go worker
+jester ingest
+# ingest + run the whole pipeline over what was queued
+jester cycle
+# process the queue; stops when the LLM quota runs out
+jester treat
+# regroup the archive into semantic themes
+jester cluster
+# register the scrape+process cycle with the host scheduler
+jester schedule
+# check the pipeline isn't quietly under-delivering
+jester doctor</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── PAGES ─────────────────────────── -->
+    <section id="pages">
+      <div class="head"><h2>Console pages — all 14, and where each gets its data</h2><span class="pill soft">loaders in app.js</span></div>
+      <div class="panel">
+        <table>
+          <thead><tr><th>Page</th><th>State</th><th>Loader (app.js)</th><th>Endpoints</th><th>Backend module</th></tr></thead>
+          <tbody>
+            <tr><td><b>Overview</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadOverview · 372</td><td class="mono">overview, infra</td><td class="mono">ops.py</td></tr>
+            <tr><td><b>Sources</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadSources · 647</td><td class="mono">sources, sources/add|update|delete</td><td class="mono">sources.py</td></tr>
+            <tr><td><b>Runs</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadRuns · 916</td><td class="mono">runs, requeue, resynth</td><td class="mono">jobs.py</td></tr>
+            <tr><td><b>Ideas</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadIdeas · 1098</td><td class="mono">ideas, idea/&lt;id&gt;, resynth</td><td class="mono">scoring.py, agents/critic.py</td></tr>
+            <tr><td><b>Search</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">runSearch · 1297</td><td class="mono">search?q&amp;limit=40</td><td class="mono">store.py + Qdrant</td></tr>
+            <tr><td><b>Clusters</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadClusters · 1639</td><td class="mono">clusters, cluster/run, cluster/idea/*</td><td class="mono">clustering.py, idea_dedup.py</td></tr>
+            <tr><td><b>Queue</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadQueue · 1927</td><td class="mono">jobs, job/&lt;id&gt;, mark</td><td class="mono">jobs.py</td></tr>
+            <tr><td><b>Posts</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadPosts · 2124</td><td class="mono">posts, post/&lt;thread&gt;</td><td class="mono">store.py (thread-grouped)</td></tr>
+            <tr><td><b>Nuggets</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadNuggets · 2383</td><td class="mono">nuggets/page</td><td class="mono">store.py, vector.py</td></tr>
+            <tr><td><b>Config</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadConfig · 2517</td><td class="mono">config, thresholds, models*</td><td class="mono">config.py, models.py, roles.py</td></tr>
+            <tr><td><b>Schedule</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadSchedule · 3016</td><td class="mono">schedule, schedule/*</td><td class="mono">scheduler.py, schedule.py</td></tr>
+            <tr><td><b>Doctor</b></td><td><span class="pill ok">designed · ported</span></td><td class="mono nowrap">loadDoctor · 3083</td><td class="mono">doctor, eval</td><td class="mono">maintenance.py</td></tr>
+            <tr><td><b>Signals</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadSignals · 3597</td><td class="mono">signals, signals/runs|outcome|scraper*</td><td class="mono">signals/ package</td></tr>
+            <tr><td><b>Chat</b></td><td><span class="pill warn">working · not designed</span></td><td class="mono nowrap">loadChat · 3927</td><td class="mono">chat, chat/sessions|session|apply|reject|revert</td><td class="mono">chat/ package</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note ok"><p>“Designed · ported” = the section has a design-of-record mockup <em>and</em> the portable parts have landed in the real console (shell ports, Sources bands, runs fixed-height, posts rev-4). “Working · not designed” = fully functional in the real app, still awaiting its design pass.</p></div>
+    </section>
+
+    <!-- ─────────────────────────── KEYS ─────────────────────────── -->
+    <section id="keys">
+      <div class="head"><h2>Keyboard &amp; chrome</h2><span class="pill soft">as implemented</span></div>
+      <div class="g2">
+        <div class="panel">
+          <div class="panel-h"><h2>Shortcuts</h2></div>
+          <div class="panel-b">
+            <table>
+              <tbody>
+                <tr><td class="nowrap"><span class="mono">g</span> then <span class="mono">o r q i n c s d</span></td><td>jump to Overview, Runs, Queue, Ideas, Nuggets, Clusters, Sources, Doctor</td></tr>
+                <tr><td class="nowrap"><span class="mono">1</span>–<span class="mono">8</span></td><td>first eight pages in side-nav order</td></tr>
+                <tr><td class="nowrap"><span class="mono">/</span></td><td>focus the current page's first text input; if it has none, jump to Search</td></tr>
+                <tr><td class="nowrap"><span class="mono">?</span></td><td>open the help sheet</td></tr>
+                <tr><td class="nowrap"><span class="mono">r</span></td><td>refresh the current page</td></tr>
+                <tr><td class="nowrap"><span class="mono">Esc</span></td><td>close modal, then drawer</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><h2>Other chrome worth knowing</h2></div>
+          <div class="panel-b">
+            <ul class="plain">
+              <li><span class="dot">●</span><span>Hash routing — pages are <span class="mono">section[data-page]</span> toggled via <span class="mono">hidden</span>; the URL hash survives reloads.</span></li>
+              <li><span class="dot">●</span><span>Shared <span class="mono">#drawer</span> for detail views at every width, with return-focus restored on close.</span></li>
+              <li><span class="dot">●</span><span>Posts detail is an in-page view swap (<span class="mono">#posts-list</span> ↔ <span class="mono">#post-detail</span>) with a sticky back button.</span></li>
+              <li><span class="dot">●</span><span>A <span class="mono">#runstrip</span> poll every 15s shows the live run; clicking it goes to Runs.</span></li>
+              <li><span class="dot">●</span><span>Toast actions (requeue, re-embed) are offered right where Doctor/Overview report the failure.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── API ─────────────────────────── -->
+    <section id="api">
+      <div class="head"><h2>HTTP API — all 50 endpoints</h2><span class="pill soft">GET reads · POST writes</span></div>
+      <p class="t-muted" style="margin-bottom:14px">Every endpoint the console consumes, verified at its client call site. POST bodies are JSON; when <span class="mono">JESTER_CONSOLE_TOKEN</span> is set, POSTs require the bearer header. (<span class="mono">/api/tags</span> in the codebase is Ollama's own endpoint — it's what <span class="mono">/api/infra</span> probes, not a console route.)</p>
+
+      <div class="g2">
+        <div class="panel"><div class="panel-h"><h2>System &amp; search</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/overview</td><td>whole-pipeline counts + failure rollup</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/infra</td><td>probes Ollama, cloakserve, Qdrant, Go toolchain</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/running</td><td>live poll of the active run (15s)</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/search?q&amp;limit</td><td>full-text search over the archive</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/doctor</td><td>under-delivery checks</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/eval</td><td>eval gate numbers</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Sources</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/sources</td><td>curated source list with health</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/sources/add</td><td>add a source</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/sources/update</td><td>edit a source</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/sources/delete</td><td>remove a source</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Pipeline control</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/run</td><td>kick the pipeline now</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/runs</td><td>run ledger</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/requeue</td><td>requeue failed ingest batches</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/resynth</td><td>re-run synthesis for an item</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/reembed</td><td>re-embed the unsearchable backlog</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Queue &amp; archive</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/jobs</td><td>ingest/treat batch list</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/job/&lt;id&gt;</td><td>one batch in full</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/mark</td><td>mark batch state</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/nuggets/page</td><td>paged nugget archive</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/posts</td><td>thread-grouped comment archive</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/post/&lt;thread&gt;</td><td>one thread in full</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Ideas &amp; clusters</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/ideas</td><td>scored idea ledger</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/idea/&lt;id&gt;</td><td>one idea in full</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/clusters</td><td>theme clusters</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/cluster/run</td><td>re-cluster the archive</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/cluster/idea/start</td><td>start a draft from a cluster</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/cluster/idea/save</td><td>save the draft</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/cluster/idea/discard</td><td>discard the draft</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Signals</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/signals</td><td>problem-signal records + facets</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/signals/runs</td><td>collector runs that produced them</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/signals/outcome</td><td>save an outcome mark</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/signals/scraper</td><td>scraper health</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/signals/scraper/run</td><td>run the scraper now</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/signals/scraper/schedule</td><td>reschedule the scraper</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Chat</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/chat/sessions</td><td>chat sessions</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/chat/session?id=</td><td>one session + messages</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/chat</td><td>send a message</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/chat/apply</td><td>apply proposed edits</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/chat/reject</td><td>reject proposed edits</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/chat/revert</td><td>revert applied edits</td></tr>
+          </tbody></table>
+        </div></div>
+
+        <div class="panel"><div class="panel-h"><h2>Config, models &amp; schedule</h2></div><div class="panel-b">
+          <table><tbody>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/config</td><td>config snapshot</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span> <span class="m post">POST</span></td><td class="mono">/api/thresholds</td><td>read / save the knobs</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/models</td><td>model roster</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/models/test</td><td>test a model connection</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/models/roles</td><td>save role assignments</td></tr>
+            <tr><td class="nowrap"><span class="m get">GET</span></td><td class="mono">/api/schedule</td><td>schedule state</td></tr>
+            <tr><td class="nowrap"><span class="m post">POST</span></td><td class="mono">/api/schedule/install|remove|run|refresh</td><td>install / remove / run now / refresh</td></tr>
+          </tbody></table>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── ENGINE ─────────────────────────── -->
+    <section id="engine">
+      <div class="head"><h2>The engine behind it</h2><span class="pill soft">85 Python files · 75 Go files</span></div>
+      <div class="g2">
+        <div class="panel">
+          <div class="panel-h"><h2>Python — <span class="mono">python/jester/</span></h2></div>
+          <div class="panel-b">
+            <table>
+              <thead><tr><th>Duty</th><th>Modules</th></tr></thead>
+              <tbody>
+                <tr><td><b>Collection</b></td><td class="mono">fetchers/cloak.py (browser fetch via cloakserve :9222), fetchers/youtube.py</td></tr>
+                <tr><td><b>Agents</b></td><td class="mono">agents/extractor · critic · labeller · synthesizer · archivist · property_alerts/analytics/dedup</td></tr>
+                <tr><td><b>Model I/O</b></td><td class="mono">llm.py (Ollama), embed.py + vector.py (Qdrant), models.py, roles.py, llm_quota.py, quota.py</td></tr>
+                <tr><td><b>Quality</b></td><td class="mono">prefilter.py, triviality.py, chunking.py, dedup_sweep.py, idea_dedup.py, scoring.py, clustering.py</td></tr>
+                <tr><td><b>Archive</b></td><td class="mono">store.py, identify.py, specs.py, edits.py, competitors.py, export.py, backup.py</td></tr>
+                <tr><td><b>Ops</b></td><td class="mono">jobs.py, worker.py, scheduler.py, schedule.py, maintenance.py, notify.py, ops.py, env.py, config.py, sources.py, cli.py, cli_review.py</td></tr>
+                <tr><td><b>Console</b></td><td class="mono">console/server.py (HTTP), console/api.py + api_chat.py + api_signals.py (routes), console/static/* (the UI)</td></tr>
+                <tr><td><b>Signals</b></td><td class="mono">signals/ — brief · scope · leads · filters · fixtures · run · limits · evidence · digest · clickhouse · from_archive (+ query/source packs)</td></tr>
+                <tr><td><b>Chat</b></td><td class="mono">chat/ — client · session · store · tools · schemas</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><h2>Go — <span class="mono">go/</span></h2></div>
+          <div class="panel-b">
+            <table>
+              <thead><tr><th>Part</th><th>What</th></tr></thead>
+              <tbody>
+                <tr><td><b>cmd/worker</b></td><td>the ingest engine <span class="mono">jester ingest</span> drives — <span class="mono">main.go</span>, <span class="mono">backfill.go</span>, routing + selection tests</td></tr>
+                <tr><td><b>other cmd tools</b></td><td class="mono">contractcheck · forumprobe · listingeval · listingharvest · renderprobe · siteprobe</td></tr>
+                <tr><td><b>platform adapters</b></td><td class="mono">reddit · hackernews · lemmy · discourse · stackexchange · youtube · github · steam · realestate · podcast</td></tr>
+                <tr><td><b>infrastructure</b></td><td class="mono">cloakbrowser · prefilter · store · htmltext · mediahash · siteprobe · siteprofile · config</td></tr>
+              </tbody>
+            </table>
+            <div class="note"><p>The split is deliberate: Go fetches fast and cheap; Python treats, judges and archives with the LLM. <span class="mono">jester cycle</span> is the handshake between the two.</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── DATA ─────────────────────────── -->
+    <section id="data">
+      <div class="head"><h2>Data &amp; config — where every byte lives</h2><span class="pill soft">SQLite + Qdrant + YAML</span></div>
+      <div class="g2">
+        <div class="panel">
+          <div class="panel-h"><h2>Data</h2><span class="pill soft">data/ · python/data/</span></div>
+          <div class="panel-b">
+            <table>
+              <thead><tr><th>Path</th><th>What it is</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">data/jester.db</td><td>the archive — comments, threads, nuggets, runs, ideas, queue</td></tr>
+                <tr><td class="mono">data/candidates.db · hiring.db</td><td>the hiring side quest's own stores</td></tr>
+                <tr><td class="mono">data/journal.db</td><td>research journals (CLI <span class="mono">jester journal</span>)</td></tr>
+                <tr><td class="mono">data/backups/</td><td>point-in-time backups (<span class="mono">jester backup</span>)</td></tr>
+                <tr><td class="mono">data/exports/</td><td>CSV deliverables — comments · nuggets · ideas · signals · listings · leads · hiring · scope · demo · signals-live/-m2/-w1</td></tr>
+                <tr><td class="mono">data/schedule-*.log</td><td>host-scheduler run logs (cycle, ingest, treat, signals…)</td></tr>
+                <tr><td class="mono">python/data/jester.qdrant</td><td>the local Qdrant vector store behind dedup + search</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-h"><h2>Config</h2><span class="pill soft">config/ (+ config-live/ overlay)</span></div>
+          <div class="panel-b">
+            <table>
+              <thead><tr><th>File</th><th>What writes to it</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">sources.yaml</td><td>the curated source list — the Sources page edits this</td></tr>
+                <tr><td class="mono">thresholds.yaml</td><td>the knobs — the Config page edits this</td></tr>
+                <tr><td class="mono">scraper.yaml</td><td>scraper targets + cadence (Signals page schedule)</td></tr>
+                <tr><td class="mono">signal_rules.yaml · hiring_rules.yaml</td><td>classifier rules for the signals collector</td></tr>
+                <tr><td class="mono">profiles/*.yaml</td><td>11 property-portal profiles (bayut, habitaclia, immowelt, mubawab, onthemarket, paruvendu, property24…) + drafts</td></tr>
+                <tr><td class="mono">local.env.example</td><td>env template (<span class="mono">.env</span> at root, loaded via <span class="mono">env.py</span>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────── QUALITY ─────────────────────────── -->
+    <section id="quality">
+      <div class="head"><h2>Tests &amp; gates</h2><span class="pill soft">what keeps it honest</span></div>
+      <div class="panel"><div class="panel-b">
+        <table>
+          <thead><tr><th>Gate</th><th>How to run</th><th>Covers</th></tr></thead>
+          <tbody>
+            <tr><td><b>Console pytest gate</b></td><td class="mono">python -m pytest python/tests/test_console_review_picks.py -q</td><td>7 tests — the standing gate for every console change</td></tr>
+            <tr><td><b>Go tests</b></td><td class="mono">go test ./…</td><td>worker routing + selection</td></tr>
+            <tr><td><b>Eval gate</b></td><td class="mono">jester eval</td><td>the eval/ corpus; surfaced in the console at <span class="mono">/api/eval</span></td></tr>
+            <tr><td><b>Doctor</b></td><td class="mono">jester doctor</td><td>catches the pipeline quietly under-delivering</td></tr>
+            <tr><td><b>Smoke</b></td><td class="mono">jester smoke</td><td>end-to-end sanity run</td></tr>
+            <tr><td><b>Dedup sweep</b></td><td class="mono">jester dedup-sweep</td><td>advisory pass over near-duplicates</td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </section>
+
+    <!-- ─────────────────────────── PARKED ─────────────────────────── -->
+    <section id="parked">
+      <div class="head"><h2>Parked &amp; unwired — so you don't chase ghosts</h2></div>
+      <div class="panel"><div class="panel-b">
+        <ul class="plain">
+          <li><span class="dot">○</span><span><b>frontend/</b> — a bare Vite + React 19 scaffold (<span class="mono">App.tsx</span>, only react/react-dom deps). <b>Not served</b> by server.py, referenced by nothing — a parked parallel idea, not part of the running app.</span></li>
+          <li><span class="dot">○</span><span><b>jester-design-system.html · JESTER-FRONTEND-SYSTEM-DESIGN.md</b> (repo root) — earlier design-system documents, predating the console-redesign work.</span></li>
+          <li><span class="dot">○</span><span><b>inspiration/ · docs/superpowers/ · plans/</b> — reference material and plan notes.</span></li>
+          <li><span class="dot">○</span><span><b>docker/ · docker-compose.yml</b> — Qdrant infrastructure for the vector store.</span></li>
+          <li><span class="dot">○</span><span><b>config-live/</b> — a live overlay variant of config/ for the deployed instance.</span></li>
+        </ul>
+      </div></div>
+    </section>
+
+    <!-- ─────────────────────────── BOUNDARIES ─────────────────────────── -->
+    <section id="boundaries">
+      <div class="head"><h2>Working agreements (the redesign)</h2></div>
+      <div class="panel"><div class="panel-b">
+        <ul class="plain">
+          <li><span class="dot">◆</span><span>The design surface is <span class="mono">python/jester/console/static/</span> only — <span class="mono">api.py</span> and <span class="mono">server.py</span> are untouched boundaries; features needing API changes are excluded until explicitly re-authorized.</span></li>
+          <li><span class="dot">◆</span><span>Design-of-record: <span class="mono">docs/console-redesign/2026-10-17-console-adaptation-mockup.html</span> (rev 4), checked in verbatim.</span></li>
+          <li><span class="dot">◆</span><span>Every real-vs-mockup deviation is ledgered in <span class="mono">docs/console-redesign/ADAPTATION-DEVIATIONS.md</span>.</span></li>
+          <li><span class="dot">◆</span><span>This file is a <b>snapshot</b> — a truthful portrait as of 2026-10-18. The app itself, not this document, is the source of truth.</span></li>
+        </ul>
+      </div></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// side-nav scroll spy: highlight the section nearest the top
+(function () {
+  const links = Array.from(document.querySelectorAll('.nav-item[href^="#"]'));
+  const secs = links.map(l => document.querySelector(l.getAttribute('href'))).filter(Boolean);
+  function pick() {
+    const y = window.scrollY + 140;
+    let cur = secs[0];
+    for (const s of secs) if (s.offsetTop <= y) cur = s;
+    links.forEach(l => {
+      if (l.getAttribute('href') === '#' + cur.id) l.setAttribute('aria-current', 'page');
+      else l.removeAttribute('aria-current');
+    });
+  }
+  window.addEventListener('scroll', pick, { passive: true });
+  window.addEventListener('load', pick);
+  pick();
+})();
+</script>
+</body>
+</html>
