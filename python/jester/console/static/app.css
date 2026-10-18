@@ -1031,6 +1031,49 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   .shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"] .card--flush .tablewrap{max-block-size:min(70vh,640px)}
 }
 
+/* ── posts: fixed-height page (adaptation reference rev 4) ─────────────
+   Same treatment as runs: the shell stops scrolling on the posts page and
+   the list keeps its place, its row region scrolling internally under the
+   sticky header it already has. An open post swaps the list for the detail
+   view, so the scroll region moves with it: the detail scrolls internally
+   with its back button pinned while a long comment feed is read. */
+.shell:has(section[data-page="posts"]:not([hidden])){
+  block-size:100vh;
+  block-size:100dvh;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main{
+  min-block-size:0;overflow:hidden;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"]:not([hidden]){
+  flex:1;min-block-size:0;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #posts-list:not([hidden]){
+  flex:1;min-block-size:0;display:flex;flex-direction:column;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #posts-list:not([hidden]) .tablewrap{
+  flex:1;min-block-size:0;overflow:auto;overscroll-behavior:contain;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #post-detail:not([hidden]){
+  flex:1;min-block-size:0;overflow:auto;overscroll-behavior:contain;
+}
+.shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #post-detail:not([hidden])>#posts-back{
+  position:sticky;inset-block-start:0;z-index:2;
+}
+@media (max-width:900px){
+  .shell:has(section[data-page="posts"]:not([hidden])){block-size:auto}
+  .shell:has(section[data-page="posts"]:not([hidden])) main{overflow:visible}
+  .shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"]:not([hidden]){flex:none}
+  .shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #posts-list:not([hidden]){flex:none}
+  .shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #posts-list:not([hidden]) .tablewrap{max-block-size:min(70vh,640px)}
+  .shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #post-detail:not([hidden]){flex:none;overflow:visible}
+  .shell:has(section[data-page="posts"]:not([hidden])) main>section[data-page="posts"] #post-detail:not([hidden])>#posts-back{position:static}
+}
+
+/* Seg buttons do not shrink inside a tight row — with scrollbars hidden
+   everywhere, a squashed seg would lose its labels to silent overflow
+   (adaptation reference rev 4). */
+.seg button{flex:none}
+
 /* Scrollbars hidden everywhere; scrolling itself still works — wheel, touch
    and keyboard scrolling are unaffected (adaptation reference rev 3). */
 *{scrollbar-width:none}
