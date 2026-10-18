@@ -1,6 +1,6 @@
 # Console adaptation — kept-real deviations & exclusions
 
-Design-of-record: `2026-10-17-console-adaptation-mockup.html` (rev 3, `e6f3733`).
+Design-of-record: `2026-10-17-console-adaptation-mockup.html` (rev 4, `06da16a`).
 The mockup defines look/feel; the real console's behavior and data set the
 limits of what may be shown. This ledger records every deliberate divergence
 so the record outlives the chat that made it.
@@ -33,6 +33,20 @@ so the record outlives the chat that made it.
 - **Dark theme `--accent-ink`**: real console keeps its dark-ink-on-accent
   choice; the mockup's white-on-`#E0645C` is lower contrast. One token,
   flip-ready if wanted.
+- **Posts detail model — in-page view swap** (2026-10-18). The real posts
+  page exchanges the list for `#post-detail` (`#posts-list` hidden), not a
+  side drawer. Rev-4's `#psplit` split pane and its ≤1100px drawer mode stay
+  mockup-only; what was portable landed in `b1195e6`/`6e53cdb` (fixed-height
+  posts page, detail as the scroll region with the back button pinned,
+  list/tablewrap internal scroll, ≤900px fallbacks, seg buttons unsquashable).
+  The focus rule ported with it: opening a post focuses `#posts-back` (the
+  detail's persistent exit, standing in for the mock's `drawer-only` close),
+  and the "‹ all posts" button hands focus back to the ledger row, so the
+  rows gained `tabindex="0"` plus Enter/Space activation.
+- **Runs/ideas rows are still not tabbable** (pre-existing). Their drawer
+  focus restore is therefore a mouse-only no-op there; only the posts rows
+  got the full keyboard path now. Extending `tabindex` to the run/idea
+  ledgers is a one-line follow-up if wanted.
 
 ## Excluded from the mockups (would misrepresent, need `api.py`, or are mock scaffolding)
 
@@ -43,6 +57,10 @@ so the record outlives the chat that made it.
 - **Rail "N new" posts badge / Reddit-watches Overview panel** —
   `COUNTS.posts` is total-only and set on posts-page load; "new" is not
   representable without an API change.
+- **Posts state & subreddit filter groups** (`#pstate`/`#psub` since rev 3) —
+  New/Kept/Dismissed is not a distinction the archive makes, and post
+  pagination is server-side, so a subreddit facet built client-side from the
+  current 50-row page would fake a picture of the whole archive.
 
 ### Mock-only scaffolding (would pretend the app does something it doesn't)
 - **Sources pager** — the real list is complete and unpaginated.
@@ -53,6 +71,10 @@ so the record outlives the chat that made it.
   "requeue failed" action exists and stays as-is.
 - **`dempty` / `dfoot`** — parts of the split-pane detail model, which the
   drawer decision above moots.
+- **Posts Escape/backdrop close (rev 4)** — the real post detail is not a
+  modal: no scrim, no fixed overlay, an always-visible back button. Escape
+  already routes to the shared drawer helpfully enough; adding a second
+  dismiss channel for an in-page swap buys nothing.
 
 ### Excluded by user decision ("Exclude all", rev 1)
 - Accent switcher, Undo-on-removal toasts, "Add note" and "Send to Coppler"
