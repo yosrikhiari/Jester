@@ -945,12 +945,13 @@ function showRun(id) {
   $('#drawer-title').textContent = `Run: ${r.run_id || r.id}`;
 
   const phases = JSON.parse(r.phase_checkpoints || '[]');
-  const phasesList = phases.map(p =>
-    `<div class="row xs" style="gap:var(--s-3)">
-      <span class="chip">${esc(p.phase)}</span>
-      <span>${esc(when(p.at))}</span>
-    </div>`
-  ).join('') || '<p class="xs">No phase checkpoints recorded.</p>';
+  // The real checkpoints carry a name and a time — nothing else — so the
+  // reference's status-toned phase pills cannot be drawn honestly. They land
+  // as compact inline chips instead of a stacked list (rev-3 reference).
+  const phasesList = phases.length
+    ? `<div class="chiprow">${phases.map(p =>
+        `<span class="chip">${esc(p.phase)} · ${esc(when(p.at))}</span>`).join('')}</div>`
+    : '<p class="xs">No phase checkpoints recorded.</p>';
 
   const models = r.models || {};
   const modelsList = models.models ? models.models.map(m =>
@@ -992,10 +993,11 @@ function showRun(id) {
       <dt>Ideas</dt><dd>${int(r.n_ideas)}</dd>
     </dl>
 
-    <h3>Models</h3>
-    <div class="chiprow" style="margin-block-end:var(--s-4)">${modelsList}</div>
-    <div class="xs"><strong>Prompts:</strong> ${esc(promptInfo)}</div>
-    <div class="xs"><strong>Rubric:</strong> v${esc(models.rubric_version || '—')}</div>
+    <details class="help" style="margin-block-end:var(--s-5)"><summary>models &amp; prompts</summary>
+      <div class="chiprow" style="margin-block:var(--s-3)">${modelsList}</div>
+      <div class="xs"><strong>prompts:</strong> ${esc(promptInfo)}</div>
+      <div class="xs"><strong>rubric:</strong> v${esc(models.rubric_version || '—')}</div>
+    </details>
 
     <h3>Platforms</h3>
     <div class="chiprow" style="margin-block-end:var(--s-4)">${platformsList}</div>
@@ -1151,7 +1153,12 @@ $('#drawer-body').addEventListener('click', e => {
   if (b) runAction('/api/resynth', { id: +b.dataset.resynth }, b);
 });
 
+let DRAWER_RETURN_FOCUS = null;
 function openDrawer() {
+  // Remember what opened the drawer so closeDrawer can hand focus back — the
+  // reference's close-and-restore-focus rule. Without it focus drops to
+  // <body> and a keyboard operator loses their row in the ledger.
+  if (DRAWER_RETURN_FOCUS == null) DRAWER_RETURN_FOCUS = document.activeElement;
   $('#drawer').classList.add('on');
   $('#drawer').setAttribute('aria-hidden', 'false');
   $('#scrim').classList.add('on');
@@ -1161,6 +1168,8 @@ function closeDrawer() {
   $('#drawer').classList.remove('on');
   $('#drawer').setAttribute('aria-hidden', 'true');
   $('#scrim').classList.remove('on');
+  if (DRAWER_RETURN_FOCUS instanceof Element) DRAWER_RETURN_FOCUS.focus({ preventScroll: true });
+  DRAWER_RETURN_FOCUS = null;
 }
 $('#drawer-close').onclick = closeDrawer;
 $('#scrim').onclick = closeDrawer;

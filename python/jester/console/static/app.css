@@ -1001,3 +1001,37 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   border-radius: 6px;
   font-size: 0.8em;
 }
+
+/* ── runs: fixed-height page (adaptation reference rev 3) ──────────────
+   The shell stops scrolling on the runs page: the ledger keeps its place,
+   its row region scrolls internally with the pinned header it already has,
+   and the run drawer overlays the intact page instead of the page's own
+   scroll position being lost. */
+.shell:has(section[data-page="runs"]:not([hidden])){
+  block-size:100vh;
+  block-size:100dvh;
+}
+.shell:has(section[data-page="runs"]:not([hidden])) main{
+  min-block-size:0;overflow:hidden;
+}
+.shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"]:not([hidden]){
+  flex:1;min-block-size:0;
+}
+.shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"] .card--flush{
+  flex:1;min-block-size:0;display:flex;flex-direction:column;
+}
+.shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"] .card--flush .tablewrap{
+  flex:1;min-block-size:0;overflow:auto;overscroll-behavior:contain;
+}
+@media (max-width:900px){
+  .shell:has(section[data-page="runs"]:not([hidden])){block-size:auto}
+  .shell:has(section[data-page="runs"]:not([hidden])) main{overflow:visible}
+  .shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"]:not([hidden]){flex:none}
+  .shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"] .card--flush{flex:none}
+  .shell:has(section[data-page="runs"]:not([hidden])) main>section[data-page="runs"] .card--flush .tablewrap{max-block-size:min(70vh,640px)}
+}
+
+/* Scrollbars hidden everywhere; scrolling itself still works — wheel, touch
+   and keyboard scrolling are unaffected (adaptation reference rev 3). */
+*{scrollbar-width:none}
+*::-webkit-scrollbar{display:none}
