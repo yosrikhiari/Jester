@@ -212,6 +212,34 @@ tbody tr.sel td{background:var(--accent-soft)}
 .pager{display:flex;gap:2px;align-items:center}.pager button{min-width:28px;height:28px;padding:0 6px;border:1px solid transparent;border-radius:var(--r-s);background:none;color:var(--muted);cursor:pointer}.pager button:hover{background:var(--sunk)}.pager button[aria-current=page]{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
 .menu{position:fixed;z-index:25;min-width:160px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);box-shadow:0 6px 24px rgba(0,0,0,.12)}
 .menu button{display:flex;align-items:center;width:100%;height:30px;padding:0 10px;border:0;border-radius:var(--r-s);background:none;font-size:13px;text-align:left;cursor:pointer}.menu button:hover,.menu button:focus-visible{background:var(--sunk)}.menu .danger{color:var(--bad)}
+
+/* detail panes: never taller than the screen; on narrow screens they open as a side drawer instead of below the table */
+:is(#rsplit,#qsplit,#isplit)>.detail{max-height:calc(100vh - 92px);overflow:auto}
+.detail .dh{margin-top:14px}.detail summary{cursor:pointer;font-weight:500}.kv.cp{gap:6px 12px}
+@media(max-width:1100px){:is(#rsplit,#qsplit,#isplit):not(.nodet)>.detail{position:fixed;top:0;right:0;bottom:0;left:auto;width:min(440px,100%);max-height:none;z-index:15;padding-top:env(safe-area-inset-top,0px);border-radius:var(--r-l) 0 0 var(--r-l);box-shadow:0 0 40px rgba(0,0,0,.18)}}
+
+/* runs: fixed-height page, fixed list panel and fixed detail panel; only their content regions scroll */
+.shell:has(#runs.on){height:100vh;height:100dvh;grid-template-rows:minmax(0,1fr)}
+.shell:has(#runs.on) main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shell:has(#runs.on) .top{flex:none}
+#runs.on{display:flex;flex-direction:column;flex:1;min-height:0}
+#runs.on>.page{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;padding-bottom:24px}
+#runs .head,#runs .tools{flex:none}
+#rsplit{flex:1;min-height:0;align-items:stretch;grid-template-rows:minmax(0,1fr)}
+#rsplit>.tw{min-height:0;overflow:auto;overscroll-behavior:contain}
+#rsplit th{position:sticky;top:0;z-index:2}
+#rsplit td{overflow-wrap:anywhere}
+#rsplit>.detail{position:static;max-height:none;overflow:hidden;min-height:0}
+#rsplit:not(.nodet)>.detail{display:flex;flex-direction:column}
+#rsplit>.detail .panel-h,#rsplit>.detail .dfoot{flex:none}
+.dbody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 18px;overflow-wrap:anywhere}
+.dfoot{display:flex;gap:8px;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--line-soft)}
+.dempty{margin:auto;padding:24px;text-align:center;color:var(--muted)}.dempty h3{color:var(--ink);margin-bottom:4px}
+@media(min-width:1101px){#rsplit.nodet{grid-template-columns:minmax(0,1fr) 400px}#rsplit.nodet>.detail{display:flex;flex-direction:column}#rsplit .hd-open{display:none}}
+@media(max-width:1100px){#rsplit:not(.nodet)::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:14}body:has(#runs.on #rsplit:not(.nodet)){overflow:hidden}}
+@media(max-width:860px){.shell:has(#runs.on){height:auto}.shell:has(#runs.on) main{display:block;overflow:visible}#runs.on>.page{display:block}#rsplit{height:min(70vh,640px)}}
+/* scrollbars hidden everywhere; scrolling itself still works (wheel, touch, keyboard) */
+*{scrollbar-width:none}*::-webkit-scrollbar{display:none}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -553,15 +581,15 @@ function renderRuns(){
   renderRun();
 }
 function renderRun(){
-  const r=runs.find(x=>x.id===rsel);$('#rsplit').classList.toggle('nodet',!r);const d=$('#rdetail');if(!r){d.innerHTML='';return}
+  const r=runs.find(x=>x.id===rsel);$('#rsplit').classList.toggle('nodet',!r);const d=$('#rdetail');if(!r){d.innerHTML='<div class="dempty"><h3>Select a run</h3><p>Pick a row to see its funnel, phases and models.</p></div>';return}
   d.innerHTML=`<div class="panel-h"><h2 class="mono" style="font-size:13px;word-break:break-all">${r.id}</h2><span class="pill ${RS[r.st]}" style="margin-left:auto">${cap(r.st)}</span></div>
-  <div class="panel-b"><dl class="kv"><dt>Started</dt><dd>${r.ago}</dd><dt>Posts / comments</dt><dd>${fmt(r.posts)} / ${fmt(r.cm)}</dd><dt>Kept / ideas</dt><dd>${fmt(r.k)} / ${r.i}${why(r)?' ('+why(r)+')':''}</dd><dt>Duration</dt><dd>${fmt(r.dur)} s <span style="color:var(--faint)">(expected ${fmt(r.exp)} s)</span></dd><dt>Origin</dt><dd>${r.o}</dd></dl>
+  <div class="dbody"><dl class="kv cp"><dt>Started</dt><dd>${r.ago}</dd><dt>Posts / comments</dt><dd>${fmt(r.posts)} / ${fmt(r.cm)}</dd><dt>Kept / ideas</dt><dd>${fmt(r.k)} / ${r.i}${why(r)?' ('+why(r)+')':''}</dd><dt>Duration</dt><dd>${fmt(r.dur)} s <span style="color:var(--faint)">(expected ${fmt(r.exp)} s)</span></dd><dt>Origin</dt><dd>${r.o}</dd></dl>
   ${r.mix.length?`<h3 class="dh">Platform mix</h3><div style="margin-top:8px">${mixBar(r.mix)}</div>${mixLeg(r.mix)}`:''}
   ${r.fun.length?`<h3 class="dh">Prefilter funnel</h3><dl class="ledger">${r.fun.map(f=>`<dt>${f[0]}</dt><dd>${fmt(f[1])}</dd>`).join('')}</dl>`:''}
-  <h3 class="dh">Phases</h3>${r.ph.map(p=>`<div class="row"><span class="pill ${PS[p[1]]}">${cap(p[1])}</span>${p[0]}<small>${p[2]}</small></div>`).join('')}
-  ${Object.keys(r.mod).length?`<h3 class="dh">Models</h3><dl class="kv" style="margin-top:8px">${Object.entries(r.mod).map(m=>`<dt>${m[0]}</dt><dd class="mono">${m[1]}</dd>`).join('')}</dl>`:''}
+  <h3 class="dh">Phases</h3><div class="mixl" style="gap:6px">${r.ph.map(p=>`<span class="pill ${PS[p[1]]}">${p[0]}${p[1]==='ok'?'':' ('+p[1]+')'} ${p[2]}</span>`).join('')}</div>
+  ${Object.keys(r.mod).length?`<details class="dh"><summary>Models</summary><dl class="kv cp" style="margin-top:8px">${Object.entries(r.mod).map(m=>`<dt>${m[0]}</dt><dd class="mono">${m[1]}</dd>`).join('')}</dl></details>`:''}
   ${r.err?`<div class="notice bad" style="margin:18px 0 0"><div><b>Run failed</b><p>${r.err}</p></div></div>`:''}
-  <div class="dact">${r.st==='failed'?'<button class="btn accent" data-toast="Run requeued (mock, not connected to a service)">Requeue</button>':''}<button class="btn ghost" data-close="run">Close</button></div></div>`;
+  </div><div class="dfoot">${r.st==='failed'?'<button class="btn accent" data-toast="Run requeued (mock, not connected to a service)">Requeue</button>':''}<button class="btn ghost" data-close="run">Close</button></div>`;
 }
 
 /* queue */
@@ -680,12 +708,12 @@ function renderDoctor(){
 $('#erun').onclick=e=>busy(e.currentTarget,'','Eval re-run finished: 1 failure (mock)',900);
 
 /* wiring */
-const CL={run(){rsel=null;renderRuns()},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()}};
+const CL={run(){const id=rsel;rsel=null;renderRuns();const r=$(`tr[data-run="${id}"]`);r&&r.focus({preventScroll:true})},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()}};
 document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
   if(t=g('[data-toast]'))toast(t.dataset.toast);
   if(t=g('[data-close]'))CL[t.dataset.close]();
   else if(t=g('[data-ro]')){ro=t.dataset.ro;renderRuns()}
-  else if(t=g('tr[data-run]')){rsel=t.dataset.run;renderRuns()}
+  else if(t=g('tr[data-run]')){rsel=t.dataset.run;renderRuns();if(matchMedia('(max-width:1100px)').matches){const c=$('#rdetail [data-close]');c&&c.focus()}}
   else if(t=g('tr[data-batch]')){bsel=t.dataset.batch;renderQueue()}
   else if(t=g('[data-qk]')){qk=t.dataset.qk;bsel=null;renderQueue()}
   else if(t=g('[data-qs]')){qs=t.dataset.qs;bsel=null;renderQueue()}
@@ -702,6 +730,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){e.preventDefault();go('search');$('#sq').focus()}
 });
 renderIdeas();renderPosts();renderRuns();renderQueue();renderSearch();renderSources();renderDoctor();
+document.addEventListener('click',e=>{if(e.target.id==='rsplit'&&rsel&&matchMedia('(max-width:1100px)').matches)CL.run()});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||!menu.hidden)return;if($('#runs').classList.contains('on')&&rsel)CL.run();else if($('#queue').classList.contains('on')&&bsel)CL.batch();else if($('#ideas').classList.contains('on')&&isel!==null)CL.idea()});
 </script>
 </body>
 </html>
