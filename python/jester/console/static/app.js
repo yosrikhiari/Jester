@@ -310,7 +310,7 @@ async function runAction(path, body, el) {
     // ok:false has three flavours here: a transport/handler error, a non-zero
     // CLI exit, and "the check ran and found things". Name the right one.
     const why = res.error
-      || (res.findings ? `${res.findings.length} finding(s)` : '')
+      || (res.findings ? `${plural(res.findings.length, 'finding')}` : '')
       || (res.code !== undefined ? `exit ${res.code}` : 'refused');
     toast(`${label}: ${why}`, 'bad');
   } else if (res.idle) {
@@ -320,21 +320,21 @@ async function runAction(path, body, el) {
     toast(`${label}: ${res.note}`, 'bad');
   } else {
     const detail = [
-      res.findings ? `${res.findings.length} finding(s)` : '',
+      res.findings ? `${plural(res.findings.length, 'finding')}` : '',
       res.requeued !== undefined ? `${res.requeued} requeued` : '',
       res.fixed !== undefined ? `${res.fixed} reembedded` : '',
-      res.queued_new_comments !== undefined ? `${res.queued_new_comments} new comment(s)` : '',
+      res.queued_new_comments !== undefined ? `${plural(res.queued_new_comments, 'new comment')}` : '',
       res.archived
-        ? `+${res.archived.nuggets} nugget(s), +${res.archived.ideas} idea(s)` : '',
+        ? `+${plural(res.archived.nuggets, 'nugget')}, +${plural(res.archived.ideas, 'idea')}` : '',
       res.counts && res.out_dir
-        ? `${res.counts.nuggets} nugget(s) + ${res.counts.ideas} idea(s) → ${res.out_dir}` : '',
+        ? `${plural(res.counts.nuggets, 'nugget')} + ${plural(res.counts.ideas, 'idea')} → ${res.out_dir}` : '',
     ].filter(Boolean).join(' · ');
     toast(`${label}: ok${detail ? ' — ' + detail : ''}`, 'ok');
   }
   // A multi-step run reports each step's own log, not just the last one's.
   (res.steps || []).forEach(st => {
     if (st.queued_new_comments !== undefined) {
-      toast(`${st.step}: ${st.queued_new_comments} new comment(s) queued`,
+      toast(`${st.step}: ${plural(st.queued_new_comments, 'new comment')} queued`,
             st.queued_new_comments ? 'ok' : 'bad');
     }
   });
@@ -635,7 +635,7 @@ async function parkSource(name) {
   loadSources();
 }
 async function deleteSource(name, btn) {
-  if (!confirm(`Remove "${name}" from the source list?`)) return;
+  if (!confirm(`Remove "${name}" from the source list? You can re-add it any time.`)) return;
   const req = () => api('/api/sources/delete', { name });
   const res = await (btn ? busy(btn, req) : req());
   if (res.ok === false) { toast(res.error, 'bad'); return; }
@@ -741,7 +741,7 @@ function renderSources() {
       <td class="mono">${esc(s.name)}</td>
       <td><span class="chip">${esc(s.kind || 'unknown')}</span></td>
       <td><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"
-             class="truncate" style="display:block;max-inline-size:34ch"
+             class="truncate src-url"
              title="${esc(s.url)}">${esc(s.url.replace(/^https?:\/\/(www\.)?/, ''))}</a>
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
       <td>${fetchCell(s)}</td>
@@ -1072,8 +1072,8 @@ function renderIdeas() {
     const overall = i.overall == null ? null : +i.overall;
     const tone = overall == null ? '' : overall >= 7.5 ? 'score--hi' : overall >= 5 ? 'score--mid' : 'score--lo';
     return `<tr data-id="${i.id}" class="clickable">
-      <td><button class="btn btn--ghost btn--sm" data-open style="max-inline-size:46ch;text-align:start;white-space:normal;padding-inline:0"><b>${esc(i.title)}</b></button>
-          <div class="xs" style="max-inline-size:52ch">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
+      <td><button class="btn btn--ghost btn--sm idea-title" data-open><b>${esc(i.title)}</b></button>
+          <div class="xs idea-sub">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
       <td class="num"><span class="score ${tone}">${num(overall)}</span>${scoreWait(i)}</td>
       <td>${scoreBars(i)}</td>
       <td>${pill(i.status)}</td>
@@ -1903,7 +1903,7 @@ function queueRow(b) {
   return `<tr data-batch="${b.id}">
     <td class="mono xs">${b.id}</td>
     <td><span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform || '—')}</span>
-        <div class="xs truncate" style="max-inline-size:38ch" title="${esc(b.source || '')}">${esc(b.thread_id || b.source || '')}</div></td>
+        <div class="xs truncate batch-src" title="${esc(b.source || '')}">${esc(b.thread_id || b.source || '')}</div></td>
     <td>${n}</td>
     <td class="xs">${esc(ago(b.created_at))}</td>
     <td class="mono xs">${esc(b.run_id || '')}</td>
@@ -2726,7 +2726,7 @@ function roleCard(role) {
       <select data-provider="${role}" aria-label="Provider for ${role}">
         ${providers.map(o => `<option value="${esc(o)}" ${o === r.provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
       </select>
-      <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}" style="flex:1;min-inline-size:0">
+      <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}">
         ${modelOptions(role, r.provider, r.model)}
       </select>
     </div>
@@ -2884,9 +2884,9 @@ function describeScope(opts, total) {
     ? `${names.length} of ${total} source${total === 1 ? '' : 's'}`
     : 'every enabled source';
   const depth = [];
-  if (opts && opts.max_posts) depth.push(`${opts.max_posts} post(s)`);
-  if (opts && opts.max_comments) depth.push(`${opts.max_comments} comment(s)`);
-  if (opts && opts.max_ideas) depth.push(`${opts.max_ideas} idea(s)`);
+  if (opts && opts.max_posts) depth.push(`${plural(opts.max_posts, 'post')}`);
+  if (opts && opts.max_comments) depth.push(`${plural(opts.max_comments, 'comment')}`);
+  if (opts && opts.max_ideas) depth.push(`${plural(opts.max_ideas, 'idea')}`);
   return where + ' · ' + (depth.length ? `max ${depth.join(', ')}` : 'no depth ceiling');
 }
 
@@ -3022,7 +3022,7 @@ function renderScheduleScope(res) {
   $('#sched-sources-hint').textContent = off
     ? `${sources.length - off} of ${sources.length} can be fetched; `
       + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
-    : `${sources.length} source(s) available.`;
+    : `${plural(sources.length, 'source')} available.`;
 
   $('#sched-max-posts').value = opts.max_posts || '';
   $('#sched-max-comments').value = opts.max_comments || '';
@@ -3299,7 +3299,7 @@ async function loadSourcesForModal() {
   $('#sources-hint').textContent = off
     ? `${selectable.length} of ${SOURCES_LIST.length} can be fetched; `
       + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
-    : `${SOURCES_LIST.length} source(s) available.`;
+    : `${plural(SOURCES_LIST.length, 'source')} available.`;
 }
 
 // The header box reflects the boxes below it in both directions, including the

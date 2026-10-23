@@ -101,6 +101,12 @@ select[data-mark]{inline-size:130px}
 input[data-map-key]{inline-size:120px}
 input[data-map-val]{inline-size:80px}
 select[data-provider]{inline-size:40%}
+/* truncation caps and the model select's fill, formerly inline in the row templates */
+.src-url{display:block;max-inline-size:34ch}
+.idea-title{max-inline-size:46ch;text-align:start;white-space:normal;padding-inline:0}
+.idea-sub{max-inline-size:52ch}
+.batch-src{max-inline-size:38ch}
+select[data-model]{flex:1;min-inline-size:0}
 .hidden{display:none !important}
 .row{display:flex;gap:var(--s-3);flex-wrap:wrap;align-items:center}
 .row-end{margin-inline-start:auto}
@@ -128,7 +134,7 @@ select[data-provider]{inline-size:40%}
 }
 .brand>span:last-child{min-inline-size:0}
 .brandmark{inline-size:100%;block-size:100%;display:block;object-fit:cover;image-rendering:pixelated;transform:scale(1.15)}
-.brand strong{display:block;font-size:17px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.brand strong{display:block;font-size:16px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
 .brand em{
   display:block;font-style:normal;color:var(--nav-muted);font-size:var(--fs-xs);
   text-transform:uppercase;letter-spacing:.08em;font-weight:500;
@@ -585,7 +591,7 @@ pre{
 #sched-kpis{grid-template-columns:repeat(auto-fit,minmax(168px,1fr))}
 #sched-ticks td{white-space:nowrap}
 #runs-body td:first-child,#sched-ticks td:first-child{white-space:nowrap}
-.row-actions{display:flex;gap:.35rem;align-items:center;justify-content:flex-end}
+.row-actions{display:flex;gap:var(--s-3);align-items:center;justify-content:flex-end}
 
 /* â”€â”€ grouped tables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .grp > td{padding:0;border-block-end:1px solid var(--line);background:var(--bg)}
