@@ -458,7 +458,6 @@ async function loadOverview() {
     $('#btn-live-models').classList.toggle('hidden',
       !(INFRA.ollama.up && INFRA.ollama.models.some(m => /qwen|mistral|phi|llama|gemma/i.test(m))));
     $('#btn-ingest-live').classList.toggle('hidden', !INFRA.can_ingest_live);
-    $('#btn-ingest-mock').classList.toggle('hidden', !INFRA.worker_go_available);
   }
 }
 /** Why a run kept nothing, from the flags it raised. "0 / 0" for two weeks was
