@@ -91,6 +91,13 @@ button,input,select,textarea{font:inherit;color:inherit}
 .sm{font-size:var(--fs-sm)}
 .mono{font-family:var(--font-mono);font-size:var(--fs-xs)}
 .mute{color:var(--ink-mute)}
+/* widths that used to be inline in the markup: the page filter inputs, the
+   archive search, the idea row's status select, the new-chat and modal fill */
+#ideas-q,#posts-q,#nuggets-q,#signals-q{inline-size:220px}
+#search-q{inline-size:300px}
+#clusters-q{inline-size:200px}
+select[data-mark]{inline-size:130px}
+#chat-new{inline-size:100%}
 .hidden{display:none !important}
 .row{display:flex;gap:var(--s-3);flex-wrap:wrap;align-items:center}
 .row-end{margin-inline-start:auto}

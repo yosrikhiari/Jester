@@ -1190,7 +1190,7 @@ async function showIdea(id) {
     <div class="row">${pill(i.status)}
       <span class="score">${num(i.overall)}</span><span class="xs">overall</span>${scoreWait(i)}
       <span class="row-end row" style="gap:var(--s-2)">
-        <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}" style="inline-size:130px">
+        <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}">
           ${IDEA_STATUSES.map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
         </select>
         <button class="btn btn--sm" data-resynth="${i.id}" title="Re-run synthesis on this idea's nuggets">resynth</button>
