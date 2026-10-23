@@ -843,11 +843,19 @@ th[data-sort][aria-sort="descending"]::after{content:" â†“";color:var(--ink
 .shell:has(section[data-page="nuggets"]:not([hidden])) #nuggets-facets{
   overflow-y:auto;overscroll-behavior:contain;
 }
+/* the runs-page analog (see "runs: fixed-height page"): without the card
+   becoming a flex column the .nfeed{flex:1} is inert in block layout, the
+   card is overflow:hidden under a 100dvh shell, and the feed has no scroll
+   path at all on desktop */
+.shell:has(section[data-page="nuggets"]:not([hidden])) main>section[data-page="nuggets"] .card--flush{
+  flex:1;min-block-size:0;display:flex;flex-direction:column;
+}
 @media (max-width:900px){
   .shell:has(section[data-page="nuggets"]:not([hidden])){block-size:auto}
   .shell:has(section[data-page="nuggets"]:not([hidden])) main{overflow:visible}
   .shell:has(section[data-page="nuggets"]:not([hidden])) main>section[data-page="nuggets"]:not([hidden]){flex:none}
   .shell:has(section[data-page="nuggets"]:not([hidden])) #nuggets-layout{flex:none;grid-template-rows:none}
+  .shell:has(section[data-page="nuggets"]:not([hidden])) main>section[data-page="nuggets"] .card--flush{flex:none}
   .nfeed{max-block-size:min(70vh,640px)}
 }
 /* clusters grid */
