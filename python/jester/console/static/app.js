@@ -493,8 +493,12 @@ $('#ov-banners').addEventListener('click', e => {
 $('#quick-actions').addEventListener('click', e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
-  // "run pipeline" is configured before it runs; every other action is
-  // immediate. openPipelineModal is defined further down — this listener only
+  // A data-confirm attribute makes a button ask before it acts. The attribute
+  // carries the specifics (what happens, is it recoverable), so the guard is
+  // one generic check instead of a branch per destructive edge.
+  if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
+  // "run pipeline" is configured before it runs; the rest act immediately.
+  // openPipelineModal is defined further down — this listener only
   // ever runs on a click, long after the module has finished evaluating.
   if (btn.dataset.act === '/api/run' && !btn.dataset.liveModels) {
     openPipelineModal();

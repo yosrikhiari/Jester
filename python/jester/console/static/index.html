@@ -79,7 +79,7 @@
         <b class="ah">Data</b>
         <button class="btn btn--sm" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
         <button class="btn btn--sm" data-act="/api/seed-mock">seed fixture</button>
-        <button class="btn btn--danger btn--sm" data-act="/api/retention">retention sweep</button>
+        <button class="btn btn--danger btn--sm" data-act="/api/retention" data-confirm="Run the retention sweep? Nuggets past their retention window will be deleted.">retention sweep</button>
       </div>
       <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
         <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
