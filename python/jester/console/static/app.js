@@ -3539,7 +3539,7 @@ function renderSignalRuns(runs, sources) {
   }
   // limited: the board asked for less and the chain moved on; skipped: it
   // was still sitting out, so it was not asked at all.
-  const tone = { ok: 'tone-ok', partial: 'tone-warn', limited: 'tone-warn', skipped: 'tone-neutral', failed: 'tone-bad' };
+  const tone = { ok: 'tone-ok', partial: 'tone-warn', limited: 'tone-warn', skipped: 'tone-neutral', failed: 'tone-failed' };
   body.innerHTML = runs.map(r =>
     '<tr><td class="mono xs">' + esc((r.started_utc || '').slice(0, 19).replace('T', ' ')) + '</td>'
     + '<td>' + esc(r.kind) + '</td><td class="mono xs">' + esc(r.source) + '</td>'
@@ -3573,7 +3573,7 @@ function emptyMessage() {
  * function is where it stopped being readable. */
 function signalFlags(r) {
   const flags = [];
-  if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
+  if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-failed">fetch failed</span>');
   if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
   if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
   // An untouched buyer signal is not a neutral fact — it is the reason none
@@ -3604,7 +3604,7 @@ const OUTCOME_CHOICES = [
   ['unfit', 'unfit', 'should never have been a lead: a fault in the rules'],
 ];
 const OUTCOME_TONE = { picked: 'tone-info', contacted: 'tone-info', replied: 'tone-ok',
-                       meeting: 'tone-ok', won: 'tone-ok', no: 'tone-neutral', unfit: 'tone-bad' };
+                       meeting: 'tone-ok', won: 'tone-ok', no: 'tone-neutral', unfit: 'tone-failed' };
 let SIG_LIST = [];
 // The row whose editor is open, and what the editor holds so far.
 const MARK = { rid: null, pick: '', note: '', saving: false };
