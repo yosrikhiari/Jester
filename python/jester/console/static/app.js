@@ -2891,11 +2891,14 @@ function renderSchedule(res) {
   const on = res.installed;
   const opts = res.options || {};
   const sources = res.sources || [];
+  // Same denominator the form summary counts (fetchable sources), or the
+  // banner and the bar can read as disagreeing about how many sources exist.
+  const supported = sources.filter(s => s.supported).length;
 
   $('#sched-banner').innerHTML = on
     ? `<div class="banner banner--ok"><span aria-hidden="true">✓</span><span>
          <b>Scheduled</b>${esc(res.cadence || 'registered')} via ${esc(res.scheduler)},
-         scraping ${esc(describeScope(opts, sources.length))}.</span></div>`
+         scraping ${esc(describeScope(opts, supported))}.</span></div>`
     : `<div class="banner"><span aria-hidden="true">◷</span><span>
          <b>Nothing scheduled</b>Choose what to scrape and how often; the host scheduler
          will run the full loop for you, with this console closed.</span></div>`;
@@ -2907,7 +2910,7 @@ function renderSchedule(res) {
     ['next run', esc(res.next_run || '—')],
     // What it will FETCH, read back from the launcher the scheduler runs —
     // not from this form, which may hold edits nobody has saved.
-    ['scrapes', on ? esc(describeScope(opts, sources.length)) : '—'],
+    ['scrapes', on ? esc(describeScope(opts, supported)) : '—'],
     ['task name', `<span class="mono">${esc(res.task_name)}</span>`],
     ['runs', `<span class="mono">${esc(res.command)}</span>`],
   ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -3051,11 +3054,11 @@ function schedFormScope() {
     ? 'every enabled source'
     : `${picked} of ${boxes.length} source${boxes.length === 1 ? '' : 's'}`;
 }
+const schedNum = id => {
+  const v = parseInt($(id).value, 10);
+  return Number.isFinite(v) && v > 0 ? v : null;
+};
 function schedFormDepth() {
-  const num = id => {
-    const v = parseInt($(id).value, 10);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  };
   const parts = [['#sched-max-posts', 'post'], ['#sched-max-comments', 'comment'],
                  ['#sched-max-ideas', 'idea']].map(([id, noun]) => [num(id), noun])
     .filter(([v]) => v).map(([v, noun]) => `${v.toLocaleString()} ${noun}(s)`);
@@ -3065,7 +3068,9 @@ function schedFormDepth() {
 }
 function schedFormMatches() {
   if (!SCHED?.installed) return false;
-  const norm = o => JSON.stringify([ ...(o?.only || []).sort(), o?.max_posts ?? '', o?.max_comments ?? '', o?.max_ideas ?? '' ]);
+  // Copy-then-sort: sorting SCHED.options.only in place would scramble the
+  // registered schedule the summary itself re-reads.
+  const norm = o => JSON.stringify([ (o?.only || []).slice().sort(), o?.max_posts ?? '', o?.max_comments ?? '', o?.max_ideas ?? '' ]);
   return norm(SCHED.options) === norm(scheduleScope());
 }
 function renderSchedSum() {
@@ -3091,15 +3096,11 @@ function renderSchedSum() {
 function scheduleScope() {
   const boxes = $$('.sched-src:not([disabled])');
   const picked = boxes.filter(b => b.checked).map(b => b.dataset.sourceName);
-  const num = id => {
-    const v = parseInt($(id).value, 10);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  };
   return {
     only: picked.length === boxes.length ? [] : picked,
-    max_posts: num('#sched-max-posts'),
-    max_comments: num('#sched-max-comments'),
-    max_ideas: num('#sched-max-ideas'),
+    max_posts: schedNum('#sched-max-posts'),
+    max_comments: schedNum('#sched-max-comments'),
+    max_ideas: schedNum('#sched-max-ideas'),
   };
 }
 
@@ -3111,8 +3112,16 @@ $('#sched-sources').addEventListener('change', e => {
   handleGroupToggle(e, '#sched-sources');
   syncSchedSelectAll();
 });
+// The summary bar is a live region: a full innerHTML rebuild per keystroke
+// would announce the whole page to a screen reader per character, so keys
+// trail through a short debounce instead (opens of the page render directly).
+let schedSumTimer = null;
+const renderSchedSumSoon = () => {
+  clearTimeout(schedSumTimer);
+  schedSumTimer = setTimeout(renderSchedSum, 300);
+};
 ['#sched-max-posts', '#sched-max-comments', '#sched-max-ideas', '#sched-every', '#sched-at']
-  .forEach(id => $(id).addEventListener('input', renderSchedSum));
+  .forEach(id => $(id).addEventListener('input', renderSchedSumSoon));
 
 async function loadSchedule() {
   const res = await api('/api/schedule');
@@ -3361,6 +3370,14 @@ $('#modal-run').onclick = async () => {
 // ── run strip: what is running now, on every page ────────────────────────
 async function pollRunning() {
   const res = await api('/api/running');
+  // The nav LED rides the same heartbeat — red "console down" when the
+  // poll cannot get an answer, rather than a static claim nobody sets.
+  const led = $('#nav-health .led');
+  if (led) {
+    const up = res.ok !== false;
+    led.classList.toggle('bad', !up);
+    led.parentElement.lastElementChild.textContent = up ? 'console up' : 'console down';
+  }
   const strip = $('#runstrip');
   if (!strip) return;
   const runs = (res.ok !== false && res.running) || [];
@@ -3442,6 +3459,10 @@ let SIG_FACETS = {};
 let SIG_TOTAL = 0;
 let SIG_EXISTS = true;
 let SFACETS_OPEN = FACETS_OPEN;
+try {
+  const saved = localStorage.getItem('jester-sfacets');
+  if (saved !== null) SFACETS_OPEN = saved === 'open';
+} catch { /* private mode */ }
 
 const AUDIENCE_TONE = { buyer: 'tone-ok', practitioner: 'tone-info', none: 'tone-neutral' };
 
@@ -3451,6 +3472,7 @@ function applySignalFacetsOpen() {
   layout.classList.toggle('is-collapsed', !SFACETS_OPEN);
   btn.setAttribute('aria-expanded', String(SFACETS_OPEN));
   $('#sfacets-toggle-label').textContent = SFACETS_OPEN ? 'hide filters' : 'filters';
+  try { localStorage.setItem('jester-sfacets', SFACETS_OPEN ? 'open' : 'shut'); } catch { /* private mode */ }
 }
 
 function signalFacetBlock(title, key, items, limit) {

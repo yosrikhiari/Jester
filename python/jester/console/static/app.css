@@ -290,7 +290,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 }
 .pill .dot{inline-size:6px;block-size:6px;border-radius:50%;background:currentColor;flex:none}
 .pill.tone-done,.pill.tone-completed,.pill.tone-ok,.pill.tone-pass{background:var(--ok-bg);color:var(--done-ink)}
-.pill.tone-failed,.pill.tone-fail,.pill.tone-error{background:var(--bad-bg);color:var(--failed-ink)}
+.pill.tone-failed,.pill.tone-fail,.pill.tone-error,.pill.tone-bad{background:var(--bad-bg);color:var(--failed-ink)}
 .pill.tone-running,.pill.tone-warn,.pill.tone-building{background:var(--warn-bg);color:var(--running-ink)}
 .pill.tone-running .dot{animation:pulse 1.2s var(--ease) infinite}
 .pill.tone-queued,.pill.tone-pending,.pill.tone-new{background:var(--surface-3);color:var(--queued-ink)}
@@ -710,7 +710,7 @@ pre{
 .scraper-state{margin:var(--s-4) 0 0}
 .scraper-state b{color:var(--ink);font-weight:600}
 .scraper-state .bad{color:var(--failed-ink)}
-.scraper-state .pending{color:var(--running-ink)}
+.scraper-state .pending,.scraper-bar-state .pending{color:var(--running-ink)}
 /* infrastructure rows with consequences */
 .infra{display:flex;flex-direction:column;gap:var(--s-4)}
 .irow{display:flex;align-items:flex-start;gap:var(--s-4);padding:8px 10px;border-radius:var(--r-ctrl);border:1px solid var(--line);background:var(--bg);font-size:var(--fs-sm)}
@@ -793,8 +793,6 @@ th[data-sort][aria-sort="descending"]::after{content:" â†“";color:var(--ink
 .facet button[aria-pressed="true"]{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
 .facet button .n{margin-inline-start:auto;font-size:var(--fs-xs);color:var(--ink-mute);font-variant-numeric:tabular-nums}
 .facet .more{color:var(--ink-mute);font-size:var(--fs-xs);padding:4px 8px}
-.nug-insight{max-inline-size:60ch}
-.nug-from b{font-weight:500;display:block}
 /* nuggets: card feed (adaptation reference rev 5, option B) — same archive,
    one card per nugget. The insight is the thing being scanned, so it gets a
    body-size column of its own; provenance and flags hang off the foot. */
@@ -944,7 +942,7 @@ mark{background:var(--warn-bg);color:inherit;border-radius:3px;padding:0 2px}
   block-size:clamp(560px,calc(100vh - 360px),860px);
   background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;
 }
-.pill.tone-accent{background:var(--accent-soft);color:var(--plum-ink)}
+.pill.tone-accent,.pill.tone-info{background:var(--accent-soft);color:var(--plum-ink)}
 .cws-list{display:flex;flex-direction:column;min-block-size:0;border-inline-end:1px solid var(--line)}
 .cws-list-head{flex:none;display:flex;align-items:center;gap:var(--s-4);padding:var(--s-4) var(--s-5);border-block-end:1px solid var(--line)}
 .cws-list-head .seg button{padding:5px 10px}
@@ -1101,7 +1099,7 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
 /* The transcript reads as chat (adaptation reference rev 5): the operator's
    line hangs right with the accent tint, the assistant's hangs left
    outlined, and a system note sits centered without a bubble. */
-.chat-msg { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; margin: 0 0 var(--s-5); }
+.chat-msg { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
 .chat-msg .who {
   flex: none;
   inline-size: auto;
