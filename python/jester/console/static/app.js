@@ -3712,12 +3712,31 @@ function renderScraper() {
     changed && d.windows ? '<span class="pending">Unsaved: press save schedule.</span>' : '',
     scraperLauncherWords(d.launcher),
   ].filter(Boolean).join(' ');
+  // The bar wants one compact line, not the drawer's full prose: what is
+  // registered, just enough that "schedule & runs" reads as worth opening.
+  const regLabel = reg.mode === 'off' ? 'not scheduled'
+    : reg.mode === 'daily' ? `daily at ${esc(reg.at)}`
+    : `every ${Number(reg.mode) / 60}h`;
+  $('#scraper-bar-state').innerHTML = [
+    d.running ? '<span class="pending">run in progress</span>' : '',
+    regLabel,
+    !scraperNever(d.last_run) ? `last ${esc(ago(d.last_run))}` : '',
+  ].filter(Boolean).join(' · ');
   if (!SCRAPER.following) {
     const run = $('#scraper-run');
     run.disabled = !!d.running;
     run.textContent = d.running ? '⟳ scheduled run in progress' : '▶ run now';
   }
 }
+
+/* The drawer is a fold: open by the button in the bar, shut again the same
+ * way. State lives in the button's aria-expanded, not the page. */
+$('#scraper-drawer-toggle').addEventListener('click', () => {
+  const d = $('#scraper-drawer'), b = $('#scraper-drawer-toggle');
+  const open = d.classList.contains('hidden');
+  d.classList.toggle('hidden', !open);
+  b.setAttribute('aria-expanded', String(open));
+});
 
 async function loadScraper() {
   const d = await api('/api/signals/scraper');

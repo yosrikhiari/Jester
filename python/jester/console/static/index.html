@@ -426,7 +426,18 @@
 
     <div class="kpis kpis--4" id="signals-tiles"></div>
 
-    <div class="card scraper" style="margin-block-start:var(--s-5)">
+    <!-- The scraper reads as a status bar and keeps its working parts in a
+         drawer (adaptation reference rev 5, option E); everything inside the
+         drawer is the same real scraper card, just folded shut. -->
+    <div class="scraper-bar" id="scraper-bar">
+      <b>jobs scraper</b>
+      <span class="scraper-bar-state" id="scraper-bar-state"></span>
+      <button class="btn btn--sm" id="scraper-run">▶ run now</button>
+      <button class="btn btn--sm" id="scraper-drawer-toggle" aria-expanded="false" aria-controls="scraper-drawer">
+        schedule &amp; runs <span class="scraper-fold" aria-hidden="true">▾</span>
+      </button>
+    </div>
+    <div class="scraper-drawer hidden" id="scraper-drawer">
       <div class="scraper-top">
         <div>
           <h3>Jobs scraper</h3>
@@ -437,7 +448,6 @@
             New buyers land in the records below.</p>
           <p class="xs mono" id="scraper-cmd"></p>
         </div>
-        <button class="btn btn--primary" id="scraper-run">▶ run now</button>
       </div>
       <div class="scraper-sched">
         <span class="scraper-label">schedule</span>
@@ -446,18 +456,17 @@
         <button class="btn btn--sm" id="scraper-save" disabled>save schedule</button>
       </div>
       <p class="xs scraper-state" id="scraper-state"></p>
-    </div>
-
-    <div class="card card--flush" style="margin-block-start:var(--s-5)">
-      <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
-      <div class="tablewrap">
-        <table>
-          <thead><tr>
-            <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
-            <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
-          </tr></thead>
-          <tbody id="signal-runs-body"></tbody>
-        </table>
+      <div class="card card--flush">
+        <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
+              <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
+            </tr></thead>
+            <tbody id="signal-runs-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 

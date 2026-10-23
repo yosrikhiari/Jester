@@ -685,6 +685,25 @@ pre{
   .post-more{padding-inline:var(--s-5)}
   .pcom{grid-template-columns:36px minmax(0,1fr);gap:var(--s-4)}
 }
+/* problem signals: the jobs scraper as a compact bar with its working parts
+   folded into a drawer (adaptation reference rev 5, option E) */
+.scraper-bar{
+  display:flex;align-items:center;gap:var(--s-4);flex-wrap:wrap;
+  padding:var(--s-3) var(--s-5);background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-card);
+}
+.scraper-bar b{font-size:var(--fs-sm);font-weight:600}
+.scraper-bar-state{flex:1 1 200px;min-inline-size:0;font-size:var(--fs-sm);color:var(--ink-mute);overflow-wrap:anywhere}
+.scraper-fold{display:inline-block;font-size:10px;color:var(--ink-soft);transition:transform var(--t-fast) var(--ease)}
+.scraper-bar [aria-expanded="true"] .scraper-fold{transform:rotate(180deg)}
+.scraper-drawer{
+  display:flex;flex-direction:column;gap:var(--s-5);
+  padding:var(--s-6);background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-card);
+}
+.scraper-drawer .scraper-state{margin:0}
+.scraper-drawer .card--flush{border-radius:var(--r-ctrl)}
+.scraper-drawer .tablewrap{max-block-size:min(46vh,420px);overflow-y:auto;overscroll-behavior:contain}
 /* problem signals: the jobs scraper card (run now + its own schedule) */
 .scraper-top{display:flex;align-items:flex-start;gap:var(--s-6);flex-wrap:wrap}
 .scraper-top>div{flex:1 1 320px;min-inline-size:0}
