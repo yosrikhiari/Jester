@@ -2880,6 +2880,7 @@ function renderSchedule(res) {
   const manual = !res.windows;
   $('#sched-install-every').textContent = manual ? 'show crontab line' : 'set interval';
   $('#sched-install-daily').textContent = manual ? 'show daily line' : 'set daily';
+  renderSchedSum();
 }
 
 function labelMinutes(m) {
@@ -2984,6 +2985,54 @@ function syncSchedSelectAll() {
   // A schedule that fetches nothing is not a schedule.
   $('#sched-install-every').disabled = on === 0;
   $('#sched-install-daily').disabled = on === 0;
+  renderSchedSum();
+}
+
+/* ── schedule: live form summary (adaptation reference rev 5) ───────────
+ * One sentence for what the form would register, with a pill that says how
+ * it stands against the registered schedule. Scope/depth compared knob by
+ * knob; cadence is deliberately NOT claimed (the form offers two paths).
+ * scope: "every enabled source" follows the sources tab, an explicit
+ * selection names itself. */
+function schedFormScope() {
+  const boxes = $$('.sched-src:not([disabled])');
+  const picked = boxes.filter(b => b.checked).length;
+  return picked === boxes.length
+    ? 'every enabled source'
+    : `${picked} of ${boxes.length} source${boxes.length === 1 ? '' : 's'}`;
+}
+function schedFormDepth() {
+  const num = id => {
+    const v = parseInt($(id).value, 10);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  };
+  const parts = [['#sched-max-posts', 'post'], ['#sched-max-comments', 'comment'],
+                 ['#sched-max-ideas', 'idea']].map(([id, noun]) => [num(id), noun])
+    .filter(([v]) => v).map(([v, noun]) => `${v.toLocaleString()} ${noun}(s)`);
+  return parts.length
+    ? `, up to ${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts.at(-1) : parts[0]} per run`
+    : ', with no ceiling on posts, comments or ideas';
+}
+function schedFormMatches() {
+  if (!SCHED?.installed) return false;
+  const norm = o => JSON.stringify([ ...(o?.only || []).sort(), o?.max_posts ?? '', o?.max_comments ?? '', o?.max_ideas ?? '' ]);
+  return norm(SCHED.options) === norm(scheduleScope());
+}
+function renderSchedSum() {
+  const bar = $('#sched-sum');
+  if (!bar) return;
+  const res = SCHED || {};
+  const every = parseInt($('#sched-every').value, 10);
+  const cadence = Number.isFinite(every) && every > 0
+    ? `every ${every} minute${every === 1 ? '' : 's'}, or daily at ${esc($('#sched-at').value) || '—'}`
+    : `an invalid interval (every field), or daily at ${esc($('#sched-at').value) || '—'}`;
+  const [state, cls] = !res.installed ? ['not installed', 'tone-neutral']
+    : schedFormMatches() ? ['installed', 'tone-done']
+    : ['differs from the registered schedule', 'tone-warn'];
+  bar.innerHTML = `<b>This form would register:</b>
+    <span class="st">${cadence} via ${esc(res.scheduler || 'the host scheduler')} — scraping
+    ${esc(schedFormScope())}${esc(schedFormDepth())}.</span>
+    <span class="pill pill--sm ${cls}">${esc(state)}</span>`;
 }
 
 /** The scope the form is currently describing. Ticking every box posts an
@@ -3012,6 +3061,8 @@ $('#sched-sources').addEventListener('change', e => {
   handleGroupToggle(e, '#sched-sources');
   syncSchedSelectAll();
 });
+['#sched-max-posts', '#sched-max-comments', '#sched-max-ideas', '#sched-every', '#sched-at']
+  .forEach(id => $(id).addEventListener('input', renderSchedSum));
 
 async function loadSchedule() {
   const res = await api('/api/schedule');
