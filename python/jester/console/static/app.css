@@ -98,6 +98,9 @@ button,input,select,textarea{font:inherit;color:inherit}
 #clusters-q{inline-size:200px}
 select[data-mark]{inline-size:130px}
 #chat-new{inline-size:100%}
+input[data-map-key]{inline-size:120px}
+input[data-map-val]{inline-size:80px}
+select[data-provider]{inline-size:40%}
 .hidden{display:none !important}
 .row{display:flex;gap:var(--s-3);flex-wrap:wrap;align-items:center}
 .row-end{margin-inline-start:auto}

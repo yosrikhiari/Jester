@@ -2578,8 +2578,8 @@ async function loadConfig() {
       // A platform → number map. It rendered as "[object Object]" before.
       const rows = Object.entries(meta.value);
       control = `<div data-knob-map="${key}"><table class="mapknob">
-        <tbody>${rows.map(([k, v]) => `<tr data-map-row><td><input data-map-key value="${esc(k)}" placeholder="platform" style="inline-size:120px"></td>
-          <td><input data-map-val type="number" min="1" max="200" step="1" value="${esc(v)}" style="inline-size:80px"></td>
+        <tbody>${rows.map(([k, v]) => `<tr data-map-row><td><input data-map-key value="${esc(k)}" placeholder="platform"></td>
+          <td><input data-map-val type="number" min="1" max="200" step="1" value="${esc(v)}"></td>
           <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`).join('')}</tbody></table>
         <button class="btn btn--ghost btn--sm" data-map-add>+ platform</button></div>`;
     } else if (typeof meta.value === 'boolean') {
@@ -2626,8 +2626,8 @@ $('#cfg-knobs').addEventListener('click', e => {
   const add = e.target.closest('[data-map-add]');
   if (add) {
     const tbody = add.parentElement.querySelector('tbody');
-    tbody.insertAdjacentHTML('beforeend', `<tr data-map-row><td><input data-map-key placeholder="platform" style="inline-size:120px"></td>
-      <td><input data-map-val type="number" min="1" max="200" step="1" value="3" style="inline-size:80px"></td>
+    tbody.insertAdjacentHTML('beforeend', `<tr data-map-row><td><input data-map-key placeholder="platform"></td>
+      <td><input data-map-val type="number" min="1" max="200" step="1" value="3"></td>
       <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`);
     $$('[data-map-key], [data-map-val]', tbody).forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
     syncSavebar();
@@ -2719,7 +2719,7 @@ function roleCard(role) {
       <span class="row-end"><button class="btn btn--ghost btn--sm" data-test="${role}">test</button></span>
     </div>
     <div class="row" style="gap:var(--s-2)">
-      <select data-provider="${role}" aria-label="Provider for ${role}" style="inline-size:40%">
+      <select data-provider="${role}" aria-label="Provider for ${role}">
         ${providers.map(o => `<option value="${esc(o)}" ${o === r.provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
       </select>
       <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}" style="flex:1;min-inline-size:0">
