@@ -45,7 +45,7 @@ html[data-theme="light"]{
   --lav:#6E70B8;
   --queued:#8E8E98; --running:#A9362F; --done:#1F7A4C; --failed:#B3362F; --requeued:#44444C;
   --plum-ink:#A9362F; --coral-ink:#A9362F;
-  --done-ink:#1F7A4C; --running-ink:#A9362F; --failed-ink:#A9362F;
+  --done-ink:#1F7A4C; --running-ink:#A9362F; --failed-ink:#A9362F; --warn-ink:#8A6100;
   --queued-ink:#5B5B64; --requeued-ink:#44444C; --mute-ink:#5B5B64;
   --shadow-1:none;
   --shadow-2:0 1px 2px rgba(0,0,0,.04);
@@ -65,7 +65,7 @@ html[data-theme="dark"]{
   --lav:#8E90D8;
   --queued:#8E8E98; --running:#F08C85; --done:#5AC48C; --failed:#EF7D75; --requeued:#D0D0D8;
   --plum-ink:#F08C85; --coral-ink:#F08C85;
-  --done-ink:#7BD6A3; --running-ink:#F08C85; --failed-ink:#F08C85;
+  --done-ink:#7BD6A3; --running-ink:#F08C85; --failed-ink:#F08C85; --warn-ink:#E0B341;
   --queued-ink:#9A9AA6; --requeued-ink:#D0D0D8; --mute-ink:#9A9AA6;
   --shadow-1:none;
   --shadow-2:none;
@@ -303,7 +303,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
 .pill .dot{inline-size:6px;block-size:6px;border-radius:50%;background:currentColor;flex:none}
 .pill.tone-done,.pill.tone-completed,.pill.tone-ok,.pill.tone-pass{background:var(--ok-bg);color:var(--done-ink)}
 .pill.tone-failed,.pill.tone-fail,.pill.tone-error,.pill.tone-bad{background:var(--bad-bg);color:var(--failed-ink)}
-.pill.tone-running,.pill.tone-warn,.pill.tone-building{background:var(--warn-bg);color:var(--running-ink)}
+.pill.tone-running,.pill.tone-warn,.pill.tone-building{background:var(--warn-bg);color:var(--warn-ink)}
 .pill.tone-running .dot{animation:pulse 1.2s var(--ease) infinite}
 .pill.tone-queued,.pill.tone-pending,.pill.tone-new{background:var(--surface-3);color:var(--queued-ink)}
 .pill.tone-requeued,.pill.tone-reviewed{background:var(--surface-3);color:var(--requeued-ink)}
@@ -316,7 +316,7 @@ main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min
   font-size:var(--fs-xs);color:var(--ink-mute);background:var(--surface);white-space:nowrap;
 }
 .chip--ok{border-color:transparent;background:var(--ok-bg);color:var(--done-ink)}
-.chip--warn{border-color:transparent;background:var(--warn-bg);color:var(--running-ink)}
+.chip--warn{border-color:transparent;background:var(--warn-bg);color:var(--warn-ink)}
 .chip--bad{border-color:transparent;background:var(--bad-bg);color:var(--failed-ink)}
 .chip--sched{border-color:transparent;background:var(--accent-soft);color:var(--plum-ink)}
 .chiprow{display:flex;flex-wrap:wrap;gap:var(--s-4)}
