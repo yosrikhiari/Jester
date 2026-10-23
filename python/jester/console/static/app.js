@@ -643,8 +643,11 @@ async function deleteSource(name, btn) {
 //: re-render rather than a round trip — and so a fold survives one.
 let SOURCES_RES = { sources: [] };
 
+let SOURCES_TOKE = 0;
 async function loadSources() {
+  const toke = ++SOURCES_TOKE;
   const [res, infra] = await Promise.all([api('/api/sources'), INFRA ? Promise.resolve(INFRA) : api('/api/infra')]);
+  if (toke !== SOURCES_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   if (infra && infra.ok !== false) INFRA = infra;
   SOURCES_RES = res;
@@ -1094,9 +1097,12 @@ function renderIdeasNote() {
   box.innerHTML = `<div class="banner"><span aria-hidden="true">ℹ</span><span style="flex:1"><b>No new ideas in the last ${recent.length} completed runs</b>Most likely because ${esc(why)}. The nuggets stay queued and are picked up once the cause clears.</span>
     <button class="btn btn--sm" data-go="runs">open Runs</button> <button class="btn btn--sm" data-go="doctor">Doctor</button></div>`;
 }
+let IDEAS_TOKE = 0;
 async function loadIdeas() {
+  const toke = ++IDEAS_TOKE;
   const qs = new URLSearchParams({ status: IDEA_FILTER, q: IDEA.q, sort: IDEA.sort, dir: IDEA.dir, offset: IDEA.offset, limit: IDEA_PAGE });
   const [res, runs] = await Promise.all([api('/api/ideas?' + qs), RUNS.length ? Promise.resolve(null) : api('/api/runs')]);
+  if (toke !== IDEAS_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   if (runs && runs.ok !== false) RUNS = runs.runs || [];
   IDEAS = res.ideas || [];
@@ -2380,10 +2386,13 @@ $('[data-page="posts"]').addEventListener('keydown', e => {
   }
 });
 
+let NUG_TOKE = 0;
 async function loadNuggets() {
+  const toke = ++NUG_TOKE;
   const qs = new URLSearchParams({ offset: NUG.offset, limit: NUGGET_PAGE, platform: NUG.platform,
     community: NUG.community, category: NUG.category, flag: NUG.flag, q: NUG.q });
   const res = await api('/api/nuggets/page?' + qs.toString());
+  if (toke !== NUG_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   NUGGETS = res.nuggets || [];
   NUGGET_TOTAL = res.total || 0;
@@ -3682,7 +3691,9 @@ function renderSignalPager() {
     + '<button class="btn btn--ghost btn--sm" data-spage="next" ' + (to < SIG_TOTAL ? '' : 'disabled') + '>next &rsaquo;</button>';
 }
 
+let SIG_TOKE = 0;
 async function loadSignals() {
+  const toke = ++SIG_TOKE;
   const qs = new URLSearchParams(
     Object.entries(SIG).filter(e => e[1] !== '' && e[1] !== null)).toString();
   const pair = await Promise.all([
@@ -3690,7 +3701,7 @@ async function loadSignals() {
     api('/api/signals/runs').catch(() => null),
   ]);
   const d = pair[0]; const runs = pair[1];
-  if (!d) return;
+  if (toke !== SIG_TOKE || !d) return; // stale fetch, or both halves failed
   SIG_EXISTS = d.exists !== false;
   SIG_TOTAL = d.total || 0;
   SIG_FACETS = d.facets || {};
