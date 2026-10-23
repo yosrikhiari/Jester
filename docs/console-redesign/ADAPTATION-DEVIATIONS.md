@@ -1,9 +1,31 @@
 # Console adaptation — kept-real deviations & exclusions
 
-Design-of-record: `2026-10-17-console-adaptation-mockup.html` (rev 4, `06da16a`).
+Design-of-record: `2026-10-23-redesign-mockup.html` (rev 5, `563d8e2`).
 The mockup defines look/feel; the real console's behavior and data set the
 limits of what may be shown. This ledger records every deliberate divergence
 so the record outlives the chat that made it.
+
+## Adopted from rev 5 (2026-10-23, real-data parts)
+
+- **Shell scroll containment** — only `main` scrolls; the page area is
+  centered by padding, so the scrollbar sits at the viewport edge and the
+  rail/topbar never move (`aca212e`).
+- **Nuggets as a card feed** (option B) — one card per nugget with the
+  insight at body size; the page is fixed-height like runs/posts and the
+  feed keeps its place (`887d3e2`).
+- **Signals compact bar + drawer** (option E) — the jobs scraper reads as a
+  one-line bar with run-now; its schedule controls and the runs table fold
+  behind "schedule & runs", with a compact registered/last-run state line
+  fed by the same `/api/signals/scraper` data (`18e9fea`).
+- **Schedule form summary bar** — a sticky bar restates the form in one
+  sentence (cadence, scope, depth) and marks it installed / differing /
+  not installed against the registered schedule (`7eb6c8c`).
+- **Chat transcript as chat** — user lines hang right with the accent tint,
+  assistant lines left outlined, system notes centered, no loose labels
+  (`d72c841`).
+- **Config two panes** — a sticky group list beside the cards, carrying
+  unsaved-change dots wired to the same dirty state the savebars count
+  (`4d7b4b9`).
 
 ## Deliberately kept real (equivalent feature, different presentation)
 
@@ -49,6 +71,31 @@ so the record outlives the chat that made it.
   ledgers is a one-line follow-up if wanted.
 
 ## Excluded from the mockups (would misrepresent, need `api.py`, or are mock scaffolding)
+
+### Rev-5 parts that stayed mockup-only
+- **Overview twin KPI strips / full-bleed page** — the strip split ("new
+  today", tiered mixes) is not representable from the one `/api/overview`
+  count group; the real overview keeps its single strip plus the all-counts
+  card.
+- **Ideas `ilist`/`irow` list + docked detail** — the drawer decision below
+  keeps ideas detail in the shared `#drawer`; a second detail model would
+  fork the review loop.
+- **Config YAML preview column with highlighted changes** — needs the file
+  text from `api.py`; a preview derived client-side from knob values would
+  print invented key order, invented comments, and a fake `roles:` block.
+- **Chat fixed-height page + pinned pending drawer (fxv)** — the real
+  transcript keeps its scroll band and the pending proposals sit under it;
+  the composer already lives with the transcript.
+- **Signals compact `kp-s` tiles and a dedicated Outcome column** — the
+  real tiles carry failed-fetch and synthetic-row truths worth keeping, and
+  outcomes already show on each row as flag pills with the inline editor
+  (`sig-mark`), which the mockup's `mkrow` row duplicates.
+- **Schedule summary-bar install button** — the summary bar reads status
+  only; install stays where the decision belongs, on the cadence card's
+  buttons (which know the crontab-only difference).
+- **Everything in the buckets below, still**: accent switcher, sources
+  yield-dots/keywords, state/subreddit filter groups, "resynthesize all",
+  export-as-md and the rest of rev 1's "Exclude all".
 
 ### Data the real API does not provide (would need `api.py`, out of boundary)
 - **Sources**: "Watching for" keyword chips, 5-dot yield rating, per-visit
