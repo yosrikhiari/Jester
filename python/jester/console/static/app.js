@@ -3376,11 +3376,6 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-go]');
   if (b && b.dataset.go) go(b.dataset.go);
 });
-// Close the "more" menu when clicking elsewhere.
-document.addEventListener('click', e => {
-  $$('details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
-});
-
 // ── keyboard ─────────────────────────────────────────────────────────────
 const PAGE_KEYS = { o: 'overview', r: 'runs', q: 'queue', i: 'ideas', n: 'nuggets', c: 'clusters', s: 'sources', d: 'doctor' };
 let chord = null;

@@ -620,16 +620,10 @@ pre{
 }
 .runstrip .dot{inline-size:7px;block-size:7px;border-radius:50%;background:currentColor;animation:pulse 1.2s var(--ease) infinite;flex:none}
 .runstrip .mono{color:inherit;opacity:.85}
-/* actions: primary, two outlined, the rest behind "more" */
-.menu{position:relative;display:inline-block}
-.menu>summary{list-style:none;cursor:pointer}
-.menu>summary::-webkit-details-marker{display:none}
-.menu-list{
-  position:absolute;inset-inline-start:0;inset-block-start:calc(100% + 4px);z-index:var(--z-nav);
-  display:flex;flex-direction:column;gap:2px;min-inline-size:200px;padding:6px;
-  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-ctrl);box-shadow:var(--shadow-2);
-}
-.menu-list .btn{justify-content:flex-start;inline-size:100%}
+/* (the "more" details-dropdown styling was removed in the rev-5 review pass:
+   nothing rendered <details class="menu"> — the only .menu consumer is the
+   fixed sources row menu above, whose position:fixed these lines were
+   overriding with position:relative, anchoring the popup off-viewport) */
 /* four cells of one strip: the panel carries border/radius, hairlines divide */
 .kpis--4{
   grid-template-columns:repeat(4,1fr);gap:0;
