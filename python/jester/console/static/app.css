@@ -1074,16 +1074,46 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.chat-msg { display: flex; gap: 10px; align-items: baseline; }
+/* The transcript reads as chat (adaptation reference rev 5): the operator's
+   line hangs right with the accent tint, the assistant's hangs left
+   outlined, and a system note sits centered without a bubble. */
+.chat-msg { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; margin: 0 0 var(--s-5); }
 .chat-msg .who {
   flex: none;
-  inline-size: 4.5ch;
-  font-weight: 600;
-  opacity: 0.65;
+  inline-size: auto;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  color: var(--ink-soft);
 }
-.chat-msg--user .text { font-weight: 500; }
-.chat-msg--system-note .text { opacity: 0.6; font-size: 0.85em; }
-.chat-msg .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-msg .text {
+  max-inline-size: min(78%, 640px);
+  padding: 10px 14px;
+  border-radius: var(--r-card);
+  border-start-start-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.chat-msg--user { align-items: flex-end; }
+.chat-msg--user .text {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-start-end-radius: var(--r-sm);
+}
+.chat-msg--system-note { align-items: center; opacity: .7; }
+.chat-msg--system-note .who { display: none; }
+.chat-msg--system-note .text {
+  background: none;
+  border: 0;
+  padding: 0;
+  max-inline-size: none;
+  text-align: center;
+  font-size: .85em;
+}
+@media (max-width: 640px) { .chat-msg .text { max-inline-size: 92%; } }
 
 .chat-proposal {
   border: 1px solid var(--line);
