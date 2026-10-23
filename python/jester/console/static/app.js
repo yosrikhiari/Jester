@@ -2512,7 +2512,48 @@ function syncSavebar() {
   const n = Object.keys(cfgDirty()).length;
   $('#cfg-savebar').classList.toggle('hidden', n === 0);
   $('#cfg-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
+  renderCfgNav();
 }
+
+/* ── config: group nav (adaptation reference rev 5) ─────────────────────
+ * One list beside the cards: where the operator is, and which card holds
+ * unsaved edits. The dots count the same dirty inputs the savebars count,
+ * so the two halves never disagree. */
+const CFG_SECTIONS = [['thresholds', 'Thresholds'], ['models', 'Agent models'],
+                      ['scraper', 'Scraper'], ['env', 'Environment']];
+let cfgNavCurrent = 'thresholds';
+function cfgDirtyBySection() {
+  const counts = {};
+  for (const [id] of CFG_SECTIONS) {
+    // Agent models track their edits by diffing, not by tagging inputs, so
+    // its savebar visibility is the single honest source.
+    if (id === 'models') {
+      const bar = $('#models-savebar');
+      counts[id] = bar && !bar.classList.contains('hidden') ? 1 : 0;
+      continue;
+    }
+    const sec = document.querySelector(`[data-cfgsec="${id}"]`);
+    counts[id] = sec ? sec.querySelectorAll('.dirty').length : 0;
+  }
+  return counts;
+}
+function renderCfgNav() {
+  const nav = $('#cfg-nav');
+  if (!nav) return;
+  const dirty = cfgDirtyBySection();
+  nav.innerHTML = CFG_SECTIONS.map(([id, label]) =>
+    `<button type="button" data-cfgnav="${id}" aria-current="${id === cfgNavCurrent}">
+       ${esc(label)}${dirty[id] ? '<span class="ud" title="unsaved changes in this section"></span>' : ''}
+     </button>`).join('');
+}
+$('#cfg-nav').addEventListener('click', e => {
+  const b = e.target.closest('button[data-cfgnav]');
+  if (!b) return;
+  cfgNavCurrent = b.dataset.cfgnav;
+  renderCfgNav();
+  const sec = document.querySelector(`[data-cfgsec="${cfgNavCurrent}"]`);
+  if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 async function loadConfig() {
   const res = await api('/api/config');
@@ -2721,6 +2762,7 @@ function syncModelsBar() {
   const n = Object.values(patch).reduce((acc, p) => acc + Object.keys(p).length, 0);
   $('#models-savebar').classList.toggle('hidden', n === 0);
   $('#models-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
+  renderCfgNav();
 }
 
 async function loadModels(profile) {

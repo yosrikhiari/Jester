@@ -904,6 +904,28 @@ mark{background:var(--warn-bg);color:inherit;border-radius:3px;padding:0 2px}
 }
 /* config groups + map knob */
 .cfg-group{border:1px solid var(--line);border-radius:var(--r-card);padding:var(--s-5) var(--s-6);margin-block-end:var(--s-4);background:var(--surface)}
+/* config: two panes (adaptation reference rev 5) — a sticky group list with
+   unsaved-change dots beside the cards it names */
+.cfglayout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:var(--s-5);align-items:start}
+.cfnav{
+  position:sticky;inset-block-start:var(--s-5);
+  display:flex;flex-direction:column;gap:1px;
+  padding:var(--s-4);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);
+}
+.cfnav button{
+  display:flex;align-items:center;gap:var(--s-3);inline-size:100%;block-size:34px;
+  padding:0 var(--s-4);border:0;border-radius:var(--r-sm);background:none;
+  color:var(--ink-2);cursor:pointer;text-align:start;font:inherit;font-size:var(--fs-body);
+}
+.cfnav button:hover{background:var(--surface-3)}
+.cfnav button[aria-current="true"]{background:var(--accent-soft);color:var(--accent-text);font-weight:500}
+.cfnav .ud{margin-inline-start:auto;inline-size:8px;block-size:8px;border-radius:50%;background:var(--accent);flex:none}
+[data-cfgsec]{scroll-margin-top:var(--s-5)}
+@media (max-width:1100px){
+  .cfglayout{grid-template-columns:1fr}
+  .cfnav{position:static;flex-direction:row;overflow-x:auto;align-items:center}
+  .cfnav button{inline-size:auto;flex:none;white-space:nowrap}
+}
 .cfg-group>summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:var(--s-4)}
 .cfg-group>summary::-webkit-details-marker{display:none}
 .cfg-group>summary::before{content:"â–¾";color:var(--ink-soft);font-size:12px}

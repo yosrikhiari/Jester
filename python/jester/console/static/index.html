@@ -501,7 +501,14 @@
       <div><h1 data-eyebrow="Setup">Config</h1><p>Every knob the pipeline reads. Editable values write straight back to
         <span class="mono">thresholds.yaml</span>; comments in the file are preserved.</p></div>
     </div>
-    <div class="card">
+    <!-- Two panes (adaptation reference rev 5): the group list stays in view
+         on the left and answers two questions — where am I, and what here is
+         unsaved. The dots are wired to the same dirty inputs the savebars
+         count; clicking jumps to its card. -->
+    <div class="cfglayout">
+      <nav class="cfnav" id="cfg-nav" aria-label="Config sections"></nav>
+      <div>
+        <div class="card" data-cfgsec="thresholds">
       <div class="card-head" style="padding:0 0 var(--s-4);border-block-end:1px solid var(--line);background:none">
         <h3>Thresholds</h3>
         <span class="xs row-end">range-checked on save; a refused value is never written</span>
@@ -515,7 +522,7 @@
         </span>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-cfgsec="models">
       <div class="row" style="align-items:flex-start">
         <div>
           <h3 style="margin:0">Agent models</h3>
@@ -539,8 +546,10 @@
       </div>
     </div>
     <div class="grid">
-      <div class="card"><h3>Scraper <span class="xs">scraper.yaml</span></h3><dl class="dl" id="cfg-scraper"></dl></div>
-      <div class="card"><h3>Environment</h3><dl class="dl" id="cfg-env"></dl></div>
+      <div class="card" data-cfgsec="scraper"><h3>Scraper <span class="xs">scraper.yaml</span></h3><dl class="dl" id="cfg-scraper"></dl></div>
+      <div class="card" data-cfgsec="env"><h3>Environment</h3><dl class="dl" id="cfg-env"></dl></div>
+    </div>
+      </div>
     </div>
   </section>
 
