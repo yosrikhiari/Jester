@@ -134,7 +134,7 @@ button,input,select,textarea{font:inherit;color:inherit}
   transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease);
 }
 .nav button:hover{background:#FFFFFF0F;color:var(--nav-ink)}
-.nav button[aria-current="page"]{background:#FFFFFF17;border-color:transparent;color:#FFFFFF;box-shadow:inset 3px 0 0 var(--accent)}
+.nav button[aria-current="page"]{background:#FFFFFF17;border-color:transparent;color:#FFFFFF}
 /* The glyph icons become a dot: the current page's dot is the accent. */
 .nav .ico{
   inline-size:6px;block-size:6px;border-radius:50%;background:var(--nav-muted);flex:none;
@@ -150,11 +150,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 .health .led{inline-size:8px;block-size:8px;border-radius:50%;background:var(--ok);flex:none}
 .health .led.warn{background:var(--warn)}
 .health .led.bad{background:var(--bad)}
-.main-col{min-inline-size:0;display:flex;flex-direction:column}
+.main-col{min-inline-size:0;display:flex;flex-direction:column;height:100vh;height:100dvh;min-height:0}
 
 /* â”€â”€ topbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .topbar{
-  position:sticky;inset-block-start:0;z-index:var(--z-top);
+  flex:none;position:sticky;inset-block-start:0;z-index:var(--z-top);
   display:flex;align-items:center;gap:var(--s-5);
   min-block-size:var(--topbar-h);padding:var(--s-5) var(--s-10);
   background:var(--bg);border-block-end:1px solid var(--line);
@@ -164,7 +164,23 @@ button,input,select,textarea{font:inherit;color:inherit}
 .topbar-meta .chip{font-family:var(--font-ui)}
 .topbar-meta .chip::before{content:"";inline-size:6px;block-size:6px;border-radius:50%;background:var(--ink-soft)}
 
-main{flex:1;padding:var(--s-9) var(--s-10) var(--s-11);max-inline-size:1240px;inline-size:100%;display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
+/* Only main scrolls (adaptation reference rev 5): the shell fills the
+   viewport, the topbar and rail never move, and the page area alone scrolls.
+   The horizontal budget is spent as centering padding instead of a capped
+   content box, so the page scrollbar sits at the viewport edge and a wide
+   window centres the console exactly like the mockup's `.page` did. */
+main{
+  flex:1;min-height:0;overflow-y:auto;overscroll-behavior:none;
+  padding:var(--s-9) max(var(--s-10),calc((100% - 1240px) / 2)) var(--s-11);
+  inline-size:100%;display:flex;flex-direction:column;gap:var(--s-6);
+}
+@media (max-width:900px){
+  html,body{height:auto}
+  body{overflow:auto}
+  .shell{height:auto;min-height:100vh}
+  .main-col{height:auto}
+  main{min-height:0;overflow:visible;padding-inline:var(--s-6)}
+}
 /* `display` on a bare selector beats the UA sheet's `[hidden]`, so keep it
    scoped to the visible section or every page renders stacked. */
 main>section:not([hidden]){display:flex;flex-direction:column;gap:var(--s-6);min-inline-size:0}
@@ -728,7 +744,7 @@ th[data-sort][aria-sort="descending"]::after{content:" â†“";color:var(--ink
 .facetlayout.is-collapsed>.facets{opacity:0;visibility:hidden;pointer-events:none;transform:translateX(-8px)}
 .facets{
   display:flex;flex-direction:column;gap:var(--s-6);overflow:hidden;
-  position:sticky;inset-block-start:calc(var(--topbar-h) + var(--s-5));
+  position:sticky;inset-block-start:var(--s-5);
   transition:opacity var(--t-fast) var(--ease),transform var(--t-base) var(--ease);
 }
 /* toggle + the active-filter chips share one bar above the layout */
