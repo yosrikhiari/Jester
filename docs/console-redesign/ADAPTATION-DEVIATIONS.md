@@ -38,6 +38,11 @@ so the record outlives the chat that made it.
   models under `details`, focus restore on close, hidden scrollbars) landed
   in `d0be92e` regardless.
 - **232px rail** vs mockup 236px — the real token wins.
+- **Nav dots instead of glyph icons** (2026-10-23 audit) — the real rail
+  renders its page markers as 6px dots, the current page's dot carrying the
+  accent; the mockup's 16px stroke glyph set stays mockup-only. The rail's
+  hover/current white overlays are tokens (`--nav-hover`, `--nav-current`,
+  `--nav-current-ink`), so the palette keeps living in `:root`.
 - **Real nav vocabulary**: "Health" group as a real group, lowercase
   "the collector", real `PAGES` registry — not the mockup's nav list.
 - **Real status vocabulary** `queued/running/done/failed/requeued` on runs,
