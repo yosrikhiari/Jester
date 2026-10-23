@@ -3168,6 +3168,11 @@ $('#sched-install-daily').onclick = e => {
 };
 
 $('#sched-remove').onclick = async e => {
+  // Same guard as source removal, and as specific as Nielsen's confirmation
+  // guidance asks for: name what dies and how to get it back, so the question
+  // cannot be clicks yes without reading.
+  if (!SCHED?.installed) return;
+  if (!confirm(`Uninstall the ${SCHED.cadence || 'registered'} schedule? Scheduled runs stop until it is installed again.`)) return;
   const res = await busy(e.currentTarget, () => api('/api/schedule/remove', {}));
   toast(res.detail || (res.ok ? 'removed' : 'could not remove'), res.ok ? 'ok' : 'bad');
   if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
