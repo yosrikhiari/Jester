@@ -1995,20 +1995,22 @@ function renderNuggetFilter() {
   $('#nuggets-filter').innerHTML = [['', 'all'], ...Object.entries(NUGGET_FLAG_LABEL)].map(([k, label]) =>
     `<button data-f="${esc(k)}" aria-pressed="${NUG.flag === k}">${esc(label)}${k && f[k] !== undefined ? ` <span class="num">${Number(f[k]).toLocaleString()}</span>` : ''}</button>`).join('');
 }
-function nuggetRow(g) {
+function nuggetCard(g) {
   const flags = [
     g.trivial ? '<span class="chip chip--warn">trivial</span>' : '',
     g.needs_reembed ? '<span class="chip chip--bad">not yet searchable</span>' : '',
     g.synthesized_at ? '' : '<span class="chip" title="not yet part of an idea">waiting for ideas</span>',
   ].filter(Boolean).join('');
-  return `<tr>
-    <td class="nug-insight">${esc(g.extracted_insight || '')}
-      <div class="xs mono" style="margin-block-start:4px">${esc(g.unique_key)}${g.source_url
-        ? ` · <a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</div></td>
-    <td class="nug-from"><b>${esc(PLATFORM_LABEL[g.platform] || g.platform || '—')}</b><span class="xs">${esc(g.community || '')}</span></td>
-    <td><span class="chip">${esc(g.category || 'uncategorised')}</span></td>
-    <td><div class="chiprow">${flags || '<span class="xs">—</span>'}</div></td>
-  </tr>`;
+  return `<div class="ncard" role="listitem">
+    <p>${esc(g.extracted_insight || '')}</p>
+    <div class="nmeta"><b>${esc(PLATFORM_LABEL[g.platform] || g.platform || '—')}</b>${g.community
+      ? `<span>${esc(g.community)}</span>` : ''}</div>
+    <div class="ncard-foot">
+      <div class="chiprow"><span class="chip">${esc(g.category || 'uncategorised')}</span>${flags}</div>
+      <span class="mono nkey">${esc(g.unique_key)}${g.source_url
+        ? ` · <a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</span>
+    </div>
+  </div>`;
 }
 function facetBlock(title, key, items, limit = 12) {
   const list = NUGGET_FACET_MORE[key] ? items : items.slice(0, limit);
@@ -2083,16 +2085,15 @@ function renderNuggets() {
   // empty state from it told the operator to run the pipeline when what he
   // actually had to do was drop a filter.
   const filtered = !!(NUG.platform || NUG.community || NUG.category || NUG.flag || NUG.q);
-  $('#nuggets-body').innerHTML = NUGGETS.map(nuggetRow).join('')
+  const empty = (msg, next) => `<div class="empty">${msg}${next
+    ? `<div><button class="btn btn--sm" data-go="${esc(next.page)}">${esc(next.label)}</button></div>`
+    : (filtered ? '<div><button class="btn btn--sm" data-facet-clear>clear the filters</button></div>' : '')}</div>`;
+  $('#nuggets-cards').innerHTML = NUGGETS.map(nuggetCard).join('')
     || (NUGGET_ARCHIVE_TOTAL
-      ? emptyRow(4, filtered
+      ? empty(filtered
           ? `No nugget matches these filters — ${NUGGET_ARCHIVE_TOTAL.toLocaleString()} in the archive.`
           : 'Nothing to show.')
-      : emptyRow(4, 'No nuggets archived yet.', { page: 'overview', label: '▶ run pipeline from Overview' }));
-  if (!NUGGETS.length && filtered && NUGGET_ARCHIVE_TOTAL) {
-    $('#nuggets-body .empty').insertAdjacentHTML('beforeend',
-      '<div><button class="btn btn--sm" data-facet-clear>clear the filters</button></div>');
-  }
+      : empty('No nuggets archived yet.', { page: 'overview', label: '▶ run pipeline from Overview' }));
   const from = NUGGET_TOTAL ? NUG.offset + 1 : 0, to = Math.min(NUGGET_TOTAL, NUG.offset + NUGGETS.length);
   $('#nuggets-shown').textContent = NUGGET_TOTAL ? `${from.toLocaleString()}–${to.toLocaleString()} of ${NUGGET_TOTAL.toLocaleString()}` : '';
   $('#nuggets-pager').innerHTML = pagerHTML(NUG.offset, NUGGET_PAGE, NUGGET_TOTAL, 'nug');
@@ -2412,7 +2413,7 @@ $('#nuggets-filter').addEventListener('click', e => {
   NUG.flag = b.dataset.f; NUG.offset = 0;
   loadNuggets();
 });
-$('#nuggets-body').addEventListener('click', e => {
+$('#nuggets-cards').addEventListener('click', e => {
   if (!e.target.closest('[data-facet-clear]')) return;
   Object.assign(NUG, { offset: 0, platform: '', community: '', category: '', flag: '', q: '' });
   $('#nuggets-q').value = '';
@@ -2436,7 +2437,7 @@ $('#nuggets-pager').addEventListener('click', e => {
   if (!b || b.disabled) return;
   NUG.offset = Number(b.dataset.pageNug);
   loadNuggets();
-  $('#nuggets-body').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#nuggets-layout').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 const KNOB_HELP = {

@@ -401,14 +401,10 @@
           <h3>Nuggets</h3><span class="xs" id="nuggets-shown"></span>
           <div class="pager row-end" id="nuggets-pager"></div>
         </div>
-        <div class="tablewrap">
-          <table>
-            <thead><tr>
-              <th>insight</th><th>from</th><th>category</th><th>flags</th>
-            </tr></thead>
-            <tbody id="nuggets-body"></tbody>
-          </table>
-        </div>
+        <!-- One card per nugget (adaptation reference rev 5, option B): the
+             insight is the thing being scanned, so it gets a body-size column
+             of its own instead of a table cell. -->
+        <div id="nuggets-cards" class="nfeed" role="list" aria-label="Nuggets"></div>
       </div>
     </div>
   </section>

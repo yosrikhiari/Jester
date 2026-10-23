@@ -488,17 +488,23 @@ pre{
    draws a shimmering placeholder of roughly its final height, so the page
    reads as "loading" instead of "broken". CSS-only; nothing in app.js changes. */
 #kpis:empty,#last-run:empty,#quota:empty,#infra:empty,#runs-body:empty,#ideas-body:empty,
-#nuggets-body:empty,#src-body:empty,#queue-body:empty,#cfg-knobs:empty,#doctor-card:empty,
+#src-body:empty,#queue-body:empty,#cfg-knobs:empty,#doctor-card:empty,
 #sched-state:empty,#search-body:empty{
   display:block;min-block-size:88px;border-radius:var(--r-ctrl);
   background:linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2));
   background-size:200% 100%;animation:shimmer 1.2s linear infinite;
 }
 #kpis:empty{min-block-size:96px;border-radius:var(--r-card)}
-#runs-body:empty,#ideas-body:empty,#nuggets-body:empty,#src-body:empty,#queue-body:empty{
+/* the nugget feed is a card grid, so its skeleton is one tall block */
+#nuggets-cards:empty{
+  min-block-size:420px;border-radius:var(--r-card);
+  background:linear-gradient(90deg,var(--surface-2),var(--surface-3),var(--surface-2));
+  background-size:200% 100%;animation:shimmer 1.2s linear infinite;
+}
+#runs-body:empty,#ideas-body:empty,#src-body:empty,#queue-body:empty{
   display:table-row-group;min-block-size:0;
 }
-#runs-body:empty::after,#ideas-body:empty::after,#nuggets-body:empty::after,
+#runs-body:empty::after,#ideas-body:empty::after,
 #src-body:empty::after,#queue-body:empty::after{
   content:"";display:block;block-size:160px;
   background:linear-gradient(90deg,var(--surface),var(--surface-2),var(--surface));
@@ -776,6 +782,55 @@ th[data-sort][aria-sort="descending"]::after{content:" â†“";color:var(--ink
 .facet .more{color:var(--ink-mute);font-size:var(--fs-xs);padding:4px 8px}
 .nug-insight{max-inline-size:60ch}
 .nug-from b{font-weight:500;display:block}
+/* nuggets: card feed (adaptation reference rev 5, option B) — same archive,
+   one card per nugget. The insight is the thing being scanned, so it gets a
+   body-size column of its own; provenance and flags hang off the foot. */
+.nfeed{
+  flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));
+  gap:var(--s-5);align-content:start;padding:var(--s-6) var(--s-5);
+}
+.nfeed .empty{grid-column:1/-1}
+.ncard{
+  display:flex;flex-direction:column;gap:var(--s-4);min-height:0;
+  padding:var(--s-5) var(--s-6);background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-card);
+  transition:border-color var(--t-fast) var(--ease);
+}
+.ncard:hover{border-color:var(--line-strong)}
+.ncard p{margin:0;font-size:15px;line-height:1.55;overflow-wrap:anywhere}
+.ncard .nmeta{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-xs);color:var(--ink-mute)}
+.ncard .nmeta b{font-weight:500;color:var(--ink-2)}
+.ncard .ncard-foot{
+  margin-block-start:auto;padding-block-start:var(--s-4);
+  border-block-start:1px solid var(--surface-2);
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--s-3);align-items:center;
+}
+.ncard .ncard-foot .chiprow{min-inline-size:0}
+.ncard .nkey{min-inline-size:0;max-inline-size:34ch;overflow-wrap:anywhere;opacity:.9}
+/* fixed-height nuggets page: the shell stops scrolling, the feed keeps its
+   place and scrolls internally under the facet rail (adaptation reference rev 5) */
+.shell:has(section[data-page="nuggets"]:not([hidden])){
+  block-size:100vh;
+  block-size:100dvh;
+}
+.shell:has(section[data-page="nuggets"]:not([hidden])) main{
+  min-block-size:0;overflow:hidden;
+}
+.shell:has(section[data-page="nuggets"]:not([hidden])) main>section[data-page="nuggets"]:not([hidden]){flex:1;min-block-size:0}
+.shell:has(section[data-page="nuggets"]:not([hidden])) #nuggets-layout{
+  flex:1;min-block-size:0;grid-template-rows:minmax(0,1fr);align-items:stretch;
+}
+.shell:has(section[data-page="nuggets"]:not([hidden])) #nuggets-facets{
+  overflow-y:auto;overscroll-behavior:contain;
+}
+@media (max-width:900px){
+  .shell:has(section[data-page="nuggets"]:not([hidden])){block-size:auto}
+  .shell:has(section[data-page="nuggets"]:not([hidden])) main{overflow:visible}
+  .shell:has(section[data-page="nuggets"]:not([hidden])) main>section[data-page="nuggets"]:not([hidden]){flex:none}
+  .shell:has(section[data-page="nuggets"]:not([hidden])) #nuggets-layout{flex:none;grid-template-rows:none}
+  .nfeed{max-block-size:min(70vh,640px)}
+}
 /* clusters grid */
 .grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s-5)}
 .grid3 .card{display:flex;flex-direction:column;gap:var(--s-4)}
