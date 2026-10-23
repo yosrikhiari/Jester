@@ -1115,7 +1115,7 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
 .chat-msg .who {
   flex: none;
   inline-size: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   letter-spacing: .02em;
   color: var(--ink-soft);
@@ -1145,7 +1145,7 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   padding: 0;
   max-inline-size: none;
   text-align: center;
-  font-size: .85em;
+  font-size: var(--fs-xs);
 }
 @media (max-width: 640px) { .chat-msg .text { max-inline-size: 92%; } }
 
@@ -1164,7 +1164,7 @@ fieldset.seg{margin:0;padding:0;min-inline-size:0}
   background: var(--surface-2);
   padding: 8px;
   border-radius: 6px;
-  font-size: 0.8em;
+  font-size: var(--fs-sm);
 }
 
 /* ── runs: fixed-height page (adaptation reference rev 3) ──────────────
