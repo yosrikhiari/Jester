@@ -33,6 +33,7 @@
   /* Keyed to the console-adaptation reference: the rail keeps its own ink so
      it stays dark in the light theme too. */
   --nav:#17171B; --nav-ink:#E9E9EE; --nav-muted:#9A9AA6; --nav-line:#2A2A31;
+  --nav-hover:#FFFFFF0F; --nav-current:#FFFFFF17; --nav-current-ink:#FFFFFF;
   --jester-black:#16161A; --jester-red:#C8453D; --jester-gold:#C8453D; --jester-crimson:#C8453D;
 }
 html[data-theme="light"]{
@@ -59,6 +60,7 @@ html[data-theme="dark"]{
   --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#EF7D75; --bell:var(--accent);
   --accent:#E0645C; --accent-soft:#3A201E; --accent-line:#52302E; --accent-text:#F08C85;
   --nav:#0B0B0D; --nav-ink:#E9E9EE; --nav-muted:#9A9AA6; --nav-line:#1E1E23;
+  --nav-hover:#FFFFFF0F; --nav-current:#FFFFFF17; --nav-current-ink:#FFFFFF;
   --ok:#5AC48C; --ok-bg:#16302387; --warn:#E0B341; --warn-bg:#3A3014; --bad:#EF7D75; --bad-bg:#3D1F1D;
   --lav:#8E90D8;
   --queued:#8E8E98; --running:#F08C85; --done:#5AC48C; --failed:#EF7D75; --requeued:#D0D0D8;
@@ -133,8 +135,8 @@ button,input,select,textarea{font:inherit;color:inherit}
   color:var(--ink-2);cursor:pointer;font-size:var(--fs-body);font-weight:500;text-align:start;
   transition:background var(--t-fast) var(--ease),color var(--t-fast) var(--ease),border-color var(--t-fast) var(--ease);
 }
-.nav button:hover{background:#FFFFFF0F;color:var(--nav-ink)}
-.nav button[aria-current="page"]{background:#FFFFFF17;border-color:transparent;color:#FFFFFF}
+.nav button:hover{background:var(--nav-hover);color:var(--nav-ink)}
+.nav button[aria-current="page"]{background:var(--nav-current);border-color:transparent;color:var(--nav-current-ink)}
 /* The glyph icons become a dot: the current page's dot is the accent. */
 .nav .ico{
   inline-size:6px;block-size:6px;border-radius:50%;background:var(--nav-muted);flex:none;
