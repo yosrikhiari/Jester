@@ -4044,6 +4044,7 @@ async function loadChat() {
   for (const s of res.sessions) {
     const b = document.createElement('button');
     b.className = 'chat-session' + (s.session_id === CHAT_SESSION ? ' is-open' : '');
+    b.dataset.chatSid = s.session_id;
     b.append(
       Object.assign(document.createElement('span'), { textContent: s.title || '(empty turn)' }),
       Object.assign(document.createElement('span'),
@@ -4059,8 +4060,13 @@ async function openChatSession(id) {
   CHAT_SESSION = id;
   const res = await api('/api/chat/session?id=' + encodeURIComponent(id));
   if (!res.ok) { toast(res.error || 'unknown session', 'bad'); CHAT_SESSION = null; return; }
-  pin(loadChat());
   renderChat(res);
+  // No pin(loadChat()) here: that mutual tail turned into an unbounded
+  // loadChat → openChatSession → loadChat loop while any session was open.
+  // loadChat already renders the sidebar, and this only needs to move the
+  // open-session mark, so it flips that in place instead of refetching.
+  $$('#chat-sessions .chat-session').forEach(b =>
+    b.classList.toggle('is-open', b.dataset.chatSid === id));
 }
 
 function renderChat(res) {
