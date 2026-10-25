@@ -23,6 +23,19 @@ a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-r
 table { border-collapse:collapse; width:100%; margin:1rem 0; font-size:.88rem; display:block; overflow-x:auto; font-variant-numeric: tabular-nums; }
 th,td { border:1px solid var(--border); padding:.5rem .6rem; text-align:left; vertical-align:top; overflow-wrap: break-word; }
 th { background:var(--code); }
+thead th { position:sticky; top:0; background:var(--code); z-index:1; }
+caption { text-align:left; font-weight:600; padding:.4rem 0; font-size:.9rem; }
+nav.toc { border:1px solid var(--border); border-radius:8px; padding:.8rem 1rem; margin:1.2rem 0; background:var(--code); }
+nav.toc p { margin:.2rem 0 .5rem; font-weight:600; }
+nav.toc ol { margin:.2rem 0; padding-left:1.2rem; columns:2; }
+nav.toc li { margin:.15rem 0; font-size:.9rem; }
+nav.toc a { text-underline-offset:2px; display:inline-block; min-height:24px; line-height:24px; }
+.mermaid svg { min-width:620px; height:auto; }
+@media (max-width:480px) { body { font-size:17px; } table { font-size:.92rem; } code { font-size:.92em; } }
+:target { scroll-margin-top:.5rem; }
+h2:target, h3:target { background:var(--code); border-radius:6px; }
+.backtop { font-size:.85rem; }
+footer.report-foot { margin-top:2.5rem; border-top:1px solid var(--border); padding-top:1rem; color:var(--muted); font-size:.88rem; }
 code { background:var(--code); padding:.1rem .35rem; border-radius:4px; font-size:.88em; overflow-wrap: break-word; }
 pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; } pre code { background:none; padding:0; }
 .mermaid { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:1rem 0; overflow-x:auto; }
@@ -35,11 +48,32 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<p class="meta">Jester — Codebase Analysis, Optimization &amp; Improvement Report · 2026-10-14 · Branch impl/report-fixes · <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
+<p class="meta">Jester — Codebase Analysis, Optimization &amp; Improvement Report · Audited 2026-10-14 · Updated 2026-10-15 · Merged to <code>main</code> as PR #54 · <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
 <main id="main">
 <h1 id="jester-codebase-analysis-optimization-improvement-report">Jester — Codebase Analysis, Optimization &amp; Improvement Report</h1>
-<p><strong>Date:</strong> 2026-10-14 · <strong>Commit audited:</strong> <code>7aef02c</code> · <strong>Scope:</strong> repo-wide audit, no production code changed
+<p><strong>Date:</strong> 2026-10-14 (content synced 2026-10-15) · <strong>Commit audited:</strong> <code>7aef02c</code> · <strong>Status:</strong> fixes merged to <code>main</code> (PR #54, now on <code>fix/sonar-js-promises-2</code> lineage at <code>9c93954</code>) · <strong>Scope:</strong> repo-wide audit, no production code changed
 <strong>Method:</strong> static reads + test collection + targeted test runs + config/docker review. No secrets exposed. No new benchmarks invented — unmeasured expectations are labelled <em>Hypothesis</em>.</p>
+<nav class="toc" aria-label="Report contents">
+<p>Contents</p>
+<ol>
+<li><a href="#1-executive-summary">1. Executive summary</a></li>
+<li><a href="#2-project-overview">2. Project overview</a></li>
+<li><a href="#3-current-state-assessment">3. Current-state assessment</a></li>
+<li><a href="#4-key-findings-summary">4. Key findings</a></li>
+<li><a href="#5-recommended-solutions">5. Recommended solutions</a></li>
+<li><a href="#6-research-and-references-why-these-fixes">6. Research and references</a></li>
+<li><a href="#7-diagrams-and-figures">7. Diagrams and figures</a></li>
+<li><a href="#8-prioritized-improvement-backlog">8. Prioritized backlog</a></li>
+<li><a href="#9-implementation-roadmap">9. Roadmap</a></li>
+<li><a href="#10-validation-strategy">10. Validation strategy</a></li>
+<li><a href="#11-limitations-and-open-questions">11. Limitations</a></li>
+<li><a href="#12-references">12. References</a></li>
+<li><a href="#appendix-a-how-to-reproduce-the-audit-numbers">Appendix A — Reproduce</a></li>
+<li><a href="#appendix-b-suggested-first-prs-small-safe">Appendix B — First PRs</a></li>
+<li><a href="#appendix-c-implementation-status-branch-implreport-fixes-2026-10-14">Appendix C — Implementation status</a></li>
+<li><a href="#appendix-d-end-to-end-verification-testing-test-automation-skills">Appendix D — E2E verification</a></li>
+</ol>
+</nav>
 <hr />
 <h2 id="1-executive-summary">1. Executive summary</h2>
 <p>Jester is a working, evidence-obsessed multi-agent pipeline: Go scrapes forums → SQLite handoff queue → Python LLM chain (extractor → synthesizer → critic) → Qdrant dedup + ClickHouse archive → stdlib operator console. The real archive (35,118 batches, 98,890 nuggets, 1,468 ideas) proves the design works.</p>
@@ -62,9 +96,9 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 <table>
 <thead>
 <tr>
-<th>Layer</th>
-<th>Tech</th>
-<th>Evidence</th>
+<th scope="col">Layer</th>
+<th scope="col">Tech</th>
+<th scope="col">Evidence</th>
 </tr>
 </thead>
 <tbody>
@@ -120,10 +154,10 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 <table>
 <thead>
 <tr>
-<th>ID</th>
-<th>Area</th>
-<th>Priority</th>
-<th>One-line problem</th>
+<th scope="col">ID</th>
+<th scope="col">Area</th>
+<th scope="col">Priority</th>
+<th scope="col">One-line problem</th>
 </tr>
 </thead>
 <tbody>
@@ -284,9 +318,9 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 <table>
 <thead>
 <tr>
-<th>Finding</th>
-<th>Source (verified)</th>
-<th>How it applies to Jester</th>
+<th scope="col">Finding</th>
+<th scope="col">Source (verified)</th>
+<th scope="col">How it applies to Jester</th>
 </tr>
 </thead>
 <tbody>
@@ -431,17 +465,19 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 <p><em>Expectation is a hypothesis: measure tokens/idea + trivial-share on <code>eval/known_good|bad.md</code> before promoting.</em></p>
 <h3 id="fig-6-implementation-roadmap-order-deps">Fig. 6 — Implementation roadmap (order + deps)</h3>
 <div class="mermaid" role="img" aria-label="Architecture diagram 6">gantt
-  title Roadmap (sequenced)
-  dateFormat YYYY-MM-DD
-  section Quick wins
-  Console bind+token + indexes + pin images + rm exes :a1, 2026-10-15, 7d
+   title Roadmap (sequenced)
+   dateFormat YYYY-MM-DD
+   axisFormat %b %d
+   tickInterval 2week
+   section Quick wins
+   Console bind+token, indexes, pins, rm exes :a1, 2026-10-15, 7d
   section Medium term
   CLI/API split + WAL migration           :a2, 2026-10-22, 14d
   Batched extraction + eval gate          :a3, 2026-11-01, 14d
   Dedup calibration + batch Qdrant        :a4, 2026-11-10, 14d
   OTel + /metrics + chaos test            :a5, 2026-11-20, 14d
   section Long term
-  Frontend decision + vitest + portal scale :a6, 2026-12-05, 21d</div>
+     Frontend decision + scale :a6, 2026-12-05, 21d</div>
 <hr />
 <h2 id="8-prioritized-improvement-backlog">8. Prioritized improvement backlog</h2>
 <blockquote>
@@ -450,18 +486,18 @@ pre { background:var(--code); padding:1rem; border-radius:8px; overflow-x:auto; 
 <table>
 <thead>
 <tr>
-<th>ID</th>
-<th>Area</th>
-<th>Current situation</th>
-<th>Problem</th>
-<th>Proposed solution</th>
-<th>Evidence</th>
-<th>References</th>
-<th>Expected impact</th>
-<th>Effort</th>
-<th>Risk</th>
-<th>Priority</th>
-<th>Validation</th>
+<th scope="col">ID</th>
+<th scope="col">Area</th>
+<th scope="col">Current situation</th>
+<th scope="col">Problem</th>
+<th scope="col">Proposed solution</th>
+<th scope="col">Evidence</th>
+<th scope="col">References</th>
+<th scope="col">Expected impact</th>
+<th scope="col">Effort</th>
+<th scope="col">Risk</th>
+<th scope="col">Priority</th>
+<th scope="col">Validation</th>
 </tr>
 </thead>
 <tbody>
@@ -694,15 +730,14 @@ go version; Get-Item go/*.exe | Select-Object Name, Length
 <li><code>sec/console-token</code> (F-01) + test. 2. <code>data/indexes</code> (F-03) + <code>EXPLAIN</code> snapshots. 3. <code>ops/pin-digests</code> (F-07). 4. <code>chore/rm-exes</code> (F-09). 5. <code>deps/dev-extras</code> (F-08). Then <code>data/wal</code> (F-02) with soak notes.</li>
 </ol>
 <hr />
-<h2 id="appendix-c-implementation-status-branch-implreport-fixes-2026-10-14">Appendix C — Implementation status (branch <code>impl/report-fixes</code>, 2026-10-14)</h2>
-<p>All 12 findings implemented in roadmap order. Nothing committed; review the
-diff on <code>impl/report-fixes</code> vs <code>main</code>.</p>
+<h2 id="appendix-c-implementation-status-branch-implreport-fixes-2026-10-14">Appendix C — Implementation status (merged to <code>main</code> as PR #54, 2026-10-14; page synced 2026-10-15)</h2>
+<p>All 12 findings were implemented in roadmap order on <code>impl/report-fixes</code> and merged to <code>main</code> as PR #54 (commit <code>96935ff</code>, now an ancestor of <code>fix/sonar-js-promises-2</code> at <code>9c93954</code>). Appendix D records the end-to-end verification.</p>
 <table>
 <thead>
 <tr>
-<th>ID</th>
-<th>What landed</th>
-<th>Validation (actually run)</th>
+<th scope="col">ID</th>
+<th scope="col">What landed</th>
+<th scope="col">Validation (actually run)</th>
 </tr>
 </thead>
 <tbody>
@@ -779,8 +814,8 @@ subprocesses over HTTP) against throwaway DBs with an all-<code>fake</code> conf
 <table>
 <thead>
 <tr>
-<th>Journey</th>
-<th>Property proved</th>
+<th scope="col">Journey</th>
+<th scope="col">Property proved</th>
 </tr>
 </thead>
 <tbody>
@@ -817,6 +852,10 @@ matching its documented "existing env wins" rule; pinned by
 <code>test_explicitly_emptied_key_is_not_backfilled</code>. Without this fix the journeys
 above cannot archive a single nugget on any machine whose <code>.env</code> sets the URL.</p>
 </main>
+<footer class="report-foot">
+<p><a class="backtop" href="#main">Back to top ↑</a> · Audited 2026-10-14 against <code>7aef02c</code>; page content synced 2026-10-15 after merge of PR #54. Audit counts (§2/§10) are point-in-time; re-run Appendix A to refresh. <a href="CODEBASE_IMPROVEMENT_REPORT.md">Markdown source</a></p>
+</footer>
+<noscript><p>Diagrams in §7 need JavaScript (Mermaid via CDN) to render; all findings, tables, and appendices remain fully readable without it.</p></noscript>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" defer></script>
 <script>window.addEventListener("DOMContentLoaded", function () { if (window.mermaid) { mermaid.initialize({ startOnLoad: true, theme: "neutral" }); } });</script>
 </body>
