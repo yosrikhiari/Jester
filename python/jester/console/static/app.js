@@ -684,7 +684,7 @@ function renderSources() {
   // under a filter that is already applied.
   $('#src-fil').innerHTML = Object.keys(SRC_STATES).map(k =>
     `<button type="button" aria-pressed="${SRC_STATE === k}" data-sfil="${k}">` +
-    `${k} ${list.filter(SRC_STATES[k]).length}</button>`).join('');
+    `${k} ${list.filter(s => SRC_STATES[k](s)).length}</button>`).join('');
 
   // Grouped by platform, because that is how the list is actually reasoned
   // about — "is Reddit still carrying this corpus" is one glance, not a scroll
@@ -799,7 +799,7 @@ $('#src-body').addEventListener('click', e => {
   if (menuBtn) { openSrcMenu(menuBtn); return; }
   const btn = e.target.closest('button[data-delete]');
   if (!btn) return;
-  deleteSource(btn.closest('tr').dataset.name, btn);
+  void deleteSource(btn.closest('tr').dataset.name, btn);
 });
 
 // Row-menu item dispatch, plus close on outside click. The button that opened
@@ -809,11 +809,11 @@ document.addEventListener('click', e => {
   if (e.target.closest('button[data-smenu]')) return;
   if (!SRC_MENU.contains(e.target)) { closeSrcMenu(); return; }
   const copy = e.target.closest('[data-scopy]');
-  if (copy) { const url = copy.dataset.scopy; closeSrcMenu(true); copySrcLink(url); return; }
+  if (copy) { const url = copy.dataset.scopy; closeSrcMenu(true); void copySrcLink(url); return; }
   const park = e.target.closest('[data-park-name]');
-  if (park) { const name = park.dataset.parkName; closeSrcMenu(); parkSource(name); return; }
+  if (park) { const name = park.dataset.parkName; closeSrcMenu(); void parkSource(name); return; }
   const del = e.target.closest('[data-del-name]');
-  if (del) { const name = del.dataset.delName; closeSrcMenu(true); deleteSource(name, null); }
+  if (del) { const name = del.dataset.delName; closeSrcMenu(true); void deleteSource(name, null); }
 });
 document.addEventListener('keydown', e => {
   if (SRC_MENU.hidden) return;

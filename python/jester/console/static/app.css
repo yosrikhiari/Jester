@@ -460,7 +460,7 @@ html[dir="rtl"] .drawer{transform:translateX(-102%)}
    GLOBAL: the `inline-size:100%` on inputs above must not reach checkboxes. */
 input[type="checkbox"]:not(.switch input),
 input[type="radio"]{
-  appearance:auto;-webkit-appearance:auto;inline-size:auto;block-size:auto;flex:none;
+  appearance:auto;inline-size:auto;block-size:auto;flex:none;
   accent-color:var(--accent);margin-inline-end:var(--s-3);vertical-align:-2px;
 }
 .source-check{display:flex;align-items:center;gap:var(--s-2);padding:3px 0;font-size:var(--fs-sm)}
