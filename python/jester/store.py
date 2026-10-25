@@ -189,6 +189,61 @@ CREATE TABLE IF NOT EXISTS runs (
     duration_expected_s REAL,
     duration_actual_s   REAL
 );
+-- ── The edit regime (plans/2026-10-17) ──────────────────────────────────
+-- Everything a chat, agent or scheduler changes to this archive is routed
+-- through python/jester/edits.py: proposals first, an append-only audit
+-- row always, reverts written as NEW rows. No UPDATE and no DELETE is ever
+-- issued against edit_log by code in this repo (guarded in tests). New
+-- databases get the tables here; legacy ones get them from
+-- edits.ensure_edits_schema, because the console opens archives with
+-- migrate=False and would otherwise never run BASE_SCHEMA.
+CREATE TABLE IF NOT EXISTS edit_log (
+    id            TEXT PRIMARY KEY,
+    created_utc   TEXT NOT NULL,
+    actor_kind    TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    tool_name     TEXT,
+    edit_kind     TEXT NOT NULL,
+    target_table  TEXT NOT NULL,
+    target_keys   TEXT NOT NULL,
+    before_json   TEXT NOT NULL,
+    after_json    TEXT NOT NULL,
+    reason        TEXT,
+    models_used   TEXT,
+    proposal_id   TEXT,
+    reverts_edit  TEXT,
+    outcome       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS edit_proposals (
+    proposal_id     TEXT PRIMARY KEY,
+    created_utc     TEXT NOT NULL,
+    actor_kind      TEXT NOT NULL,
+    actor           TEXT NOT NULL,
+    edit_kind       TEXT NOT NULL,
+    target_table    TEXT NOT NULL,
+    target_keys     TEXT NOT NULL,
+    payload_json    TEXT NOT NULL,
+    diff_json       TEXT NOT NULL,
+    affected_json   TEXT NOT NULL,
+    downstream_json TEXT NOT NULL,
+    reason          TEXT,
+    models_used     TEXT,
+    status          TEXT NOT NULL DEFAULT 'proposed',
+    decided_utc     TEXT,
+    decision_note   TEXT,
+    edit_id         TEXT
+);
+CREATE TABLE IF NOT EXISTS signal_rule_proposals (
+    id            TEXT PRIMARY KEY,
+    created_utc   TEXT NOT NULL,
+    actor_kind    TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    justification TEXT,
+    status        TEXT NOT NULL DEFAULT 'proposed',
+    decided_utc   TEXT,
+    models_used   TEXT
+);
 """
 
 _ADD_COLUMNS = [
@@ -303,6 +358,8 @@ _ADD_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_nuggets_thread ON nuggets(thread_id)",
     "CREATE INDEX IF NOT EXISTS idx_ideas_status_overall ON ideas(status, overall)",
     "CREATE INDEX IF NOT EXISTS idx_runs_status_started ON runs(status, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_edit_proposals_status ON edit_proposals(status)",
+    "CREATE INDEX IF NOT EXISTS idx_edit_log_target ON edit_log(target_table)",
 ]
 
 

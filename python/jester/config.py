@@ -178,6 +178,36 @@ class Thresholds:
     #: fall back to per-comment calls on any malformed batch reply, with the
     #: eval/known_good|bad.md gate deciding whether the saving is worth it.
     extractor_batch_size: int = 1
+    #: Chat tool loop: how many model↔tool round trips ONE user turn may take
+    #: before the session stops and reports what it did anyway. A bound, not
+    #: a goal — a confused model burns quota and a proposal still waits for
+    #: its human.
+    chat_max_rounds: int = 6
+    #: How long a chat-minted proposal stays applyable before the console
+    #: refuses it. Enforced lazily at apply time (the proposal is marked
+    #: expired, never deleted); every refusal is visible in the trace.
+    chat_proposal_ttl_hours: float = 72.0
+    #: The chat's kill switch. OFF by design: the console's chat routes stay
+    #: closed until the operator turns them on, so an archive never answers
+    #: to a model nobody asked for. Send/receive endpoints only — the human
+    #: apply/reject/revert endpoints stay usable either way, because a
+    #: proposal on file still needs its disposition.
+    chat_enabled: bool = False
+    #: Deterministic source allocation (design §5 S5). On a live fetch the
+    #: run may walk top-yield sources every run and probe zero-yield ones in
+    #: a rotation, instead of walking everything at flat depth. It can only
+    #: SHRINK a run's walk list — caps are never raised.
+    scheduler_enabled: bool = False
+    #: How many of a source's most recent batch events the yield score reads.
+    scheduler_window_batches: int = 30
+    #: Spec review gate (design §5 S6): how many pages validate_spec samples.
+    #: At least 3 pages must each yield comments before a human may activate.
+    specs_max_samples: int = 5
+    #: Maintenance (design §5 S7): the empty-batch rate jump that flags a
+    #: source as a drift suspect, and the age at which a clusterless nugget
+    #: gets flagged for review. Flags only — maintenance deletes nothing.
+    maintenance_null_rate_spike: float = 0.25
+    maintenance_stale_days: int = 90
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -201,6 +231,12 @@ class Thresholds:
         "ingest_timeout_seconds": (0, 86400),
         "rescore_per_run": (0, 1000),
         "extractor_batch_size": (1, 50),
+        "chat_max_rounds": (1, 12),
+        "chat_proposal_ttl_hours": (0.25, 720.0),
+        "scheduler_window_batches": (1, 500),
+        "specs_max_samples": (3, 50),
+        "maintenance_null_rate_spike": (0.01, 1.0),
+        "maintenance_stale_days": (7, 3650),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the
@@ -232,6 +268,14 @@ class Thresholds:
         "ingest_timeout_seconds": int,
         "rescore_per_run": int,
         "extractor_batch_size": int,
+        "chat_max_rounds": int,
+        "chat_proposal_ttl_hours": float,
+        "chat_enabled": _as_bool,
+        "scheduler_enabled": _as_bool,
+        "scheduler_window_batches": int,
+        "specs_max_samples": int,
+        "maintenance_null_rate_spike": float,
+        "maintenance_stale_days": int,
         "embedding_model": str,
         "llm_provider": str,
         "embedding_provider": str,

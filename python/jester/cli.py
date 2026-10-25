@@ -1457,6 +1457,12 @@ def cmd_treat(args):
 
 def cmd_schedule(args):
     """D-2: register / inspect / remove the nightly job with the host scheduler."""
+    if args.action == "plan":
+        # The source-allocation plan lives in jester/scheduler.py entirely;
+        # this is a delegation branch, not logic — the god-file rule stays intact.
+        from jester.scheduler import plan_action
+
+        return plan_action(args)
     # Every branch here has to resolve the task the same way. `status` and
     # `run` used to ignore --command and always act on the cycle task, which
     # was invisible while cycle was the only one anybody scheduled and became
@@ -3593,7 +3599,7 @@ def main(argv=None):
     )
     sc.add_argument(
         "action",
-        choices=["status", "install", "remove", "run", "refresh"],
+        choices=["status", "install", "remove", "run", "refresh", "plan"],
         nargs="?",
         default="status",
     )
@@ -3646,7 +3652,23 @@ def main(argv=None):
     )
     sc.add_argument("--db", default="data/jester.db")
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
+    sc.add_argument(
+        "--replay", type=int, default=0, metavar="TICKS",
+        help="with `plan`: project this many future turns from today's scores "
+             "(no model, no clock — the same numbers every run)",
+    )
     sc.set_defaults(func=cmd_schedule)
+
+    # S6: agent-proposed extraction specs. The parser AND its command live in
+    # jester/specs.py; this one delegation line keeps cli.py out of the journey.
+    from jester.specs import spec_cli
+
+    spec_cli(sub)
+
+    # S7: the maintenance pass likewise (parser + logic in maintenance.py).
+    from jester.maintenance import maintenance_cli
+
+    maintenance_cli(sub)
 
     ex = sub.add_parser(
         "export", help="write the archive as CSV by content type + origin"

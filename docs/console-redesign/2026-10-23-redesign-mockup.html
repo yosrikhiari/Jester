@@ -1,0 +1,1424 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-accent="red">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jester — redesign mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f6f7;--surface:#fff;--sunk:#efeff1;--line:#e4e4e8;--line-soft:#eeeef1;
+  --ink:#16161a;--ink-2:#44444c;--muted:#6a6a74;--faint:#8e8e98;
+  --nav:#17171b;--nav-ink:#e9e9ee;--nav-muted:#9a9aa6;--nav-line:#2a2a31;
+  --ok:#1f7a4c;--ok-bg:#e3f3ea;--warn:#8a6100;--warn-bg:#faf0d2;--bad:#b3362f;--bad-bg:#fbe6e4;
+  --r-s:6px;--r-m:8px;--r-l:12px;
+  --h-ctl:36px;--h-ctl-s:30px;
+  --shadow:0 1px 2px rgba(0,0,0,.04);
+  --font:"Lexend",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --nav-w:236px;
+}
+:root[data-accent=red]{--accent:#c8453d;--accent-ink:#fff;--accent-soft:#fbeceb;--accent-text:#a9362f}
+:root[data-accent=gold]{--accent:#b8860b;--accent-ink:#fff;--accent-soft:#faf3dc;--accent-text:#7d5a05}
+:root[data-accent=lavender]{--accent:#6e70b8;--accent-ink:#fff;--accent-soft:#ecedfa;--accent-text:#4f519c}
+:root[data-theme=dark]{
+  --bg:#101013;--surface:#18181c;--sunk:#222227;--line:#2c2c33;--line-soft:#232328;
+  --ink:#f2f2f5;--ink-2:#d0d0d8;--muted:#a0a0ac;--faint:#7e7e8a;
+  --nav:#0b0b0d;--nav-line:#1e1e23;
+  --ok:#5ac48c;--ok-bg:#16302387;--warn:#e0b341;--warn-bg:#3a3014;--bad:#ef7d75;--bad-bg:#3d1f1d;--shadow:none}
+:root[data-theme=dark][data-accent=red]{--accent:#e0645c;--accent-soft:#3a201e;--accent-text:#f08c85}
+:root[data-theme=dark][data-accent=gold]{--accent:#d4a02a;--accent-soft:#38301a;--accent-text:#e6bd5a}
+:root[data-theme=dark][data-accent=lavender]{--accent:#8e90d8;--accent-soft:#25263f;--accent-text:#aeb0f0}
+*{box-sizing:border-box}
+html{scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 14px/1.5 var(--font);-webkit-font-smoothing:antialiased;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+a{color:inherit;text-decoration:none}button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-s)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.skip{position:absolute;left:8px;top:-60px;background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:var(--r-s);z-index:50}
+.skip:focus{top:8px}
+.icon{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+/* shell */
+.shell{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh}
+.side{background:var(--nav);color:var(--nav-ink);position:sticky;top:0;height:100vh;padding:20px 12px;display:flex;flex-direction:column;overflow-y:auto;scrollbar-width:none}
+.side::-webkit-scrollbar{display:none}
+.brand{display:flex;gap:10px;align-items:center;padding:2px 8px 18px}
+.mark{width:30px;height:30px;border-radius:var(--r-m);background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:600}
+.brand b{font-weight:600;font-size:16px;display:block;line-height:1.1}
+.brand small{color:var(--nav-muted);font-size:12px}
+.grp{font-size:12px;color:var(--nav-muted);padding:16px 10px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;width:100%;padding:0 10px;height:var(--h-ctl);border:0;background:none;border-radius:var(--r-m);color:var(--nav-muted);cursor:pointer;text-align:left;font-size:14px}
+.nav-item:hover{background:#ffffff0f;color:var(--nav-ink)}
+.nav-item[aria-current=page]{background:#ffffff17;color:#fff}
+.nav-item[aria-current=page] .icon{color:var(--accent)}
+.nav-item[aria-current=page] .n:not(.new){color:var(--nav-ink)}
+.nav-item .n{margin-left:auto;font-size:12px;font-variant-numeric:tabular-nums}
+.nav-item .n.new{background:var(--accent);color:var(--accent-ink);border-radius:99px;padding:0 7px;line-height:18px}
+.side .sp{flex:1;min-height:16px}
+.health{display:flex;gap:8px;align-items:center;padding:10px;border:1px solid var(--nav-line);border-radius:var(--r-m);font-size:12.5px;color:var(--nav-muted)}
+.led{width:8px;height:8px;border-radius:50%;background:#4cc38a;flex:none}.led.idle{background:#e0b341}.led.off{background:#ef7d75}
+
+main{min-width:0}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;display:flex;align-items:center;gap:8px;padding:10px 32px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.crumb{color:var(--muted);font-size:13px;display:flex;gap:6px;align-items:center}
+.crumb b{color:var(--ink);font-weight:500}
+.grow{flex:1}
+.chip{display:inline-flex;gap:6px;align-items:center;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:99px;background:var(--surface);font-size:12.5px;color:var(--muted)}
+.chip code{font-family:ui-monospace,monospace;font-size:12px;color:var(--ink-2)}
+
+/* controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--h-ctl);padding:0 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);font-weight:500;font-size:14px;cursor:pointer;white-space:nowrap;transition:background .12s,border-color .12s}
+.btn:hover{background:var(--sunk)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}.btn.primary:hover{opacity:.9;background:var(--ink)}
+.btn.accent{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.accent:hover{background:var(--accent);opacity:.92}
+.btn.danger{color:var(--bad)}
+.btn.ghost{border-color:transparent;background:none;color:var(--muted)}.btn.ghost:hover{background:var(--sunk);color:var(--ink)}
+.btn.sm{height:var(--h-ctl-s);padding:0 10px;font-size:13px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.busy .icon{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.seg{display:inline-flex;padding:2px;background:var(--sunk);border-radius:var(--r-m)}
+.seg button{border:0;background:none;height:30px;padding:0 12px;border-radius:var(--r-s);font-size:13px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font-weight:500}
+.field{display:flex;align-items:center;gap:8px;height:var(--h-ctl);padding:0 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--faint);flex:1;min-width:200px}
+.field input{border:0;outline:0;background:none;flex:1;font:inherit;color:var(--ink);min-width:0}
+.field:focus-within{border-color:var(--accent)}
+
+/* page */
+.page{padding:28px 32px 72px;max-width:1240px}
+.head{display:flex;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap}
+h1{margin:0;font-size:28px;line-height:1.15;letter-spacing:-.02em;font-weight:600}
+.lede{margin:6px 0 0;color:var(--muted);max-width:62ch}
+h2{margin:0;font-size:15px;font-weight:600}h3{margin:0;font-size:14px;font-weight:500}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--shadow)}
+.panel-h{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-soft)}
+.panel-h .btn{margin-left:auto}
+.panel-b{padding:16px 18px}
+
+.notice{display:flex;gap:12px;align-items:center;padding:12px 16px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:var(--r-m);background:var(--surface);margin-bottom:16px}
+.notice p{margin:0;color:var(--muted);font-size:13px}.notice .btn{margin-left:auto}
+
+/* KPI strip: one panel, dividers (not four cards) */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:16px}
+.kpi{padding:16px 20px;border-left:1px solid var(--line-soft)}.kpi:first-child{border-left:0}
+.kpi .k{font-size:13px;color:var(--muted)}
+.kpi .v{font-size:30px;font-weight:600;letter-spacing:-.025em;line-height:1.15;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:12.5px;color:var(--faint);margin-top:2px}
+.up{color:var(--ok)!important}.warn-t{color:var(--warn)!important}
+
+.g2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:10px 12px;margin:0}.kv dt{color:var(--muted)}.kv dd{margin:0;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,monospace;font-size:13px}
+.bar{height:6px;border-radius:99px;background:var(--sunk);margin-top:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
+.bar.lg{height:8px}
+.ledger{margin:0;display:grid;grid-template-columns:1fr auto;gap:0}
+.ledger>*{padding:8px 0;border-bottom:1px solid var(--line-soft)}.ledger>*:nth-last-child(-n+2){border-bottom:0}
+.ledger dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}.ledger .z{color:var(--faint)}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line-soft)}.row:last-child{border-bottom:0}.row small{margin-left:auto;color:var(--faint);font-size:12.5px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions .btn{justify-content:flex-start}
+.actions h3{grid-column:1/-1;color:var(--muted);font-weight:400;font-size:12.5px;margin-top:4px}.actions h3:first-child{margin-top:0}
+
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:99px;font-size:12px;font-weight:500;background:var(--sunk);color:var(--ink-2);white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.run{background:var(--accent-soft);color:var(--accent-text)}
+.pill.np::before{display:none}
+.tag{display:inline-block;padding:1px 8px;border-radius:var(--r-s);background:var(--sunk);font-size:12px;color:var(--ink-2)}
+
+/* tables — dark header (ref: Bankio), grouped bands (ref: Stacks/Craftboard) */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:500;font-size:12.5px;color:var(--muted);padding:9px 14px;background:var(--sunk);white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tbody tr.clk{cursor:pointer}tbody tr.clk:hover td{background:var(--bg)}
+tbody tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.band td{background:var(--bg);padding:8px 14px;font-weight:500;border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+.band .cnt{color:var(--faint);font-weight:400;margin-left:6px}
+.tc b{font-weight:500;display:block}.tc span{color:var(--muted);font-size:13px;display:block;max-width:56ch}
+.score{display:inline-flex;gap:4px}.score i{width:26px;height:24px;border-radius:var(--r-s);display:grid;place-items:center;font:500 12px var(--font);background:var(--sunk);color:var(--ink-2)}
+.score i.hi{background:var(--ok-bg);color:var(--ok)}.score i.lo{background:var(--bad-bg);color:var(--bad)}
+.legend{color:var(--faint);font-size:12.5px;margin:0 0 10px}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+
+/* posts */
+.split{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px;align-items:start}
+.plist{max-height:none}
+.post{display:grid;grid-template-columns:52px 1fr auto;gap:12px;width:100%;text-align:left;padding:14px 16px;border:0;border-bottom:1px solid var(--line-soft);background:none;cursor:pointer}
+.post:hover{background:var(--bg)}.post[aria-selected=true]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.post .sc b{display:block;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}.post .sc span{font-size:12px;color:var(--faint)}
+.post h3{line-height:1.35}
+.meta{display:flex;gap:4px 10px;flex-wrap:wrap;color:var(--muted);font-size:12.5px;margin-top:4px}.meta .kw{color:var(--accent-text)}
+.detail{position:sticky;top:76px}
+.detail .body{color:var(--ink-2);line-height:1.6;white-space:pre-line;margin:8px 0 0;max-width:64ch}
+.cm{padding:8px 12px;border-left:2px solid var(--line);margin-top:10px;color:var(--ink-2);font-size:13.5px}.cm small{display:block;color:var(--faint);font-size:12px}
+.dact{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.empty{padding:48px 24px;text-align:center;color:var(--muted)}.empty h3{color:var(--ink);margin-bottom:4px}.empty .btn{margin-top:14px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--r-m);opacity:0;pointer-events:none;transition:.2s;z-index:30;display:flex;gap:12px;align-items:center}
+.toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}.toast button{background:none;border:0;text-decoration:underline;cursor:pointer;color:inherit;padding:0}
+
+.view{display:none}.view.on{display:block}
+.mock{position:fixed;right:14px;bottom:14px;z-index:20;display:flex;gap:8px;align-items:center;padding:6px 8px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-size:12px;color:var(--muted);box-shadow:0 6px 24px rgba(0,0,0,.1)}
+.sw{width:18px;height:18px;border-radius:50%;border:2px solid var(--surface);outline:1px solid var(--line);cursor:pointer;padding:0}.sw[aria-pressed=true]{outline:2px solid var(--ink)}
+.toast.on~.mock{display:none}
+@media(max-width:1100px){.kpis{grid-template-columns:1fr 1fr}.kpi:nth-child(3){border-left:0}.kpi:nth-child(n+3){border-top:1px solid var(--line-soft)}.g2,.g3,.split{grid-template-columns:1fr}.detail{position:static}}
+@media(max-width:860px){
+  .shell{grid-template-columns:1fr}
+  .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:2px;padding:10px;overflow:visible}
+  .brand{padding:0 8px 0 4px;width:100%}.grp,.side .sp,.health{display:none}
+  .nav-item{width:auto;height:32px;padding:0 10px;font-size:13px}
+  .top,.page{padding-left:16px;padding-right:16px}h1{font-size:24px}.kv{grid-template-columns:100px 1fr}
+  .top{position:static}.mock{display:none}
+}
+
+/* merged content: only Jester tokens, no new colours */
+.notice.ok{border-left-color:var(--ok)}.notice.bad{border-left-color:var(--bad)}.notice b{font-weight:500}
+.kpis.k2{grid-template-columns:1fr 1fr}
+.kpi .spark{display:block;width:100%;max-width:120px;height:28px;margin-top:6px;fill:none;stroke:var(--accent);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.mix{display:flex;gap:1px;height:6px;border-radius:99px;overflow:hidden;background:var(--sunk);min-width:90px}.mix i{display:block;background:var(--accent)}
+.mixl{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:12.5px;margin-top:8px}.mixl i{display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--accent);margin-right:6px}
+.sub2{display:block;color:var(--faint);font-size:12.5px}.dh{margin-top:18px}
+.split.nodet{grid-template-columns:minmax(0,1fr)}.split.nodet>.detail{display:none}.split:not(.nodet) .hd-open{display:none}
+tbody tr.sel td{background:var(--accent-soft)}
+.in{height:var(--h-ctl);padding:0 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);font:inherit}.in:focus{border-color:var(--accent)}
+.chk{width:16px;height:16px;accent-color:var(--accent)}
+.fix{display:flex;gap:12px;align-items:flex-start;padding:14px 18px;border-bottom:1px solid var(--line-soft)}.fix:last-child{border-bottom:0}.fix .led{margin-top:7px}.fix b{font-weight:500;display:block}.fix span.why{display:block;color:var(--muted);font-size:13px}.fix .btn{margin-left:auto}
+.res{padding:14px 18px;border-bottom:1px solid var(--line-soft)}.res:last-child{border-bottom:0}.res p{margin:4px 0 0;color:var(--muted);font-size:13px}.res .meta{margin:0 0 6px}
+.sim{display:inline-flex;align-items:center;gap:8px;margin-left:auto}.sim .bar{width:64px;margin:0}
+.fold{transition:transform .12s;transform:rotate(90deg)}[aria-expanded=false] .fold{transform:none}
+.band .btn{padding:0 6px 0 0;font-weight:500;height:auto}
+@media(max-width:1100px){.split:not(.nodet) .hd-open{display:revert}}
+
+/* sources: grouped table (tinted bands, repeated headers, expandable rows, outlined chips, yield dots) */
+:root{--lav:#6e70b8}:root[data-theme=dark]{--lav:#8e90d8}
+.gb{display:flex;align-items:center;gap:10px;padding:6px 10px;background:color-mix(in srgb,var(--g) 11%,var(--surface));border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.gb .dot{width:8px;height:8px;border-radius:50%;background:var(--g);flex:none}.gb b{font-weight:500}
+.gb .nb{min-width:22px;padding:0 6px;border-radius:99px;background:var(--surface);border:1px solid var(--line);font-size:12px;text-align:center;line-height:18px;color:var(--muted)}
+.gb .gm{color:var(--muted);font-size:12.5px}
+#stable{table-layout:fixed;min-width:1020px}#stable td{vertical-align:middle}
+#stable .gband>td{padding:0;border:0}
+#stable .colh th{background:none;font-weight:400;border-bottom:1px solid var(--line-soft)}
+#stable tr.open>td{background:var(--accent-soft)}
+#stable .subrow>td{padding:0;background:var(--bg)}
+.sub{margin:8px 14px 14px 64px;border:1px solid var(--line-soft);border-radius:var(--r-m);background:var(--surface);overflow:hidden;max-width:560px}
+.sub table th,.sub table td{padding:8px 14px}
+.xp{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-s);background:none;color:var(--muted);cursor:pointer;vertical-align:middle}.xp:hover{background:var(--sunk);color:var(--ink)}
+.oc{--c:var(--ok);display:inline-block;margin:0 4px 4px 0;padding:0 8px;line-height:20px;border-radius:var(--r-s);font-size:12px;color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent);border:1px solid color-mix(in srgb,var(--c) 35%,transparent)}
+.oc.c1{--c:var(--lav)}.oc.c2{--c:var(--accent-text)}
+.dots{display:inline-flex;gap:3px}.dots i{width:6px;height:6px;border-radius:50%;background:var(--line)}.dots i.f{background:var(--ok)}
+.tfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line-soft);color:var(--faint);font-size:12.5px}
+.pager{display:flex;gap:2px;align-items:center}.pager button{min-width:28px;height:28px;padding:0 6px;border:1px solid transparent;border-radius:var(--r-s);background:none;color:var(--muted);cursor:pointer}.pager button:hover{background:var(--sunk)}.pager button[aria-current=page]{background:var(--surface);border-color:var(--line);color:var(--ink);font-weight:500}
+.menu{position:fixed;z-index:25;min-width:160px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);box-shadow:0 6px 24px rgba(0,0,0,.12)}
+.menu button{display:flex;align-items:center;width:100%;height:30px;padding:0 10px;border:0;border-radius:var(--r-s);background:none;font-size:13px;text-align:left;cursor:pointer}.menu button:hover,.menu button:focus-visible{background:var(--sunk)}.menu .danger{color:var(--bad)}
+
+/* detail panes: never taller than the screen; on narrow screens they open as a side drawer instead of below the table */
+:is(#rsplit,#qsplit,#isplit)>.detail{max-height:calc(100vh - 92px);overflow:auto}
+.detail .dh{margin-top:14px}.detail summary{cursor:pointer;font-weight:500}.kv.cp{gap:6px 12px}
+@media(max-width:1100px){:is(#rsplit,#qsplit,#isplit):not(.nodet)>.detail{position:fixed;top:0;right:0;bottom:0;left:auto;width:min(440px,100%);max-height:none;z-index:15;padding-top:env(safe-area-inset-top,0px);border-radius:var(--r-l) 0 0 var(--r-l);box-shadow:0 0 40px rgba(0,0,0,.18)}}
+
+/* runs: fixed-height page, fixed list panel and fixed detail panel; only their content regions scroll */
+.shell:has(#runs.on){height:100vh;height:100dvh;grid-template-rows:minmax(0,1fr)}
+.shell:has(#runs.on) main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shell:has(#runs.on) .top{flex:none}
+#runs.on{display:flex;flex-direction:column;flex:1;min-height:0}
+#runs.on>.page{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;padding-bottom:24px}
+#runs .head,#runs .tools{flex:none}
+#rsplit{flex:1;min-height:0;align-items:stretch;grid-template-rows:minmax(0,1fr)}
+#rsplit>.tw{min-height:0;overflow:auto;overscroll-behavior:contain}
+#rsplit th{position:sticky;top:0;z-index:2}
+#rsplit td{overflow-wrap:anywhere}
+#rsplit>.detail{position:static;max-height:none;overflow:hidden;min-height:0}
+#rsplit:not(.nodet)>.detail{display:flex;flex-direction:column}
+#rsplit>.detail .panel-h,#rsplit>.detail .dfoot{flex:none}
+.dbody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:16px 18px;overflow-wrap:anywhere}
+.dfoot{display:flex;gap:8px;flex-wrap:wrap;padding:12px 18px;border-top:1px solid var(--line-soft)}
+.dempty{margin:auto;padding:24px;text-align:center;color:var(--muted)}.dempty h3{color:var(--ink);margin-bottom:4px}
+@media(min-width:1101px){#rsplit.nodet{grid-template-columns:minmax(0,1fr) 400px}#rsplit.nodet>.detail{display:flex;flex-direction:column}#rsplit .hd-open{display:none}}
+@media(max-width:1100px){#rsplit:not(.nodet)::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:14}body:has(#runs.on #rsplit:not(.nodet)){overflow:hidden}}
+@media(max-width:860px){.shell:has(#runs.on){height:auto}.shell:has(#runs.on) main{display:block;overflow:visible}#runs.on>.page{display:block}#rsplit{height:min(70vh,640px)}}
+/* scrollbars hidden everywhere; scrolling itself still works (wheel, touch, keyboard) */
+*{scrollbar-width:none}*::-webkit-scrollbar{display:none}
+
+/* posts: same fixed-height layout as runs */
+.shell:has(#posts.on){height:100vh;height:100dvh;grid-template-rows:minmax(0,1fr)}
+.shell:has(#posts.on) main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shell:has(#posts.on) .top{flex:none}
+#posts.on{display:flex;flex-direction:column;flex:1;min-height:0}
+#posts.on>.page{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;padding-bottom:24px}
+#posts .head,#posts .tools{flex:none}
+#psplit{flex:1;min-height:0;align-items:stretch;grid-template-rows:minmax(0,1fr)}
+#plist{min-height:0;overflow:auto;overscroll-behavior:contain}
+.post>div{min-width:0}.post h3{overflow-wrap:anywhere}
+#psplit>.detail{position:static;max-height:none;overflow:hidden;min-height:0}
+#psplit:not(.nodet)>.detail{display:flex;flex-direction:column}
+#psplit>.detail .panel-h,#psplit>.detail .dfoot{flex:none}
+.drawer-only{display:none!important}
+@media(min-width:1101px){#psplit.nodet{grid-template-columns:minmax(0,1fr) 400px}#psplit.nodet>.detail{display:flex;flex-direction:column}}
+@media(max-width:1100px){.drawer-only{display:inline-flex!important}
+ #psplit:not(.nodet)>.detail{position:fixed;top:0;right:0;bottom:0;left:auto;width:min(440px,100%);max-height:none;z-index:15;padding-top:env(safe-area-inset-top,0px);border-radius:var(--r-l) 0 0 var(--r-l);box-shadow:0 0 40px rgba(0,0,0,.18)}
+ #psplit:not(.nodet)::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:14}
+ body:has(#posts.on #psplit:not(.nodet)){overflow:hidden}}
+@media(max-width:860px){.shell:has(#posts.on){height:auto}.shell:has(#posts.on) main{display:block;overflow:visible}#posts.on>.page{display:block}#psplit{height:min(70vh,640px)}}
+/* contain visually-hidden labels inside scrolling tables; let the Posts filter groups scroll instead of widening the page */
+.tw{position:relative}.seg button{flex:none;white-space:nowrap}#pstate,#psub{max-width:100%;overflow-x:auto}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+[hidden]{display:none!important}
+/* no overscroll / white band: only main scrolls, shell fills the viewport */
+html,body{height:100%;overscroll-behavior:none}
+body{overflow:hidden;background:var(--bg)}
+.shell{height:100vh;height:100dvh;min-height:0}
+.side{height:100vh;height:100dvh}
+main{height:100vh;height:100dvh;overflow-y:auto;overscroll-behavior:none}
+.top{top:0}
+html{scroll-padding-top:0}
+
+/* overview: use the full width; the two KPI strips sit side by side on wide screens */
+#overview .page{max-width:none}
+.kgrid{display:grid;gap:16px;margin-bottom:16px}
+.kgrid .kpis{margin-bottom:0}
+@media(min-width:1101px){.kgrid{grid-template-columns:4fr 2fr}}
+@media(max-width:860px){body{overflow:auto}.shell{height:auto}.side{height:auto}main{height:auto;overflow:visible}.top{top:env(safe-area-inset-top,0px)}}
+
+
+/* ===== decided pages: nuggets (card feed), clusters (list + detail), chat (sessions + thread + pending),
+   problem signals (compact bar + drawer), config (two panes), schedule (form + live summary) ===== */
+
+/* fixed-height pages: only their inner regions scroll */
+.shell:has(:is(#nuggets,#clusters,#chat).on){height:100vh;height:100dvh;grid-template-rows:minmax(0,1fr)}
+.shell:has(:is(#nuggets,#clusters,#chat).on) main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.shell:has(:is(#nuggets,#clusters,#chat).on) .top{flex:none}
+.view.fxv.on{display:flex;flex-direction:column;flex:1;min-height:0}
+.fxv.on>.page{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;padding-bottom:24px}
+.fxv .head,.fxv .tools,.fxv .notice{flex:none}
+.tools .seg{max-width:100%;overflow-x:auto}.tools .seg button{flex:none;white-space:nowrap}
+.tools select.in{max-width:100%}
+
+/* nuggets: card feed */
+.nfeed{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px;align-content:start}
+.nfeed .empty{grid-column:1/-1}
+.ncard{display:flex;flex-direction:column;gap:10px;padding:16px 18px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--shadow)}
+.ncard p{margin:0;font-size:15px;line-height:1.55;overflow-wrap:anywhere}
+.ncard .meta{margin-top:0}
+.ncard .nft{display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:10px;border-top:1px solid var(--line-soft)}
+.ncard .nft .end{margin-left:auto;display:inline-flex;gap:10px;align-items:center;white-space:nowrap}.ncard .nft .k{font:12px ui-monospace,monospace;color:var(--faint)}
+.ncard .nft .src{font-size:12.5px;color:var(--muted)}.ncard .nft .src:hover{color:var(--ink);text-decoration:underline}
+.nfoot{flex:none;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-top:12px;color:var(--faint);font-size:12.5px}
+
+/* clusters + chat: workspace panes */
+.ws{display:grid;gap:16px;align-items:stretch;flex:1;min-height:0;grid-template-rows:minmax(0,1fr)}
+.ws.c2{grid-template-columns:minmax(280px,.9fr) minmax(0,1.3fr)}
+.ws.ch{grid-template-columns:210px minmax(0,1fr)}
+.ws>*{min-height:0}
+.lst{overflow:auto;overscroll-behavior:contain}
+.crow{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:12px 16px;border:0;border-bottom:1px solid var(--line-soft);background:none;cursor:pointer}
+.crow:hover{background:var(--bg)}.crow[aria-selected=true]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.crow .tx{flex:1;min-width:0}.crow .tx b{font-weight:500;display:block;overflow-wrap:anywhere}.crow .tx span{color:var(--muted);font-size:12.5px}
+.crow .pl{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.wsd{display:flex;flex-direction:column;overflow:hidden}.wsd>.panel-h,.wsd>.dfoot{flex:none}
+.wsd .panel-h h2{overflow-wrap:anywhere}
+.ideabox{margin-top:18px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--bg)}
+.ideabox p{margin:8px 0 12px;color:var(--ink-2);line-height:1.55}
+.ideabox .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.convs .row{justify-content:space-between}
+
+/* chat */
+.srail{padding:12px;display:flex;flex-direction:column;gap:4px;overflow:auto}
+.srail .btn{width:100%;margin-bottom:6px}
+.srail .sess{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:var(--r-s);background:none;cursor:pointer;font-size:13px;color:var(--ink-2)}
+.srail .sess:hover{background:var(--sunk)}.srail .sess[aria-current=true]{background:var(--accent-soft);color:var(--accent-text);font-weight:500}
+.srail .sess small{display:block;color:var(--faint);font-size:12px;font-weight:400}
+.cth{display:flex;flex-direction:column;overflow:hidden}
+.cmsgs{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px 18px}
+.evt{padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--bg);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.evt .mono{color:var(--muted);flex-basis:100%;font-size:12.5px}.evt .btn{margin-left:auto}
+.cpend{flex:none;padding:12px 18px;border-top:1px solid var(--line);background:var(--bg)}
+.cpend h3{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.cpend .none{color:var(--muted);font-size:13px;margin:0}
+.prop{padding:12px 14px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:var(--r-m);background:var(--surface);margin-bottom:8px}
+.prop:last-child{margin-bottom:0}
+.prop pre{margin:8px 0;padding:8px 10px;background:var(--sunk);border-radius:var(--r-s);font:13px ui-monospace,monospace;white-space:pre-wrap}
+.prop .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.prop .r small{margin-left:auto;color:var(--faint);font-size:12.5px}
+.ccomp{flex:none;padding:12px 18px;border-top:1px solid var(--line-soft)}
+.ccomp .r{display:flex;gap:8px;align-items:flex-end}
+.ccomp textarea{flex:1;min-height:56px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);color:var(--ink);font:inherit;resize:vertical}
+.ccomp textarea:focus{border-color:var(--accent);outline:0}.ccomp textarea:disabled{background:var(--sunk);color:var(--muted)}
+.ccomp .st{margin:6px 0 0;color:var(--faint);font-size:12.5px}
+
+/* stacked layouts (clusters, chat): the fixed-height shell steps aside, panes stack */
+@media(max-width:1100px){
+  .shell:has(:is(#clusters,#chat).on){height:auto}
+  .shell:has(:is(#clusters,#chat).on) main{display:block;overflow:visible}
+  .view.fxv:is(#clusters,#chat).on>.page{display:block}
+  .ws.c2,.ws.ch{display:grid;grid-template-columns:1fr;grid-template-rows:none}
+  .ws .lst{max-height:340px}.cmsgs{max-height:50vh}
+  .srail{flex-direction:row;overflow-x:auto;align-items:center}.srail .btn{width:auto;flex:none;margin:0 6px 0 0}.srail .sess{width:auto;flex:none;white-space:nowrap}
+}
+@media(max-width:860px){
+  .shell:has(#nuggets.on){height:auto}.shell:has(#nuggets.on) main{display:block;overflow:visible}
+  #nuggets.on>.page{display:block}.nfeed{overflow:visible}
+}
+
+/* problem signals: compact bar + drawer */
+.kp-s .kpi{padding:12px 18px}.kp-s .kpi .v{font-size:24px}
+.sbar{display:flex;gap:12px;align-items:center;padding:10px 16px;margin-bottom:12px;flex-wrap:wrap}
+.sbar b{font-weight:500}.sbar .st{color:var(--muted);font-size:13px}
+.sdr{margin-bottom:16px}.sdr .panel-b{display:grid;gap:14px}
+.sdr .cmd{display:inline-block;padding:2px 8px;background:var(--sunk);border-radius:var(--r-s)}
+.sdr .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.srow{display:grid;grid-template-columns:176px minmax(0,1fr);gap:16px;align-items:start}.srow.nofac{grid-template-columns:minmax(0,1fr)}
+.fac{padding:12px}.fac h3{font-size:12.5px;color:var(--muted);font-weight:500;margin:14px 0 4px;padding:0 8px}.fac h3:first-child{margin-top:0}
+.fac button{display:flex;width:100%;justify-content:space-between;gap:8px;padding:5px 8px;border:0;border-radius:var(--r-s);background:none;cursor:pointer;font-size:13px;color:var(--ink-2);text-align:left}
+.fac button:hover{background:var(--sunk)}.fac button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent-text);font-weight:500}
+.fac button span{color:var(--faint);font-variant-numeric:tabular-nums}
+.mkrow>td{background:var(--bg)}.mkrow .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mkrow .in{min-width:200px;flex:1}
+@media(max-width:860px){.srow,.srow.nofac{grid-template-columns:minmax(0,1fr)}}.srow>*{min-width:0}
+
+/* config: two panes */
+.cfws{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px;align-items:start}
+.cfnav{padding:8px;position:sticky;top:76px}
+.cfnav button{display:flex;align-items:center;gap:8px;width:100%;height:34px;padding:0 10px;border:0;border-radius:var(--r-s);background:none;cursor:pointer;color:var(--ink-2);text-align:left;font-size:14px}
+.cfnav button:hover{background:var(--sunk)}.cfnav button[aria-current=true]{background:var(--accent-soft);color:var(--accent-text);font-weight:500}
+.cfnav .ud{margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
+.cfnav .sep{height:1px;background:var(--line-soft);margin:6px 4px}
+.kn{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.kn label{display:flex;flex-direction:column;gap:4px;font-size:13px}.kn label .mono{color:var(--ink-2)}
+.kn .in{width:100%}.kn .in.chg{border-color:var(--accent);background:var(--accent-soft)}.kn .in.bad{border-color:var(--bad)}
+.kn small{color:var(--faint);font-size:12.5px}.kn small.err{color:var(--bad)}
+.savebar,.sumbar{position:sticky;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;box-shadow:0 6px 24px rgba(0,0,0,.14)}
+.savebar{margin-top:16px}.savebar[hidden]{display:none}
+@media(min-width:861px){.savebar,.sumbar,.nfoot{padding-right:176px}}
+@media(max-width:860px){.cfws{grid-template-columns:1fr}.cfnav{position:static;display:flex;overflow-x:auto;gap:2px}.cfnav button{width:auto;flex:none;white-space:nowrap}.cfnav .sep{display:none}}
+
+/* schedule: form + live summary */
+.sch{max-width:900px;display:flex;flex-direction:column;gap:16px}
+.sch .notice{margin:0}.sch .panel-b{display:grid;gap:12px}
+.cad{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.sgrp b{display:block;font-size:12.5px;color:var(--muted);font-weight:500;margin:10px 0 2px}.sgrp label{display:flex;gap:10px;align-items:center;padding:5px 0}
+.sgrp .na{color:var(--faint);font-size:12.5px}
+.sumbar .st{flex:1;min-width:220px}
+.depth{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.depth label{display:flex;flex-direction:column;gap:4px;font-size:13px}.depth .in{width:100%}
+.logp{margin:0;padding:12px 16px;background:var(--sunk);border-radius:var(--r-m);font:12.5px/1.7 ui-monospace,monospace;overflow-x:auto}
+.sch .kpis{margin-bottom:0}.sch .kpis.k3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:860px){.sch .kpis.k3{grid-template-columns:1fr}.sch .kpis.k3 .kpi{border-left:0;border-top:1px solid var(--line-soft)}.sch .kpis.k3 .kpi:first-child{border-top:0}}
+
+/* chat: your messages and the assistant's are visually separate (right-aligned tinted bubble vs left outlined bubble) */
+.msg{display:flex;flex-direction:column;gap:4px;align-items:flex-start;margin:0 0 14px}
+.msg>b{width:auto;font-size:12px;font-weight:500;color:var(--faint)}
+.msg>div{max-width:min(78%,640px);padding:10px 14px;border-radius:var(--r-l);line-height:1.5;overflow-wrap:anywhere;white-space:pre-line}
+.msg.chat>div{background:var(--bg);border:1px solid var(--line);border-top-left-radius:var(--r-s)}
+.msg.you{align-items:flex-end}
+.msg.you>div{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);border-top-right-radius:var(--r-s);font-weight:400;color:var(--ink)}
+.msg.note{align-items:center;opacity:.7;font-size:12.5px}.msg.note>b{display:none}.msg.note>div{background:none;border:0;padding:0;max-width:none;text-align:center}
+.evt{margin:0 0 14px;max-width:min(78%,640px)}
+@media(max-width:860px){.msg>div,.evt{max-width:92%}}
+
+/* ideas: list and detail */
+.ilist{padding:8px;display:flex;flex-direction:column;gap:2px;max-height:calc(100vh - 92px);overflow:auto}
+.irow{display:block;width:100%;text-align:left;border:0;border-radius:var(--r-m);background:none;padding:10px 12px;font:inherit;color:var(--ink);cursor:pointer}
+.irow:hover{background:var(--sunk)}.irow[aria-current=true]{background:var(--accent-soft)}.irow[aria-current=true] b{color:var(--accent-text)}
+.irow b{font-weight:500;display:block}.irow small{display:flex;gap:8px;align-items:center;color:var(--faint);font-size:12.5px;margin-top:3px}
+.scr{display:grid;grid-template-columns:96px 1fr 22px;gap:10px;align-items:center;margin-top:8px}.scr span{color:var(--muted)}.scr b{font-weight:500;font-variant-numeric:tabular-nums;text-align:right}
+.sb{height:6px;border-radius:3px;background:var(--sunk)}.sb i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+@media(min-width:1101px){#isplit{grid-template-columns:340px minmax(0,1fr)}}
+
+/* sections: one fixed size (--pane-h) that content can surpass; panels never shrink below it */
+:root{--pane-h:clamp(420px,calc(100dvh - 340px),720px)}
+#isplit>.panel:first-child,#qsplit>.panel,#sres,#sources .panel,#dfind,#signals .panel:not(.kpis):not(.sbar){min-height:var(--pane-h)}
+.ilist{max-height:none;overflow:visible}
+/* detail panes: fixed size, never grow the page; overflow scrolls inside with the scrollbar hidden */
+.detail,.detail *,#cldet,#cldet *{scrollbar-width:none}
+.detail::-webkit-scrollbar,.detail *::-webkit-scrollbar,#cldet::-webkit-scrollbar,#cldet *::-webkit-scrollbar{display:none}
+.detail,#cldet{overscroll-behavior:contain}
+@media(min-width:1101px){:is(#isplit,#qsplit){align-items:start}
+:is(#isplit,#qsplit)>.detail{position:static;height:var(--pane-h);min-height:0;max-height:none;overflow-y:auto}
+:is(#isplit,#qsplit)>.panel:first-child{height:var(--pane-h);min-height:0;overflow-y:auto}}
+
+/* overlays (side drawers, row menu): fixed size; content past it scrolls with the scrollbar hidden */
+.menu{max-height:min(60vh,360px);overflow:auto}
+.menu,.menu *{scrollbar-width:none}.menu::-webkit-scrollbar{display:none}
+@media(max-width:1100px){
+:is(#rsplit,#qsplit,#isplit,#psplit):not(.nodet)>.detail{height:100%;max-height:100%;overflow-y:auto;overscroll-behavior:contain}
+:is(#rsplit,#qsplit,#isplit,#psplit):not(.nodet)>.detail,:is(#rsplit,#qsplit,#isplit,#psplit):not(.nodet)>.detail *{scrollbar-width:none}
+:is(#rsplit,#qsplit,#isplit,#psplit):not(.nodet)>.detail::-webkit-scrollbar,:is(#rsplit,#qsplit,#isplit,#psplit):not(.nodet)>.detail *::-webkit-scrollbar{display:none}}
+
+/* config: setting rows + yaml preview */
+.cfg2{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:stretch}
+.cfr{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:20px;align-items:start;padding:16px 0;border-top:1px solid var(--line-soft)}.cfr:first-of-type{border-top:0;padding-top:0}
+.cfr p{margin:4px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.cfi{display:block}.cfi small{display:block;margin-top:6px;color:var(--faint);font-size:12.5px}.cfi .in{width:100%}
+.rl{border:0;background:none;color:var(--accent-text);cursor:pointer;font:inherit;padding:0;text-decoration:underline}
+.yml{margin:0;padding:14px 16px;font:12.5px/1.9 ui-monospace,monospace;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.yml .yl{display:block}.yml .c{color:var(--faint)}.yml .ych{background:var(--accent-soft);color:var(--accent-text);margin:0 -16px;padding:0 16px}
+.m2{margin:0;padding:0 16px 14px;color:var(--faint);font-size:12.5px}
+@media(max-width:1100px){.cfg2{grid-template-columns:1fr}}
+@media(max-width:560px){.cfr{grid-template-columns:1fr;gap:10px}}
+
+/* config: agent models */
+.cfstack{display:grid;gap:16px}
+.cfstack .grp td{background:var(--bg);color:var(--muted);font-size:12.5px;font-weight:500;padding:8px 16px}
+.cfstack td .in{min-width:190px}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="shell">
+<nav class="side" aria-label="Main">
+  <div class="brand"><div class="mark" aria-hidden="true">J</div><div><b>Jester</b><small>Local pipeline</small></div></div>
+  <div class="grp">Pipeline</div>
+  <button class="nav-item" data-go="overview" aria-current="page"><svg class="icon" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>Overview</button>
+  <button class="nav-item" data-go="runs"><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Runs<span class="n">214</span></button>
+  <button class="nav-item" data-go="queue"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Queue<span class="n">33,614</span></button>
+  <div class="grp">Archive</div>
+  <button class="nav-item" data-go="ideas"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10c1 1 1 2 1 3h6c0-1 0-2 1-3a6 6 0 0 0-4-10z"/></svg>Ideas<span class="n">1,321</span></button>
+  <button class="nav-item" data-go="nuggets"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3l8 5v8l-8 5-8-5V8z"/></svg>Nuggets<span class="n">31,818</span></button>
+  <button class="nav-item" data-go="posts"><svg class="icon" viewBox="0 0 24 24"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg>Posts<span class="n new" id="navNew">12 new</span></button>
+  <button class="nav-item" data-go="clusters"><svg class="icon" viewBox="0 0 24 24"><circle cx="7" cy="8" r="3"/><circle cx="17" cy="8" r="3"/><circle cx="12" cy="17" r="3"/></svg>Clusters</button>
+  <button class="nav-item" data-go="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>Search</button>
+  <div class="grp">Curation</div>
+  <button class="nav-item" data-go="chat"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 11h16M4 16h10"/></svg>Chat</button>
+  <div class="grp">Collector</div>
+  <button class="nav-item" data-go="signals"><svg class="icon" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Problem signals<span class="n">96</span></button>
+  <div class="grp">Setup</div>
+  <button class="nav-item" data-go="sources"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 16 0M8 12a4 4 0 0 1 8 0"/><circle cx="12" cy="12" r="1"/></svg>Sources<span class="n">115</span></button>
+  <button class="nav-item" data-go="config"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>Config</button>
+  <button class="nav-item" data-go="schedule"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Schedule</button>
+  <button class="nav-item" data-go="doctor"><svg class="icon" viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 6-8 12-8 12z"/></svg>Doctor<span class="n">3</span></button>
+  <div class="sp"></div>
+  <div class="health"><span class="led"></span>All services up. Next cycle 10:20.</div>
+</nav>
+
+<main id="content">
+<header class="top">
+  <div class="crumb" aria-label="Breadcrumb">Jester <span aria-hidden="true">/</span> <b id="crumb">Overview</b></div>
+  <div class="grow"></div>
+  <span class="chip">db <code>jester.db</code></span>
+  <span class="chip"><span class="led" style="background:var(--accent)"></span>Running · cycle-20260922T0920Z</span>
+  <button class="btn ghost sm" id="themeBtn" aria-label="Toggle dark mode"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+  <button class="btn sm" id="refreshBtn"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Refresh</button>
+  <button class="btn primary sm" id="runBtn"><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run pipeline</button>
+</header>
+
+<!-- OVERVIEW -->
+<section id="overview" class="view on"><div class="page">
+  <div class="head"><div><h1>Overview</h1><p class="lede">Tuesday 22 Sep. Reddit is back after 26 days (30 comments from r/selfhosted this morning), so the 71,309 deferred nuggets are being archived.</p></div></div>
+
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div><b style="font-weight:500">7 nuggets are waiting to be re-embedded</b><p>Search works but results are incomplete until this clears, usually within a minute.</p></div>
+    <button class="btn sm" id="reembed">Re-embed now</button></div>
+
+  <div class="kgrid">
+  <div class="panel kpis">
+    <div class="kpi"><div class="k">Nuggets</div><div class="v">31,818</div><div class="d up">+2,938 today</div></div>
+    <div class="kpi"><div class="k">Ideas</div><div class="v">1,321</div><div class="d">None new in 14 cycles</div></div>
+    <div class="kpi"><div class="k">Pending batches</div><div class="v">33,614</div><div class="d warn-t">25,067 are real-estate listings</div></div>
+    <div class="kpi"><div class="k">Failed batches</div><div class="v">0</div><div class="d">7 in the re-embed backlog</div></div>
+  </div>
+
+  <div class="panel kpis k2">
+    <div class="kpi"><div class="k">Unprocessed</div><div class="v">412</div><div class="d">Fetched, not yet extracted</div></div>
+    <div class="kpi"><div class="k">Runs active</div><div class="v">1</div><div class="d">Started 10:12 by hand</div></div>
+  </div>
+  </div>
+
+  <div class="g2">
+    <div class="panel"><div class="panel-h"><h2>Current run</h2><span class="pill run">Running</span><button class="btn sm ghost" data-go="runs">Open log</button></div>
+      <div class="panel-b"><dl class="kv">
+        <dt>Run</dt><dd class="mono">cycle-20260922T082003Z</dd>
+        <dt>Started</dt><dd>10:12, 11 min ago</dd>
+        <dt>Phase</dt><dd>Archive → synthesize <span style="color:var(--faint)">(62%)</span><div class="bar lg" role="progressbar" aria-valuenow="62" aria-valuemin="0" aria-valuemax="100" aria-label="Run progress"><i style="width:62%"></i></div></dd>
+        <dt>Kept / ideas</dt><dd>2,938 / none yet</dd>
+        <dt>Duration</dt><dd>112 s <span style="color:var(--faint)">(expected 2,443 s)</span></dd>
+        <dt>Flags</dt><dd><span class="pill warn">LOW_NUGGETS</span></dd></dl></div></div>
+    <div class="panel"><div class="panel-h"><h2>Quota today</h2><span class="chip" style="margin-left:auto">2026-09-22</span></div>
+      <div class="panel-b"><div class="mix" role="img" aria-label="Share of today’s fetches by platform" style="margin-bottom:10px"><i style="width:64.5%"></i><i style="width:29.7%;opacity:.7"></i><i style="width:2.9%;opacity:.5"></i><i style="width:2.1%;opacity:.35"></i><i style="width:.7%;opacity:.25"></i></div><dl class="ledger">
+        <dt>Reddit</dt><dd>30</dd><dt>Hacker News</dt><dd>1,204</dd><dt>Discourse</dt><dd>2,611</dd><dt>Lemmy</dt><dd>118</dd>
+        <dt>Stack Exchange</dt><dd>86</dd><dt>YouTube</dt><dd class="z">0</dd><dt>GitHub</dt><dd class="z">0</dd><dt>Steam</dt><dd class="z">0</dd></dl></div></div>
+  </div>
+
+  <div class="g3">
+    <div class="panel"><div class="panel-h"><h2>Infrastructure</h2></div><div class="panel-b" style="padding-top:6px;padding-bottom:6px">
+      <div class="row"><span class="led"></span>Ollama<small>8 models, native</small></div>
+      <div class="row"><span class="led"></span>cloakserve<small>:9222, Chrome 146</small></div>
+      <div class="row"><span class="led"></span>Qdrant<small>1.19, docker</small></div>
+      <div class="row"><span class="led idle"></span>Reddit API<small>No credentials</small></div>
+      <div class="row"><span class="led"></span>Go worker<small>go 1.22</small></div>
+      <p class="sub2" style="margin:8px 0 2px">Checked just now <button class="btn sm ghost" id="recheck">Re-check</button></p></div></div>
+    <div class="panel"><div class="panel-h"><h2>Quick actions</h2></div><div class="panel-b"><div class="actions">
+      <h3>Run</h3><button class="btn sm act">Run pipeline</button><button class="btn sm act">Live models</button><button class="btn sm act">Ingest</button><button class="btn sm act">Smoke check</button>
+      <h3>Repair</h3><button class="btn sm act">Requeue failed</button><button class="btn sm act">Re-embed backlog</button>
+      <h3>Data</h3><button class="btn sm act">Export CSV</button><button class="btn sm act danger">Retention sweep</button></div></div></div>
+    <div class="panel"><div class="panel-h"><h2>Reddit watches</h2><button class="btn sm ghost" data-go="posts">View posts</button></div>
+      <div class="tw"><table><tbody>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/selfhosted</b><span>backup, self-host*, migrat*</span></td><td class="num">8 new</td></tr>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/devops</b><span>score ≥ 20</span></td><td class="num">3 new</td></tr>
+        <tr class="clk" data-go="posts" tabindex="0"><td class="tc"><b>r/dataengineering</b><span>flair: Discussion</span></td><td class="num">1 new</td></tr></tbody></table></div></div>
+  </div>
+</div></section>
+
+<!-- IDEAS -->
+<section id="ideas" class="view"><div class="page">
+  <div class="head"><div><h1>Ideas</h1><p class="lede">1,321 ideas, each scored by the critic. Open one to check its citations against the original comments.</p></div>
+    <button class="btn" data-toast="Resynthesis queued for all ideas (mock, not connected to a service)"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Resynthesize all</button></div>
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><div><b>No new ideas in 14 cycles</b><p>Open Runs to see what each cycle kept and why.</p></div><button class="btn sm" data-go="runs">Open runs</button></div>
+  <div class="tools">
+    <label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search ideas</span><input id="iq" type="search" placeholder="Search ideas, problems, sources"></label>
+    <div class="seg" role="group" aria-label="Show"><button aria-pressed="true" data-f="all">All</button><button aria-pressed="false" data-f="saved">Saved</button><button aria-pressed="false" data-f="discarded">Discarded</button></div>
+    <div class="seg" role="group" aria-label="Sort"><button aria-pressed="true" data-s="score">Score</button><button aria-pressed="false" data-s="new">Newest</button><button aria-pressed="false" data-s="ev">Evidence</button></div>
+  </div>
+  <p class="legend">Scores: demand, feasibility, competition (higher is better; low competition scores high).</p>
+  <div class="split" id="isplit"><div class="panel"><div class="ilist" id="ibody" role="list"></div>
+    <div class="empty" id="iempty" hidden><h3>No ideas match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" id="iclear">Clear filters</button></div></div>
+  <aside class="panel detail" id="idetail" aria-live="polite"></aside></div>
+  <p class="legend" id="ishown" style="margin-top:10px"></p>
+</div></section>
+
+<!-- POSTS -->
+<section id="posts" class="view"><div class="page">
+  <div class="head"><div><h1>Posts</h1><p class="lede">Posts that matched a Reddit watch since the last cycle. Keep what is worth reading; dismissed posts are hidden, not deleted.</p></div>
+    <button class="btn" id="exportMd"><svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>Export kept as .md</button></div>
+  <div class="tools">
+    <label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search posts</span><input id="pq" type="search" placeholder="Search posts"></label>
+    <div class="seg" role="group" aria-label="State" id="pstate"></div>
+    <div class="seg" role="group" aria-label="Subreddit" id="psub"></div>
+  </div>
+  <div class="split nodet" id="psplit">
+    <div class="panel plist" id="plist" role="listbox" aria-label="Posts"></div>
+    <aside class="panel detail" id="pdetail" aria-live="polite"></aside>
+  </div>
+</div></section>
+
+<!-- RUNS -->
+<section id="runs" class="view"><div class="page">
+  <div class="head"><div><h1>Runs</h1><p class="lede">The pipeline ledger. Origin tells a run you started from one the host scheduler started at 4am.</p></div>
+    <button class="btn accent" data-runnow><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run pipeline</button></div>
+  <div class="tools"><div class="seg" role="group" aria-label="Origin" id="rorigin"></div><span class="grow"></span><span class="legend" style="margin:0" id="rshown"></span></div>
+  <div class="split nodet" id="rsplit"><div class="panel tw"><table>
+    <thead><tr><th>Started</th><th>Status</th><th class="num">Kept / ideas</th><th class="num">Duration</th><th>Origin</th><th class="hd-open">Mix</th></tr></thead>
+    <tbody id="rbody"></tbody></table></div>
+    <aside class="panel detail" id="rdetail" aria-live="polite"></aside></div>
+</div></section>
+
+<!-- QUEUE -->
+<section id="queue" class="view"><div class="page">
+  <div class="head"><div><h1>Queue</h1><p class="lede">What has been scraped and not yet treated. Ingestion and treatment run on separate clocks, so a gap between them is normal.</p></div>
+    <button class="btn" data-toast="Treatment started (mock, not connected to a service)">Treat now</button></div>
+  <div class="notice" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><div><b>Treatment is paused until 13:40</b><p>The hosted model is out of quota. Queued work keeps accumulating and nothing is lost.</p></div></div>
+  <div class="panel" style="margin-bottom:16px"><div class="panel-h"><h2>Where the waiting work came from</h2></div><div class="panel-b" id="qmix" style="padding-top:6px;padding-bottom:6px"></div></div>
+  <div class="tools"><div class="seg" role="group" aria-label="Kind" id="qkind"></div><div class="seg" role="group" aria-label="Status" id="qstat"></div></div>
+  <div class="split nodet" id="qsplit"><div class="panel tw"><table>
+    <thead><tr><th>Batch</th><th>Source</th><th class="num">Items</th><th>Queued</th><th>Status</th></tr></thead><tbody id="qbody"></tbody></table></div>
+    <aside class="panel detail" id="qdetail" aria-live="polite"></aside></div>
+  <p class="legend" id="qshown" style="margin-top:10px"></p>
+</div></section>
+
+<!-- SEARCH -->
+<section id="search" class="view"><div class="page">
+  <div class="head"><div><h1>Search</h1><p class="lede">Ask the archive. Results are nuggets ranked by similarity to your query.</p></div></div>
+  <div class="tools"><label class="field"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search the archive</span><input id="sq" type="search" placeholder="Try “backups fail silently”. Press / from anywhere."></label></div>
+  <div class="tools" id="sex"></div>
+  <div class="panel" id="sres"></div>
+  <p class="legend" id="scnt" style="margin-top:10px"></p>
+</div></section>
+
+<!-- SOURCES -->
+<section id="sources" class="view"><div class="page">
+  <div class="head"><div><h1>Sources</h1><p class="lede">The curated list the pipeline walks each cycle. Changes are written to sources.yaml immediately.</p></div></div>
+  <div class="tools"><label class="sr" for="splat">Platform</label>
+    <select class="in" id="splat"><option value="auto">Detect from link</option><option>Reddit</option><option>Hacker News</option><option>Discourse</option><option>Lemmy</option><option>Stack Exchange</option><option>Real estate</option></select>
+    <label class="field" style="max-width:340px"><span class="sr">Link</span><input id="surl" placeholder="Paste a link. The platform is detected from it."></label>
+    <label class="field" style="max-width:200px;min-width:140px"><span class="sr">Name</span><input id="sname" placeholder="Name (optional)"></label>
+    <button class="btn accent" id="sadd">Add source</button></div>
+  <div class="tools"><label class="field" style="max-width:420px"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Search sources</span><input id="ssq" type="search" placeholder="Search sources, targets, keywords"></label><div class="seg" role="group" aria-label="Status" id="sfil"></div></div>
+  <p class="legend" id="shint"></p>
+  <div class="panel"><div class="tw"><table id="stable"><colgroup><col style="width:72px"><col><col style="width:104px"><col style="width:22%"><col style="width:84px"><col style="width:140px"><col style="width:84px"><col style="width:120px"><col style="width:52px"></colgroup><tbody id="sbody"></tbody></table></div>
+    <div class="tfoot"><span id="scount"></span><span class="pager" id="spager" role="group" aria-label="Pages"></span></div></div>
+</div></section>
+
+<!-- DOCTOR -->
+<section id="doctor" class="view"><div class="page">
+  <div class="head"><div><h1>Doctor</h1><p class="lede">Checks that the pipeline is not quietly doing less than it looks.</p></div></div>
+  <div class="panel" id="dfind" style="margin-bottom:16px"></div>
+  <div class="panel"><div class="panel-h"><h2>Eval gate</h2><span class="pill bad" id="ebadge">Fail</span><button class="btn sm" id="erun">Re-run</button></div>
+    <div class="panel-b"><p class="lede" style="margin:0 0 12px">Regression suite over the idea scorer. A failure blocks nothing, but it is loud.</p>
+      <dl class="kv"><dt>Gate</dt><dd>Idea scorer</dd><dt>Checks</dt><dd>3</dd><dt>Failures</dt><dd>1</dd></dl></div>
+    <div class="tw"><table><thead><tr><th>Case</th><th class="num">Overall</th><th>Verdict</th></tr></thead><tbody id="ebody"></tbody></table></div></div>
+</div></section>
+
+<!-- NUGGETS: Option B, card feed -->
+<section id="nuggets" class="view fxv"><div class="page">
+  <div class="head"><div><h1>Nuggets</h1><p class="lede">The 31,818 archived pain signals, newest first. Each card is one insight with where it came from; narrow them by flag, platform or category.</p></div></div>
+  <div class="tools">
+    <label class="field" style="max-width:320px"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Filter nuggets</span><input id="nq" type="search" placeholder="Filter nuggets ( / )"></label>
+    <div class="seg" role="group" aria-label="Flag" id="nflag"></div>
+    <select class="in" id="npl" aria-label="Platform"></select>
+    <select class="in" id="nct" aria-label="Category"></select>
+    <button class="btn sm ghost" id="nclr" data-a="nclr" hidden>Clear filters</button>
+  </div>
+  <div class="nfeed" id="nfeed" aria-label="Nuggets"></div>
+  <div class="nfoot"><span id="ncnt"></span><span class="pager" id="npager" role="group" aria-label="Pages"></span></div>
+</div></section>
+
+<!-- CLUSTERS: Option D, list + detail workspace -->
+<section id="clusters" class="view fxv"><div class="page">
+  <div class="head"><div><h1>Clusters</h1><p class="lede">The archive grouped by meaning. Pick a theme to judge its size and breadth, read the evidence, and turn the good ones into ideas.</p></div>
+    <button class="btn" id="creg" data-a="creg"><svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Regroup</button></div>
+  <div class="notice" id="chash" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--warn)"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div><b>The last grouping used hash vectors</b><p>The embedding model was not used, so themes are rougher than usual. Regroup to redo it with embeddings.</p></div></div>
+  <div class="tools">
+    <label class="field" style="max-width:300px"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Filter themes</span><input id="clq" type="search" placeholder="Filter themes ( / )"></label>
+    <div class="seg" role="group" aria-label="Sort" id="clsort"></div>
+    <div class="seg" role="group" aria-label="Platform" id="clplat"></div>
+  </div>
+  <div class="ws c2">
+    <div class="panel lst" id="cllist" role="listbox" aria-label="Themes"></div>
+    <aside class="panel wsd" id="cldet" aria-live="polite"></aside>
+  </div>
+</div></section>
+
+<!-- CHAT: Option D, sessions rail + thread + pending -->
+<section id="chat" class="view fxv"><div class="page">
+  <div class="head"><div><h1>Chat</h1><p class="lede">An assistant over the archive. It can read and it can propose changes. Nothing happens until you apply, and every apply can be reverted.</p></div></div>
+  <div class="ws ch">
+    <aside class="panel srail" id="chsess" aria-label="Sessions"></aside>
+    <div class="panel cth">
+      <div class="cmsgs" id="chmsgs" aria-live="polite"></div>
+      <div class="cpend" id="chpend"></div>
+      <div class="ccomp"><div class="r"><textarea id="chin" rows="2" aria-label="Message"></textarea><button class="btn accent" id="chsend" data-a="chsend">Send</button></div><p class="st" id="chst"></p></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- PROBLEM SIGNALS: Option E, compact bar + drawer -->
+<section id="signals" class="view"><div class="page">
+  <div class="head"><div><h1>Problem signals</h1><p class="lede">Posts from approved sources, split into buyer signals outreach can act on and practitioner content, with the words that classified each.</p></div></div>
+  <div class="panel kpis kp-s">
+    <div class="kpi"><div class="k">Buyer signals</div><div class="v">96</div><div class="d">What outreach can act on</div></div>
+    <div class="kpi"><div class="k">Practitioner</div><div class="v">212</div><div class="d">Content material, not leads</div></div>
+    <div class="kpi"><div class="k">Runs this week</div><div class="v">7</div><div class="d">1 had errors</div></div>
+    <div class="kpi"><div class="k">New today</div><div class="v">31</div><div class="d">From 3 sources</div></div>
+  </div>
+  <div class="panel sbar">
+    <b>Jobs scraper</b><span class="st" id="sgstate"></span><span class="grow"></span>
+    <button class="btn sm" id="sgrun" data-a="sgrun"><svg class="icon" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>Run now</button>
+    <button class="btn sm" id="sgtog" data-a="sgtog" aria-expanded="false" aria-controls="sgdr">Schedule &amp; runs <svg class="icon fold" viewBox="0 0 24 24" style="transform:rotate(90deg)"><path d="M9 6l6 6-6 6"/></svg></button>
+  </div>
+  <div class="panel sdr" id="sgdr" hidden>
+    <div class="panel-h"><h2>Schedule</h2></div>
+    <div class="panel-b">
+      <p class="lede" style="margin:0">Reads the last two months of “Who is hiring?” threads, then contract boards in order until one adds something new.</p>
+      <div><span class="mono cmd">jester signals run --source jobs</span></div>
+      <div class="r"><div class="seg" role="group" aria-label="Schedule mode" id="sgmode"></div>
+        <label class="sr" for="sgtime">Time of daily run</label><input class="in" id="sgtime" type="time" value="09:30" style="width:120px">
+        <button class="btn sm" id="sgsave" data-a="sgsave" disabled>Save schedule</button></div>
+      <p class="sub2" id="sgnote" style="margin:0"></p>
+      <p class="sub2" style="margin:0">Scheduling uses the host scheduler (Windows Task Scheduler). Run now works anywhere.</p>
+    </div>
+    <div class="tw"><table><thead><tr><th>Started</th><th>Kind</th><th>Source</th><th class="num">Collected</th><th class="num">New</th><th class="num">Buyer</th><th class="num">Errors</th><th>Status</th></tr></thead><tbody id="sgruns"></tbody></table></div>
+  </div>
+  <div class="tools">
+    <label class="field" style="max-width:320px"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span class="sr">Filter problem signals</span><input id="sgq" type="search" placeholder="Filter signals ( / )"></label>
+    <button class="btn sm ghost" id="sgfac" data-a="sgfac" aria-pressed="true">Hide filters</button>
+    <button class="btn sm ghost" id="sgclr" data-a="sgclr" hidden>Clear filters</button>
+  </div>
+  <div class="srow" id="sgrow">
+    <aside class="panel fac" id="sgfacets" aria-label="Filters"></aside>
+    <div><div class="panel"><div class="tw"><table><thead><tr><th style="min-width:260px">Record</th><th>Audience</th><th class="num">Conf.</th><th>Why it was kept</th><th>Outcome</th></tr></thead><tbody id="sgrec"></tbody></table></div>
+      <div class="tfoot"><span id="sgcnt"></span><span class="pager" id="sgpager" role="group" aria-label="Pages"></span></div></div></div>
+  </div>
+</div></section>
+
+<!-- CONFIG: Option D, two panes -->
+<section id="config" class="view"><div class="page">
+  <div class="head"><div><h1>Config</h1><p class="lede">Every knob the pipeline reads, grouped by stage. Values are range-checked and written straight to thresholds.yaml.</p></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="sub2" style="display:inline">Profile</span><div class="seg" role="group" aria-label="Profile" id="cfprof"></div><span class="pill ok">Ollama reachable</span></div></div>
+  <div class="cfws">
+    <nav class="panel cfnav" id="cfnav" aria-label="Config groups"></nav>
+    <div id="cfpane"></div>
+  </div>
+  <div class="panel savebar" id="cfbar" role="status" hidden>
+    <b style="font-weight:500" id="cfn"></b><span class="grow"></span>
+    <button class="btn sm" data-a="cfdisc">Discard</button><button class="btn sm accent" data-a="cfsave">Save to thresholds.yaml</button></div>
+</div></section>
+
+<!-- SCHEDULE: Option D, form + live summary -->
+<section id="schedule" class="view"><div class="page">
+  <div class="head"><div><h1>Schedule</h1><p class="lede">Runs the whole loop (fetch, extract, archive, synthesize) through the host scheduler, with this console closed.</p></div></div>
+  <div class="sch">
+    <div id="scban"></div>
+    <div class="panel"><div class="panel-h"><h2>How often</h2></div><div class="panel-b"><div class="cad" id="sccad"></div></div></div>
+    <div class="panel"><div class="panel-h"><h2>What each run scrapes</h2><button class="btn sm ghost" data-a="scall">Select all</button><span class="pill run np" id="sccnt" style="margin-left:0"></span></div><div class="panel-b sgrp" id="scscope"></div></div>
+    <div class="panel"><div class="panel-h"><h2>How deep</h2></div><div class="panel-b"><p class="lede" style="margin:0">Leave a box blank for no ceiling. Whatever is left stays queued for the next run.</p>
+      <div class="depth"><label>Max posts<input class="in" type="number" min="1" inputmode="numeric" placeholder="No ceiling" data-sd="mp"></label><label>Max comments<input class="in" type="number" min="1" inputmode="numeric" placeholder="No ceiling" data-sd="mc"></label><label>Max ideas<input class="in" type="number" min="1" inputmode="numeric" placeholder="No ceiling" data-sd="mi"></label></div></div></div>
+    <div class="panel sumbar" role="status"><span class="st" id="scsum"></span><span id="scmark"></span><button class="btn accent" id="scinst" data-a="scinst"></button></div>
+    <div id="scstat" style="display:flex;flex-direction:column;gap:16px"></div>
+  </div>
+</div></section>
+
+<!-- STUB -->
+<section id="stub" class="view"><div class="page">
+  <div class="head"><div><h1 id="stubT">Page</h1><p class="lede">This page is outside the scope of the mockup.</p></div></div>
+  <div class="panel empty"><h3>Not designed yet</h3><p>It will use the same table, filter and detail patterns as Ideas and Posts.</p><button class="btn" data-go="overview">Back to overview</button></div>
+</div></section>
+</main></div>
+
+<div class="toast" id="toast" role="status"><span id="tmsg"></span><button id="tundo" hidden>Undo</button></div>
+<div class="mock" aria-label="Mockup controls"><span>Accent</span>
+  <button class="sw" aria-pressed="true" data-acc="red" style="background:#c8453d" aria-label="Red"></button>
+  <button class="sw" aria-pressed="false" data-acc="gold" style="background:#b8860b" aria-label="Gold"></button>
+  <button class="sw" aria-pressed="false" data-acc="lavender" style="background:#6e70b8" aria-label="Lavender"></button></div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const root=document.documentElement;
+function toast(m,undo){$('#tmsg').textContent=m;const u=$('#tundo');u.hidden=!undo;u.onclick=()=>{undo&&undo();$('#toast').classList.remove('on')};$('#toast').classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>$('#toast').classList.remove('on'),4000)}
+
+/* navigation */
+function go(id){
+  let name=id;const stub=id.startsWith('stub:');if(stub){name=id.slice(5);id='stub';$('#stubT').textContent=name}
+  $$('.view').forEach(v=>v.classList.toggle('on',v.id===id));
+  $$('.nav-item').forEach(n=>n.removeAttribute('aria-current'));
+  const target=stub?'stub:'+name:id;const n=$(`.nav-item[data-go="${target}"]`);n&&n.setAttribute('aria-current','page');
+  $('#crumb').textContent=stub?name:{overview:'Overview',runs:'Runs',queue:'Queue',ideas:'Ideas',posts:'Posts',search:'Search',sources:'Sources',doctor:'Doctor',nuggets:'Nuggets',clusters:'Clusters',chat:'Chat',signals:'Problem signals',config:'Config',schedule:'Schedule'}[id];
+  document.querySelector('main').scrollTo(0,0);window.scrollTo(0,0);
+}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-go]');if(t)go(t.dataset.go)});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.matches('tr[data-go]'))go(e.target.dataset.go)});
+$('#themeBtn').onclick=()=>root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+$$('.sw').forEach(s=>s.onclick=()=>{root.dataset.accent=s.dataset.acc;$$('.sw').forEach(x=>x.setAttribute('aria-pressed',x===s))});
+
+/* mock actions with feedback */
+function busy(btn,label,done,ms=900){if(btn.disabled)return;const h=btn.innerHTML;btn.disabled=true;btn.classList.add('busy');setTimeout(()=>{btn.disabled=false;btn.classList.remove('busy');toast(done)},ms)}
+$('#runBtn').onclick=e=>toast('A cycle is already running. It will pick up new work when it finishes.');
+$('#refreshBtn').onclick=e=>busy(e.currentTarget,'','Refreshed just now (mock data)',600);
+$('#reembed').onclick=e=>{const b=e.currentTarget;b.disabled=true;b.textContent='Re-embedding…';setTimeout(()=>{b.closest('.notice').remove();toast('Re-embed finished: 7 nuggets added to the archive (mock)')},1000)};
+$$('.act').forEach(b=>b.onclick=()=>{if(b.classList.contains('danger')&&!confirm('Run the retention sweep? Nuggets past their retention window will be deleted.'))return;toast(b.textContent+' started (mock, not connected to a service)')});
+$('#exportMd').onclick=()=>toast(posts.filter(p=>p.s==='kept').length+' kept posts would be exported (mock)');
+
+/* ideas */
+const ideas=[
+ {t:'Backup Drill Scheduler',d:'Self-hosters never test restores. Runs a monthly restore into a scratch VM and reports what broke.',p:['reddit','discourse'],n:14,th:3,sc:[8,7,5],st:'saved',o:3},
+ {t:'Pipeline Drift Ledger',d:'Data engineers lose hours to silent upstream schema changes. Diffs every source schema per run and pages the owner.',p:['reddit','hackernews'],n:22,th:5,sc:[9,6,3],st:'new',o:5},
+ {t:'Homelab Power Budget',d:'Meters per-device draw and price, and says which container costs the most per month.',p:['reddit'],n:9,th:2,sc:[6,8,5],st:'new',o:4},
+ {t:'On-call Handover Notes',d:'Pager rotations lose context at every handoff. Captures the shift’s incidents into a one-page brief.',p:['reddit','stackexchange'],n:11,th:4,sc:[7,8,4],st:'discarded',o:2},
+ {t:'Forum Migration Checker',d:'Discourse admins moving hosts break every embed and redirect. Crawls both and lists what changed.',p:['discourse'],n:6,th:1,sc:[5,9,6],st:'new',o:1}];
+const pc={saved:'ok',new:'',discarded:'bad'};
+let ifl='all',isort='score',isel=null;
+function renderIdeas(){
+  const q=$('#iq').value.toLowerCase();
+  let l=ideas.filter(i=>(ifl==='all'||i.st===ifl)&&(i.t+i.d+i.p.join(' ')).toLowerCase().includes(q));
+  l.sort((a,b)=>isort==='score'?b.sc[0]-a.sc[0]:isort==='ev'?b.n-a.n:b.o-a.o);
+  const wide=matchMedia('(min-width:1101px)').matches;
+  if(wide&&(isel===null||!l.includes(ideas[isel])))isel=l.length?ideas.indexOf(l[0]):null;
+  $('#ibody').innerHTML=l.map(i=>{const k=ideas.indexOf(i);return `<button class="irow" data-i="${k}" aria-current="${k===isel}"><b>${i.t}</b><small>${i.n} nuggets<span class="pill ${pc[i.st]}" style="margin-left:auto">${cap(i.st)}</span></small></button>`}).join('');
+  $('#iempty').hidden=l.length>0;
+  $('#ishown').textContent=`Showing ${l.length} of 1,321 ideas, sorted by ${{score:'score',ev:'evidence',new:'newest'}[isort]}`;renderIdea();
+}
+$('#iq').oninput=renderIdeas;
+$$('[data-f]').forEach(b=>b.onclick=()=>{ifl=b.dataset.f;$$('[data-f]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderIdeas()});
+$$('[data-s]').forEach(b=>b.onclick=()=>{isort=b.dataset.s;$$('[data-s]').forEach(x=>x.setAttribute('aria-pressed',x===b));renderIdeas()});
+$('#iclear').onclick=()=>{$('#iq').value='';ifl='all';$$('[data-f]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.f==='all'));renderIdeas()};
+
+/* posts */
+const posts=[
+ {id:1,sc:342,c:67,t:'Hardening security for public services: what am I missing?',sub:'r/selfhosted',u:'quietfox',ago:'2 h ago',kw:'self-host*',tag:'Help',src:'api',s:'new',
+  b:'I run Nextcloud, Immich and Vaultwarden behind Traefik with Authelia in front. Fail2ban on the host, Cloudflare tunnel, no ports open except 443. Is there anything obvious I’m missing before I let family use it?\n\nCurrently no WAF and I’ve never actually tried a restore from my backups…',
+  cm:[['u/restic_rob · 88','“Never tested a restore” is the whole answer. Schedule one. Everything else is decoration until that works.'],['u/zt_person · 41','Cloudflare tunnel + Authelia is fine. Add CrowdSec instead of fail2ban, it shares blocklists across your boxes.'],['u/nc_admin · 23','Watch the Nextcloud brute-force setting, it silently disables itself after an upgrade.']]},
+ {id:2,sc:128,c:31,t:'Migrated 40 containers from Portainer to plain compose. Notes.',sub:'r/selfhosted',u:'etulastrada',ago:'5 h ago',kw:'migrat*',src:'api',s:'new',b:'Wrote up what broke, what got simpler, and the script I used to export stacks.',cm:[['u/compose_cat · 30','Exporting stacks first saved me too. Keep the Portainer volumes until you’re sure.']]},
+ {id:3,sc:96,c:12,t:'Our restic backups were silently empty for 3 months',sub:'r/selfhosted',u:'dbwatcher',ago:'9 h ago',kw:'backup',tag:'Guide',src:'browser',s:'new',b:'A path change meant the job exited 0 with nothing to back up. Here is the check we added.',cm:[['u/restic_rob · 52','Alert on snapshot size, not on exit code.']]},
+ {id:4,sc:54,c:19,t:'How do you keep on-call handovers from losing context?',sub:'r/devops',u:'pager_pete',ago:'12 h ago',kw:'score ≥ 20',src:'api',s:'new',b:'We rotate weekly and every handover is a rushed Slack message. What works for you?',cm:[['u/sre_sam · 17','One-page template, filled in at the end of every shift.']]},
+ {id:5,sc:27,c:8,t:'Schema drift detection: anything better than dbt tests?',sub:'r/dataengineering',u:'lakehouse_lu',ago:'1 d ago',kw:'',tag:'Discussion',src:'api',s:'new',b:'Upstream teams rename columns without telling us. dbt tests catch it after the fact.',cm:[['u/de_dana · 9','Contract tests at the ingestion boundary.']]}];
+let pst='new',psub='all',psel=1,pshow=false;
+const subs=['all',...new Set(posts.map(p=>p.sub))];
+function renderPosts(){
+  const cnt=s=>posts.filter(p=>p.s===s).length;
+  $('#pstate').innerHTML=['new','kept','dismissed'].map(s=>`<button aria-pressed="${pst===s}" data-st="${s}">${s[0].toUpperCase()+s.slice(1)} ${cnt(s)}</button>`).join('');
+  $('#psub').innerHTML=subs.map(s=>`<button aria-pressed="${psub===s}" data-sb="${s}">${s==='all'?'All subreddits':s}</button>`).join('');
+  $('#navNew').textContent=cnt('new')?cnt('new')+' new':'';$('#navNew').hidden=!cnt('new');
+  const q=$('#pq').value.toLowerCase();
+  const l=posts.filter(p=>p.s===pst&&(psub==='all'||p.sub===psub)&&(p.t+p.b+p.u).toLowerCase().includes(q));
+  if(!l.find(p=>p.id===psel))psel=l[0]?.id;
+  $('#plist').innerHTML=l.length?l.map(p=>`<button class="post" role="option" aria-selected="${p.id===psel}" data-id="${p.id}"><div class="sc"><b>${p.sc}</b><span>${p.c} comments</span></div><div><h3>${p.t}</h3><div class="meta"><span>${p.sub}</span><span>u/${p.u}</span><span>${p.ago}</span>${p.kw?`<span class="kw">${p.kw}</span>`:''}${p.tag?`<span class="tag">${p.tag}</span>`:''}</div></div><span class="pill np">${p.src}</span></button>`).join('')
+   :`<div class="empty"><h3>${pst==='new'?'You’re all caught up':'Nothing here yet'}</h3><p>${pst==='new'?'New matches appear after the next cycle at 10:20.':pst==='kept'?'Keep a post and it will show up here.':'Dismissed posts will show up here.'}</p></div>`;
+  const p=posts.find(x=>x.id===psel);$('#psplit').classList.toggle('nodet',!pshow);
+  $('#pdetail').innerHTML=p?`<div class="panel-h"><span class="tag">${p.sub}</span><span style="color:var(--muted);font-size:13px">${p.sc} points, ${p.c} comments</span><a class="btn sm ghost" href="#" onclick="return false">Open on Reddit</a><button class="btn sm ghost drawer-only" data-close="post" aria-label="Close post" style="margin-left:0"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dbody"><h2 style="font-size:17px;line-height:1.35">${p.t}</h2><p class="body">${p.b}</p>${held(p)}<h3 style="margin-top:18px">Top comments</h3>${p.cm.map(c=>`<div class="cm"><small>${c[0]}</small>${c[1]}</div>`).join('')}
+  </div><div class="dfoot">${p.s==='new'?`<button class="btn accent" data-do="kept">Keep</button><button class="btn" data-do="dismissed">Dismiss</button>`:`<button class="btn" data-do="new">Move back to New</button>`}<button class="btn ghost">Add note</button><button class="btn ghost" style="margin-left:auto">Send to Coppler</button></div>`
+  :`<div class="dempty"><h3>No post selected</h3><p>Select a post to read it and decide.</p></div>`;
+}
+$('#pq').oninput=renderPosts;
+document.addEventListener('click',e=>{
+  const a=e.target.closest('[data-st]');if(a){pst=a.dataset.st;renderPosts()}
+  const b=e.target.closest('[data-sb]');if(b){psub=b.dataset.sb;renderPosts()}
+  const c=e.target.closest('.post');if(c){psel=+c.dataset.id;pshow=true;renderPosts();if(matchMedia('(max-width:1100px)').matches){const x=$('#pdetail [data-close]');x&&x.focus()}}
+  const d=e.target.closest('[data-do]');if(d){const p=posts.find(x=>x.id===psel),prev=p.s;p.s=d.dataset.do;
+    pshow=false;renderPosts();
+    toast(p.s==='kept'?'Kept':p.s==='dismissed'?'Dismissed':'Moved back to New',()=>{p.s=prev;psel=p.id;renderPosts()})}
+});
+/* ---- merged from the corporate redesign: runs, queue, search, sources, doctor, idea detail, thread coverage ---- */
+const cap=s=>s[0].toUpperCase()+s.slice(1),fmt=n=>Number(n).toLocaleString('en-US');
+const SH=[1,.7,.5,.35,.25],FL={LOW_NUGGETS:'nothing new'};
+const mixBar=m=>{const t=m.reduce((a,x)=>a+x[1],0);return `<div class="mix" role="img" aria-label="Platform mix">${m.map((x,n)=>`<i title="${x[0]} ${fmt(x[1])}" style="width:${(x[1]/t*100).toFixed(1)}%;opacity:${SH[n]||.2}"></i>`).join('')}</div>`};
+const mixLeg=m=>`<div class="mixl">${m.map((x,n)=>`<span><i style="opacity:${SH[n]||.2}"></i>${x[0]} ${fmt(x[1])}</span>`).join('')}</div>`;
+const spark=v=>{const mx=Math.max(...v,1),p=v.map((y,i)=>`${(i/(v.length-1)*120).toFixed(1)},${(24-y/mx*20).toFixed(1)}`).join(' ');return `<svg class="spark" viewBox="0 0 120 28" aria-hidden="true"><polyline points="${p}"/></svg>`};
+[[1820,2140,1960,2410,2655,2790,2938],[3,0,2,0,0,0,0],[30100,31200,31900,32400,33000,33300,33614],[0,0,2,1,0,0,0]].forEach((v,i)=>$$('#overview .kpis')[0].children[i].insertAdjacentHTML('beforeend',spark(v)));
+$('#recheck').onclick=e=>busy(e.currentTarget,'','Checked just now (mock)',600);
+$$('[data-runnow]').forEach(b=>b.onclick=()=>toast('A cycle is already running. It will pick up new work when it finishes.'));
+
+/* ideas: detail with citations */
+const cites=[[[1,'“Never tested a restore” is the whole answer.'],[1,'Alert on snapshot size, not on exit code.'],[0,'Most of us only find out at restore time.']],
+ [[1,'Upstream teams rename columns without telling us.'],[1,'Contract tests at the ingestion boundary.']],
+ [[1,'I have no idea which container costs the most.'],[0,'The NAS idles at 90 W.']],
+ [[1,'Every handover is a rushed Slack message.'],[1,'One-page template, filled in at the end of every shift.']],
+ [[1,'Every embed broke after we changed host.']]];
+function renderIdea(){
+  const wide=matchMedia('(min-width:1101px)').matches,i=ideas[isel];$('#isplit').classList.toggle('nodet',!i&&!wide);const d=$('#idetail');
+  if(!i){d.innerHTML=wide?'<div class="dempty"><h3>No idea selected</h3><p>Nothing matches the current filters.</p></div>':'';return}
+  const sb=(n,v)=>`<div class="scr"><span>${n}</span><div class="sb"><i style="width:${v*10}%"></i></div><b>${v}</b></div>`;
+  d.innerHTML=`<div class="panel-h"><h2>${i.t}</h2><button class="btn sm accent" data-toast="Resynthesis queued (mock, not connected to a service)">Resynthesize</button><span class="pill ${pc[i.st]}">${cap(i.st)}</span><button class="btn sm ghost drawer-only" data-close="idea" aria-label="Close idea" style="margin-left:0">Close</button></div>
+  <div class="panel-b"><p class="body" style="margin:0;color:var(--ink-2);line-height:1.6">${i.d}</p>
+  <h3 class="dh">Scores</h3>${sb('Demand',i.sc[0])}${sb('Feasibility',i.sc[1])}${sb('Competition',i.sc[2])}
+  <dl class="kv" style="margin-top:14px"><dt>Evidence</dt><dd>${i.n} nuggets, ${i.th} thread${i.th>1?'s':''}</dd><dt>Platforms</dt><dd>${i.p.map(x=>`<span class="tag">${x}</span>`).join(' ')}</dd></dl>
+  <h3 class="dh">Citations, checked against source</h3>${(cites[isel]||[]).map(c=>`<div class="row" style="align-items:flex-start"><span class="pill ${c[0]?'ok':'bad'}">${c[0]?'Found':'Missing'}</span><span class="cm" style="margin:0;padding:0;border:0">${c[1]}</span></div>`).join('')||'<p class="sub2">No citations kept.</p>'}</div>`;
+}
+matchMedia('(min-width:1101px)').addEventListener('change',e=>{if(!e.matches)isel=null;renderIdeas()});
+
+/* posts: how much of each thread the archive holds */
+const HD={1:[19,6],2:[18,4],3:[9,2],4:[11,3],5:[5,1]};
+function held(p){const h=HD[p.id];if(!h)return'';const w=p.c,n=w-h[0]-h[1],pc2=Math.round((h[0]+h[1])/w*100),f=v=>(v/w*100).toFixed(1);
+  return `<h3 class="dh">What the archive holds of the ${w} comments</h3><div class="mix" style="margin-top:8px;height:8px"><i style="width:${f(h[0])}%"></i><i style="width:${f(h[1])}%;opacity:.4"></i></div>
+  <div class="mixl"><span><i></i>${h[0]} signal</span><span><i style="opacity:.4"></i>${h[1]} flagged trivial</span><span><i style="background:var(--line)"></i>${n} never fetched</span></div>
+  ${pc2<50?`<p class="sub2" style="margin-top:8px;color:var(--warn)">${pc2}% held: a sample, not the thread. Treat counts as a lower bound.</p>`:''}`}
+
+/* runs */
+const RS={running:'run',completed:'ok',failed:'bad',queued:'warn'},PS={ok:'ok',running:'run',queued:'',failed:'bad'};
+const runs=[
+ {id:'cycle-20260922T082003Z',st:'running',o:'manual',ago:'11 min ago',posts:412,cm:9120,k:2938,i:0,dur:112,exp:2443,fl:['LOW_NUGGETS'],mix:[['Discourse',2611],['Hacker News',1204],['Lemmy',118],['Stack Exchange',86],['Reddit',30]],fun:[['Fetched',9120],['After prefilter',6410],['Kept as nuggets',2938]],ph:[['Fetch','ok','10:12'],['Treat','ok','10:14'],['Archive','running','10:19'],['Synthesize','queued','—']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b',Embed:'nomic-embed-text'}},
+ {id:'cycle-20260922T040001Z',st:'completed',o:'scheduled',ago:'6 h ago',posts:188,cm:2140,k:0,i:0,dur:641,exp:2400,fl:['LOW_NUGGETS'],mix:[['Hacker News',640],['Discourse',210]],fun:[['Fetched',2140],['After prefilter',990],['Kept as nuggets',0]],ph:[['Fetch','ok','04:00'],['Treat','ok','04:03'],['Archive','ok','04:09'],['Synthesize','ok','04:11']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}},
+ {id:'cycle-20260921T220001Z',st:'completed',o:'scheduled',ago:'12 h ago',posts:301,cm:6410,k:1204,i:0,dur:2190,exp:2400,fl:[],mix:[['Discourse',1900],['Hacker News',900]],fun:[['Fetched',6410],['After prefilter',3200],['Kept as nuggets',1204]],ph:[['Fetch','ok','22:00'],['Treat','ok','22:20'],['Archive','ok','22:41'],['Synthesize','ok','22:36']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}},
+ {id:'cycle-20260921T161502Z',st:'failed',o:'manual',ago:'18 h ago',posts:0,cm:0,k:0,i:0,dur:38,exp:2400,fl:[],mix:[],fun:[],ph:[['Fetch','failed','16:15']],mod:{},err:'Go worker exited with status 2: the browser on :9222 was unreachable.'},
+ {id:'cycle-20260921T100002Z',st:'completed',o:'scheduled',ago:'1 d ago',posts:356,cm:7880,k:1873,i:0,dur:2310,exp:2400,fl:[],mix:[['Discourse',2200],['Hacker News',1100],['Lemmy',130]],fun:[['Fetched',7880],['After prefilter',4100],['Kept as nuggets',1873]],ph:[['Fetch','ok','10:00'],['Treat','ok','10:22'],['Archive','ok','10:38'],['Synthesize','ok','10:38']],mod:{Extract:'qwen3:8b',Critic:'qwen3:14b'}}];
+let rsel=null,ro='all';
+const why=r=>r.st==='completed'&&!r.k?(r.fl.map(f=>FL[f]).find(Boolean)||'nothing fetched'):'';
+function renderRuns(){
+  const c={all:runs.length};runs.forEach(r=>c[r.o]=(c[r.o]||0)+1);
+  $('#rorigin').innerHTML=Object.keys(c).map(o=>`<button aria-pressed="${ro===o}" data-ro="${o}">${cap(o)} ${c[o]}</button>`).join('');
+  const l=runs.filter(r=>ro==='all'||r.o===ro);
+  $('#rshown').textContent=`Showing ${l.length} of 214 runs, newest first`;
+  $('#rbody').innerHTML=l.map(r=>`<tr class="clk${r.id===rsel?' sel':''}" tabindex="0" data-run="${r.id}"><td>${r.ago}<span class="sub2">${r.posts} posts · <span class="mono">${r.id.slice(6,22)}…</span></span></td>
+    <td><span class="pill ${RS[r.st]}">${cap(r.st)}</span></td><td class="num">${fmt(r.k)} / ${r.i}${why(r)?`<span class="sub2">${why(r)}</span>`:''}</td>
+    <td class="num">${fmt(r.dur)} s<span class="sub2">exp ${fmt(r.exp)} s</span></td><td><span class="tag">${r.o}</span></td>
+    <td class="hd-open">${r.mix.length?mixBar(r.mix):''}${r.fl.map(f=>`<span class="pill warn np" style="margin-top:6px">${FL[f]}</span>`).join(' ')}${r.err?'<span class="pill bad np">error</span>':''}</td></tr>`).join('')||`<tr><td colspan="6" class="empty">No ${ro} runs yet.</td></tr>`;
+  renderRun();
+}
+function renderRun(){
+  const r=runs.find(x=>x.id===rsel);$('#rsplit').classList.toggle('nodet',!r);const d=$('#rdetail');if(!r){d.innerHTML='<div class="dempty"><h3>Select a run</h3><p>Pick a row to see its funnel, phases and models.</p></div>';return}
+  d.innerHTML=`<div class="panel-h"><h2 class="mono" style="font-size:13px;word-break:break-all">${r.id}</h2><span class="pill ${RS[r.st]}" style="margin-left:auto">${cap(r.st)}</span></div>
+  <div class="dbody"><dl class="kv cp"><dt>Started</dt><dd>${r.ago}</dd><dt>Posts / comments</dt><dd>${fmt(r.posts)} / ${fmt(r.cm)}</dd><dt>Kept / ideas</dt><dd>${fmt(r.k)} / ${r.i}${why(r)?' ('+why(r)+')':''}</dd><dt>Duration</dt><dd>${fmt(r.dur)} s <span style="color:var(--faint)">(expected ${fmt(r.exp)} s)</span></dd><dt>Origin</dt><dd>${r.o}</dd></dl>
+  ${r.mix.length?`<h3 class="dh">Platform mix</h3><div style="margin-top:8px">${mixBar(r.mix)}</div>${mixLeg(r.mix)}`:''}
+  ${r.fun.length?`<h3 class="dh">Prefilter funnel</h3><dl class="ledger">${r.fun.map(f=>`<dt>${f[0]}</dt><dd>${fmt(f[1])}</dd>`).join('')}</dl>`:''}
+  <h3 class="dh">Phases</h3><div class="mixl" style="gap:6px">${r.ph.map(p=>`<span class="pill ${PS[p[1]]}">${p[0]}${p[1]==='ok'?'':' ('+p[1]+')'} ${p[2]}</span>`).join('')}</div>
+  ${Object.keys(r.mod).length?`<details class="dh"><summary>Models</summary><dl class="kv cp" style="margin-top:8px">${Object.entries(r.mod).map(m=>`<dt>${m[0]}</dt><dd class="mono">${m[1]}</dd>`).join('')}</dl></details>`:''}
+  ${r.err?`<div class="notice bad" style="margin:18px 0 0"><div><b>Run failed</b><p>${r.err}</p></div></div>`:''}
+  </div><div class="dfoot">${r.st==='failed'?'<button class="btn accent" data-toast="Run requeued (mock, not connected to a service)">Requeue</button>':''}<button class="btn ghost" data-close="run">Close</button></div>`;
+}
+
+/* queue */
+const QM=[['Real estate',25067],['Discourse',4112],['Hacker News',2884],['Lemmy',1551]],QC={comment:8547,listing:25067},QS={pending:33614,failed:0,done:4201};
+const cmt=(a,t,c)=>({a,t,c});
+const batches=[
+ {id:'b-48213',k:'comment',pl:'Discourse',src:'community thread: self-hosted backups',n:312,ago:'3 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('restic_rob','Found out at restore time that nothing had been written for weeks.','Pain point'),cmt('quiet_fox','Green dashboards, empty snapshots.','Pain point')]},
+ {id:'b-48214',k:'comment',pl:'Hacker News',src:'Ask HN: how do you test restores?',n:184,ago:'3 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('dbwatcher','We alert on snapshot size now, not on exit code.','Workaround')]},
+ {id:'b-48220',k:'comment',pl:'Lemmy',src:'c/selfhosted: power draw per container',n:96,ago:'5 h ago',st:'pending',run:'cycle-20260922T040001Z',cm:[cmt('lowwatt','No idea which service eats the most.','Pain point')]},
+ {id:'b-47102',k:'listing',pl:'Real estate',src:'listings: two-bed lets, central',n:240,ago:'1 d ago',st:'pending',run:'cycle-20260921T100002Z',cm:[]},
+ {id:'b-47090',k:'comment',pl:'Discourse',src:'community thread: reverse proxy rules',n:141,ago:'1 d ago',st:'done',run:'cycle-20260921T100002Z',cm:[cmt('nc_admin','Brute-force setting resets after upgrades.','Pain point')]}];
+let qk='comment',qs='pending',bsel=null;
+function renderQueue(){
+  $('#qmix').innerHTML=QM.map(m=>{const s=Math.round(m[1]/33614*100);return `<div class="row"><span class="tag" style="min-width:104px">${m[0]}</span><div class="bar lg" style="flex:1;margin:0"><i style="width:${s}%"></i></div><small style="min-width:92px;text-align:right">${fmt(m[1])} · ${s}%</small></div>`}).join('');
+  $('#qkind').innerHTML=[['comment','Comments'],['listing','Listings']].map(x=>`<button aria-pressed="${qk===x[0]}" data-qk="${x[0]}">${x[1]} ${fmt(QC[x[0]])}</button>`).join('');
+  $('#qstat').innerHTML=Object.keys(QS).map(s=>`<button aria-pressed="${qs===s}" data-qs="${s}">${cap(s)} ${fmt(QS[s])}</button>`).join('');
+  const l=batches.filter(b=>b.st===qs&&b.k===qk);
+  $('#qbody').innerHTML=l.map(b=>`<tr class="clk${b.id===bsel?' sel':''}" tabindex="0" data-batch="${b.id}"><td class="mono">${b.id}</td><td class="tc"><b>${b.pl}</b><span>${b.src}</span></td><td class="num">${fmt(b.n)}</td><td>${b.ago}</td><td><span class="pill ${b.st==='done'?'ok':b.st==='failed'?'bad':'warn'}">${cap(b.st)}</span></td></tr>`).join('')
+   ||`<tr><td colspan="5" class="empty"><h3>No ${qk} batches are ${qs}</h3><button class="btn sm" data-go="overview">Back to overview</button></td></tr>`;
+  $('#qshown').textContent=`${fmt(33614)} pending · ${QS.failed} failed · ${fmt(QS.done)} done. Showing the oldest ${l.length} in this view.`;
+  const b=batches.find(x=>x.id===bsel);$('#qsplit').classList.toggle('nodet',!b);const d=$('#qdetail');
+  d.innerHTML=b?`<div class="panel-h"><h2 class="mono" style="font-size:13px">${b.id}</h2><span class="pill ${b.st==='done'?'ok':'warn'}" style="margin-left:auto">${cap(b.st)}</span></div>
+  <div class="panel-b"><dl class="kv"><dt>Platform</dt><dd>${b.pl}</dd><dt>Source</dt><dd>${b.src}</dd><dt>Items</dt><dd>${fmt(b.n)}</dd><dt>Queued</dt><dd>${b.ago}</dd><dt>Run</dt><dd class="mono" style="word-break:break-all">${b.run}</dd></dl>
+  <h3 class="dh">${b.k==='listing'?'Contents':'Comments in this batch'}</h3>${b.cm.map(c=>`<div class="cm"><small>u/${c.a} · ${c.c}</small>${c.t}</div>`).join('')||'<p class="sub2" style="margin-top:8px">Listings are treated as whole records, so there is no comment list.</p>'}
+  <div class="dact"><button class="btn ghost" data-close="batch">Close</button></div></div>`:'';
+}
+
+/* search */
+const NG=[{pl:'Reddit',c:'Backups',a:'u/restic_rob',t:'3 days ago',s:.86,i:'Backups run green for months while writing nothing.',r:'A path change meant the job exited 0 with nothing to back up.'},
+ {pl:'Hacker News',c:'Data quality',a:'u/lakehouse_lu',t:'5 days ago',s:.78,i:'Upstream schema changes are found only after they break a report.',r:'dbt tests catch it after the fact.'},
+ {pl:'Discourse',c:'On-call',a:'u/pager_pete',t:'1 week ago',s:.71,i:'Context is lost at every on-call handover.',r:'Every handover is a rushed message in chat.'},
+ {pl:'Lemmy',c:'Homelab',a:'u/lowwatt',t:'2 weeks ago',s:.58,i:'Nobody knows which container costs the most to run.',r:'The NAS never really idles.'}];
+const EX=['backups fail silently','schema changes nobody announces','handover context lost'],RC=['restore test','cloudflare tunnel'];
+function renderSearch(){
+  $('#sex').innerHTML=EX.map(x=>`<button class="btn sm" data-q="${x}">${x}</button>`).join('')+'<span class="legend" style="margin:0 0 0 8px">Recent</span>'+RC.map(x=>`<button class="btn sm ghost" data-q="${x}">${x}</button>`).join('');
+  const w=$('#sq').value.toLowerCase().split(/\s+/).filter(x=>x.length>3);
+  const l=NG.filter(n=>!w.length||w.some(x=>(n.i+n.r+n.c).toLowerCase().includes(x)));
+  $('#sres').innerHTML=l.map(n=>`<div class="res"><div class="meta"><span class="tag">${n.pl}</span><span class="tag">${n.c}</span><span>${n.a}</span><span>${n.t}</span><span class="sim"><span class="bar"><i style="width:${Math.round(n.s*100)}%"></i></span>${n.s>=.8?'Strong':n.s>=.65?'Good':'Weak'} ${n.s.toFixed(2)}</span></div><b style="font-weight:500">${n.i}</b><p>${n.r}</p></div>`).join('')
+   ||'<div class="empty"><h3>No nuggets match</h3><p>Try fewer words, or start from one of the examples.</p></div>';
+  $('#scnt').textContent=`${l.length} of 31,818 nuggets, ranked by similarity (mock results)`;
+}
+$('#sq').oninput=renderSearch;
+/* sources */
+const src=[
+ {p:'Reddit',rows:[{n:'r/selfhosted',k:'subreddit',t:'r/selfhosted',f:'api',l:'12 min ago',q:'+8 comments',h:'ok',on:1},{n:'r/devops',k:'subreddit',t:'r/devops',f:'api',l:'12 min ago',q:'+3 comments',h:'ok',on:1},{n:'r/dataengineering',k:'subreddit',t:'r/dataengineering',f:'api',l:'12 min ago',q:'+1 comment',h:'ok',on:1}]},
+ {p:'Hacker News',rows:[{n:'Ask HN',k:'feed',t:'news.ycombinator.com/ask',f:'api',l:'25 min ago',q:'+22 comments',h:'ok',on:1}]},
+ {p:'Discourse',rows:[{n:'Self-hosted forum',k:'forum',t:'forum.example.org/c/selfhost',f:'api',l:'25 min ago',q:'+41 comments',h:'ok',on:1},{n:'Proxmox forum',k:'forum',t:'forum.example.com/proxmox',f:'api',l:'1 d ago',q:'nothing new, 4 visits',h:'barren',on:1}]},
+ {p:'Lemmy',rows:[{n:'c/selfhosted',k:'community',t:'lemmy.example/c/selfhosted',f:'api',l:'2 h ago',q:'+5 comments',h:'ok',on:1}]},
+ {p:'Real estate',rows:[{n:'Central two-bed lets',k:'listings',t:'listings.example/central-2br',f:'browser',l:'4 h ago',q:'+240 listings',h:'ok',on:1}]}];
+const HL={ok:['ok','Producing'],barren:['warn','Nothing yet'],off:['','Paused']};
+const folded=new Set();
+const EXTRA={'r/selfhosted':[['backup','self-host*','migrat*'],5],'r/devops':[['score ≥ 20'],4],'r/dataengineering':[['flair: Discussion'],2],'Ask HN':[['restore','backup'],4],'Self-hosted forum':[['backup','reverse proxy'],5],'Proxmox forum':[['backup'],0],'c/selfhosted':[['power','homelab'],3],'Central two-bed lets':[['2 bed','central'],5]};
+src.forEach(g=>g.rows.forEach(r=>{const x=EXTRA[r.n];r.w=x?x[0]:[];r.y=x?x[1]:0}));
+const GC=['var(--accent)','var(--ok)','var(--warn)','var(--lav)','var(--faint)'],sopen=new Set();let sfil='all';
+const sstate=s=>s.on?s.h:'off',CHEV='<svg class="icon fold" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+const visits=s=>{const b=s.h==='barren'||s.l==='never'?0:parseInt((s.q.match(/\d+/)||[0])[0]);return[['This cycle',b],['Previous cycle',Math.round(b*.7)],['Two cycles ago',Math.round(b*1.2)]]};
+const menu=document.createElement('div');menu.className='menu';menu.id='smenu';menu.setAttribute('role','menu');menu.hidden=true;document.body.appendChild(menu);
+let mbtn=null;
+function closeMenu(f){menu.hidden=true;if(mbtn){mbtn.setAttribute('aria-expanded','false');if(f)mbtn.focus();mbtn=null}}
+function renderSources(){
+  const q=($('#ssq').value||'').toLowerCase(),all=src.flatMap(g=>g.rows),cnt={all:all.length,ok:0,barren:0,off:0};all.forEach(s=>cnt[sstate(s)]++);
+  $('#sfil').innerHTML=[['all','All'],['ok','Producing'],['barren','Nothing yet'],['off','Paused']].map(x=>`<button aria-pressed="${sfil===x[0]}" data-sf="${x[0]}">${x[1]} ${cnt[x[0]]}</button>`).join('');
+  let shown=0;
+  const html=src.map((g,gi)=>{
+    const rows=g.rows.map((s,ri)=>[s,ri]).filter(([s])=>(sfil==='all'||sstate(s)===sfil)&&(s.n+s.t+s.w.join(' ')).toLowerCase().includes(q));
+    if(!rows.length)return'';shown+=rows.length;const op=!folded.has(g.p),on=g.rows.filter(s=>s.on).length;
+    const band=`<tr class="gband" style="--g:${GC[gi%5]}"><td colspan="9"><div class="gb"><button class="xp" data-fold="${g.p}" aria-expanded="${op}" aria-label="${op?'Fold':'Unfold'} ${g.p}">${CHEV}</button><span class="dot"></span><b>${g.p}</b><span class="nb">${g.rows.length}</span><span class="gm">${on===g.rows.length?'All enabled':on+' enabled'}</span><button class="btn sm ghost" data-gadd="${g.p}" aria-label="Add a ${g.p} source" style="margin-left:auto"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div></td></tr>`;
+    if(!op)return band;
+    const head=`<tr class="colh"><th><input type="checkbox" class="chk" data-gall="${gi}" aria-label="Enable all ${g.p} sources"></th><th>Source</th><th>Kind</th><th>Watching for</th><th>Fetch</th><th>Last fetched</th><th>Yield</th><th>Status</th><th><span class="sr">Actions</span></th></tr>`;
+    return band+head+rows.map(([s,ri])=>{const k=gi+'-'+ri,ex=sopen.has(s.n),[c,lab]=s.on?HL[s.h]:HL.off;
+      return `<tr class="${ex?'open':''}"><td style="white-space:nowrap"><button class="xp" data-xp="${s.n}" aria-expanded="${ex}" aria-label="Recent visits to ${s.n}">${CHEV}</button> <input type="checkbox" class="chk" data-on="${k}"${s.on?' checked':''} aria-label="Enable ${s.n}"></td>
+      <td class="tc"><b class="mono">${s.n}</b><span class="mono">${s.t}</span></td><td><span class="tag">${s.k}</span></td>
+      <td>${s.w.map((w,i)=>`<span class="oc c${i%3}">${w}</span>`).join('')||'<span class="sub2">No keywords</span>'}</td><td><span class="tag">${s.f}</span></td>
+      <td>${s.l}<span class="sub2">${s.q}</span></td><td><span class="dots" role="img" aria-label="Yield ${s.y} of 5">${[1,2,3,4,5].map(i=>`<i class="${i<=s.y?'f':''}"></i>`).join('')}</span></td>
+      <td><span class="pill ${c}">${lab}</span></td><td><button class="btn sm ghost" data-menu="${k}" aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${s.n}"><svg class="icon" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></td></tr>`
+      +(ex?`<tr class="subrow"><td colspan="9"><div class="sub">${s.l==='never'?'<p class="sub2" style="padding:12px 14px;margin:0">Not visited yet. It is next in line.</p>':`<table><thead><tr><th>Visit</th><th class="num">Queued</th><th>Result</th></tr></thead><tbody>${visits(s).map(v=>`<tr><td>${v[0]}</td><td class="num">${v[1]}</td><td><span class="pill ${v[1]?'ok':''}">${v[1]?'Queued':'Nothing new'}</span></td></tr>`).join('')}</tbody></table>`}</div></td></tr>`:'')}).join('')}).join('');
+  $('#sbody').innerHTML=html||`<tr><td colspan="9" class="empty"><h3>No sources match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" data-sclear>Clear filters</button></td></tr>`;
+  $$('[data-gall]').forEach(c=>{const g=src[c.dataset.gall],n=g.rows.filter(s=>s.on).length;c.checked=n===g.rows.length;c.indeterminate=n>0&&n<g.rows.length});
+  const barren=all.filter(s=>s.on&&s.h==='barren').map(s=>s.n);
+  $('#shint').innerHTML=(barren.length?`${barren.length} enabled source (${barren.join(', ')}) has been walked 3 or more times and never queued a comment. It still costs a rotation slot every run. Pause it from the row menu to keep it on the list.`:'')+' TikTok has no adapter and none is planned.';
+  $('#scount').textContent=`Showing ${shown} of 115 sources. This mock holds a sample.`;
+  $('#spager').innerHTML=['‹',1,2,3,'…',12,'›'].map(x=>`<button data-pg="${x}"${x===1?' aria-current="page"':''} aria-label="${typeof x==='number'?'Page '+x:x==='‹'?'Previous page':x==='›'?'Next page':'More pages'}">${x}</button>`).join('');
+}
+$('#ssq').oninput=renderSources;
+document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
+  if(t=g('[data-menu]')){const was=mbtn===t;closeMenu();if(was)return;const[a,b]=t.dataset.menu.split('-'),s=src[a].rows[b],r=t.getBoundingClientRect();mbtn=t;t.setAttribute('aria-expanded','true');
+    menu.innerHTML=`<button role="menuitem" data-toast="Link copied (mock)">Copy link</button>${s.on?`<button role="menuitem" data-park="${t.dataset.menu}">Pause source</button>`:''}<button role="menuitem" class="danger" data-rm="${t.dataset.menu}">Remove</button>`;
+    menu.hidden=false;menu.style.top=Math.min(r.bottom+4,innerHeight-menu.offsetHeight-8)+'px';menu.style.left=Math.max(8,r.right-menu.offsetWidth)+'px';menu.querySelector('button').focus();return}
+  if(!g('#smenu')||g('#smenu button'))closeMenu();
+  if(t=g('[data-xp]')){const k=t.dataset.xp;sopen.has(k)?sopen.delete(k):sopen.add(k);renderSources();$(`[data-xp="${k}"]`).focus()}
+  else if(t=g('[data-gall]')){const gr=src[t.dataset.gall];gr.rows.forEach(s=>s.on=t.checked?1:0);renderSources();toast((t.checked?'Enabled all ':'Paused all ')+gr.p+' sources (mock)')}
+  else if(t=g('[data-gadd]')){$('#splat').value=t.dataset.gadd;$('#surl').scrollIntoView({block:'center'});$('#surl').focus()}
+  else if(t=g('[data-sf]')){sfil=t.dataset.sf;renderSources()}
+  else if(g('[data-sclear]')){sfil='all';$('#ssq').value='';renderSources()}
+  else if(t=g('[data-pg]')){if(t.dataset.pg!=='1')toast('This mockup only has sample rows for page 1.')}
+});
+document.addEventListener('keydown',e=>{if(menu.hidden)return;const b=[...menu.querySelectorAll('button')],i=b.indexOf(document.activeElement);
+  if(e.key==='Escape'){e.preventDefault();closeMenu(1)}else if(e.key==='ArrowDown'){e.preventDefault();b[(i+1)%b.length].focus()}else if(e.key==='ArrowUp'){e.preventDefault();b[(i-1+b.length)%b.length].focus()}});
+const det=u=>/reddit\./.test(u)?'Reddit':/ycombinator/.test(u)?'Hacker News':/lemmy/.test(u)?'Lemmy':/stackexchange|serverfault|stackoverflow/.test(u)?'Stack Exchange':/discourse|forum\./.test(u)?'Discourse':null;
+$('#sadd').onclick=()=>{const u=$('#surl').value.trim(),pick=$('#splat').value;if(!u){toast('Paste a link first.');return}
+  const p=pick==='auto'?det(u):pick;if(!p){toast('Could not detect the platform. Choose one from the list.');return}
+  let g=src.find(x=>x.p===p);if(!g){g={p,rows:[]};src.push(g)}
+  g.rows.push({n:$('#sname').value.trim()||u.replace(/^https?:\/\/(www\.)?/,'').split('/')[0],k:'source',t:u.replace(/^https?:\/\/(www\.)?/,''),f:'api',l:'never',q:'next in line',h:'ok',on:1,w:[],y:0});
+  $('#surl').value=$('#sname').value='';renderSources();toast('Added to '+p+' (mock, sources.yaml not written)')};
+
+/* doctor */
+const finds=[[1,'No ideas in 14 cycles','Nuggets are being kept, so the synthesizer may be rejecting everything it drafts.','Open Runs','data-go="runs"'],
+ [0,'Reddit has no API credentials','Reddit is fetched through the browser instead, which is slower.','Open Sources','data-go="sources"'],
+ [0,'7 nuggets are waiting to be re-embedded','Dedup and search skip them until this clears.','Re-embed now','data-toast="Re-embed started (mock, not connected to a service)"']];
+const evals=[['Specific pain, three threads of evidence',8,1,1],['Vague “AI assistant for everything”',2,0,0],['Real need, only one source',5,0,1]];
+function renderDoctor(){
+  $('#dfind').innerHTML=finds.map(f=>`<div class="fix"><span class="led ${f[0]?'off':'idle'}"></span><span><b>${f[1]}</b><span class="why">${f[2]}</span></span><button class="btn sm" ${f[4]}>${f[3]}</button></div>`).join('');
+  $('#ebody').innerHTML=evals.map(e=>`<tr><td class="tc"><b>${e[0]}</b></td><td class="num">${e[1]}</td><td><span class="pill ${e[2]?'ok':e[3]?'bad':''}">${e[2]?'Pass':'Fail'}${e[3]?'':' · expected'}</span></td></tr>`).join('');
+}
+$('#erun').onclick=e=>busy(e.currentTarget,'','Eval re-run finished: 1 failure (mock)',900);
+
+/* wiring */
+const CL={run(){const id=rsel;rsel=null;renderRuns();const r=$(`tr[data-run="${id}"]`);r&&r.focus({preventScroll:true})},batch(){bsel=null;renderQueue()},idea(){isel=null;renderIdeas()},post(){const id=psel;pshow=false;renderPosts();const b=$(`.post[data-id="${id}"]`);b&&b.focus({preventScroll:true})}};
+document.addEventListener('click',e=>{const g=s=>e.target.closest(s);let t;
+  if(t=g('[data-toast]'))toast(t.dataset.toast);
+  if(t=g('[data-close]'))CL[t.dataset.close]();
+  else if(t=g('[data-ro]')){ro=t.dataset.ro;renderRuns()}
+  else if(t=g('tr[data-run]')){rsel=t.dataset.run;renderRuns();if(matchMedia('(max-width:1100px)').matches){const c=$('#rdetail [data-close]');c&&c.focus()}}
+  else if(t=g('tr[data-batch]')){bsel=t.dataset.batch;renderQueue()}
+  else if(t=g('[data-qk]')){qk=t.dataset.qk;bsel=null;renderQueue()}
+  else if(t=g('[data-qs]')){qs=t.dataset.qs;bsel=null;renderQueue()}
+  else if(t=g('.irow[data-i]')){isel=+t.dataset.i;renderIdeas();if(!matchMedia('(min-width:1101px)').matches){const c=$('#idetail [data-close]');c&&c.focus()}}
+  else if(t=g('[data-q]')){$('#sq').value=t.dataset.q;renderSearch()}
+  else if(t=g('[data-fold]')){const k=t.dataset.fold;folded.has(k)?folded.delete(k):folded.add(k);renderSources();$(`[data-fold="${k}"]`).focus()}
+  else if(t=g('[data-on]')){const[a,b]=t.dataset.on.split('-'),s=src[a].rows[b];s.on=t.checked?1:0;renderSources();$(`[data-on="${t.dataset.on}"]`).focus();toast((s.on?'Enabled ':'Paused ')+s.n+' (mock)')}
+  else if(t=g('[data-park]')){const[a,b]=t.dataset.park.split('-'),s=src[a].rows[b];s.on=0;renderSources();toast('Parked '+s.n+'. It stays on the list (mock)')}
+  else if(t=g('[data-rm]')){const[a,b]=t.dataset.rm.split('-').map(Number),s=src[a].rows.splice(b,1)[0];renderSources();toast('Removed '+s.n+' (mock)',()=>{src[a].rows.splice(b,0,s);renderSources()})}
+});
+document.addEventListener('keydown',e=>{
+  if((e.key==='Enter'||e.key===' ')&&e.target.matches('tr[data-i],tr[data-run],tr[data-batch]')){e.preventDefault();e.target.click()}
+  if(e.key==='/'&&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){e.preventDefault();go('search');$('#sq').focus()}
+});
+renderIdeas();renderPosts();renderRuns();renderQueue();renderSearch();renderSources();renderDoctor();
+document.addEventListener('click',e=>{if(!matchMedia('(max-width:1100px)').matches)return;if(e.target.id==='rsplit'&&rsel)CL.run();else if(e.target.id==='psplit'&&pshow)CL.post()});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape'||!menu.hidden)return;if($('#runs').classList.contains('on')&&rsel)CL.run();else if($('#queue').classList.contains('on')&&bsel)CL.batch();else if($('#ideas').classList.contains('on')&&isel!==null)CL.idea();else if($('#posts').classList.contains('on')&&pshow)CL.post()});
+</script>
+<script>
+/* ===== decided pages (all sample data; nothing is connected to a service) ===== */
+(()=>{
+const el=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pagerHtml=n=>['‹',1,2,3,'…',n,'›'].map(x=>`<button data-pg="${x}"${x===1?' aria-current="page"':''} aria-label="${typeof x==='number'?'Page '+x:x==='‹'?'Previous page':x==='›'?'Next page':'More pages'}">${x}</button>`).join('');
+const REF='<svg class="icon" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>';
+const plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+
+/* ---------- NUGGETS: card feed ---------- */
+const NUG=[
+ ['Wish I could see which cron job ate my disk before it fills','Reddit','r/selfhosted','22 Sep','cron',[]],
+ ['Every backup tool wants a cloud account. I just want rsync with a UI','Reddit','r/homelab','22 Sep','backups',[]],
+ ['Invoice reminders are the part of freelancing I hate most','Reddit','r/freelance','21 Sep','pricing',['wait']],
+ ['Spent three hours debugging a flaky cron email','Hacker News','Ask HN','21 Sep','cron',['trivial','pend']],
+ ['No decent way to track warranty receipts','Reddit','r/Frugal','20 Sep','home admin',[]],
+ ['Our team pastes passwords into Slack because vault UX is awful','Lemmy','c/selfhosted','19 Sep','security',['pend','wait']],
+ ['I never test restores until I need them','Reddit','r/homelab','19 Sep','backups',[]],
+ ['Reverse proxy rules drift after every upgrade and nobody notices','Discourse','Self-hosted forum','18 Sep','networking',[]],
+ ['No idea which container eats the most power per month','Lemmy','c/selfhosted','18 Sep','power',['wait']],
+ ['Upstream teams rename columns and our dashboards break silently','Reddit','r/dataengineering','17 Sep','data quality',[]],
+ ['Handover notes get lost between on-call shifts','Reddit','r/devops','17 Sep','on-call',[]],
+ ['Checked the box, moved on, still ran out of disk. Ok.','Hacker News','Ask HN','16 Sep','cron',['trivial']]];
+const FLG={trivial:['Trivial','warn'],pend:['Not yet searchable','bad'],wait:['Waiting for ideas','']};
+const NFS=[['all','All'],['flagged','Flagged'],['trivial','Trivial'],['pend','Not yet searchable'],['wait','Waiting for ideas']];
+const PLC=[['Reddit',18204],['Hacker News',6011],['Discourse',4313],['Lemmy',3290]];
+const CTC=[['backups',2210],['cron',1980],['pricing',1402],['data quality',1204],['security',1115],['networking',906],['home admin',842],['on-call',531],['power',388]];
+let nq='',nfl='all',npl='all',nct='all';
+function renderNug(){
+  el('nflag').innerHTML=NFS.map(f=>`<button aria-pressed="${nfl===f[0]}" data-a="nf:${f[0]}">${f[1]}</button>`).join('');
+  const l=NUG.map((n,i)=>[n,i]).filter(([n])=>(nfl==='all'||(nfl==='flagged'?n[5].length>0:n[5].includes(nfl)))&&(npl==='all'||n[1]===npl)&&(nct==='all'||n[4]===nct)&&(n[0]+' '+n[2]+' '+n[4]).toLowerCase().includes(nq));
+  el('nfeed').innerHTML=l.map(([n,i])=>`<article class="ncard"><p>${esc(n[0])}</p>
+    <div class="meta"><span class="tag">${n[1]}</span><span>${esc(n[2])}</span><span>${n[3]}</span></div>
+    <div class="nft"><span class="tag">${n[4]}</span>${n[5].map(f=>`<span class="pill ${FLG[f][1]}">${FLG[f][0]}</span>`).join('')}<span class="end"><span class="k">nug_${4100+i}</span><a class="src" href="#" onclick="return false" data-toast="Opens the source thread (mock)">Source ↗</a></span></div></article>`).join('')
+   ||`<div class="panel empty"><h3>No nuggets match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" data-a="nclr">Clear filters</button></div>`;
+  const act=nq||nfl!=='all'||npl!=='all'||nct!=='all';el('nclr').hidden=!act;
+  el('ncnt').textContent=act?`${l.length} of 31,818 nuggets in this view (mock sample)`:`1–${NUG.length} of 31,818 · 100 per page (this mock holds a sample)`;
+  el('npager').innerHTML=pagerHtml(319);
+}
+el('npl').innerHTML='<option value="all">All platforms</option>'+PLC.map(p=>`<option value="${p[0]}">${p[0]} (${fmt(p[1])})</option>`).join('');
+el('nct').innerHTML='<option value="all">All categories</option>'+CTC.map(c=>`<option value="${c[0]}">${c[0]} (${fmt(c[1])})</option>`).join('');
+el('nq').oninput=e=>{nq=e.target.value.toLowerCase();renderNug()};
+el('npl').onchange=e=>{npl=e.target.value;renderNug()};
+el('nct').onchange=e=>{nct=e.target.value;renderNug()};
+
+/* ---------- CLUSTERS: list + detail workspace ---------- */
+const TH=[
+ {n:'cron · alert · disk',c:412,b:'broad',pl:['Reddit','Hacker News'],idea:'idea 8.1',
+  ex:[['Wish I could see which cron job ate my disk before it fills','u/dbwatcher · r/selfhosted'],['Spent three hours debugging a flaky cron email','u/pager_pete · Ask HN'],['Cron fails quietly and I only notice when the disk is full','u/lowwatt · r/homelab']],
+  cv:[['Ask HN: how do you monitor cron?',146],['r/selfhosted weekly thread',98],['r/homelab: disk full again',71]],dr:'Watches cron jobs and warns before the disk fills.'},
+ {n:'backup · restore · rsync',c:388,b:'broad',pl:['Reddit','Lemmy'],idea:'idea 7.4',
+  ex:[['Every backup tool wants a cloud account. I just want rsync with a UI','u/quiet_fox · r/homelab'],['I never test restores until I need them','u/restic_rob · r/homelab'],['Green dashboards, empty snapshots.','u/dbwatcher · c/selfhosted']],
+  cv:[['r/selfhosted: hardening public services',120],['c/selfhosted: backups thread',94],['r/homelab: restore tests',77]],dr:'Runs a monthly restore into a scratch VM and reports what broke.'},
+ {n:'invoice · client · chase',c:301,b:'narrow',pl:['Reddit'],idea:'',
+  ex:[['Invoice reminders are the part of freelancing I hate most','u/freelance_fi · r/freelance'],['I chase the same three clients every month','u/solo_sam · r/freelance'],['Late payments cost me more than slow work','u/ledger_lou · r/freelance']],
+  cv:[['r/freelance: late payments megathread',188],['r/freelance: monthly invoicing',64]],dr:'Sends polite, escalating invoice reminders and tracks who is late.'},
+ {n:'password · vault · slack',c:187,b:'one author',pl:['Lemmy'],idea:'',
+  ex:[['Our team pastes passwords into Slack because vault UX is awful','u/vaultfan · c/selfhosted'],['Every vault wants a seat licence per person','u/vaultfan · c/selfhosted'],['Nobody on my team will open a second app to log in','u/vaultfan · c/selfhosted']],
+  cv:[['c/selfhosted: team password rant',187]],dr:'A shared vault that lives inside the chat tool the team already uses.'},
+ {n:'receipt · warranty · track',c:96,b:'narrow',pl:['Reddit'],idea:'idea 6.2',
+  ex:[['No decent way to track warranty receipts','u/frugal_fran · r/Frugal'],['I photo receipts and then never find them','u/homebody · r/Frugal'],['Warranty claims die because the paper faded','u/tidy_ted · r/organization']],
+  cv:[['r/Frugal: warranty claims',52],['r/organization: paper trail',29]],dr:'Photographs a receipt, files it, and reminds you before the warranty ends.'}];
+const BP={broad:'ok',narrow:'warn','one author':'bad'},BR={broad:0,narrow:1,'one author':2};
+let clq='',cls='comments',clp='all',tsel=TH[0],hash=true;
+function visTh(){
+  const l=TH.filter(t=>(clp==='all'||t.pl.includes(clp))&&t.n.toLowerCase().includes(clq));
+  l.sort((a,b)=>cls==='comments'?b.c-a.c:cls==='breadth'?BR[a.b]-BR[b.b]||b.c-a.c:(!!b.idea-!!a.idea)||b.c-a.c);return l}
+function renderCl(){
+  el('clsort').innerHTML=[['comments','Comments'],['breadth','Breadth'],['idea','Idea']].map(s=>`<button aria-pressed="${cls===s[0]}" data-a="cls:${s[0]}">${s[1]}</button>`).join('');
+  el('clplat').innerHTML=['all','Reddit','Hacker News'].map(p=>`<button aria-pressed="${clp===p}" data-a="clp:${p}">${p==='all'?'All platforms':p}</button>`).join('');
+  const l=visTh();if(!l.includes(tsel))tsel=l[0]||null;
+  el('cllist').innerHTML=l.map(t=>`<button class="crow" role="option" aria-selected="${t===tsel}" data-a="cl:${TH.indexOf(t)}"><span class="tx"><b>${t.n}</b><span>${fmt(t.c)} comments</span></span><span class="pl"><span class="pill ${BP[t.b]}">${cap(t.b)}</span>${t.idea?`<span class="pill run">${t.idea}</span>`:''}</span></button>`).join('')
+   ||`<div class="empty"><h3>No themes match</h3><p>Try a different word, or switch platform.</p><button class="btn sm" data-a="clclr">Clear filters</button></div>`;
+  renderClDet();
+}
+function renderClDet(){
+  const t=tsel,d=el('cldet');
+  if(!t){d.innerHTML='<div class="dempty"><h3>No theme selected</h3><p>Pick a theme to read its evidence.</p></div>';return}
+  const listed=t.cv.reduce((a,x)=>a+x[1],0),rest=t.c-listed;
+  d.innerHTML=`<div class="panel-h"><h2 style="font-size:16px">${t.n}</h2><span class="pill ${BP[t.b]}" style="margin-left:auto">${cap(t.b)}</span></div>
+  <div class="dbody"><p class="sub2" style="margin:0">${fmt(t.c)} comments · ${t.pl.join(', ')}${t.b==='one author'?' · all from a single author':''}</p>
+  <h3 class="dh">What people said</h3>${t.ex.map(x=>`<div class="cm"><small>${x[1]}</small>${esc(x[0])}</div>`).join('')}
+  ${t.all?`<h3 class="dh">Grouped by conversation</h3><div class="convs">${t.cv.map(v=>`<div class="row"><span>${v[0]}</span><span class="pill np">${v[1]}</span></div>`).join('')}${rest>0?`<div class="row"><span style="color:var(--muted)">Smaller conversations</span><span class="pill np">${rest}</span></div>`:''}</div>`
+    :`<div style="margin-top:12px"><button class="btn sm" data-a="clall">Read all ${fmt(t.c)} excerpts, grouped by conversation →</button></div>`}
+  <div class="ideabox"><h3>Idea</h3>${t.draft?`<p>Draft: “${esc(t.dr)}”</p><div class="r"><button class="btn accent sm" data-a="clsave">Save</button><button class="btn sm" data-a="cldisc">Discard</button></div>`
+    :`<div class="r"><button class="btn sm" data-a="clgen">Generate idea</button><span class="sub2" style="display:inline">${t.idea||'No idea yet'}</span></div>`}</div></div>`;
+}
+el('clq').oninput=e=>{clq=e.target.value.toLowerCase();renderCl()};
+el('cllist').addEventListener('keydown',e=>{
+  if(e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;e.preventDefault();
+  const l=visTh(),i=l.indexOf(tsel),n=l[Math.max(0,Math.min(l.length-1,i+(e.key==='ArrowDown'?1:-1)))];
+  if(n){tsel=n;renderCl();const b=el('cllist').querySelector('[aria-selected=true]');b&&b.focus()}});
+/* ---------- CHAT: sessions rail + thread + pending ---------- */
+const SESS=[
+ {id:'S-0142',name:'slow exports',ro:false,round:2,items:[['you','search my archive for comments about slow exports and propose a relabel'],['chat','Found 12 nuggets about slow exports. I propose moving them to the “performance” category.']]},
+ {id:'S-0141',name:'pricing themes',ro:true,round:2,items:[['you','merge the near-duplicate pricing labels'],['chat','Four labels overlap: “pricing”, “price”, “prices” and “cost”. I propose merging them into “pricing”.'],['edit','p2'],['you','now relabel the three pricing nuggets that are really about taxes'],['chat','Proposal ready: 3 nuggets move to “taxes”.'],['edit','p3']]},
+ {id:'S-0139',name:'dedup check',ro:true,round:1,items:[['you','are there duplicate nuggets in r/homelab from this week?'],['chat','No pairs above the 0.92 threshold in r/homelab this week. Nothing to propose.']]}];
+const PROP=[
+ {id:'p1',s:'S-0142',t:'Relabel 12 nuggets',d:'category: export → performance (×12)',st:'pending'},
+ {id:'p2',s:'S-0141',t:'Merge 4 labels',d:'category: price, prices, cost → pricing',st:'applied'},
+ {id:'p3',s:'S-0141',t:'Relabel pricing ×3',d:'category: pricing → taxes (×3)',st:'reverted'}];
+let chs=SESS[0],working=false,pn=3,sn=142;const MAXR=4;
+const pr=id=>PROP.find(p=>p.id===id);
+function evtHtml(p){
+  const lab={applied:['ok','Applied'],reverted:['','Reverted'],rejected:['bad','Rejected']}[p.st];
+  return `<div class="evt"><span class="pill ${lab[0]}">${lab[1]}</span><b style="font-weight:500">${p.t}</b>${p.st==='applied'?`<button class="btn sm danger" data-a="chrev:${p.id}">Revert</button>`:''}<span class="mono">${p.d}${p.st==='rejected'?' · nothing changed':''}</span></div>`}
+function renderChat(){
+  const s=chs,full=s.round>=MAXR;
+  el('chsess').innerHTML=`<button class="btn primary sm" data-a="chnew">＋ New session</button>`+SESS.map(x=>`<button class="sess" aria-current="${x===s}" data-a="chs:${x.id}">${x.id} · ${x.name}<small>${x.ro?'Read-only':'Open'}</small></button>`).join('');
+  el('chmsgs').innerHTML=(s.items.length?s.items.map(m=>m[0]==='edit'?evtHtml(pr(m[1])):`<div class="msg ${m[0]}"><b>${m[0]}</b><div>${esc(m[1])}</div></div>`).join('')
+    :'<div class="dempty"><h3>New session</h3><p>Ask about the archive. Nothing changes until you apply a proposal.</p></div>')
+    +(working&&s===chs?'<div class="msg note"><b>note</b><div>Working on it…</div></div>':'');
+  const pend=PROP.filter(p=>p.s===s.id&&p.st==='pending');
+  el('chpend').innerHTML=`<h3>Waiting on you${pend.length?`<span class="pill run np">${pend.length}</span>`:''}</h3>`+(pend.length?pend.map(p=>`<div class="prop"><b style="font-weight:500">Proposal · ${p.t}</b><pre>${p.d}</pre><div class="r"><button class="btn accent sm" data-a="chapp:${p.id}">Apply</button><button class="btn sm" data-a="chrej:${p.id}">Reject</button><small>Expires in 23 h</small></div></div>`).join(''):'<p class="none">Nothing waiting on you.</p>');
+  const ta=el('chin'),off=s.ro||full;ta.disabled=off;
+  ta.placeholder=s.ro?'Past sessions are read-only. Start a new session to continue.':full?'This session reached its round limit. Start a new session to continue.':'e.g. search my archive for comments about slow exports and propose a relabel';
+  el('chsend').disabled=off||working;el('chsend').classList.toggle('busy',working);
+  el('chst').textContent=s.items.length&&!s.ro?`Round ${s.round} of ${MAXR} (chat_max_rounds) · proposals expire after 24 h`:s.ro?'Transcripts are insert-only, so past sessions reopen read-only.':'';
+  const m=el('chmsgs');m.scrollTop=m.scrollHeight;
+}
+function chatSend(){
+  const ta=el('chin'),v=ta.value.trim(),s=chs;if(!v||working||s.ro||s.round>=MAXR)return;
+  s.items.push(['you',v]);s.round++;ta.value='';working=true;renderChat();toast('Working on it. A turn runs as a background job (mock)');
+  setTimeout(()=>{working=false;s.items.push(['chat','I found 3 near-identical labels for backups. I propose merging them into “backups”.']);
+    PROP.push({id:'p'+(++pn),s:s.id,t:'Merge 3 labels',d:'category: backup, back-ups → backups',st:'pending'});renderChat()},1400);
+}
+el('chin').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chatSend()}});
+
+/* ---------- PROBLEM SIGNALS: compact bar + drawer ---------- */
+const SREC=[{"t": "Hiring a contractor to automate monthly reporting", "a": "buyer", "c": 0.91, "w": ["hiring", "contractor", "automate"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Looking for someone to fix our CSV import", "a": "buyer", "c": 0.84, "w": ["looking for", "fix"], "s": "Remotive", "k": "job ad", "m": "hiring", "o": ""}, {"t": "I built a scraper for invoices, AMA", "a": "practitioner", "c": 0.77, "w": ["I built", "AMA"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Need freelance dev for Shopify sync", "a": "buyer", "c": 0.72, "w": ["need", "freelance dev"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Contract help wanted: sync inventory between two tools", "a": "buyer", "c": 0.7, "w": ["contract", "sync"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": "replied"}, {"t": "Our nightly export keeps failing, can anyone help", "a": "buyer", "c": 0.68, "w": ["can anyone help", "failing"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Hiring a part-time data engineer to clean legacy tables", "a": "buyer", "c": 0.66, "w": ["hiring", "data engineer"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "How we automated payroll checks with a small script", "a": "practitioner", "c": 0.64, "w": ["we automated", "script"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Freelance developer needed to replace a Zapier flow", "a": "buyer", "c": 0.63, "w": ["freelance developer", "replace"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": "won"}, {"t": "Looking for help migrating a spreadsheet workflow", "a": "buyer", "c": 0.61, "w": ["looking for", "migrating"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Show: a small tool that diffs vendor price lists", "a": "practitioner", "c": 0.59, "w": ["Show", "tool"], "s": "HN Who is hiring", "k": "post", "m": "content", "o": ""}, {"t": "Need someone to build a weekly report emailer", "a": "buyer", "c": 0.58, "w": ["need", "build"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": "lost"}, {"t": "Hiring an integrations engineer for CRM sync", "a": "buyer", "c": 0.57, "w": ["hiring", "integrations"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Write-up: what broke when we changed hosting providers", "a": "practitioner", "c": 0.55, "w": ["what broke"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Seeking a contractor to automate invoice matching", "a": "buyer", "c": 0.54, "w": ["seeking", "automate"], "s": "Remotive", "k": "job ad", "m": "hiring", "o": "replied"}, {"t": "We tried three tools for backups, none restore cleanly", "a": "practitioner", "c": 0.52, "w": ["we tried", "none"], "s": "HN Who is hiring", "k": "post", "m": "content", "o": ""}, {"t": "Short contract: clean and dedupe a customer list", "a": "buyer", "c": 0.51, "w": ["contract", "dedupe"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": "no reply"}, {"t": "Hiring someone to own our scraping jobs", "a": "buyer", "c": 0.5, "w": ["hiring", "scraping"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Looking for a script to merge exports from two systems", "a": "buyer", "c": 0.48, "w": ["looking for", "merge"], "s": "Remotive", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Lessons from running a homelab for five years", "a": "practitioner", "c": 0.47, "w": ["lessons", "homelab"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Need a developer to fix our webhook retries", "a": "buyer", "c": 0.46, "w": ["need", "fix"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Hiring an ops engineer to tame alert noise", "a": "buyer", "c": 0.45, "w": ["hiring", "alert noise"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": "no reply"}, {"t": "Looking for someone to automate our onboarding checklist", "a": "buyer", "c": 0.44, "w": ["looking for", "automate"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": ""}, {"t": "How I keep on-call handovers short", "a": "practitioner", "c": 0.43, "w": ["how I", "handovers"], "s": "HN Who is hiring", "k": "post", "m": "content", "o": ""}, {"t": "Freelance help: move forum content to a new host", "a": "buyer", "c": 0.42, "w": ["freelance", "move"], "s": "Remotive", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Hiring a contractor to document our data pipeline", "a": "buyer", "c": 0.41, "w": ["hiring", "document"], "s": "HN Who is hiring", "k": "job ad", "m": "hiring", "o": ""}, {"t": "Anyone built a restore test for self-hosted backups?", "a": "practitioner", "c": 0.4, "w": ["anyone built", "restore"], "s": "Remotive", "k": "post", "m": "content", "o": ""}, {"t": "Need help with a one-off CSV cleanup", "a": "buyer", "c": 0.39, "w": ["need", "cleanup"], "s": "Jobicy", "k": "job ad", "m": "hiring", "o": "lost"}];
+const SFAC_DEF=[['Audience','a'],['Source','s'],['Kind','k'],['Mode','m'],['Outcome','o']],SPER=8;
+const sigFac=()=>SFAC_DEF.map(([n,k])=>{const c={};SREC.forEach(r=>{const v=k==='o'?(r.o||'none'):r[k];c[v]=(c[v]||0)+1});return[n,k,Object.entries(c).sort((x,y)=>y[1]-x[1])]});
+const sigPager=(n,p)=>['‹',...Array.from({length:n},(_,i)=>i+1),'›'].map(x=>`<button data-a="sgpg:${x}"${x===p?' aria-current="page"':''}${(x==='‹'&&p===1)||(x==='›'&&p===n)?' disabled':''} aria-label="${typeof x==='number'?'Page '+x:x==='‹'?'Previous page':'Next page'}">${x}</button>`).join('');
+function sigPage(x){sgp=x==='‹'?sgp-1:x==='›'?sgp+1:+x;renderSig()}
+const SRUNS=[['Tue 09:30','scheduled','Hacker News',412,31,6,0,'ok'],['Mon 09:30','scheduled','Remotive',188,0,0,0,'ok'],['Sun 14:02','manual','Jobicy',96,4,1,2,'bad']];
+let sgf={},sgp=1,sgq='',facOn=true,mk=null,mkSel='replied',open=false;
+let reg={mode:'daily',time:'09:30'},frmS={mode:'daily',time:'09:30'};
+const sdesc=r=>r.mode==='off'?'Not scheduled':r.mode==='hourly'?'Hourly':'Daily '+r.time;
+const sdirty=()=>frmS.mode!==reg.mode||(frmS.mode==='daily'&&frmS.time!==reg.time);
+function updScr(){
+  const d=sdirty();
+  el('sgstate').innerHTML=`${sdesc(reg)} · last run ok${d?' <span class="pill warn np">Unsaved changes</span>':''}`;
+  el('sgmode').innerHTML=['daily','hourly','off'].map(m=>`<button aria-pressed="${frmS.mode===m}" data-a="sgm:${m}">${cap(m)}</button>`).join('');
+  el('sgtime').disabled=frmS.mode!=='daily';el('sgsave').disabled=!d;
+  el('sgnote').textContent=d?'Unsaved: press Save schedule.':reg.mode==='off'?'Not scheduled. Run now still works.':`Scheduled ${sdesc(reg).toLowerCase()}. Last scheduled run ok.`;
+}
+function renderSig(){
+  el('sgruns').innerHTML=SRUNS.map(r=>`<tr><td>${r[0]}</td><td><span class="tag">${r[1]}</span></td><td>${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td class="num">${r[5]}</td><td class="num">${r[6]}</td><td><span class="pill ${r[7]==='ok'?'ok':'bad'}">${r[7]==='ok'?'Ok':'Failed'}</span></td></tr>`).join('');
+  el('sgfacets').innerHTML=sigFac().map(f=>`<h3>${f[0]}</h3>`+f[2].map(x=>`<button aria-pressed="${sgf[f[1]]===x[0]}" data-a="sgf:${f[1]}:${x[0]}">${x[0]}<span>${x[1]}</span></button>`).join('')).join('');
+  el('sgfacets').hidden=!facOn;el('sgrow').classList.toggle('nofac',!facOn);
+  el('sgfac').textContent=facOn?'Hide filters':'Show filters';el('sgfac').setAttribute('aria-pressed',facOn);
+  const l=SREC.map((r,i)=>[r,i]).filter(([r])=>Object.entries(sgf).every(([k,v])=>(k==='o'&&v==='none'?r.o==='':r[k]===v))&&(r.t+' '+r.s).toLowerCase().includes(sgq));
+  const pages=Math.max(1,Math.ceil(l.length/SPER));sgp=Math.min(sgp,pages);const pg=l.slice((sgp-1)*SPER,sgp*SPER);
+  el('sgrec').innerHTML=pg.map(([r,i])=>`<tr><td class="tc"><b>${esc(r.t)}</b><span class="mono">${r.s}</span></td><td><span class="pill ${r.a==='buyer'?'ok':''}">${cap(r.a)}</span></td><td class="num">${r.c.toFixed(2)}</td>
+    <td>${r.w.map((w,j)=>`<span class="oc c${j%3}">${esc(w)}</span>`).join('')}</td>
+    <td>${r.o?`<span class="pill run">${cap(r.o)}</span> <button class="btn sm ghost" data-a="sgmk:${i}">Edit</button>`:`<button class="btn sm" data-a="sgmk:${i}">Mark</button>`}</td></tr>`
+    +(mk===i?`<tr class="mkrow"><td colspan="5"><div class="r"><b style="font-weight:500">Outcome</b><div class="seg" role="group" aria-label="Outcome">${['replied','won','lost','no reply'].map(o=>`<button aria-pressed="${mkSel===o}" data-a="sgo:${o}">${cap(o)}</button>`).join('')}</div><input class="in" id="sgnote2" placeholder="Note (optional)" aria-label="Note"><button class="btn sm accent" data-a="sgmks:${i}">Save</button><button class="btn sm ghost" data-a="sgmk:${i}">Cancel</button></div></td></tr>`:'')).join('')
+   ||`<tr><td colspan="5" class="empty"><h3>No signals match</h3><p>Try a different word, or clear the filters.</p><button class="btn sm" data-a="sgclr">Clear filters</button></td></tr>`;
+  const act=sgq||Object.keys(sgf).length;el('sgclr').hidden=!act;
+  el('sgcnt').textContent=l.length?`Showing ${(sgp-1)*SPER+1}–${(sgp-1)*SPER+pg.length} of ${l.length} signals`:'No signals';el('sgpager').innerHTML=pages>1?sigPager(pages,sgp):'';
+  updScr();
+}
+el('sgq').oninput=e=>{sgq=e.target.value.toLowerCase();sgp=1;renderSig()};
+el('sgtime').oninput=e=>{frmS.time=e.target.value;updScr()};
+/* ---------- CONFIG: two panes ---------- */
+const CFG=[
+ {g:'Fetch',d:'How much the worker walks and how politely.',f:[{k:'max_threads_per_source',v:'25',t:'int',min:1,max:500},{k:'max_comments_per_thread',v:'200',t:'int',min:1,max:5000}]},
+ {g:'Pre-filter',d:'What is dropped before any model sees it.',f:[{k:'prefilter_min_chars',v:'20',t:'int',min:0,max:500},{k:'prefilter_max_chars',v:'600',t:'int',min:100,max:5000}]},
+ {g:'Archive & synthesis',d:'Dedup and how ideas are formed.',f:[{k:'dedup_threshold',v:'0.92',t:'float',min:0,max:1},{k:'good_idea_min',v:'7',t:'int',min:1,max:10}]},
+ {g:'Critic web step',d:'Competition checks and their budget.',f:[{k:'critic_web_rate_limit',v:'5',t:'int',min:1,hint:'per minute, 1 or more'}]},
+ {g:'Providers & output',d:'Backends and what a run leaves behind.',f:[{k:'llm_provider',v:'ollama',t:'enum',o:['fake','ollama','groq']},{k:'export_after_run',v:'true',t:'enum',o:['true','false']}]}];
+CFG.forEach(G=>G.f.forEach(f=>{f.hint=f.hint||(f.t==='enum'?f.o.join(' · '):`${f.min}–${f.max}`)}));
+const CFD={"max_threads_per_source": "Threads read from each source per run.", "max_comments_per_thread": "Comments kept from each thread.", "prefilter_min_chars": "Comments shorter than this are dropped before any model sees them.", "prefilter_max_chars": "Upper length limit for a comment passed on to the models.", "dedup_threshold": "Similarity above which two nuggets count as duplicates.", "good_idea_min": "Lowest critic score at which an idea counts as good.", "critic_web_rate_limit": "Web searches the critic may make each minute.", "llm_provider": "Backend used for the models unless a role overrides it.", "export_after_run": "Write the exports when a run finishes."};
+const FL=CFG.flatMap(G=>G.f),base={},cur={};FL.forEach(f=>base[f.k]=cur[f.k]=f.v);
+const PROV={ollama:{n:'Ollama',loc:1,m:[['qwen3:8b','5.2 GB','chat'],['qwen3:14b','9.3 GB','chat'],['llama3.1:8b','4.9 GB','chat'],['gemma3:12b','8.1 GB','chat'],['mistral:7b','4.1 GB','chat'],['nomic-embed-text','274 MB','embed']]},
+ groq:{n:'Groq',m:[['llama-3.3-70b','','chat'],['llama-3.1-8b','','chat']]},
+ openai:{n:'OpenAI',m:[['gpt-4o-mini','','chat'],['gpt-4o','','chat'],['text-embedding-3-small','','embed']]},
+ anthropic:{n:'Anthropic',m:[['claude-haiku-5-5','','chat'],['claude-sonnet-5-5','','chat']]}};
+const KEYS={groq:1,openai:0,anthropic:0};
+const RJ=[['Pipeline agents',[['extractor','Extractor','Pulls nuggets out of comments','chat'],['synthesizer','Synthesizer','Forms ideas from nuggets','chat'],['critic','Critic','Scores ideas and checks competition','chat'],['labeller','Labeller','Tags and names things','chat'],['embedding','Embedding','Turns text into vectors for search and clusters','embed']]],['Other tasks',[['chat','Chat assistant','Answers in the Chat page','chat'],['clusters','Cluster ideas','Writes an idea from a theme','chat']]]];
+const RS={extractor:{p:'ollama',m:'qwen3:8b'},synthesizer:{p:'groq',m:'llama-3.3-70b'},critic:{p:'ollama',m:'qwen3:14b'},labeller:{p:'inherit',m:''},embedding:{p:'ollama',m:'nomic-embed-text'},chat:{p:'ollama',m:'qwen3:14b'},clusters:{p:'groq',m:'llama-3.3-70b'}};
+const RB=JSON.parse(JSON.stringify(RS));
+const mOpts=(p,kind)=>(PROV[p]?PROV[p].m:[]).filter(x=>x[2]===kind);
+const rDirty=()=>Object.keys(RS).filter(r=>RS[r].p!==RB[r].p||RS[r].m!==RB[r].m).length;
+const provOpts=(k,kind)=>Object.entries(PROV).filter(([id])=>mOpts(id,kind).length).map(([id,P])=>{const ok=P.loc||KEYS[id]||RS[k].p===id;return `<option value="${id}"${RS[k].p===id?' selected':''}${ok?'':' disabled'}>${P.n}${ok?'':' (needs key)'}</option>`}).join('');
+function roleRow(r){const [k,label,desc,kind]=r,s=RS[k],inh=s.p==='inherit',ch=s.p!==RB[k].p||s.m!==RB[k].m?' chg':'';
+  return `<tr><td><b style="font-weight:500">${label}</b><span class="sub2">${desc}</span></td><td><select class="in${ch}" data-rpv="${k}" aria-label="${label} provider">${k==='labeller'?`<option value="inherit"${inh?' selected':''}>Follow synthesizer</option>`:''}${provOpts(k,kind)}</select></td><td>${inh?`<span class="mono">${esc(RS.synthesizer.m)}</span> <span class="sub2" style="display:inline">via synthesizer</span>`:`<select class="in${ch}" data-rmd="${k}" aria-label="${label} model">${mOpts(s.p,kind).map(x=>`<option value="${x[0]}"${x[0]===s.m?' selected':''}>${x[0]}${x[1]?' · '+x[1]:''}</option>`).join('')}</select>`}</td><td><button class="btn sm" data-a="cft:${k}">Test</button></td></tr>`}
+function provRow(id){const P=PROV[id],n=P.m.length;
+  const st=P.loc?'<span class="pill ok">Reachable</span>':KEYS[id]?'<span class="pill ok">Key set</span>':'<span class="pill np">No key</span>';
+  const key=P.loc?'<span class="sub2" style="display:inline">No key needed, runs on this machine</span>':KEYS[id]?`<span class="mono">••••••••••••</span> <button class="btn sm ghost" data-a="ckrm:${id}">Remove</button>`:`<span style="display:inline-flex;gap:6px"><input class="in" type="password" id="key-${id}" placeholder="Paste API key" aria-label="${P.n} API key" style="width:190px;height:30px"><button class="btn sm" data-a="cks:${id}">Save</button></span>`;
+  const mod=P.loc?`${n} installed <button class="btn sm ghost" data-a="cfscan">Rescan</button>`:KEYS[id]?`${n} available`:'<span class="sub2" style="display:inline">Add a key to list models</span>';
+  return `<tr><td><b style="font-weight:500">${P.n}</b><span class="sub2">${P.loc?'Local':'API'}</span></td><td>${st}</td><td>${key}</td><td>${mod}</td></tr>`}
+const GRP=[...CFG.map(G=>G.g),'Agent models'],ROG=['Scraper','Environment'];
+let cfg='Fetch',cfe={},prof='default';
+const nDirty=()=>FL.filter(f=>cur[f.k]!==base[f.k]).length+rDirty();
+const gDirty=g=>{if(g==='Agent models')return rDirty()>0;const G=CFG.find(x=>x.g===g);return !!G&&G.f.some(f=>cur[f.k]!==base[f.k])};
+function check(f){const v=String(cur[f.k]).trim();
+  if(f.t==='enum')return f.o.includes(v)?'':`Must be one of ${f.o.join(', ')}`;
+  if(v===''||isNaN(Number(v)))return 'Must be a number';const n=Number(v);
+  if(f.t==='int'&&!Number.isInteger(n))return 'Must be a whole number';
+  if(f.max==null)return n<f.min?`Must be at least ${f.min}`:'';
+  return n<f.min||n>f.max?`Out of range (${f.min}–${f.max})`:''}
+const hintHtml=f=>{if(cfe[f.k])return`<small class="err">${cfe[f.k]}</small>`;const c=cur[f.k]!==base[f.k];return`<small>${c?`was ${base[f.k]} · `:''}${f.hint}${c?` · <button class="rl" data-a="cfrst:${f.k}">Reset</button>`:''}</small>`};
+function fieldHtml(f){
+  const c=cur[f.k]!==base[f.k]?' chg':'',b=cfe[f.k]?' bad':'';
+  return `<div class="cfr"><div><span class="mono">${f.k}</span><p>${CFD[f.k]||''}</p></div><label class="cfi"><span class="sr">${f.k}</span>${f.t==='enum'?`<select class="in${c}${b}" data-cfk="${f.k}">${f.o.map(o=>`<option${o===cur[f.k]?' selected':''}>${o}</option>`).join('')}</select>`:`<input class="in${c}${b}" data-cfk="${f.k}" value="${esc(cur[f.k])}" inputmode="decimal">`}<span data-ch="${f.k}">${hintHtml(f)}</span></label></div>`}
+function ymlHtml(G){return `<div class="panel-h"><h2 style="font-size:14px">thresholds.yaml</h2><span class="pill np" style="margin-left:auto">Preview</span></div><pre class="yml"><span class="yl c"># ${G.g.toLowerCase()}</span>${G.f.map(f=>{const c=cur[f.k]!==base[f.k];return `<span class="yl${c?' ych':''}">${f.k}: ${esc(cur[f.k])}${c?` <span class="c"># was ${esc(base[f.k])}</span>`:''}</span>`}).join('')}</pre><p class="m2">Written here when you save. Changed lines are highlighted.</p>`}
+function renderCfNav(){
+  el('cfnav').innerHTML=GRP.map(g=>`<button aria-current="${g===cfg}" data-a="cfg:${g}">${g}${gDirty(g)?'<span class="ud" role="img" aria-label="Unsaved changes"></span>':''}</button>`).join('')+'<div class="sep"></div>'+ROG.map(g=>`<button aria-current="${g===cfg}" data-a="cfg:${g}">${g}</button>`).join('');
+  el('cfprof').innerHTML=['default','laptop','server'].map(p=>`<button aria-pressed="${prof===p}" data-a="cfp:${p}">${cap(p)}</button>`).join('');
+}
+function renderCfPane(){
+  const G=CFG.find(x=>x.g===cfg);let h;
+  if(G)h=`<div class="cfg2"><div class="panel"><div class="panel-h"><h2>${G.g}</h2></div><div class="panel-b"><p class="lede" style="margin:0 0 16px">${G.d}</p>${G.f.map(fieldHtml).join('')}</div></div><div class="panel" id="cfyml">${ymlHtml(G)}</div></div>`;
+  else if(cfg==='Agent models')h=`<div class="cfstack"><div class="panel"><div class="panel-h"><h2>Providers</h2></div><div class="panel-b" style="padding-bottom:6px"><p class="lede" style="margin:0">Local models come from what is installed in Ollama. Other providers need an API key before their models can be chosen.</p></div><div class="tw"><table><thead><tr><th>Provider</th><th>Status</th><th>API key</th><th>Models</th></tr></thead><tbody>${Object.keys(PROV).map(provRow).join('')}</tbody></table></div></div>
+    <div class="panel"><div class="panel-h"><h2>Models by job</h2></div><div class="panel-b" style="padding-bottom:6px"><p class="lede" style="margin:0">Pick a provider and model for each job. Saved to the ${prof} profile’s roles block.</p></div><div class="tw"><table><thead><tr><th>Job</th><th>Provider</th><th>Model</th><th><span class="sr">Test</span></th></tr></thead><tbody>${RJ.map(([g,rows])=>`<tr class="grp"><td colspan="4">${g}</td></tr>`+rows.map(roleRow).join('')).join('')}</tbody></table></div></div></div>`;
+  else h=`<div class="panel"><div class="panel-h"><h2>${cfg}</h2><span class="pill np">Read-only</span></div><div class="panel-b"><p class="lede" style="margin:0 0 12px">${cfg==='Scraper'?'Read from scraper.yaml. Edit the file to change it.':'Read from the environment of the process running this console.'}</p><div class="mono" style="line-height:1.8">${(cfg==='Scraper'?['hn_months: 2','boards: himalayas, remotive, jobicy']:['config_dir: C:\\jester\\config','OLLAMA_HOST: localhost:11434']).join('<br>')}</div></div></div>`;
+  el('cfpane').innerHTML=h;
+}
+function updCf(){
+  const n=nDirty();el('cfbar').hidden=!n;el('cfn').textContent=`${plural(n,'unsaved change')}`;renderCfNav();
+}
+function renderCf(){renderCfNav();renderCfPane();updCf()}
+function cfInput(e){
+  const t=e.target,k=t.dataset&&t.dataset.cfk;if(!k)return;const f=FL.find(x=>x.k===k);
+  cur[k]=t.value;delete cfe[k];t.classList.toggle('chg',cur[k]!==base[k]);t.classList.remove('bad');
+  const h=document.querySelector(`[data-ch="${k}"]`);if(h)h.innerHTML=hintHtml(f);const Gc=CFG.find(x=>x.g===cfg),y=el('cfyml');if(Gc&&y)y.innerHTML=ymlHtml(Gc);updCf();
+}
+document.addEventListener('input',cfInput);
+document.addEventListener('change',e=>{const t=e.target,d=t.dataset||{};
+  if(d.rpv){const k=d.rpv,kind=RJ.flatMap(g=>g[1]).find(r=>r[0]===k)[3];RS[k].p=t.value;RS[k].m=t.value==='inherit'?'':(mOpts(t.value,kind)[0]||[''])[0];renderCf();const n=document.querySelector(`[data-rpv="${k}"]`);n&&n.focus()}
+  else if(d.rmd){RS[d.rmd].m=t.value;renderCf();const n=document.querySelector(`[data-rmd="${d.rmd}"]`);n&&n.focus()}});
+/* ---------- SCHEDULE: form + live summary ---------- */
+const CADS=[['15m','Every 15 minutes',96],['30m','Every 30 minutes',48],['1h','Every hour',24],['6h','Every 6 hours',4],['1d','Daily',1]];
+const NEXT={'15m':'in 9 min','30m':'in 21 min','1h':'in 37 min','6h':'in 5 h 37 min'};
+const cadText=f=>f.cad==='1d'?`daily at ${f.time}`:CADS.find(c=>c[0]===f.cad)[1].toLowerCase();
+const enabled=()=>src.flatMap(g=>g.rows).filter(r=>r.on).map(r=>r.n);
+const selList=f=>enabled().filter(n=>!f.off.includes(n));
+const scopeTxt=f=>{const all=enabled().length,n=selList(f).length;return n===0?'every enabled source':n===all?`all ${all} enabled sources`:`${n} of ${all} sources`};
+const depthTxt=f=>{const p=[f.mp&&`${fmt(f.mp)} posts`,f.mc&&`${fmt(f.mc)} comments`,f.mi&&`${fmt(f.mi)} ideas`].filter(Boolean);
+  return p.length?`, up to ${p.length>1?p.slice(0,-1).join(', ')+' and '+p[p.length-1]:p[0]} per run`:', with no ceiling on posts, comments or ideas'};
+const sumTxt=f=>`${cap(cadText(f))} via Task Scheduler, scraping ${scopeTxt(f)}${depthTxt(f)}.`;
+const clone=f=>({cad:f.cad,time:f.time,off:[...f.off],mp:f.mp,mc:f.mc,mi:f.mi});
+const key=f=>JSON.stringify([f.cad,f.cad==='1d'?f.time:'',[...f.off].sort(),f.mp,f.mc,f.mi]);
+let ins={cad:'6h',time:'04:00',off:[],mp:'',mc:'',mi:'',stale:true},frm=clone(ins);
+function renderBanner(){
+  el('scban').innerHTML=ins?`<div class="notice ok" role="status"><svg class="icon" viewBox="0 0 24 24" style="color:var(--ok)"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg><div><b>Scheduled</b><p>${cap(cadText(ins))} via Windows Task Scheduler, scraping ${scopeTxt(ins)}.</p></div></div>`
+   :`<div class="notice" role="status" style="border-left-color:var(--faint)"><svg class="icon" viewBox="0 0 24 24" style="color:var(--muted)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><b>Nothing scheduled</b><p>Choose what to scrape and how often. The host scheduler then runs the loop with this console closed.</p></div></div>`;
+}
+function renderCad(){
+  el('sccad').innerHTML=CADS.map(c=>`<button class="btn sm${frm.cad===c[0]?' primary':''}" aria-pressed="${frm.cad===c[0]}" data-a="scc:${c[0]}">${c[1]}</button>`).join('')
+   +(frm.cad==='1d'?`<label class="sr" for="sctime">Time of the daily run</label><input class="in" id="sctime" type="time" value="${frm.time}" style="width:120px">`:'');
+}
+function renderScope(){
+  const en=enabled();
+  el('scscope').innerHTML=src.map(g=>`<div><b>${g.p}</b>${g.rows.map(r=>`<label><input type="checkbox" class="chk" data-scn="${esc(r.n)}"${r.on&&!frm.off.includes(r.n)?' checked':''}${r.on?'':' disabled'}> <span class="mono">${r.n}</span>${r.on?'':' <span class="na">paused on Sources</span>'}</label>`).join('')}</div>`).join('')
+   +`<div><b>TikTok</b><label><input type="checkbox" class="chk" disabled> <span class="mono">#smallbiz</span> <span class="na">no worker adapter yet</span></label></div>`;
+  updSum();
+}
+function updSum(){
+  const n=selList(frm).length,all=enabled().length,d=ins&&key(frm)!==key(ins);
+  el('sccnt').textContent=n===0?'None selected: every enabled source':`${n} of ${all} selected`;
+  el('scsum').textContent=sumTxt(frm);
+  el('scmark').innerHTML=!ins?'<span class="pill np">Not installed</span>':d?'<span class="pill warn">Unsaved</span>':'<span class="pill ok">Installed</span>';
+  const b=el('scinst');b.textContent=ins?'Update schedule':'Install schedule';b.disabled=!!ins&&!d;
+}
+const TIKS=()=>runs.filter(r=>r.o==='scheduled').map(r=>{const m=r.id.match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/),dt=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));
+  return {at:dt.toLocaleDateString('en-GB',{weekday:'short',timeZone:'UTC'})+' '+m[4]+':'+m[5],id:r.id,st:r.st,cm:r.cm,k:r.k,i:r.i}});
+function renderStatus(){
+  const T=TIKS(),exp=ins?(CADS.find(c=>c[0]===ins.cad)[2]):0,last=runs.find(r=>r.o==='scheduled'),ok24=2;
+  el('scstat').innerHTML=`<div class="panel"><div class="panel-h"><h2>Current schedule</h2><span class="pill ${ins?'ok':''}" style="margin-left:auto">${ins?'Installed':'Off'}</span></div><div class="panel-b">
+    ${ins?`<dl class="kv"><dt>Scheduler</dt><dd>Windows Task Scheduler</dd><dt>Cadence</dt><dd>${cap(cadText(ins))}</dd><dt>Next run</dt><dd>${ins.cad==='1d'?'tomorrow at '+ins.time:NEXT[ins.cad]}</dd><dt>Scope</dt><dd>${cap(scopeTxt(ins))}</dd><dt>Task name</dt><dd class="mono">JesterLoop</dd><dt>Command</dt><dd class="mono">jester run --loop</dd></dl>
+     ${ins.stale?`<div class="notice" style="margin:0"><div><b>The task runs an older command than Run it now</b><p>Press Update schedule to register the current command.</p></div></div>`:''}
+     <div class="dact" style="margin-top:0"><button class="btn sm" data-a="scnow">Run it now</button><button class="btn sm danger" data-a="scrm">Remove schedule</button></div>`
+     :`<p class="lede" style="margin:0">Nothing is registered with the host scheduler, so the loop only runs when you start it here.</p>`}</div></div>
+   <div class="panel kpis k3"><div class="kpi"><div class="k">Ticks, 24 h</div><div class="v">${ok24}${ins?` <span style="font-size:14px;font-weight:400;color:var(--muted)">of ${exp} expected</span>`:''}</div></div>
+     <div class="kpi"><div class="k">Archived, 24 h</div><div class="v">${fmt(T.slice(0,2).reduce((a,t)=>a+t.k,0))} <span style="font-size:14px;font-weight:400;color:var(--muted)">nuggets</span></div></div>
+     <div class="kpi"><div class="k">Last tick</div><div class="v">${last.ago.replace(' ago','')} <span style="font-size:14px;font-weight:400;color:var(--muted)">ago, ${last.st==='completed'?'ok':last.st}</span></div></div></div>
+   <div class="panel"><div class="panel-h"><h2>Recent ticks</h2></div><div class="tw"><table><thead><tr><th>Started</th><th>Run</th><th>Status</th><th class="num">Comments</th><th class="num">Nuggets</th><th class="num">Ideas</th></tr></thead><tbody>${T.map(t=>`<tr><td>${t.at}</td><td class="mono">${t.id.slice(6,22)}…</td><td><span class="pill ${t.st==='completed'?'ok':'bad'}">${t.st==='completed'?'Ok':cap(t.st)}</span></td><td class="num">${fmt(t.cm)}</td><td class="num">${fmt(t.k)}</td><td class="num">${t.i}</td></tr>`).join('')}</tbody></table></div></div>
+   <div class="panel"><div class="panel-h"><h2>Last scheduled output</h2></div><div class="panel-b"><pre class="logp">04:00:01 fetch 5 sources (worker)
+04:03:12 treat ${fmt(last.cm)} comments → ${last.k} nuggets (nothing new)
+04:11:07 synthesize ${last.i} ideas · done</pre></div></div>`;
+}
+function renderSched(){renderBanner();renderCad();renderScope();renderStatus();
+  document.querySelectorAll('[data-sd]').forEach(i=>i.value=frm[i.dataset.sd]||'')}
+document.addEventListener('input',e=>{const t=e.target;
+  if(t.id==='sctime'){frm.time=t.value;updSum()}
+  else if(t.dataset&&t.dataset.sd){frm[t.dataset.sd]=t.value.replace(/\D/g,'');updSum()}});
+document.addEventListener('change',e=>{const t=e.target;if(t.dataset&&t.dataset.scn!==undefined){const n=t.dataset.scn;frm.off=t.checked?frm.off.filter(x=>x!==n):[...frm.off,n];updSum()}});
+
+/* ---------- actions ---------- */
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-a]');if(!t)return;const [k,...r]=t.dataset.a.split(':'),v=r.join(':');
+  switch(k){
+   case 'nf':nfl=v;renderNug();break;
+   case 'nclr':nq='';nfl=npl=nct='all';el('nq').value='';el('npl').value='all';el('nct').value='all';renderNug();break;
+   case 'cls':cls=v;renderCl();break;
+   case 'clp':clp=v;renderCl();break;
+   case 'clclr':clq='';clp='all';el('clq').value='';renderCl();break;
+   case 'cl':tsel=TH[+v];renderCl();break;
+   case 'clall':tsel.all=true;renderClDet();break;
+   case 'clgen':tsel.draft=true;renderClDet();break;
+   case 'cldisc':tsel.draft=false;renderClDet();break;
+   case 'clsave':tsel.draft=false;tsel.idea='idea · unscored';renderCl();toast('Idea saved. The critic scores it next cycle (mock)');break;
+   case 'creg':{if(t.disabled)break;t.disabled=true;t.classList.add('busy');setTimeout(()=>{t.disabled=false;t.classList.remove('busy');hash=false;el('chash').hidden=true;toast('Regrouped 31,818 nuggets into 5 themes with embeddings (mock)')},900);break}
+   case 'chs':chs=SESS.find(s=>s.id===v);renderChat();break;
+   case 'chnew':{const s={id:'S-0'+(++sn),name:'new session',ro:false,round:0,items:[]};SESS.unshift(s);chs=s;renderChat();el('chin').focus();toast('Started '+s.id+' (mock)');break}
+   case 'chsend':chatSend();break;
+   case 'chapp':{const p=pr(v);p.st='applied';chs.items.push(['edit',p.id]);renderChat();toast('Applied: '+p.t+' (mock)');break}
+   case 'chrej':{const p=pr(v);p.st='rejected';chs.items.push(['edit',p.id]);renderChat();toast('Rejected. Nothing changed.');break}
+   case 'chrev':{const p=pr(v);p.st='reverted';renderChat();toast('Reverted: '+p.t+' (mock)');break}
+   case 'sgrun':busy(t,'','Scrape started (mock, not connected to a service)',900);break;
+   case 'sgtog':open=!open;el('sgdr').hidden=!open;t.setAttribute('aria-expanded',open);t.querySelector('.fold').style.transform=open?'rotate(270deg)':'rotate(90deg)';break;
+   case 'sgm':frmS.mode=v;updScr();break;
+   case 'sgsave':reg={...frmS};updScr();toast('Schedule registered: '+sdesc(reg).toLowerCase()+' (mock)');break;
+   case 'sgfac':facOn=!facOn;renderSig();break;
+   case 'sgf':{const [fk,fv]=[v.split(':')[0],v.split(':').slice(1).join(':')];sgf[fk]===fv?delete sgf[fk]:sgf[fk]=fv;sgp=1;renderSig();break}
+   case 'sgpg':sigPage(v);break;
+   case 'sgclr':sgf={};sgq='';sgp=1;el('sgq').value='';renderSig();break;
+   case 'sgmk':mk=mk===+v?null:+v;mkSel=SREC[+v].o||'replied';renderSig();break;
+   case 'sgo':mkSel=v;renderSig();break;
+   case 'sgmks':{const rec=SREC[+v],note=el('sgnote2');rec.o=mkSel;rec.note=note?note.value:'';mk=null;renderSig();toast('Marked as “'+mkSel+'” (mock)');break}
+   case 'cfg':cfg=v;renderCf();break;
+   case 'cfp':prof=v;renderCfNav();if(cfg==='Agent models')renderCfPane();toast('Viewing the '+v+' profile (mock)');break;
+   case 'cft':{const r=RS[v],m=r.p==='inherit'?RS.synthesizer.m:r.m;busy(t,'',`Test call to ${m} returned in 0.8 s (mock)`,900);break}
+   case 'cks':{const i=el('key-'+v);if(!i||!i.value.trim()){toast('Paste an API key first.');break}KEYS[v]=1;renderCfPane();toast(PROV[v].n+' key saved. Its models are now listed (mock)');break}
+   case 'ckrm':{if(Object.values(RS).some(r=>r.p===v)){toast('Still used by a job. Switch that job to another provider first.');break}KEYS[v]=0;renderCfPane();toast(PROV[v].n+' key removed (mock)');break}
+   case 'cfscan':busy(t,'','Found 6 models in Ollama (mock)',900);break;
+   case 'cfrst':cur[v]=base[v];delete cfe[v];renderCf();break;
+   case 'cfdisc':FL.forEach(f=>cur[f.k]=base[f.k]);Object.keys(RS).forEach(k=>RS[k]={...RB[k]});cfe={};renderCf();toast('Discarded unsaved changes');break;
+   case 'cfsave':{cfe={};const bad=FL.filter(f=>check(f));bad.forEach(f=>cfe[f.k]=check(f));
+     if(bad.length){cfg=CFG.find(G=>G.f.includes(bad[0])).g;renderCf();toast(`Not saved: ${plural(bad.length,'value')} refused. Nothing was written.`);break}
+     FL.forEach(f=>base[f.k]=cur[f.k]);Object.keys(RS).forEach(k=>RB[k]={...RS[k]});renderCf();toast('Saved to thresholds.yaml, comments kept (mock)');break}
+   case 'scc':frm.cad=v;renderCad();updSum();break;
+   case 'scall':frm.off=[];renderScope();break;
+   case 'scinst':{const was=!!ins;ins={...clone(frm),stale:false};renderBanner();renderStatus();updSum();toast((was?'Schedule updated':'Schedule installed')+' (mock, nothing registered with a scheduler)');break}
+   case 'scnow':toast('JesterLoop fired (mock, not connected to a service)');break;
+   case 'scrm':{const prev=ins;ins=null;renderBanner();renderStatus();updSum();toast('Schedule removed (mock)',()=>{ins=prev;renderBanner();renderStatus();updSum()});break}
+  }
+});
+
+/* "/" focuses the page filter on pages that have one */
+document.addEventListener('keydown',e=>{
+  if(e.key!=='/'||/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))return;
+  const id=[['nuggets','nq'],['clusters','clq'],['signals','sgq']].find(p=>el(p[0]).classList.contains('on'));
+  if(id){e.preventDefault();e.stopPropagation();el(id[1]).focus()}
+},true);
+
+/* refresh pages that read shared data when they open */
+const _go=go;go=function(id){_go(id);if(id==='schedule')renderSched();if(id==='chat'){const m=el('chmsgs');m.scrollTop=m.scrollHeight}};
+
+renderNug();renderCl();renderChat();renderSig();renderCf();renderSched();
+})();
+</script>
+</body>
+</html>
+

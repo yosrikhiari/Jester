@@ -164,6 +164,38 @@ critic_provider: groq
 # runs it in ~12s with comparable output, so `models.extractor` is the knob if
 # throughput matters more than nuance.
 extractor_provider: ollama
+
+# Chat tool loop (autonomous-curation design §5 S3). The chat may propose
+# edits and config changes; the console applies/reverts them as a human.
+chat_max_rounds: 6
+chat_proposal_ttl_hours: 72
+# The chat's kill switch. Until this is true the console's chat routes
+# refuse to start a turn; applies/rejects/reverts stay usable because a
+# proposal on file still needs its human disposition.
+chat_enabled: false
+
+# Deterministic source allocation (autonomous-curation design §5 S5). When
+# scheduler_enabled is true, a live fetch walks hot sources every run and
+# probes zero-yield ones in rotation (one per run), measured from the
+# ingest ledger over scheduler_window_batches recent batch events per
+# source. It only ever SHRINKS a run's walk list; the platform caps above
+# are never raised.
+scheduler_enabled: false
+scheduler_window_batches: 30
+
+# Spec review gate (autonomous-curation design §5 S6): how many pages the
+# spec validator samples before a human may approve/activate an extraction
+# spec. At least 3 of them must each yield comments (range 3-50).
+specs_max_samples: 5
+
+# Maintenance (autonomous-curation design §5 S7), flags only - maintenance
+# never deletes anything. maintenance_null_rate_spike is how far a source's
+# recent empty-batch rate may jump above its whole-history rate before the
+# pass flags it as a drift suspect; maintenance_stale_days is how old a
+# clusterless nugget may sit before it is flagged for review.
+maintenance_null_rate_spike: 0.25
+maintenance_stale_days: 90
+
 models:
   extractor: qwen3:8b
   archivist: phi4-mini:3.8b

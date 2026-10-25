@@ -66,12 +66,13 @@ function groupBy(items, keyFn) {
 
 /** A foldable header row spanning the whole table.
  *  `depth` 1 is a platform, 2 a community inside it. */
-function groupRow({ key, depth = 1, label, meta = '', count, span }) {
+function groupRow({ key, depth = 1, label, meta = '', count, span, tint }) {
   const shut = FOLDED.has(key);
-  return `<tr class="grp grp--${depth}${shut ? ' is-shut' : ''}" data-fold="${esc(key)}">
+  return `<tr class="grp grp--${depth}${shut ? ' is-shut' : ''}" data-fold="${esc(key)}"${tint ? ` data-tint style="--g:${esc(tint)}"` : ''}>
     <td colspan="${span}">
       <button type="button" class="grp-btn" aria-expanded="${!shut}">
         <span class="grp-caret" aria-hidden="true">${shut ? '▸' : '▾'}</span>
+        ${tint ? '<span class="grp-dot" aria-hidden="true"></span>' : ''}
         <span class="grp-label">${label}</span>
         <span class="pill pill--sm tone-neutral">${esc(count.toLocaleString())}</span>
         ${meta ? `<span class="xs grp-meta">${meta}</span>` : ''}
@@ -254,6 +255,8 @@ const PAGES = [
   { group: 'Archive', id: 'nuggets', label: 'Nuggets', icon: '◦', load: loadNuggets, count: () => COUNTS.nuggets },
   { group: 'Archive', id: 'clusters', label: 'Clusters', icon: '❋', load: loadClusters, count: () => COUNTS.clusters },
   { group: 'Archive', id: 'search', label: 'Search', icon: '⌕', load: loadSearch },
+  // The chat is an operator surface, not archive data: its own group.
+  { group: 'Curation', id: 'chat', label: 'Chat', icon: '☰', load: loadChat },
   // Its own group: this is a task deliverable with its own database, its
   // own rules and its own reviewer, not another view of Jester's archive.
   { group: 'the collector', id: 'signals', label: 'Problem signals', icon: '◎',
@@ -307,7 +310,7 @@ async function runAction(path, body, el) {
     // ok:false has three flavours here: a transport/handler error, a non-zero
     // CLI exit, and "the check ran and found things". Name the right one.
     const why = res.error
-      || (res.findings ? `${res.findings.length} finding(s)` : '')
+      || (res.findings ? `${plural(res.findings.length, 'finding')}` : '')
       || (res.code !== undefined ? `exit ${res.code}` : 'refused');
     toast(`${label}: ${why}`, 'bad');
   } else if (res.idle) {
@@ -317,21 +320,21 @@ async function runAction(path, body, el) {
     toast(`${label}: ${res.note}`, 'bad');
   } else {
     const detail = [
-      res.findings ? `${res.findings.length} finding(s)` : '',
+      res.findings ? `${plural(res.findings.length, 'finding')}` : '',
       res.requeued !== undefined ? `${res.requeued} requeued` : '',
       res.fixed !== undefined ? `${res.fixed} reembedded` : '',
-      res.queued_new_comments !== undefined ? `${res.queued_new_comments} new comment(s)` : '',
+      res.queued_new_comments !== undefined ? `${plural(res.queued_new_comments, 'new comment')}` : '',
       res.archived
-        ? `+${res.archived.nuggets} nugget(s), +${res.archived.ideas} idea(s)` : '',
+        ? `+${plural(res.archived.nuggets, 'nugget')}, +${plural(res.archived.ideas, 'idea')}` : '',
       res.counts && res.out_dir
-        ? `${res.counts.nuggets} nugget(s) + ${res.counts.ideas} idea(s) → ${res.out_dir}` : '',
+        ? `${plural(res.counts.nuggets, 'nugget')} + ${plural(res.counts.ideas, 'idea')} → ${res.out_dir}` : '',
     ].filter(Boolean).join(' · ');
     toast(`${label}: ok${detail ? ' — ' + detail : ''}`, 'ok');
   }
   // A multi-step run reports each step's own log, not just the last one's.
   (res.steps || []).forEach(st => {
     if (st.queued_new_comments !== undefined) {
-      toast(`${st.step}: ${st.queued_new_comments} new comment(s) queued`,
+      toast(`${st.step}: ${plural(st.queued_new_comments, 'new comment')} queued`,
             st.queued_new_comments ? 'ok' : 'bad');
     }
   });
@@ -455,7 +458,6 @@ async function loadOverview() {
     $('#btn-live-models').classList.toggle('hidden',
       !(INFRA.ollama.up && INFRA.ollama.models.some(m => /qwen|mistral|phi|llama|gemma/i.test(m))));
     $('#btn-ingest-live').classList.toggle('hidden', !INFRA.can_ingest_live);
-    $('#btn-ingest-mock').classList.toggle('hidden', !INFRA.worker_go_available);
   }
 }
 /** Why a run kept nothing, from the flags it raised. "0 / 0" for two weeks was
@@ -491,8 +493,12 @@ $('#ov-banners').addEventListener('click', e => {
 $('#quick-actions').addEventListener('click', e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
-  // "run pipeline" is configured before it runs; every other action is
-  // immediate. openPipelineModal is defined further down — this listener only
+  // A data-confirm attribute makes a button ask before it acts. The attribute
+  // carries the specifics (what happens, is it recoverable), so the guard is
+  // one generic check instead of a branch per destructive edge.
+  if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
+  // "run pipeline" is configured before it runs; the rest act immediately.
+  // openPipelineModal is defined further down — this listener only
   // ever runs on a click, long after the module has finished evaluating.
   if (btn.dataset.act === '/api/run' && !btn.dataset.liveModels) {
     openPipelineModal();
@@ -539,16 +545,6 @@ function healthTag(s) {
     title="${esc(s.health_reason || '')}">${esc(label)}</span>`;
 }
 
-/** Parking is OFFERED, never applied. A barren source may be barren because
- *  the site was down for a week, and a console that quietly switches sources
- *  off leaves the operator with a shrinking list and no idea why. */
-function parkButton(s) {
-  if (!s.enabled || s.health !== 'barren') return '';
-  return `<button class="btn btn--sm" data-park
-    title="${esc(s.health_reason || '')} — pause it until you say otherwise"
-    aria-label="Park ${esc(s.name)}">park</button>`;
-}
-
 const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
   youtube: 'YouTube', tiktok: 'TikTok', stackexchange: 'Stack Exchange',
@@ -572,12 +568,90 @@ function renderPlatformOptions(platformKinds, gaps = {}) {
   if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
 }
 
+//: Client-side view state for the search field and status segments on the
+//: sources list. Both filter what is already loaded; neither needs a round
+//: trip, and neither invents a state the server does not report — quiet and
+//: unmeasured sources simply stay under "all".
+const SRC_STATES = {
+  all: () => true,
+  producing: s => s.enabled && s.health === 'producing',
+  barren: s => s.enabled && s.health === 'barren',
+  paused: s => !s.enabled,
+};
+let SRC_QUERY = '', SRC_STATE = 'all';
+//: Platform band colours, cycled in platform-sort order (matches the
+//: adaptation reference's grouped sources table).
+const SRC_TINTS = ['var(--accent)', 'var(--ok)', 'var(--warn)', 'var(--lav)', 'var(--ink-soft)'];
+//: name → source, so the row menu can act without re-walking the DOM.
+const SRC_BY_NAME = new Map();
+//: Shared fixed-position menu for the sources rows: copy link / park / remove.
+//: Park keeps the real visibility rule — only an enabled, barren source is
+//: offered parking, because a barren source may just be a site that was down
+//: for a week, and a menu that quietly offers to switch everything off would
+//: leave the operator with a shrinking list and no idea why.
+const SRC_MENU = document.createElement('div');
+SRC_MENU.className = 'menu';
+SRC_MENU.setAttribute('role', 'menu');
+SRC_MENU.hidden = true;
+document.body.appendChild(SRC_MENU);
+let SRC_MENU_BTN = null;
+function closeSrcMenu(refocus) {
+  SRC_MENU.hidden = true;
+  if (SRC_MENU_BTN) {
+    SRC_MENU_BTN.setAttribute('aria-expanded', 'false');
+    if (refocus) SRC_MENU_BTN.focus();
+    SRC_MENU_BTN = null;
+  }
+}
+function openSrcMenu(btn) {
+  const name = btn.closest('tr').dataset.name;
+  const s = SRC_BY_NAME.get(name);
+  if (!s) return;
+  const wasOpen = SRC_MENU_BTN === btn;
+  closeSrcMenu();
+  if (wasOpen) return;
+  SRC_MENU_BTN = btn;
+  btn.setAttribute('aria-expanded', 'true');
+  SRC_MENU.innerHTML =
+    `<button type="button" role="menuitem" data-scopy="${esc(s.url)}">copy link</button>` +
+    (s.enabled && s.health === 'barren'
+      ? `<button type="button" role="menuitem" data-park-name="${esc(name)}" title="${esc(s.health_reason || '')}">park</button>`
+      : '') +
+    `<button type="button" role="menuitem" class="menu--danger" data-del-name="${esc(name)}">remove</button>`;
+  SRC_MENU.hidden = false;
+  const r = btn.getBoundingClientRect();
+  SRC_MENU.style.top = `${Math.max(8, Math.min(r.bottom + 4, window.innerHeight - SRC_MENU.offsetHeight - 8))}px`;
+  SRC_MENU.style.left = `${Math.max(8, r.right - SRC_MENU.offsetWidth)}px`;
+  SRC_MENU.querySelector('button').focus();
+}
+async function copySrcLink(url) {
+  try { await navigator.clipboard.writeText(url); toast('link copied', 'ok'); }
+  catch { toast('could not reach the clipboard', 'bad'); }
+}
+async function parkSource(name) {
+  const res = await api('/api/sources/update', { name, enabled: false });
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  toast(`${name} parked — re-enable it any time with the switch`, 'ok');
+  loadSources();
+}
+async function deleteSource(name, btn) {
+  if (!confirm(`Remove "${name}" from the source list? You can re-add it any time.`)) return;
+  const req = () => api('/api/sources/delete', { name });
+  const res = await (btn ? busy(btn, req) : req());
+  if (res.ok === false) { toast(res.error, 'bad'); return; }
+  toast(`removed ${name}`, 'ok');
+  loadSources();
+}
+
 //: The last /api/sources response, so folding a platform open or shut is a
 //: re-render rather than a round trip — and so a fold survives one.
 let SOURCES_RES = { sources: [] };
 
+let SOURCES_TOKE = 0;
 async function loadSources() {
+  const toke = ++SOURCES_TOKE;
   const [res, infra] = await Promise.all([api('/api/sources'), INFRA ? Promise.resolve(INFRA) : api('/api/infra')]);
+  if (toke !== SOURCES_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   if (infra && infra.ok !== false) INFRA = infra;
   SOURCES_RES = res;
@@ -592,35 +666,58 @@ function renderSources() {
   renderNav();
 
   $('#src-path').textContent = res.path || '';
-  $('#src-count').textContent = `${COUNTS.sources} enabled / ${list.length} total`;
 
   const order = { hackernews: 0, reddit: 1, discourse: 2, stackexchange: 3,
                   github: 4, lemmy: 5, steam: 6, podcast: 7, youtube: 8, tiktok: 9,
                   realestate: 10 };
   const sorted = [...list].sort((a, b) =>
     (order[a.platform] ?? 9) - (order[b.platform] ?? 9) || a.name.localeCompare(b.name));
+  SRC_BY_NAME.clear();
+  for (const s of sorted) SRC_BY_NAME.set(s.name, s);
+
+  const q = SRC_QUERY.trim().toLowerCase();
+  const keep = s =>
+    (SRC_STATE === 'all' || SRC_STATES[SRC_STATE](s)) &&
+    (!q || `${s.name} ${s.url} ${s.kind || ''}`.toLowerCase().includes(q));
+
+  // Segment counts always cover the whole list, so the numbers do not move
+  // under a filter that is already applied.
+  $('#src-fil').innerHTML = Object.keys(SRC_STATES).map(k =>
+    `<button type="button" aria-pressed="${SRC_STATE === k}" data-sfil="${k}">` +
+    `${k} ${list.filter(s => SRC_STATES[k](s)).length}</button>`).join('');
 
   // Grouped by platform, because that is how the list is actually reasoned
   // about — "is Reddit still carrying this corpus" is one glance, not a scroll
-  // through 91 rows. The sort above already clusters them; the headers make
-  // the clusters countable and foldable.
+  // through 91 rows. A platform with no matching rows is omitted entirely, and
+  // its band counts only what is visible, so the band never lies about what is
+  // on screen.
   const byPlatform = groupBy(sorted, s => s.platform || 'unknown');
-  $('#src-body').innerHTML = [...byPlatform].map(([platform, rows]) => {
+  let visibleCount = 0; let rendered = '';
+  [...byPlatform].forEach(([platform, rows]) => {
+    const shown = rows.filter(keep);
+    if (!shown.length) return;
+    visibleCount += shown.length;
     const key = `src:${platform}`;
-    const on = rows.filter(r => r.enabled).length;
-    const queued = rows.reduce((t, r) => t + Number(r.state?.total_queued || 0), 0);
-    const barren = rows.filter(r => r.enabled && r.health === 'barren').length;
+    const on = shown.filter(r => r.enabled).length;
+    const queued = shown.reduce((t, r) => t + Number(r.state?.total_queued || 0), 0);
+    const barren = shown.filter(r => r.enabled && r.health === 'barren').length;
     const meta = [
-      on === rows.length ? 'all enabled' : `${on} enabled`,
+      on === shown.length ? 'all enabled' : `${on} enabled`,
       queued ? `${queued.toLocaleString()} comment(s) queued` : '',
       barren ? `${barren} barren` : '',
     ].filter(Boolean).join(' · ');
-    const head = groupRow({
-      key, depth: 1, span: 8, count: rows.length, meta: esc(meta),
+    rendered += groupRow({
+      key, depth: 1, span: 8, count: shown.length, meta: esc(meta),
       label: esc(PLATFORM_LABEL[platform] || platform),
-    });
-    return head + (FOLDED.has(key) ? '' : rows.map(sourceRow).join(''));
-  }).join('') || emptyRow(8, 'No sources yet — add one above.');
+      tint: SRC_TINTS[(order[platform] ?? 5) % 5],
+    }) + (FOLDED.has(key) ? '' : shown.map(sourceRow).join(''));
+  });
+  const filtering = SRC_STATE !== 'all' || q !== '';
+  $('#src-count').textContent = filtering
+    ? `${visibleCount} of ${list.length} shown`
+    : `${COUNTS.sources} enabled / ${list.length} total`;
+  $('#src-body').innerHTML = rendered
+    || emptyRow(8, filtering ? 'No sources match the search or filter.' : 'No sources yet — add one above.');
   /** How the worker reaches this source, and whether it can right now. A
    *  Reddit source read "quiet" for 26 days while cloakserve was down; the
    *  page never said the fetch was impossible. */
@@ -644,13 +741,13 @@ function renderSources() {
       <td class="mono">${esc(s.name)}</td>
       <td><span class="chip">${esc(s.kind || 'unknown')}</span></td>
       <td><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"
-             class="truncate" style="display:block;max-inline-size:34ch"
+             class="truncate src-url"
              title="${esc(s.url)}">${esc(s.url.replace(/^https?:\/\/(www\.)?/, ''))}</a>
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
       <td>${fetchCell(s)}</td>
       <td>${fetchedCell(s.state)}</td>
       <td>${status}</td>
-      <td class="row-actions">${parkButton(s)}<button class="btn btn--danger btn--sm" data-delete aria-label="Remove ${esc(s.name)}">remove</button></td>
+      <td class="row-actions"><button class="btn btn--sm" data-smenu aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${esc(s.name)}">⋯</button></td>
     </tr>`;
   }
 
@@ -673,7 +770,8 @@ function renderSources() {
     notes.push(`<span class="chip">quiet list</span> ${barren.length} enabled source(s)
       (${esc(barren.map(s => s.name).join(', '))}) have been walked
       ${res.park_after_barren_visits || 3}+ times and never queued a comment. Each one still
-      costs a rotation slot every run — “park” pauses it without removing it.`);
+      costs a rotation slot every run — the row’s “⋯” menu has “park” to
+      pause it without removing it.`);
   }
   const gaps = res.platform_gaps || {};
   for (const [p, why] of Object.entries(gaps)) {
@@ -696,24 +794,45 @@ $('#src-body').addEventListener('change', async e => {
   loadSources();
 });
 
-$('#src-body').addEventListener('click', async e => {
-  const park = e.target.closest('button[data-park]');
-  if (park) {
-    const name = park.closest('tr').dataset.name;
-    const res = await api('/api/sources/update', { name, enabled: false });
-    if (res.ok === false) { toast(res.error, 'bad'); return; }
-    toast(`${name} parked — re-enable it any time with the switch`, 'ok');
-    loadSources();
-    return;
-  }
+$('#src-body').addEventListener('click', e => {
+  const menuBtn = e.target.closest('button[data-smenu]');
+  if (menuBtn) { openSrcMenu(menuBtn); return; }
   const btn = e.target.closest('button[data-delete]');
   if (!btn) return;
-  const name = btn.closest('tr').dataset.name;
-  if (!confirm(`Remove "${name}" from the source list?`)) return;
-  const res = await busy(btn, () => api('/api/sources/delete', { name }));
-  if (res.ok === false) { toast(res.error, 'bad'); return; }
-  toast(`removed ${name}`, 'ok');
-  loadSources();
+  void deleteSource(btn.closest('tr').dataset.name, btn);
+});
+
+// Row-menu item dispatch, plus close on outside click. The button that opened
+// the menu is skipped here — its own row handler above already toggles it.
+document.addEventListener('click', e => {
+  if (SRC_MENU.hidden) return;
+  if (e.target.closest('button[data-smenu]')) return;
+  if (!SRC_MENU.contains(e.target)) { closeSrcMenu(); return; }
+  const copy = e.target.closest('[data-scopy]');
+  if (copy) { const url = copy.dataset.scopy; closeSrcMenu(true); void copySrcLink(url); return; }
+  const park = e.target.closest('[data-park-name]');
+  if (park) { const name = park.dataset.parkName; closeSrcMenu(); void parkSource(name); return; }
+  const del = e.target.closest('[data-del-name]');
+  if (del) { const name = del.dataset.delName; closeSrcMenu(true); void deleteSource(name, null); }
+});
+document.addEventListener('keydown', e => {
+  if (SRC_MENU.hidden) return;
+  const items = [...SRC_MENU.querySelectorAll('button')];
+  const i = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); closeSrcMenu(true); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); (items[(i + 1) % items.length] || items[0]).focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); (items[(i - 1 + items.length) % items.length] || items[0]).focus(); }
+});
+
+$('#src-q').addEventListener('input', e => {
+  SRC_QUERY = e.target.value;
+  renderSources();
+});
+$('#src-fil').addEventListener('click', e => {
+  const b = e.target.closest('[data-sfil]');
+  if (!b) return;
+  SRC_STATE = b.dataset.sfil;
+  renderSources();
 });
 
 $('#src-form').addEventListener('submit', async e => {
@@ -832,12 +951,13 @@ function showRun(id) {
   $('#drawer-title').textContent = `Run: ${r.run_id || r.id}`;
 
   const phases = JSON.parse(r.phase_checkpoints || '[]');
-  const phasesList = phases.map(p =>
-    `<div class="row xs" style="gap:var(--s-3)">
-      <span class="chip">${esc(p.phase)}</span>
-      <span>${esc(when(p.at))}</span>
-    </div>`
-  ).join('') || '<p class="xs">No phase checkpoints recorded.</p>';
+  // The real checkpoints carry a name and a time — nothing else — so the
+  // reference's status-toned phase pills cannot be drawn honestly. They land
+  // as compact inline chips instead of a stacked list (rev-3 reference).
+  const phasesList = phases.length
+    ? `<div class="chiprow">${phases.map(p =>
+        `<span class="chip">${esc(p.phase)} · ${esc(when(p.at))}</span>`).join('')}</div>`
+    : '<p class="xs">No phase checkpoints recorded.</p>';
 
   const models = r.models || {};
   const modelsList = models.models ? models.models.map(m =>
@@ -879,10 +999,11 @@ function showRun(id) {
       <dt>Ideas</dt><dd>${int(r.n_ideas)}</dd>
     </dl>
 
-    <h3>Models</h3>
-    <div class="chiprow" style="margin-block-end:var(--s-4)">${modelsList}</div>
-    <div class="xs"><strong>Prompts:</strong> ${esc(promptInfo)}</div>
-    <div class="xs"><strong>Rubric:</strong> v${esc(models.rubric_version || '—')}</div>
+    <details class="help" style="margin-block-end:var(--s-5)"><summary>models &amp; prompts</summary>
+      <div class="chiprow" style="margin-block:var(--s-3)">${modelsList}</div>
+      <div class="xs"><strong>prompts:</strong> ${esc(promptInfo)}</div>
+      <div class="xs"><strong>rubric:</strong> v${esc(models.rubric_version || '—')}</div>
+    </details>
 
     <h3>Platforms</h3>
     <div class="chiprow" style="margin-block-end:var(--s-4)">${platformsList}</div>
@@ -923,14 +1044,14 @@ function renderIdeaFilter() {
     `<button data-f="${s}" aria-pressed="${IDEA_FILTER === s}">${esc(s)}` +
     `${s === 'all' ? ` <span class="num">${all}</span>` : IDEA_STATUS_COUNTS[s] ? ` <span class="num">${IDEA_STATUS_COUNTS[s]}</span>` : ''}</button>`).join('');
 }
-/** Three scores as three small bars; a missing competition check is hatched,
- *  not "3.0". "7.0 / 6.0 / unchecked" was unreadable at scan speed. */
+/** Three scores as three numbered tiles, after the reference's score pattern.
+ *  The real reading rule stands: demand and feasibility are "more is better"
+ *  and get the good/bad tint; competition is a reading, not a verdict, so it
+ *  stays neutral and an unchecked value stays a blank tile, not a fake 0. */
 function scoreBars(i) {
-  // Demand and feasibility are "more is better" and get the good/bad tint;
-  // competition is a reading, not a verdict, so it stays neutral.
   const cell = (v, ok, tint) => v === null || v === undefined || !ok
     ? '<i class="na" title="unchecked"></i>'
-    : `<i class="${tint ? (+v >= 7.5 ? 'hi' : +v < 4 ? 'lo' : '') : ''}" style="--v:${Math.max(4, Math.min(100, (+v / 10) * 100))}%" title="${num(v)}"></i>`;
+    : `<i class="${tint ? (+v >= 7.5 ? 'hi' : +v < 4 ? 'lo' : '') : ''}" title="${num(v)}">${num(v)}</i>`;
   return `<span class="sbar" title="demand ${num(i.demand_signal)} · feasibility ${num(i.feasibility)} · competition ${i.competition_checked ? num(i.competition) : 'unchecked'}">
     ${cell(i.demand_signal, true, true)}${cell(i.feasibility, true, true)}${cell(i.competition, i.competition_checked, false)}</span>`;
 }
@@ -951,8 +1072,8 @@ function renderIdeas() {
     const overall = i.overall == null ? null : +i.overall;
     const tone = overall == null ? '' : overall >= 7.5 ? 'score--hi' : overall >= 5 ? 'score--mid' : 'score--lo';
     return `<tr data-id="${i.id}" class="clickable">
-      <td><button class="btn btn--ghost btn--sm" data-open style="max-inline-size:46ch;text-align:start;white-space:normal;padding-inline:0"><b>${esc(i.title)}</b></button>
-          <div class="xs" style="max-inline-size:52ch">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
+      <td><button class="btn btn--ghost btn--sm idea-title" data-open><b>${esc(i.title)}</b></button>
+          <div class="xs idea-sub">${esc((i.problem_statement || '').slice(0, 120))}${(i.problem_statement || '').length > 120 ? '…' : ''}</div></td>
       <td class="num"><span class="score ${tone}">${num(overall)}</span>${scoreWait(i)}</td>
       <td>${scoreBars(i)}</td>
       <td>${pill(i.status)}</td>
@@ -980,9 +1101,12 @@ function renderIdeasNote() {
   box.innerHTML = `<div class="banner"><span aria-hidden="true">ℹ</span><span style="flex:1"><b>No new ideas in the last ${recent.length} completed runs</b>Most likely because ${esc(why)}. The nuggets stay queued and are picked up once the cause clears.</span>
     <button class="btn btn--sm" data-go="runs">open Runs</button> <button class="btn btn--sm" data-go="doctor">Doctor</button></div>`;
 }
+let IDEAS_TOKE = 0;
 async function loadIdeas() {
+  const toke = ++IDEAS_TOKE;
   const qs = new URLSearchParams({ status: IDEA_FILTER, q: IDEA.q, sort: IDEA.sort, dir: IDEA.dir, offset: IDEA.offset, limit: IDEA_PAGE });
   const [res, runs] = await Promise.all([api('/api/ideas?' + qs), RUNS.length ? Promise.resolve(null) : api('/api/runs')]);
+  if (toke !== IDEAS_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   if (runs && runs.ok !== false) RUNS = runs.runs || [];
   IDEAS = res.ideas || [];
@@ -1038,7 +1162,12 @@ $('#drawer-body').addEventListener('click', e => {
   if (b) runAction('/api/resynth', { id: +b.dataset.resynth }, b);
 });
 
+let DRAWER_RETURN_FOCUS = null;
 function openDrawer() {
+  // Remember what opened the drawer so closeDrawer can hand focus back — the
+  // reference's close-and-restore-focus rule. Without it focus drops to
+  // <body> and a keyboard operator loses their row in the ledger.
+  if (DRAWER_RETURN_FOCUS == null) DRAWER_RETURN_FOCUS = document.activeElement;
   $('#drawer').classList.add('on');
   $('#drawer').setAttribute('aria-hidden', 'false');
   $('#scrim').classList.add('on');
@@ -1048,6 +1177,8 @@ function closeDrawer() {
   $('#drawer').classList.remove('on');
   $('#drawer').setAttribute('aria-hidden', 'true');
   $('#scrim').classList.remove('on');
+  if (DRAWER_RETURN_FOCUS instanceof Element) DRAWER_RETURN_FOCUS.focus({ preventScroll: true });
+  DRAWER_RETURN_FOCUS = null;
 }
 $('#drawer-close').onclick = closeDrawer;
 $('#scrim').onclick = closeDrawer;
@@ -1063,7 +1194,7 @@ async function showIdea(id) {
     <div class="row">${pill(i.status)}
       <span class="score">${num(i.overall)}</span><span class="xs">overall</span>${scoreWait(i)}
       <span class="row-end row" style="gap:var(--s-2)">
-        <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}" style="inline-size:130px">
+        <select data-mark="${i.id}" aria-label="Set status for idea ${i.id}">
           ${IDEA_STATUSES.map(s => `<option ${s === i.status ? 'selected' : ''}>${s}</option>`).join('')}
         </select>
         <button class="btn btn--sm" data-resynth="${i.id}" title="Re-run synthesis on this idea's nuggets">resynth</button>
@@ -1772,7 +1903,7 @@ function queueRow(b) {
   return `<tr data-batch="${b.id}">
     <td class="mono xs">${b.id}</td>
     <td><span class="chip">${esc(PLATFORM_LABEL[b.platform] || b.platform || '—')}</span>
-        <div class="xs truncate" style="max-inline-size:38ch" title="${esc(b.source || '')}">${esc(b.thread_id || b.source || '')}</div></td>
+        <div class="xs truncate batch-src" title="${esc(b.source || '')}">${esc(b.thread_id || b.source || '')}</div></td>
     <td>${n}</td>
     <td class="xs">${esc(ago(b.created_at))}</td>
     <td class="mono xs">${esc(b.run_id || '')}</td>
@@ -1873,20 +2004,22 @@ function renderNuggetFilter() {
   $('#nuggets-filter').innerHTML = [['', 'all'], ...Object.entries(NUGGET_FLAG_LABEL)].map(([k, label]) =>
     `<button data-f="${esc(k)}" aria-pressed="${NUG.flag === k}">${esc(label)}${k && f[k] !== undefined ? ` <span class="num">${Number(f[k]).toLocaleString()}</span>` : ''}</button>`).join('');
 }
-function nuggetRow(g) {
+function nuggetCard(g) {
   const flags = [
     g.trivial ? '<span class="chip chip--warn">trivial</span>' : '',
     g.needs_reembed ? '<span class="chip chip--bad">not yet searchable</span>' : '',
     g.synthesized_at ? '' : '<span class="chip" title="not yet part of an idea">waiting for ideas</span>',
   ].filter(Boolean).join('');
-  return `<tr>
-    <td class="nug-insight">${esc(g.extracted_insight || '')}
-      <div class="xs mono" style="margin-block-start:4px">${esc(g.unique_key)}${g.source_url
-        ? ` · <a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</div></td>
-    <td class="nug-from"><b>${esc(PLATFORM_LABEL[g.platform] || g.platform || '—')}</b><span class="xs">${esc(g.community || '')}</span></td>
-    <td><span class="chip">${esc(g.category || 'uncategorised')}</span></td>
-    <td><div class="chiprow">${flags || '<span class="xs">—</span>'}</div></td>
-  </tr>`;
+  return `<div class="ncard" role="listitem">
+    <p>${esc(g.extracted_insight || '')}</p>
+    <div class="nmeta"><b>${esc(PLATFORM_LABEL[g.platform] || g.platform || '—')}</b>${g.community
+      ? `<span>${esc(g.community)}</span>` : ''}</div>
+    <div class="ncard-foot">
+      <div class="chiprow"><span class="chip">${esc(g.category || 'uncategorised')}</span>${flags}</div>
+      <span class="mono nkey">${esc(g.unique_key)}${g.source_url
+        ? ` · <a href="${esc(g.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</span>
+    </div>
+  </div>`;
 }
 function facetBlock(title, key, items, limit = 12) {
   const list = NUGGET_FACET_MORE[key] ? items : items.slice(0, limit);
@@ -1961,16 +2094,15 @@ function renderNuggets() {
   // empty state from it told the operator to run the pipeline when what he
   // actually had to do was drop a filter.
   const filtered = !!(NUG.platform || NUG.community || NUG.category || NUG.flag || NUG.q);
-  $('#nuggets-body').innerHTML = NUGGETS.map(nuggetRow).join('')
+  const empty = (msg, next) => `<div class="empty">${msg}${next
+    ? `<div><button class="btn btn--sm" data-go="${esc(next.page)}">${esc(next.label)}</button></div>`
+    : (filtered ? '<div><button class="btn btn--sm" data-facet-clear>clear the filters</button></div>' : '')}</div>`;
+  $('#nuggets-cards').innerHTML = NUGGETS.map(nuggetCard).join('')
     || (NUGGET_ARCHIVE_TOTAL
-      ? emptyRow(4, filtered
+      ? empty(filtered
           ? `No nugget matches these filters — ${NUGGET_ARCHIVE_TOTAL.toLocaleString()} in the archive.`
           : 'Nothing to show.')
-      : emptyRow(4, 'No nuggets archived yet.', { page: 'overview', label: '▶ run pipeline from Overview' }));
-  if (!NUGGETS.length && filtered && NUGGET_ARCHIVE_TOTAL) {
-    $('#nuggets-body .empty').insertAdjacentHTML('beforeend',
-      '<div><button class="btn btn--sm" data-facet-clear>clear the filters</button></div>');
-  }
+      : empty('No nuggets archived yet.', { page: 'overview', label: '▶ run pipeline from Overview' }));
   const from = NUGGET_TOTAL ? NUG.offset + 1 : 0, to = Math.min(NUGGET_TOTAL, NUG.offset + NUGGETS.length);
   $('#nuggets-shown').textContent = NUGGET_TOTAL ? `${from.toLocaleString()}–${to.toLocaleString()} of ${NUGGET_TOTAL.toLocaleString()}` : '';
   $('#nuggets-pager').innerHTML = pagerHTML(NUG.offset, NUGGET_PAGE, NUGGET_TOTAL, 'nug');
@@ -1996,7 +2128,7 @@ function pagerHTML(offset, size, total, key) {
 const POST_PAGE = 50;
 // view/sort/shown belong to the open post: which comments, in what order, and
 // how many before "show all". Reset each time a post is opened.
-const POSTS = { offset: 0, q: '', total: 0, open: null, view: 'signal', sort: 'top', shown: 0 };
+const POSTS = { offset: 0, q: '', total: 0, open: null, returnRow: null, view: 'signal', sort: 'top', shown: 0 };
 const POST_SHOWN = 20;
 
 async function loadPosts() {
@@ -2025,7 +2157,7 @@ async function loadPosts() {
       ? `${p.held} <span class="xs">of ${p.advertised}</span>`
       : `${p.held}`;
     const thin = p.advertised && p.held / p.advertised < 0.5;
-    return `<tr data-post="${esc(p.thread_id)}" style="cursor:pointer">
+    return `<tr data-post="${esc(p.thread_id)}" tabindex="0" style="cursor:pointer">
       <td><strong>${esc(p.title || '(untitled post)')}</strong>
         ${p.trivial ? `<div class="xs">${p.trivial} of ${p.held} flagged trivial</div>` : ''}</td>
       <td>${esc(p.community || p.platform || '—')}
@@ -2035,6 +2167,15 @@ async function loadPosts() {
       <td class="xs">${esc((p.created || '').slice(0, 10) || '—')}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="4">No posts match.</td></tr>`;
+
+  // Coming back from a post, hand focus to the row that opened it — the
+  // reference's close-and-restore-focus rule. Without it a keyboard
+  // operator is dropped on <body> and loses their place in the ledger.
+  if (POSTS.returnRow) {
+    const back = document.querySelector('#posts-body tr[data-post="' + CSS.escape(POSTS.returnRow) + '"]');
+    if (back) back.focus({ preventScroll: true });
+    POSTS.returnRow = null;
+  }
 }
 
 async function openPost(threadId) {
@@ -2047,6 +2188,10 @@ async function openPost(threadId) {
   POSTS.sort = 'top';
   POSTS.shown = POST_SHOWN;
   renderPostDetail();
+  // The opening view swap: move focus to the detail's back button so the
+  // operator is inside the view they opened, with a way out one Tab away
+  // (the reference focuses the detail's close affordance when it opens).
+  $('#posts-back').focus({ preventScroll: true });
 }
 
 // A comment the real extractor never touched: its "insight" is the raw text.
@@ -2216,6 +2361,7 @@ $('#posts-q').addEventListener('input', e => {
   POSTS.q = e.target.value.trim();
   POSTS.offset = 0;
   POSTS.open = null;
+  POSTS.returnRow = null; // filtering from inside a post: no row to hand focus back to
   pin(loadPosts());
 });
 $('#posts-back').addEventListener('click', () => {   POSTS.open = null;
@@ -2229,15 +2375,28 @@ $('[data-page="posts"]').addEventListener('click', e => {
   if (sort) { POSTS.sort = sort.dataset.postSort; renderPostDetail(); return; }
   if (e.target.closest('[data-post-more]')) { POSTS.shown = Infinity; renderPostDetail(); return; }
   const row = e.target.closest('tr[data-post]');
-  if (row) { pin(openPost(row.dataset.post)); return; }
+  if (row) { POSTS.returnRow = row.dataset.post; pin(openPost(row.dataset.post)); return; }
   const pg = e.target.closest('button[data-page-post]');
   if (pg) { POSTS.offset = Number(pg.dataset.pagePost); pin(loadPosts()); }
 });
+// Rows are tabbable now, so keyboard activation on them must exist too —
+// Enter or Space opens a post the same way a click does (reference rows
+// are buttons, which get this for free).
+$('[data-page="posts"]').addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('tr[data-post]')) {
+    e.preventDefault();
+    POSTS.returnRow = e.target.dataset.post;
+    pin(openPost(e.target.dataset.post));
+  }
+});
 
+let NUG_TOKE = 0;
 async function loadNuggets() {
+  const toke = ++NUG_TOKE;
   const qs = new URLSearchParams({ offset: NUG.offset, limit: NUGGET_PAGE, platform: NUG.platform,
     community: NUG.community, category: NUG.category, flag: NUG.flag, q: NUG.q });
   const res = await api('/api/nuggets/page?' + qs.toString());
+  if (toke !== NUG_TOKE) return; // a newer fetch will render; drop this one
   if (res.ok === false) { toast(res.error, 'bad'); return; }
   NUGGETS = res.nuggets || [];
   NUGGET_TOTAL = res.total || 0;
@@ -2266,7 +2425,7 @@ $('#nuggets-filter').addEventListener('click', e => {
   NUG.flag = b.dataset.f; NUG.offset = 0;
   loadNuggets();
 });
-$('#nuggets-body').addEventListener('click', e => {
+$('#nuggets-cards').addEventListener('click', e => {
   if (!e.target.closest('[data-facet-clear]')) return;
   Object.assign(NUG, { offset: 0, platform: '', community: '', category: '', flag: '', q: '' });
   $('#nuggets-q').value = '';
@@ -2290,7 +2449,7 @@ $('#nuggets-pager').addEventListener('click', e => {
   if (!b || b.disabled) return;
   NUG.offset = Number(b.dataset.pageNug);
   loadNuggets();
-  $('#nuggets-body').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#nuggets-layout').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 const KNOB_HELP = {
@@ -2365,7 +2524,48 @@ function syncSavebar() {
   const n = Object.keys(cfgDirty()).length;
   $('#cfg-savebar').classList.toggle('hidden', n === 0);
   $('#cfg-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
+  renderCfgNav();
 }
+
+/* ── config: group nav (adaptation reference rev 5) ─────────────────────
+ * One list beside the cards: where the operator is, and which card holds
+ * unsaved edits. The dots count the same dirty inputs the savebars count,
+ * so the two halves never disagree. */
+const CFG_SECTIONS = [['thresholds', 'Thresholds'], ['models', 'Agent models'],
+                      ['scraper', 'Scraper'], ['env', 'Environment']];
+let cfgNavCurrent = 'thresholds';
+function cfgDirtyBySection() {
+  const counts = {};
+  for (const [id] of CFG_SECTIONS) {
+    // Agent models track their edits by diffing, not by tagging inputs, so
+    // its savebar visibility is the single honest source.
+    if (id === 'models') {
+      const bar = $('#models-savebar');
+      counts[id] = bar && !bar.classList.contains('hidden') ? 1 : 0;
+      continue;
+    }
+    const sec = document.querySelector(`[data-cfgsec="${id}"]`);
+    counts[id] = sec ? sec.querySelectorAll('.dirty').length : 0;
+  }
+  return counts;
+}
+function renderCfgNav() {
+  const nav = $('#cfg-nav');
+  if (!nav) return;
+  const dirty = cfgDirtyBySection();
+  nav.innerHTML = CFG_SECTIONS.map(([id, label]) =>
+    `<button type="button" data-cfgnav="${id}" aria-current="${id === cfgNavCurrent}">
+       ${esc(label)}${dirty[id] ? '<span class="ud" title="unsaved changes in this section"></span>' : ''}
+     </button>`).join('');
+}
+$('#cfg-nav').addEventListener('click', e => {
+  const b = e.target.closest('button[data-cfgnav]');
+  if (!b) return;
+  cfgNavCurrent = b.dataset.cfgnav;
+  renderCfgNav();
+  const sec = document.querySelector(`[data-cfgsec="${cfgNavCurrent}"]`);
+  if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 async function loadConfig() {
   const res = await api('/api/config');
@@ -2382,8 +2582,8 @@ async function loadConfig() {
       // A platform → number map. It rendered as "[object Object]" before.
       const rows = Object.entries(meta.value);
       control = `<div data-knob-map="${key}"><table class="mapknob">
-        <tbody>${rows.map(([k, v]) => `<tr data-map-row><td><input data-map-key value="${esc(k)}" placeholder="platform" style="inline-size:120px"></td>
-          <td><input data-map-val type="number" min="1" max="200" step="1" value="${esc(v)}" style="inline-size:80px"></td>
+        <tbody>${rows.map(([k, v]) => `<tr data-map-row><td><input data-map-key value="${esc(k)}" placeholder="platform"></td>
+          <td><input data-map-val type="number" min="1" max="200" step="1" value="${esc(v)}"></td>
           <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`).join('')}</tbody></table>
         <button class="btn btn--ghost btn--sm" data-map-add>+ platform</button></div>`;
     } else if (typeof meta.value === 'boolean') {
@@ -2430,8 +2630,8 @@ $('#cfg-knobs').addEventListener('click', e => {
   const add = e.target.closest('[data-map-add]');
   if (add) {
     const tbody = add.parentElement.querySelector('tbody');
-    tbody.insertAdjacentHTML('beforeend', `<tr data-map-row><td><input data-map-key placeholder="platform" style="inline-size:120px"></td>
-      <td><input data-map-val type="number" min="1" max="200" step="1" value="3" style="inline-size:80px"></td>
+    tbody.insertAdjacentHTML('beforeend', `<tr data-map-row><td><input data-map-key placeholder="platform"></td>
+      <td><input data-map-val type="number" min="1" max="200" step="1" value="3"></td>
       <td><button class="btn btn--ghost btn--sm" data-map-del aria-label="remove">✕</button></td></tr>`);
     $$('[data-map-key], [data-map-val]', tbody).forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
     syncSavebar();
@@ -2523,10 +2723,10 @@ function roleCard(role) {
       <span class="row-end"><button class="btn btn--ghost btn--sm" data-test="${role}">test</button></span>
     </div>
     <div class="row" style="gap:var(--s-2)">
-      <select data-provider="${role}" aria-label="Provider for ${role}" style="inline-size:40%">
+      <select data-provider="${role}" aria-label="Provider for ${role}">
         ${providers.map(o => `<option value="${esc(o)}" ${o === r.provider ? 'selected' : ''}>${esc(o)}</option>`).join('')}
       </select>
-      <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}" style="flex:1;min-inline-size:0">
+      <select id="model-${role}" data-model="${role}" aria-label="Model for ${role}">
         ${modelOptions(role, r.provider, r.model)}
       </select>
     </div>
@@ -2574,6 +2774,7 @@ function syncModelsBar() {
   const n = Object.values(patch).reduce((acc, p) => acc + Object.keys(p).length, 0);
   $('#models-savebar').classList.toggle('hidden', n === 0);
   $('#models-dirty').textContent = `${n} unsaved change${n === 1 ? '' : 's'}`;
+  renderCfgNav();
 }
 
 async function loadModels(profile) {
@@ -2683,9 +2884,9 @@ function describeScope(opts, total) {
     ? `${names.length} of ${total} source${total === 1 ? '' : 's'}`
     : 'every enabled source';
   const depth = [];
-  if (opts && opts.max_posts) depth.push(`${opts.max_posts} post(s)`);
-  if (opts && opts.max_comments) depth.push(`${opts.max_comments} comment(s)`);
-  if (opts && opts.max_ideas) depth.push(`${opts.max_ideas} idea(s)`);
+  if (opts && opts.max_posts) depth.push(`${plural(opts.max_posts, 'post')}`);
+  if (opts && opts.max_comments) depth.push(`${plural(opts.max_comments, 'comment')}`);
+  if (opts && opts.max_ideas) depth.push(`${plural(opts.max_ideas, 'idea')}`);
   return where + ' · ' + (depth.length ? `max ${depth.join(', ')}` : 'no depth ceiling');
 }
 
@@ -2694,11 +2895,14 @@ function renderSchedule(res) {
   const on = res.installed;
   const opts = res.options || {};
   const sources = res.sources || [];
+  // Same denominator the form summary counts (fetchable sources), or the
+  // banner and the bar can read as disagreeing about how many sources exist.
+  const supported = sources.filter(s => s.supported).length;
 
   $('#sched-banner').innerHTML = on
     ? `<div class="banner banner--ok"><span aria-hidden="true">✓</span><span>
          <b>Scheduled</b>${esc(res.cadence || 'registered')} via ${esc(res.scheduler)},
-         scraping ${esc(describeScope(opts, sources.length))}.</span></div>`
+         scraping ${esc(describeScope(opts, supported))}.</span></div>`
     : `<div class="banner"><span aria-hidden="true">◷</span><span>
          <b>Nothing scheduled</b>Choose what to scrape and how often; the host scheduler
          will run the full loop for you, with this console closed.</span></div>`;
@@ -2710,7 +2914,7 @@ function renderSchedule(res) {
     ['next run', esc(res.next_run || '—')],
     // What it will FETCH, read back from the launcher the scheduler runs —
     // not from this form, which may hold edits nobody has saved.
-    ['scrapes', on ? esc(describeScope(opts, sources.length)) : '—'],
+    ['scrapes', on ? esc(describeScope(opts, supported)) : '—'],
     ['task name', `<span class="mono">${esc(res.task_name)}</span>`],
     ['runs', `<span class="mono">${esc(res.command)}</span>`],
   ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -2733,6 +2937,7 @@ function renderSchedule(res) {
   const manual = !res.windows;
   $('#sched-install-every').textContent = manual ? 'show crontab line' : 'set interval';
   $('#sched-install-daily').textContent = manual ? 'show daily line' : 'set daily';
+  renderSchedSum();
 }
 
 function labelMinutes(m) {
@@ -2817,7 +3022,7 @@ function renderScheduleScope(res) {
   $('#sched-sources-hint').textContent = off
     ? `${sources.length - off} of ${sources.length} can be fetched; `
       + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
-    : `${sources.length} source(s) available.`;
+    : `${plural(sources.length, 'source')} available.`;
 
   $('#sched-max-posts').value = opts.max_posts || '';
   $('#sched-max-comments').value = opts.max_comments || '';
@@ -2837,6 +3042,56 @@ function syncSchedSelectAll() {
   // A schedule that fetches nothing is not a schedule.
   $('#sched-install-every').disabled = on === 0;
   $('#sched-install-daily').disabled = on === 0;
+  renderSchedSum();
+}
+
+/* ── schedule: live form summary (adaptation reference rev 5) ───────────
+ * One sentence for what the form would register, with a pill that says how
+ * it stands against the registered schedule. Scope/depth compared knob by
+ * knob; cadence is deliberately NOT claimed (the form offers two paths).
+ * scope: "every enabled source" follows the sources tab, an explicit
+ * selection names itself. */
+function schedFormScope() {
+  const boxes = $$('.sched-src:not([disabled])');
+  const picked = boxes.filter(b => b.checked).length;
+  return picked === boxes.length
+    ? 'every enabled source'
+    : `${picked} of ${boxes.length} source${boxes.length === 1 ? '' : 's'}`;
+}
+const schedNum = id => {
+  const v = parseInt($(id).value, 10);
+  return Number.isFinite(v) && v > 0 ? v : null;
+};
+function schedFormDepth() {
+  const parts = [['#sched-max-posts', 'post'], ['#sched-max-comments', 'comment'],
+                 ['#sched-max-ideas', 'idea']].map(([id, noun]) => [num(id), noun])
+    .filter(([v]) => v).map(([v, noun]) => `${v.toLocaleString()} ${noun}(s)`);
+  return parts.length
+    ? `, up to ${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts.at(-1) : parts[0]} per run`
+    : ', with no ceiling on posts, comments or ideas';
+}
+function schedFormMatches() {
+  if (!SCHED?.installed) return false;
+  // Copy-then-sort: sorting SCHED.options.only in place would scramble the
+  // registered schedule the summary itself re-reads.
+  const norm = o => JSON.stringify([ (o?.only || []).slice().sort(), o?.max_posts ?? '', o?.max_comments ?? '', o?.max_ideas ?? '' ]);
+  return norm(SCHED.options) === norm(scheduleScope());
+}
+function renderSchedSum() {
+  const bar = $('#sched-sum');
+  if (!bar) return;
+  const res = SCHED || {};
+  const every = parseInt($('#sched-every').value, 10);
+  const cadence = Number.isFinite(every) && every > 0
+    ? `every ${every} minute${every === 1 ? '' : 's'}, or daily at ${esc($('#sched-at').value) || '—'}`
+    : `an invalid interval (every field), or daily at ${esc($('#sched-at').value) || '—'}`;
+  const [state, cls] = !res.installed ? ['not installed', 'tone-neutral']
+    : schedFormMatches() ? ['installed', 'tone-done']
+    : ['differs from the registered schedule', 'tone-warn'];
+  bar.innerHTML = `<b>This form would register:</b>
+    <span class="st">${cadence} via ${esc(res.scheduler || 'the host scheduler')} — scraping
+    ${esc(schedFormScope())}${esc(schedFormDepth())}.</span>
+    <span class="pill pill--sm ${cls}">${esc(state)}</span>`;
 }
 
 /** The scope the form is currently describing. Ticking every box posts an
@@ -2845,15 +3100,11 @@ function syncSchedSelectAll() {
 function scheduleScope() {
   const boxes = $$('.sched-src:not([disabled])');
   const picked = boxes.filter(b => b.checked).map(b => b.dataset.sourceName);
-  const num = id => {
-    const v = parseInt($(id).value, 10);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  };
   return {
     only: picked.length === boxes.length ? [] : picked,
-    max_posts: num('#sched-max-posts'),
-    max_comments: num('#sched-max-comments'),
-    max_ideas: num('#sched-max-ideas'),
+    max_posts: schedNum('#sched-max-posts'),
+    max_comments: schedNum('#sched-max-comments'),
+    max_ideas: schedNum('#sched-max-ideas'),
   };
 }
 
@@ -2865,6 +3116,16 @@ $('#sched-sources').addEventListener('change', e => {
   handleGroupToggle(e, '#sched-sources');
   syncSchedSelectAll();
 });
+// The summary bar is a live region: a full innerHTML rebuild per keystroke
+// would announce the whole page to a screen reader per character, so keys
+// trail through a short debounce instead (opens of the page render directly).
+let schedSumTimer = null;
+const renderSchedSumSoon = () => {
+  clearTimeout(schedSumTimer);
+  schedSumTimer = setTimeout(renderSchedSum, 300);
+};
+['#sched-max-posts', '#sched-max-comments', '#sched-max-ideas', '#sched-every', '#sched-at']
+  .forEach(id => $(id).addEventListener('input', renderSchedSumSoon));
 
 async function loadSchedule() {
   const res = await api('/api/schedule');
@@ -2911,6 +3172,11 @@ $('#sched-install-daily').onclick = e => {
 };
 
 $('#sched-remove').onclick = async e => {
+  // Same guard as source removal, and as specific as Nielsen's confirmation
+  // guidance asks for: name what dies and how to get it back, so the question
+  // cannot be clicks yes without reading.
+  if (!SCHED?.installed) return;
+  if (!confirm(`Uninstall the ${SCHED.cadence || 'registered'} schedule? Scheduled runs stop until it is installed again.`)) return;
   const res = await busy(e.currentTarget, () => api('/api/schedule/remove', {}));
   toast(res.detail || (res.ok ? 'removed' : 'could not remove'), res.ok ? 'ok' : 'bad');
   if (res.schedule) renderSchedule(res.schedule); else loadSchedule();
@@ -3033,7 +3299,7 @@ async function loadSourcesForModal() {
   $('#sources-hint').textContent = off
     ? `${selectable.length} of ${SOURCES_LIST.length} can be fetched; `
       + `${off} ${off === 1 ? 'has' : 'have'} no worker adapter yet.`
-    : `${SOURCES_LIST.length} source(s) available.`;
+    : `${plural(SOURCES_LIST.length, 'source')} available.`;
 }
 
 // The header box reflects the boxes below it in both directions, including the
@@ -3113,6 +3379,14 @@ $('#modal-run').onclick = async () => {
 // ── run strip: what is running now, on every page ────────────────────────
 async function pollRunning() {
   const res = await api('/api/running');
+  // The nav LED rides the same heartbeat — red "console down" when the
+  // poll cannot get an answer, rather than a static claim nobody sets.
+  const led = $('#nav-health .led');
+  if (led) {
+    const up = res.ok !== false;
+    led.classList.toggle('bad', !up);
+    led.parentElement.lastElementChild.textContent = up ? 'console up' : 'console down';
+  }
   const strip = $('#runstrip');
   if (!strip) return;
   const runs = (res.ok !== false && res.running) || [];
@@ -3137,11 +3411,6 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-go]');
   if (b && b.dataset.go) go(b.dataset.go);
 });
-// Close the "more" menu when clicking elsewhere.
-document.addEventListener('click', e => {
-  $$('details.menu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
-});
-
 // ── keyboard ─────────────────────────────────────────────────────────────
 const PAGE_KEYS = { o: 'overview', r: 'runs', q: 'queue', i: 'ideas', n: 'nuggets', c: 'clusters', s: 'sources', d: 'doctor' };
 let chord = null;
@@ -3199,6 +3468,10 @@ let SIG_FACETS = {};
 let SIG_TOTAL = 0;
 let SIG_EXISTS = true;
 let SFACETS_OPEN = FACETS_OPEN;
+try {
+  const saved = localStorage.getItem('jester-sfacets');
+  if (saved !== null) SFACETS_OPEN = saved === 'open';
+} catch { /* private mode */ }
 
 const AUDIENCE_TONE = { buyer: 'tone-ok', practitioner: 'tone-info', none: 'tone-neutral' };
 
@@ -3208,6 +3481,7 @@ function applySignalFacetsOpen() {
   layout.classList.toggle('is-collapsed', !SFACETS_OPEN);
   btn.setAttribute('aria-expanded', String(SFACETS_OPEN));
   $('#sfacets-toggle-label').textContent = SFACETS_OPEN ? 'hide filters' : 'filters';
+  try { localStorage.setItem('jester-sfacets', SFACETS_OPEN ? 'open' : 'shut'); } catch { /* private mode */ }
 }
 
 function signalFacetBlock(title, key, items, limit) {
@@ -3274,7 +3548,7 @@ function renderSignalRuns(runs, sources) {
   }
   // limited: the board asked for less and the chain moved on; skipped: it
   // was still sitting out, so it was not asked at all.
-  const tone = { ok: 'tone-ok', partial: 'tone-warn', limited: 'tone-warn', skipped: 'tone-neutral', failed: 'tone-bad' };
+  const tone = { ok: 'tone-ok', partial: 'tone-warn', limited: 'tone-warn', skipped: 'tone-neutral', failed: 'tone-failed' };
   body.innerHTML = runs.map(r =>
     '<tr><td class="mono xs">' + esc((r.started_utc || '').slice(0, 19).replace('T', ' ')) + '</td>'
     + '<td>' + esc(r.kind) + '</td><td class="mono xs">' + esc(r.source) + '</td>'
@@ -3308,7 +3582,7 @@ function emptyMessage() {
  * function is where it stopped being readable. */
 function signalFlags(r) {
   const flags = [];
-  if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-bad">fetch failed</span>');
+  if (r.run_status !== 'ok') flags.push('<span class="pill pill--sm tone-failed">fetch failed</span>');
   if (r.edited_utc) flags.push('<span class="pill pill--sm tone-warn">edited x' + r.revisions + '</span>');
   if (r.removed_utc) flags.push('<span class="pill pill--sm tone-warn">removed at source</span>');
   // An untouched buyer signal is not a neutral fact — it is the reason none
@@ -3339,7 +3613,7 @@ const OUTCOME_CHOICES = [
   ['unfit', 'unfit', 'should never have been a lead: a fault in the rules'],
 ];
 const OUTCOME_TONE = { picked: 'tone-info', contacted: 'tone-info', replied: 'tone-ok',
-                       meeting: 'tone-ok', won: 'tone-ok', no: 'tone-neutral', unfit: 'tone-bad' };
+                       meeting: 'tone-ok', won: 'tone-ok', no: 'tone-neutral', unfit: 'tone-failed' };
 let SIG_LIST = [];
 // The row whose editor is open, and what the editor holds so far.
 const MARK = { rid: null, pick: '', note: '', saving: false };
@@ -3448,7 +3722,9 @@ function renderSignalPager() {
     + '<button class="btn btn--ghost btn--sm" data-spage="next" ' + (to < SIG_TOTAL ? '' : 'disabled') + '>next &rsaquo;</button>';
 }
 
+let SIG_TOKE = 0;
 async function loadSignals() {
+  const toke = ++SIG_TOKE;
   const qs = new URLSearchParams(
     Object.entries(SIG).filter(e => e[1] !== '' && e[1] !== null)).toString();
   const pair = await Promise.all([
@@ -3456,7 +3732,7 @@ async function loadSignals() {
     api('/api/signals/runs').catch(() => null),
   ]);
   const d = pair[0]; const runs = pair[1];
-  if (!d) return;
+  if (toke !== SIG_TOKE || !d) return; // stale fetch, or both halves failed
   SIG_EXISTS = d.exists !== false;
   SIG_TOTAL = d.total || 0;
   SIG_FACETS = d.facets || {};
@@ -3565,12 +3841,31 @@ function renderScraper() {
     changed && d.windows ? '<span class="pending">Unsaved: press save schedule.</span>' : '',
     scraperLauncherWords(d.launcher),
   ].filter(Boolean).join(' ');
+  // The bar wants one compact line, not the drawer's full prose: what is
+  // registered, just enough that "schedule & runs" reads as worth opening.
+  const regLabel = reg.mode === 'off' ? 'not scheduled'
+    : reg.mode === 'daily' ? `daily at ${esc(reg.at)}`
+    : `every ${Number(reg.mode) / 60}h`;
+  $('#scraper-bar-state').innerHTML = [
+    d.running ? '<span class="pending">run in progress</span>' : '',
+    regLabel,
+    !scraperNever(d.last_run) ? `last ${esc(ago(d.last_run))}` : '',
+  ].filter(Boolean).join(' · ');
   if (!SCRAPER.following) {
     const run = $('#scraper-run');
     run.disabled = !!d.running;
     run.textContent = d.running ? '⟳ scheduled run in progress' : '▶ run now';
   }
 }
+
+/* The drawer is a fold: open by the button in the bar, shut again the same
+ * way. State lives in the button's aria-expanded, not the page. */
+$('#scraper-drawer-toggle').addEventListener('click', () => {
+  const d = $('#scraper-drawer'), b = $('#scraper-drawer-toggle');
+  const open = d.classList.contains('hidden');
+  d.classList.toggle('hidden', !open);
+  b.setAttribute('aria-expanded', String(open));
+});
 
 async function loadScraper() {
   const d = await api('/api/signals/scraper');
@@ -3766,3 +4061,190 @@ $('#signals-q').addEventListener('input', () => {
 // Fetch the counts on boot regardless of which page is opening.
 if ((location.hash.slice(1) || 'overview') !== 'overview') refreshCounts();
 go(location.hash.slice(1) || 'overview', { push: false });
+
+// ── chat: the model proposes; you confirm ───────────────────────────────
+// Every transcript line is server text: rendered with textContent only, so
+// an archive comment cannot inject markup into the page. The model HAS no
+// apply path — the buttons below are the only ones, and they run as
+// actor='human' console actions on the server (see console/api_chat.py).
+
+let CHAT_SESSION = null;   // S-... of the open transcript (null = new)
+let CHAT_TIMER = null;
+
+const CHAT_ROLE_LABEL = { user: 'you', chat: 'chat', 'system-note': 'note' };
+
+async function loadChat() {
+  const res = await api('/api/chat/sessions');
+  const box = $('#chat-sessions');
+  if (!res.ok) { box.textContent = res.error || 'sessions unavailable'; return; }
+  box.innerHTML = '';
+  for (const s of res.sessions) {
+    const b = document.createElement('button');
+    b.className = 'chat-session' + (s.session_id === CHAT_SESSION ? ' is-open' : '');
+    b.dataset.chatSid = s.session_id;
+    b.append(
+      Object.assign(document.createElement('span'), { textContent: s.title || '(empty turn)' }),
+      Object.assign(document.createElement('span'),
+        { className: 'xs', textContent: `${s.messages} msg · ${ago(s.created_utc)}` }),
+    );
+    b.onclick = () => openChatSession(s.session_id);
+    box.appendChild(b);
+  }
+  if (CHAT_SESSION) await openChatSession(CHAT_SESSION);
+}
+
+async function openChatSession(id) {
+  CHAT_SESSION = id;
+  const res = await api('/api/chat/session?id=' + encodeURIComponent(id));
+  if (!res.ok) { toast(res.error || 'unknown session', 'bad'); CHAT_SESSION = null; return; }
+  renderChat(res);
+  // No pin(loadChat()) here: that mutual tail turned into an unbounded
+  // loadChat → openChatSession → loadChat loop while any session was open.
+  // loadChat already renders the sidebar, and this only needs to move the
+  // open-session mark, so it flips that in place instead of refetching.
+  $$('#chat-sessions .chat-session').forEach(b =>
+    b.classList.toggle('is-open', b.dataset.chatSid === id));
+}
+
+function renderChat(res) {
+  const body = $('#chat-transcript');
+  body.innerHTML = '';
+  for (const m of res.messages) {
+    const row = document.createElement('div');
+    row.className = 'chat-msg chat-msg--' + m.role;
+    row.append(
+      Object.assign(document.createElement('span'), { className: 'who', textContent: CHAT_ROLE_LABEL[m.role] || m.role }),
+      Object.assign(document.createElement('span'), { className: 'text', textContent: m.content }),
+    );
+    body.appendChild(row);
+  }
+  body.scrollTop = body.scrollHeight;
+
+  const pending = $('#chat-pending');
+  pending.innerHTML = '';
+  const reverted = new Set(
+    res.edits.filter(e => e.edit_kind === 'revert').map(e => e.reverts_edit));
+  const openEdits = res.edits
+    .filter(e => e.edit_kind !== 'revert' && e.outcome === 'applied' && !reverted.has(e.id));
+
+  for (const p of res.pending) {
+    pending.appendChild(chatProposalCard(p));
+  }
+  for (const e of openEdits) {
+    pending.appendChild(chatEditCard(e));
+  }
+  if (!res.pending.length && !openEdits.length) {
+    pending.innerHTML = '<p class="xs">nothing waiting on you</p>';
+  }
+  $('#chat-state').textContent =
+    'the model proposes only; apply/reject below run as YOU. ' +
+    'chat_max_rounds bounds every turn; a proposal expires after ' +
+    'chat_proposal_ttl_hours.';
+}
+
+function chatProposalCard(p) {
+  const card = document.createElement('div');
+  card.className = 'chat-proposal';
+  const head = document.createElement('div');
+  head.className = 'chat-proposal-head';
+  head.textContent = `proposed · ${p.edit_kind} · by ${p.actor} · ${p.created_utc}`;
+  card.appendChild(head);
+  const diff = document.createElement('pre');
+  diff.textContent = JSON.stringify(p.diff_json, null, 2);
+  card.appendChild(diff);
+  const row = document.createElement('div');
+  row.className = 'row';
+  const apply = document.createElement('button');
+  apply.className = 'primary';
+  apply.textContent = 'apply';
+  apply.onclick = async () => {
+    if (!confirm(`Apply ${p.edit_kind} to the archive?`)) return;
+    const res = await api('/api/chat/apply', { proposal_id: p.proposal_id });
+    toast(res.ok ? 'applied (revertable in this list)'
+                 : ('apply refused: ' + (res.error || 'why?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  const reject = document.createElement('button');
+  reject.textContent = 'reject';
+  reject.onclick = async () => {
+    if (!confirm('Reject this proposal?')) return;
+    const res = await api('/api/chat/reject', { proposal_id: p.proposal_id });
+    toast(res.ok ? 'rejected' : ('refused: ' + (res.error || '?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  row.append(apply, reject);
+  card.appendChild(row);
+  return card;
+}
+
+function chatEditCard(e) {
+  const card = document.createElement('div');
+  card.className = 'chat-proposal';
+  const head = document.createElement('div');
+  head.className = 'chat-proposal-head';
+  head.textContent = `applied · ${e.edit_kind} · by ${e.actor} · ${e.created_utc}`;
+  card.appendChild(head);
+  const diff = document.createElement('pre');
+  diff.textContent = JSON.stringify(e.after_json, null, 2);
+  card.appendChild(diff);
+  const row = document.createElement('div');
+  row.className = 'row';
+  const revert = document.createElement('button');
+  revert.textContent = 'revert';
+  revert.onclick = async () => {
+    if (!confirm('Revert this edit? The undo is itself a new edit_log row.')) return;
+    const res = await api('/api/chat/revert', { edit_id: e.id });
+    toast(res.ok ? 'reverted' : ('refused: ' + (res.error || '?')), res.ok ? 'ok' : 'bad');
+    await openChatSession(CHAT_SESSION);
+  };
+  row.appendChild(revert);
+  card.appendChild(row);
+  return card;
+}
+
+async function sendChat() {
+  const input = $('#chat-input');
+  const text = (input.value || '').trim();
+  if (!text) return;
+  input.value = '';
+  const send = $('#chat-send');
+  send.disabled = true;
+  const res = await api('/api/chat', { text, session_id: CHAT_SESSION });
+  if (!res.ok) {
+    toast(res.error || 'chat refused', 'bad');
+    send.disabled = false;
+    return;
+  }
+  toast('thinking… the transcript opens when the turn lands', 'ok');
+  pollChatJob(res.job_id);
+}
+
+function pollChatJob(jobId, attempt = 0) {
+  if (attempt > 900) { // ~13.5 minutes at 900ms; a turn cannot outlive 12 rounds
+    toast('chat turn timed out polling; check the Jobs page', 'bad');
+    $('#chat-send').disabled = false;
+    return;
+  }
+  CHAT_TIMER = setTimeout(async () => {
+    const res = await api('/api/job/' + jobId);
+    const job = res.job || {};
+    if (res.ok && job.status === 'done') {
+      $('#chat-send').disabled = false;
+      const out = job.result || {};
+      if (out.session_id) CHAT_SESSION = out.session_id;
+      toast('chat: turn ready' + (out.proposals && out.proposals.length ? ` (+${out.proposals.length} proposal(s))` : ''), 'ok');
+      await loadChat();
+    } else if (res.ok && job.status === 'error') {
+      toast('chat turn failed: ' + (job.error || 'see Jobs'), 'bad');
+      $('#chat-send').disabled = false;
+    } else if (res.ok) {
+      pollChatJob(jobId, attempt + 1);
+    } else {
+      toast(res.error || 'lost the job', 'bad');
+      $('#chat-send').disabled = false;
+    }
+  }, 900);
+}
+
+$('#chat-send').onclick = sendChat;
+$('#chat-new').onclick = () => { CHAT_SESSION = null; $('#chat-transcript').innerHTML = ''; $('#chat-pending').innerHTML = '<p class="xs">nothing waiting on you</p>'; pin(loadChat()); };

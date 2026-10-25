@@ -6,13 +6,15 @@
 <title>Jester — Operator Console</title>
 <meta name="description" content="Local operator console for the Jester scrape → nugget → idea pipeline.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#F8F5F6">
+<meta name="theme-color" content="#17171B">
 <link rel="icon" href="/icon.png" type="image/png">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+
+<a class="skip" href="#main">Skip to content</a>
 
 <div class="shell">
 <nav class="nav" aria-label="Sections">
@@ -61,26 +63,23 @@
         <h3 style="margin:0">Actions</h3>
         <button class="btn btn--ghost btn--icon row-end" id="qa-help" title="what these do" aria-expanded="false">?</button>
       </div>
-      <div class="row" id="quick-actions">
-        <button class="btn btn--primary" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
-        <button class="btn btn--accent hidden" id="btn-ingest-live"
+      <div class="actions-grid" id="quick-actions">
+        <b class="ah">Run</b>
+        <button class="btn btn--primary btn--sm" data-act="/api/run" data-run-prefix="console">▶ run pipeline</button>
+        <button class="btn btn--accent btn--sm hidden" id="btn-ingest-live"
                 data-act="/api/ingest" data-live="1" data-run-prefix="ingest"
                 title="Fetch the enabled sources through cloakserve">⇣ ingest sources</button>
-        <button class="btn hidden" id="btn-live-models"
+        <button class="btn btn--sm hidden" id="btn-live-models"
                 data-act="/api/run" data-live-models="1" data-run-prefix="live-models">▶ run with live models</button>
-        <button class="btn" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
-        <details class="menu">
-          <summary class="btn btn--ghost">⋯ more</summary>
-          <div class="menu-list">
-            <button class="btn btn--ghost btn--sm hidden" id="btn-ingest-mock" data-act="/api/ingest" data-run-prefix="ingest-mock">ingest (worker mock)</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/requeue">requeue failed</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/reembed">reembed backlog</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/smoke">smoke check</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/seed-mock">seed fixture</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/migrate">migrate schema</button>
-            <button class="btn btn--ghost btn--sm" data-act="/api/retention">retention sweep</button>
-          </div>
-        </details>
+        <button class="btn btn--sm" data-act="/api/smoke">smoke check</button>
+        <b class="ah">Repair</b>
+        <button class="btn btn--sm" data-act="/api/requeue">requeue failed</button>
+        <button class="btn btn--sm" data-act="/api/reembed">reembed backlog</button>
+        <button class="btn btn--sm" data-act="/api/migrate">migrate schema</button>
+        <b class="ah">Data</b>
+        <button class="btn btn--sm" data-act="/api/export" title="Write the archive as CSV, split by content type and origin">⇪ export CSV</button>
+        <button class="btn btn--sm" data-act="/api/seed-mock">seed fixture</button>
+        <button class="btn btn--danger btn--sm" data-act="/api/retention" data-confirm="Run the retention sweep? Nuggets past their retention window will be deleted.">retention sweep</button>
       </div>
       <p class="xs hidden" id="qa-help-text" style="margin:var(--s-5) 0 0">
         <b>run pipeline</b> opens a dialog to pick the sources and an optional stop-at goal, then does
@@ -128,6 +127,10 @@
         <span class="pill pill--sm tone-neutral" id="src-count">—</span>
         <span class="row-end xs mono" id="src-path"></span>
       </div>
+      <div class="src-tools">
+        <input id="src-q" type="search" placeholder="Search sources, targets, kinds" aria-label="Search sources">
+        <div class="seg" id="src-fil" role="group" aria-label="Filter sources by status"></div>
+      </div>
       <div class="tablewrap">
         <table>
           <thead><tr>
@@ -168,7 +171,7 @@
     <div class="hero">
       <div><h1 data-eyebrow="Archive">Ideas</h1><p>Review loop — open one to verify its citations, then mark it.</p></div>
       <div class="row row-end">
-        <input id="ideas-q" aria-label="Filter ideas" placeholder="filter ideas… ( / )" style="inline-size:220px" autocomplete="off">
+        <input id="ideas-q" aria-label="Filter ideas" placeholder="filter ideas… ( / )" autocomplete="off">
         <div class="seg" id="ideas-filter" role="group" aria-label="Filter by status"></div>
       </div>
     </div>
@@ -207,13 +210,45 @@
         <p id="search-note" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="search-q" aria-label="Search the archive" placeholder="describe a problem… ( / )" style="inline-size:300px" autocomplete="off">
+        <input id="search-q" aria-label="Search the archive" placeholder="describe a problem… ( / )" autocomplete="off">
         <button id="search-go" class="primary">search</button>
       </div>
     </div>
     <div id="search-facets" class="row"></div>
     <div id="search-recent" class="row"></div>
     <div id="search-body" class="stack"></div>
+  </section>
+
+  <section data-page="chat" hidden>
+    <div class="hero">
+      <div>
+        <h1 data-eyebrow="Curation">Chat</h1>
+        <p>
+          A bounded assistant over this archive. It can READ the archive and
+          it can PROPOSE changes — nothing it asks for happens without your
+          Apply below, and every Apply can be Reverted.
+        </p>
+        <p id="chat-state" class="xs"></p>
+      </div>
+    </div>
+    <div class="chat-grid">
+      <!-- Sessions: the whole transcript is its own insert-only database
+           beside the archive. Picking one re-opens it read-only. -->
+      <aside class="chat-sessions" aria-label="Sessions">
+        <button id="chat-new" class="primary">＋ new session</button>
+        <div id="chat-sessions" class="stack xs"></div>
+      </aside>
+      <div class="stack">
+        <div id="chat-transcript" class="chat-transcript stack" aria-live="polite"></div>
+        <div class="row">
+          <textarea id="chat-input" rows="2" autocomplete="off"
+            aria-label="Message the archive assistant"
+            placeholder="e.g. search my archive for comments about slow exports and propose a relabel"></textarea>
+          <button id="chat-send" class="primary">send</button>
+        </div>
+        <div id="chat-pending" class="stack"></div>
+      </div>
+    </div>
   </section>
 
   <!-- ── clusters ─────────────────────────────────────────────────── -->
@@ -230,7 +265,7 @@
         <p id="clusters-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="clusters-q" aria-label="Filter themes" placeholder="filter themes… ( / )" style="inline-size:200px" autocomplete="off">
+        <input id="clusters-q" aria-label="Filter themes" placeholder="filter themes… ( / )" autocomplete="off">
         <div class="seg" id="clusters-platform" role="group" aria-label="Filter by platform"></div>
         <button id="clusters-run" class="primary">⟳ regroup</button>
       </div>
@@ -314,7 +349,7 @@
         <p id="posts-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="posts-q" aria-label="Filter posts" placeholder="filter posts…" style="inline-size:220px" autocomplete="off">
+        <input id="posts-q" aria-label="Filter posts" placeholder="filter posts…" autocomplete="off">
       </div>
     </div>
 
@@ -350,7 +385,7 @@
         <p id="nuggets-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="nuggets-q" aria-label="Filter nuggets" placeholder="filter nuggets… ( / )" style="inline-size:220px" autocomplete="off">
+        <input id="nuggets-q" aria-label="Filter nuggets" placeholder="filter nuggets… ( / )" autocomplete="off">
         <div class="seg" id="nuggets-filter" role="group" aria-label="Filter nuggets"></div>
       </div>
     </div>
@@ -367,14 +402,10 @@
           <h3>Nuggets</h3><span class="xs" id="nuggets-shown"></span>
           <div class="pager row-end" id="nuggets-pager"></div>
         </div>
-        <div class="tablewrap">
-          <table>
-            <thead><tr>
-              <th>insight</th><th>from</th><th>category</th><th>flags</th>
-            </tr></thead>
-            <tbody id="nuggets-body"></tbody>
-          </table>
-        </div>
+        <!-- One card per nugget (adaptation reference rev 5, option B): the
+             insight is the thing being scanned, so it gets a body-size column
+             of its own instead of a table cell. -->
+        <div id="nuggets-cards" class="nfeed" role="list" aria-label="Nuggets"></div>
       </div>
     </div>
   </section>
@@ -390,13 +421,24 @@
         <p id="signals-count" class="xs"></p>
       </div>
       <div class="row row-end">
-        <input id="signals-q" aria-label="Filter problem signals" placeholder="filter signals…" style="inline-size:220px" autocomplete="off">
+        <input id="signals-q" aria-label="Filter problem signals" placeholder="filter signals…" autocomplete="off">
       </div>
     </div>
 
     <div class="kpis kpis--4" id="signals-tiles"></div>
 
-    <div class="card scraper" style="margin-block-start:var(--s-5)">
+    <!-- The scraper reads as a status bar and keeps its working parts in a
+         drawer (adaptation reference rev 5, option E); everything inside the
+         drawer is the same real scraper card, just folded shut. -->
+    <div class="scraper-bar" id="scraper-bar">
+      <b>jobs scraper</b>
+      <span class="scraper-bar-state" id="scraper-bar-state"></span>
+      <button class="btn btn--sm" id="scraper-run">▶ run now</button>
+      <button class="btn btn--sm" id="scraper-drawer-toggle" aria-expanded="false" aria-controls="scraper-drawer">
+        schedule &amp; runs <span class="scraper-fold" aria-hidden="true">▾</span>
+      </button>
+    </div>
+    <div class="scraper-drawer hidden" id="scraper-drawer">
       <div class="scraper-top">
         <div>
           <h3>Jobs scraper</h3>
@@ -407,7 +449,6 @@
             New buyers land in the records below.</p>
           <p class="xs mono" id="scraper-cmd"></p>
         </div>
-        <button class="btn btn--primary" id="scraper-run">▶ run now</button>
       </div>
       <div class="scraper-sched">
         <span class="scraper-label">schedule</span>
@@ -416,18 +457,17 @@
         <button class="btn btn--sm" id="scraper-save" disabled>save schedule</button>
       </div>
       <p class="xs scraper-state" id="scraper-state"></p>
-    </div>
-
-    <div class="card card--flush" style="margin-block-start:var(--s-5)">
-      <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
-      <div class="tablewrap">
-        <table>
-          <thead><tr>
-            <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
-            <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
-          </tr></thead>
-          <tbody id="signal-runs-body"></tbody>
-        </table>
+      <div class="card card--flush">
+        <div class="card-head"><h3>Runs</h3><span class="xs">did it run on schedule, and did anything fail</span></div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr>
+              <th>started</th><th>kind</th><th>source</th><th class="num">collected</th>
+              <th class="num">new</th><th class="num">buyer</th><th class="num">errors</th><th>status</th>
+            </tr></thead>
+            <tbody id="signal-runs-body"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -462,7 +502,14 @@
       <div><h1 data-eyebrow="Setup">Config</h1><p>Every knob the pipeline reads. Editable values write straight back to
         <span class="mono">thresholds.yaml</span>; comments in the file are preserved.</p></div>
     </div>
-    <div class="card">
+    <!-- Two panes (adaptation reference rev 5): the group list stays in view
+         on the left and answers two questions — where am I, and what here is
+         unsaved. The dots are wired to the same dirty inputs the savebars
+         count; clicking jumps to its card. -->
+    <div class="cfglayout">
+      <nav class="cfnav" id="cfg-nav" aria-label="Config sections"></nav>
+      <div>
+        <div class="card" data-cfgsec="thresholds">
       <div class="card-head" style="padding:0 0 var(--s-4);border-block-end:1px solid var(--line);background:none">
         <h3>Thresholds</h3>
         <span class="xs row-end">range-checked on save; a refused value is never written</span>
@@ -476,7 +523,7 @@
         </span>
       </div>
     </div>
-    <div class="card">
+    <div class="card" data-cfgsec="models">
       <div class="row" style="align-items:flex-start">
         <div>
           <h3 style="margin:0">Agent models</h3>
@@ -500,8 +547,10 @@
       </div>
     </div>
     <div class="grid">
-      <div class="card"><h3>Scraper <span class="xs">scraper.yaml</span></h3><dl class="dl" id="cfg-scraper"></dl></div>
-      <div class="card"><h3>Environment</h3><dl class="dl" id="cfg-env"></dl></div>
+      <div class="card" data-cfgsec="scraper"><h3>Scraper <span class="xs">scraper.yaml</span></h3><dl class="dl" id="cfg-scraper"></dl></div>
+      <div class="card" data-cfgsec="env"><h3>Environment</h3><dl class="dl" id="cfg-env"></dl></div>
+    </div>
+      </div>
     </div>
   </section>
 
@@ -557,7 +606,7 @@
       <div class="row modal-listhead">
         <label class="checkall">
           <input type="checkbox" id="sched-select-all" aria-label="Select all sources" checked>
-          <span>Select all</span>
+          <span>select all</span>
         </label>
         <span class="pill pill--sm tone-neutral row-end" id="sched-selected-count">—</span>
       </div>
@@ -611,6 +660,10 @@
     </div>
       </div>
     </div>
+    <!-- What this form would do if a button were pressed right now, in one
+         sentence, with the registered state next to it (adaptation
+         reference rev 5). -->
+    <div class="schedsum" id="sched-sum" role="status"></div>
   </section>
 
   <!-- ── doctor ───────────────────────────────────────────────────── -->
@@ -645,7 +698,7 @@
 <div class="scrim" id="modal-scrim" hidden></div>
 <dialog class="modal" id="pipeline-modal" aria-labelledby="modal-title">
   <div class="modal-head">
-    <h2 id="modal-title">Configure Pipeline Run</h2>
+    <h2 id="modal-title">Configure pipeline run</h2>
     <button class="btn btn--ghost btn--icon" id="modal-close" aria-label="Close">✕</button>
   </div>
   <div class="modal-body">
@@ -656,7 +709,7 @@
     <div class="row modal-listhead">
       <label class="checkall">
         <input type="checkbox" id="select-all-sources" aria-label="Select all sources" checked>
-        <span>Select all</span>
+        <span>select all</span>
       </label>
       <span class="pill pill--sm tone-neutral row-end" id="selected-count">—</span>
     </div>
@@ -668,27 +721,27 @@
       synthesis — whatever is left stays queued for the next run.</p>
     <div class="formgrid">
       <div class="field">
-        <label for="goal-type">Goal Type</label>
+        <label for="goal-type">goal type</label>
         <select id="goal-type">
-          <option value="none">No specific goal</option>
-          <option value="posts">Target number of posts</option>
-          <option value="comments">Target number of comments</option>
-          <option value="ideas">Target number of ideas</option>
+          <option value="none">no specific goal</option>
+          <option value="posts">target number of posts</option>
+          <option value="comments">target number of comments</option>
+          <option value="ideas">target number of ideas</option>
         </select>
       </div>
       <div class="field" id="goal-value-field" style="display:none">
-        <label for="goal-value">Target Count</label>
-        <input type="number" id="goal-value" aria-label="Goal value" min="1" value="10" placeholder="e.g., 50">
+        <label for="goal-value">target count</label>
+        <input type="number" id="goal-value" aria-label="Goal value" min="1" value="10" placeholder="50">
       </div>
       <div class="field">
-        <label for="run-id-input">Run ID <span class="xs">(optional)</span></label>
+        <label for="run-id-input">run id <span class="xs">(optional)</span></label>
         <input type="text" id="run-id-input" aria-label="Run id" placeholder="auto-generated if empty">
       </div>
     </div>
   </div>
   <div class="modal-footer">
-    <button class="btn btn--ghost" id="modal-cancel">Cancel</button>
-    <button class="btn btn--primary" id="modal-run">▶ Start Pipeline</button>
+    <button class="btn btn--ghost" id="modal-cancel">cancel</button>
+    <button class="btn btn--primary" id="modal-run">start pipeline</button>
   </div>
 </dialog>
 

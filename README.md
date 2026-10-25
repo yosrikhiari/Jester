@@ -40,20 +40,22 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 | Layer | Stack | Role |
 |-------|-------|------|
 | **Ingestion** | Go, CloakBrowser (stealth Chromium) | Scrapes via documented APIs or a headless browser; deposits raw comments into a SQLite handoff queue |
-| **Processing** | Python, Ollama / Groq / any OpenAI-compatible server | Five model jobs (extractor, synthesizer, critic, labeller, embedding), each with its own provider, model and generation settings in one `roles:` block |
+| **Processing** | Python, Ollama / Groq / any OpenAI-compatible server | Seven model jobs (extractor, synthesizer, critic, labeller, embedding, chat, specifier), each with its own provider, model and generation settings in one `roles:` block |
 | **Storage** | SQLite, Qdrant, ClickHouse | SQLite for pipeline state; Qdrant for semantic dedup (0.87 cosine) and cluster search; ClickHouse for the queryable problem-signal archive |
 | **Console** | Python stdlib HTTP, vanilla JS | The operator UI at `:8619` — no build step, ships inside the Python package |
 | **Orchestration** | Docker Compose | One command for the stack; profiles add the scraping browser, local models and the archive |
 
 ## Model jobs
 
-Five jobs call a model. Each one is set separately in the `roles:` block of `thresholds.yaml`:
+Seven jobs call a model. Each one is set separately in the `roles:` block of `thresholds.yaml`:
 
 1. **Extractor**: turns one comment into a nugget (a pain point and its category). One call per comment.
 2. **Synthesizer**: turns a thread's nuggets into one product idea (problem and proposed solution). One call per thread chunk.
 3. **Critic**: scores each idea 1 to 10 on demand, feasibility and competition. One call per idea, plus re-scores.
 4. **Labeller**: names each group of similar comments in `jester cluster`. Follows the synthesizer unless set on its own.
 5. **Embedding**: turns text into vectors for duplicate detection and search (Ollama or the offline stand-in).
+6. **Chat**: runs the console's chat page tool-by-tool — read-only reads of the archive and PROPOSAL-ONLY edits, with the human applying anything (autonomous curation). Defaults to the deterministic stand-in until `roles.chat` is set and `chat_enabled` is true.
+7. **Specifier**: proposes an extraction spec for a source with no adapter; the spec is validated on pages, then approved and activated by a human.
 
 The archivist files nuggets and refuses to mix vectors from two embedding models; it calls no chat model.
 

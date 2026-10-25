@@ -395,10 +395,9 @@ go version; Get-Item go/*.exe | Select-Object Name, Length
 
 ---
 
-## Appendix C — Implementation status (branch `impl/report-fixes`, 2026-10-14)
+## Appendix C — Implementation status (merged to `main` as PR #54, 2026-10-14; page synced 2026-10-15)
 
-All 12 findings implemented in roadmap order. Nothing committed; review the
-diff on `impl/report-fixes` vs `main`.
+All 12 findings were implemented in roadmap order on `impl/report-fixes` and merged to `main` as PR #54 (commit `96935ff`, now an ancestor of `fix/sonar-js-promises-2` at `9c93954`). Appendix D records the end-to-end verification.
 
 | ID | What landed | Validation (actually run) |
 |---|---|---|

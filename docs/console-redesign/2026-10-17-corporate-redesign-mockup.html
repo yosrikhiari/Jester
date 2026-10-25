@@ -1,0 +1,1238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Overview — Jester</title>
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Static mockup of the Jester operator console — fixture data only, no API calls.">
+<style>
+/* Jester console v3 — corporate. Black/white/neutral foundation; one brand accent used for emphasis only.
+   NOTE: no logo asset was supplied, so --brand is the project's original accent (#2A5BD7) as a placeholder.
+   To rebrand, change only the --brand* tokens. */
+/* ========== TOKENS — BEGIN ========== */
+:root{
+--bg:#F7F7F8;--card:#fff;--hov:#F1F2F4;--line:#E4E6EB;--line-strong:#CDD1D8;
+--ink:#111317;--mute:#454B56;--soft:#656C79;
+--brand:#2A5BD7;--brand-ink:#fff;--brand-soft:#EAEFFB;
+--btn:#111317;--btni:#fff;
+--nav-bg:#111317;--nav-ink:#C4C9D1;--nav-soft:#8B919C;--nav-line:#24272D;--nav-hov:#1B1E24;--nav-on:#fff;--nav-on-bg:#1F232A;
+--ok:#17794A;--okb:#E8F5EE;--wn:#8A5A00;--wnb:#FFF5DC;--bd:#B42A18;--bdb:#FCECE9;--qu:#454B56;--qub:#EEF0F3;
+/* scroll-table layer stack (theme-aware: built from --card / --line-strong so it re-resolves in dark) */
+--tw-fade-l:linear-gradient(to right,var(--card) 30%,transparent) left/40px 100% no-repeat local;
+--tw-fade-r:linear-gradient(to left,var(--card) 30%,transparent) right/40px 100% no-repeat local;
+--tw-hint-l:radial-gradient(farthest-side at 0 50%,var(--line-strong),transparent) left/10px 100% no-repeat scroll;
+--tw-hint-r:radial-gradient(farthest-side at 100% 50%,var(--line-strong),transparent) right/10px 100% no-repeat scroll;
+/* fixed dark-nav inks (the nav rail is dark in both themes) */
+--mark:#fff;--mark-ink:#111317;--led-up:#4ADE80;
+--r-card:8px;--r-ctl:6px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
+--fs-xs:12px;--fs-sm:13px;--fs-md:14px;--shadow-1:0 1px 2px rgba(17,19,23,.05);--topbar:52px;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0A0B0D;--card:#131519;--hov:#1B1E24;--line:#25282E;--line-strong:#3A3E46;--ink:#ECEEF1;--mute:#A4AAB5;--soft:#868D99;--brand:#7FA6FF;--brand-ink:#0A0B0D;--brand-soft:#16203A;--btn:#ECEEF1;--btni:#0A0B0D;--nav-bg:#0D0E11;--ok:#5FD39A;--okb:#12261C;--wn:#E9B949;--wnb:#2A2310;--bd:#FF8E80;--bdb:#2E1815;--qu:#A4AAB5;--qub:#1E2228;--shadow-1:none}}
+:root[data-theme="dark"]{--bg:#0A0B0D;--card:#131519;--hov:#1B1E24;--line:#25282E;--line-strong:#3A3E46;--ink:#ECEEF1;--mute:#A4AAB5;--soft:#868D99;--brand:#7FA6FF;--brand-ink:#0A0B0D;--brand-soft:#16203A;--btn:#ECEEF1;--btni:#0A0B0D;--nav-bg:#0D0E11;--ok:#5FD39A;--okb:#12261C;--wn:#E9B949;--wnb:#2A2310;--bd:#FF8E80;--bdb:#2E1815;--qu:#A4AAB5;--qub:#1E2228;--shadow-1:none}
+/* ========== TOKENS — END ========== */
+*{box-sizing:border-box;scrollbar-width:none;-ms-overflow-style:none}
+*::-webkit-scrollbar{display:none;width:0;height:0}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs-sm)/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}button{cursor:pointer}a{color:var(--brand)}
+input[type=number],input[type=text],input[type=search],input[type=time],select{height:32px;border:1px solid var(--line-strong);border-radius:var(--r-ctl);background:var(--card);padding:0 10px}
+input:hover:not(:disabled),select:hover:not(:disabled){border-color:var(--soft)}
+input[aria-invalid=true],input:user-invalid{border-color:var(--bd);background:var(--bdb)}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--brand)}
+input:disabled,button:disabled,select:disabled{opacity:.5;cursor:default}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){.btn,.nav,.facet,.seg button,tbody tr,input,select{transition:background-color .12s,color .12s,border-color .12s}}
+/* shell: dark navigation, light content, one page scroll */
+.shell{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+.side{background:var(--nav-bg);color:var(--nav-ink);padding:16px 10px;display:flex;flex-direction:column;gap:1px;position:sticky;top:0;height:100vh;overflow-y:auto}
+.ws{display:flex;align-items:center;gap:10px;padding:2px 8px 16px;font-weight:600;font-size:15px;color:var(--nav-on)}
+.ws b{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;background:var(--mark);color:var(--mark-ink);font-size:13px}
+.grp{font-size:var(--fs-xs);color:var(--nav-soft);padding:16px 10px 4px;font-weight:500}
+.nav{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:var(--r-ctl);background:none;color:var(--nav-ink);text-align:left;font-weight:500}
+.nav:hover{background:var(--nav-hov);color:var(--nav-on)}
+.nav.on{background:var(--nav-on-bg);color:var(--nav-on)}
+.nav.on::before{content:"";position:absolute;left:-10px;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--brand)}
+.nav em{margin-left:auto;font-style:normal;font-size:var(--fs-xs);color:var(--nav-soft);font-variant-numeric:tabular-nums}
+.side :focus-visible{outline-color:var(--nav-on)}
+.side-foot{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--nav-line);font-size:var(--fs-xs);color:var(--nav-soft);display:flex;align-items:center;gap:8px}
+.side-foot .led{width:7px;height:7px;border-radius:50%;background:var(--led-up);flex:none}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;height:var(--topbar);padding:0 var(--s6);background:var(--card);border-bottom:1px solid var(--line);color:var(--soft)}
+.top b{color:var(--ink);font-weight:600}
+.top .r{margin-left:auto;display:flex;gap:12px;align-items:center}
+.top .chips{display:flex;gap:12px;align-items:center;font-size:var(--fs-xs)}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;align-items:start}
+.wrap.nodet{grid-template-columns:minmax(0,1fr)}.wrap.nodet .det{display:none}
+.pane{padding:var(--s5) var(--s6) 56px;min-width:0}.pane>section{max-width:1320px}
+h1{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:0;line-height:1.3}
+.sub{margin:4px 0 0;color:var(--mute);max-width:70ch}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s4);flex-wrap:wrap}
+.head .acts{display:flex;gap:var(--s2);flex-wrap:wrap}
+.blk{margin-top:var(--s6)}.blk h2{font-size:var(--fs-md);font-weight:600;margin:0 0 4px}
+.blk .x{color:var(--soft);font-size:var(--fs-xs);margin:0 0 var(--s3);max-width:70ch}
+/* buttons: primary / secondary / tertiary / destructive */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 14px;border:1px solid var(--line-strong);border-radius:var(--r-ctl);background:var(--card);font-weight:500;white-space:nowrap}
+.btn:hover:not(:disabled){background:var(--hov)}.btn:active:not(:disabled){background:var(--line)}
+.btn[aria-busy=true]{opacity:.6;cursor:progress;pointer-events:none}
+.btn.p{background:var(--btn);color:var(--btni);border-color:var(--btn)}
+.btn.p:hover:not(:disabled){background:var(--btn);opacity:.88}.btn.p:active:not(:disabled){opacity:.78}
+.btn.g{border-color:transparent;background:none;color:var(--mute)}.btn.g:hover:not(:disabled){background:var(--hov);color:var(--ink)}
+.btn.xs{height:26px;padding:0 8px;font-size:var(--fs-xs);border:0;background:none;color:var(--soft)}
+.btn.xs:hover:not(:disabled){color:var(--ink);background:var(--hov)}.btn.xs.bad{color:var(--bd)}.btn.xs.bad:hover:not(:disabled){background:var(--bdb)}
+/* KPI strip: one bordered group with dividers */
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-1);margin:var(--s4) 0 var(--s3)}
+.stats.s3{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:0}.stats.s5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.stats div{padding:14px 18px;border-left:1px solid var(--line);min-width:0}.stats div:first-child{border-left:0}
+.stats span{display:block;color:var(--mute);font-size:var(--fs-xs)}
+.stats strong{display:block;font-size:22px;font-weight:600;letter-spacing:-.015em;font-variant-numeric:tabular-nums;line-height:1.3}
+.stats small{font-size:var(--fs-xs);color:var(--soft)}.stats small.ok,.stats small.up{color:var(--ok)}.stats small.bd{color:var(--bd)}
+.spark{display:block;width:100%;max-width:130px;height:28px;margin:2px 0}
+.spark polyline{fill:none;stroke:var(--brand);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}.spark line{stroke:var(--line)}
+/* filters, chips, status */
+.seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--card)}
+.seg button{height:26px;padding:0 10px;border:0;border-radius:var(--r-ctl);background:none;font-size:var(--fs-xs);font-weight:500;color:var(--mute)}
+.seg button:hover{background:var(--hov);color:var(--ink)}.seg button[aria-pressed=true]{background:var(--btn);color:var(--btni)}
+.seg .num{font-variant-numeric:tabular-nums;opacity:.7;margin-left:5px}
+.facetbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--s3);align-items:center}
+.facet{height:28px;padding:0 10px;border:1px solid var(--line-strong);background:var(--card);border-radius:var(--r-ctl);font-size:var(--fs-xs);font-weight:500;color:var(--mute)}
+.facet:hover{background:var(--hov);color:var(--ink)}.facet.on{background:var(--btn);color:var(--btni);border-color:var(--btn)}
+.facet .num{opacity:.7;margin-left:5px}.facet-lab{font-size:var(--fs-xs);color:var(--soft)}
+.chiprow{display:flex;gap:4px;flex-wrap:wrap}
+.chip{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:1px 6px;font-size:11.5px;color:var(--mute);white-space:nowrap;background:var(--card)}
+a.chip{color:var(--brand);text-decoration:none}.chip.bad{color:var(--bd);border-color:transparent;background:var(--bdb)}.chip.warn{color:var(--wn);border-color:transparent;background:var(--wnb)}
+.s{display:inline-flex;align-items:center;gap:6px;font-weight:500;color:var(--qu);white-space:nowrap}
+.s::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.s.done,.s.reviewed{color:var(--ok)}.s.running,.s.building,.s.warn{color:var(--wn)}.s.failed{color:var(--bd)}.s.off,.s.archived{color:var(--soft)}
+.tool{display:flex;gap:var(--s2);align-items:center;margin:var(--s4) 0;flex-wrap:wrap}
+.q{position:relative;width:260px}.q.w{width:440px;max-width:100%}.q svg{position:absolute;left:10px;top:8px;color:var(--soft)}
+.q input{width:100%;padding:0 10px 0 32px}.sp{flex:1}
+.meter{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--hov)}.meter i{display:block}
+.meter-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:var(--fs-xs);color:var(--soft);margin-top:6px}
+.meter-legend i{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.row2{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.qmix{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.qbar{flex:1;min-width:80px;height:6px;background:var(--hov);border-radius:3px;overflow:hidden}
+.qbar i,.ratio i{display:block;height:100%;background:var(--brand)}
+.ratio{display:inline-block;width:56px;height:4px;background:var(--hov);border-radius:2px;vertical-align:2px;margin-right:6px;overflow:hidden}
+.sigbar{display:flex;width:120px;height:4px;border-radius:2px;overflow:hidden;background:var(--hov)}.sigbar i{display:block;background:var(--ink)}
+.m-signal{background:var(--brand)}.m-trivial{background:var(--soft)}.m-missing{background:var(--line)}
+/* tables: hidden scrollbar, but edge shadows show when content continues sideways */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-1);
+background:var(--tw-fade-l),var(--tw-fade-r),var(--tw-hint-l),var(--tw-hint-r),var(--card)}
+.blk .tw,.det .tw{box-shadow:none}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:500;font-size:var(--fs-xs);color:var(--soft);padding:10px 14px;white-space:nowrap;border-bottom:1px solid var(--line)}
+th[data-sort]{cursor:pointer}td{padding:9px 14px;border-top:1px solid var(--line);white-space:nowrap;height:44px}
+thead+tbody tr:first-child td{border-top:0}
+#runs-table tbody tr,#ideas-table tbody tr,#clu-table tbody tr,#queue-table tbody tr,#posts-table tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--hov)}tbody tr.sel{background:var(--brand-soft);box-shadow:inset 3px 0 0 var(--brand)}
+.n{text-align:right;font-variant-numeric:tabular-nums}.m{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:var(--fs-xs)}
+.soft{color:var(--soft)}.tt{max-width:460px;overflow:hidden;text-overflow:ellipsis}.tt.w520{max-width:520px}
+.stack2{display:flex;flex-direction:column;gap:1px}td.stack2{white-space:normal}.stack2 .xs,.xs{font-size:var(--fs-xs)}.stack2 .xs{white-space:nowrap}
+.gh{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:var(--r-ctl);font-weight:600}
+.gh .c,.gh .meta{font-weight:400;opacity:.75}.gh .meta{font-size:var(--fs-xs)}
+.gh .btn{margin-left:auto;height:24px;padding:0 6px;border:0;background:none;color:inherit}.gh.closed .fold svg{transform:rotate(-90deg)}
+.gh.plain{background:var(--hov);color:var(--ink);cursor:pointer}
+.ghrow td{border-top:0;padding:12px 0 0;height:auto}.ghrow:hover{background:none}
+.empty{padding:28px 14px;color:var(--soft);white-space:normal}.empty .btn{margin-left:8px}
+.foot2{display:flex;justify-content:space-between;align-items:center;color:var(--soft);font-size:var(--fs-xs);margin-top:var(--s3)}
+.pager{display:flex;gap:6px}.brk{word-break:break-all}
+/* banners / findings */
+.banner{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin:var(--s3) 0 4px}
+.banner p{margin:2px 0 0;color:var(--mute)}.banner .bstack{min-width:0}.banner .bact{display:flex;gap:8px;flex:none}
+.err{border-left:3px solid var(--bd);background:var(--bdb);padding:10px 14px;border-radius:0 var(--r-ctl) var(--r-ctl) 0}
+.err.wn{border-left-color:var(--wn);background:var(--wnb)}.err.ok{border-left-color:var(--ok);background:var(--okb)}
+.fix{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-left:3px solid var(--bd);border-radius:0 var(--r-ctl) var(--r-ctl) 0;background:var(--bdb);margin-bottom:8px}
+.fix.warn{border-left-color:var(--wn);background:var(--wnb)}.fix .sevdot{width:7px;height:7px;border-radius:50%;background:var(--bd);margin-top:7px;flex:none}.fix.warn .sevdot{background:var(--wn)}
+.fix .grow{flex:1;min-width:0}.fix .why{display:block;font-size:var(--fs-xs);color:var(--mute)}
+.guard{display:flex;gap:8px;align-items:center;color:var(--wn);font-size:var(--fs-xs);margin:10px 0}
+.irow{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line);align-items:flex-start}.irow:first-child{border-top:0}
+.irow .led{width:8px;height:8px;border-radius:50%;background:var(--ok);margin-top:6px;flex:none}.irow.off .led{background:var(--bd)}
+.irow b{font-weight:500}.irow .why{display:block;font-size:var(--fs-xs);color:var(--soft)}
+/* content groups: flat sections; only Overview panels are cards (independent content) */
+section[data-page=overview]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4);align-items:start}
+section[data-page=overview]>.head,section[data-page=overview]>.stats,section[data-page=overview]>#ov-banners,section[data-page=overview]>.blk:last-child{grid-column:1/-1}
+section[data-page=overview]>.stats{margin:0}section[data-page=overview]>#ov-banners:empty{display:none}
+section[data-page=overview]>.blk{margin-top:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-1);padding:16px 20px 20px}
+.blk+.blk,section:not([data-page=overview]) .blk{padding-top:var(--s5);border-top:1px solid var(--line)}
+section:not([data-page=overview]) .blk:first-of-type{padding-top:0;border-top:0}
+.blk .kv{max-width:none!important}.kv{margin:0}
+.kv div{display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line);gap:12px}.kv div:first-child{border-top:0}
+.kv dt{color:var(--mute)}.kv dd{margin:0;font-weight:500;font-variant-numeric:tabular-nums;text-align:right}.kv dd.left{text-align:left}
+.knob{display:flex;justify-content:space-between;gap:var(--s4);padding:10px 0;border-top:1px solid var(--line);align-items:baseline}
+.knob>div{min-width:0}.knob b{font-weight:500}.knob .help{display:block;font-size:var(--fs-xs);color:var(--soft)}
+.knob dd{display:flex;align-items:center;gap:8px;flex:none;margin:0}.knob .hint{font-size:var(--fs-xs);color:var(--soft)}
+.knob input[type=number],.knob input[type=text],.knob select{width:140px}.knob .dirty,.knob select.dirty{border-color:var(--wn);background:var(--wnb)}
+.mapknob td{padding:3px 6px 3px 0;border-top:0;height:auto}.ckgrp{font-size:var(--fs-xs);color:var(--soft);padding:10px 0 2px}
+.cklist label{display:flex;gap:8px;align-items:center;padding:5px 0}.cklist .xs{color:var(--soft)}
+.result{padding:14px 0;border-top:1px solid var(--line)}.result .row{display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap}
+.result .rhs{margin-left:auto;display:flex;gap:8px;align-items:center}.simlab{font-size:var(--fs-xs);color:var(--soft)}.result p{margin:0 0 4px;max-width:70ch}
+.cmt{padding:10px 0;border-top:1px solid var(--line)}.cmt .row{display:flex;gap:8px;align-items:center;margin-bottom:3px;font-size:var(--fs-xs);color:var(--soft);flex-wrap:wrap}
+.cmt .row b{color:var(--ink);font-weight:500}.cmt p{margin:0;white-space:pre-wrap;max-width:70ch}
+.log{display:flex;gap:10px;margin-bottom:6px}.log .m:first-child{color:var(--soft)}.log .s{margin-left:auto}
+.logpre{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:var(--hov);padding:12px;border-radius:var(--r-ctl);white-space:pre-wrap;word-break:break-word;margin:0;max-height:320px;overflow:auto}
+.chat{display:grid;grid-template-columns:240px minmax(0,1fr);border:1px solid var(--line);border-radius:var(--r-card);background:var(--card);overflow:hidden;margin-top:var(--s4)}
+.chat-side{border-right:1px solid var(--line);padding:10px;max-height:600px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.chat-session{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:none;border-radius:var(--r-ctl);font-weight:500}
+.chat-session:hover{background:var(--hov)}.chat-session.is-open{background:var(--brand-soft);color:var(--brand)}.chat-session .xs{display:block;font-weight:400;color:var(--soft)}
+.chat-main{padding:var(--s4);display:flex;flex-direction:column;gap:14px;min-width:0;max-height:600px;overflow:auto}
+.chat-msg{display:flex;gap:10px}.chat-msg .who{flex:none;width:44px;color:var(--soft);font-size:var(--fs-xs);padding-top:2px}
+.chat-msg .text{min-width:0;white-space:pre-wrap}.chat-msg--model .text{background:var(--hov);border-radius:var(--r-ctl);padding:8px 12px}
+.chat-proposal{border:1px solid var(--line);border-radius:var(--r-ctl);padding:12px;margin-bottom:8px}.chat-proposal-head{font-size:var(--fs-xs);color:var(--soft);margin-bottom:6px}
+.chat-proposal pre{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;background:var(--hov);padding:8px;border-radius:4px;overflow:auto;margin:0 0 8px;white-space:pre-wrap;word-break:break-word}
+.chat-proposal .row{display:flex;gap:8px}.chat-composer{display:flex;gap:8px;align-items:center;position:sticky;bottom:0;background:var(--card)}.chat-composer input{flex:1}
+/* inspector panel */
+.det{position:sticky;top:var(--topbar);background:var(--card);border-left:1px solid var(--line);height:calc(100vh - var(--topbar));overflow-y:auto;padding:var(--s5);display:flex;flex-direction:column;gap:var(--s5)}
+.det h2{margin:0 0 6px;font-size:var(--fs-md);font-weight:600;word-break:break-word}.det h3{margin:0 0 8px;font-size:var(--fs-xs);font-weight:500;color:var(--soft)}
+.det .acts{margin-top:auto;display:flex;gap:8px;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--line);position:sticky;bottom:calc(-1 * var(--s5));background:var(--card)}
+.overall-big{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+@media(max-width:1180px){.wrap{grid-template-columns:minmax(0,1fr)}.det{position:static;height:auto;border-left:0;border-top:1px solid var(--line)}
+.chat{grid-template-columns:1fr}.chat-side{border-right:0;border-bottom:1px solid var(--line);max-height:180px}.stats.s5{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){.shell{grid-template-columns:56px minmax(0,1fr)}.side{padding:12px 6px;align-items:center}
+.nav .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.nav em,.grp,.ws span,.side-foot span:last-child{display:none}
+.nav,.ws{justify-content:center;padding-left:0;padding-right:0}.nav{width:40px;min-height:40px}.nav.on::before{left:-6px}
+.stats,.stats.s3,.stats.s5{grid-template-columns:repeat(2,minmax(0,1fr))}.stats div:nth-child(odd){border-left:0}.stats div:nth-child(n+3){border-top:1px solid var(--line)}
+section[data-page=overview]{grid-template-columns:minmax(0,1fr)}.pane{padding:var(--s5) var(--s4) 56px}.top{padding:0 var(--s4)}.top .chips{display:none}.q.w,.q{width:100%}}
+@media(max-width:700px){body{padding-bottom:64px}.shell{grid-template-columns:minmax(0,1fr)}
+.side{position:fixed;inset:auto 0 0 0;top:auto;height:auto;z-index:20;flex-direction:row;justify-content:flex-start;gap:2px;overflow-x:auto;overflow-y:hidden;padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--nav-line)}
+.ws,.side-foot{display:none}.nav{flex-direction:column;gap:2px;width:auto;min-width:64px;min-height:48px;padding:6px 8px;font-size:11px;justify-content:center}
+.nav.on::before{left:8px;right:8px;top:0;bottom:auto;width:auto;height:3px;border-radius:0 0 3px 3px}.nav .lbl{position:static;width:auto;height:auto;clip:auto}
+.stats strong{font-size:20px}.knob{flex-direction:column;align-items:stretch;gap:6px}.knob dd{flex-wrap:wrap}.banner{flex-direction:column}.tt,.tt.w520{max-width:240px}.det{padding:var(--s4)}}
+@media(pointer:coarse){.btn,input[type=number],input[type=text],input[type=search],input[type=time],select{height:40px;font-size:16px}.btn.xs,.seg button,.facet{height:36px}input[type=checkbox]{width:20px;height:20px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+<symbol id="runs" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+<symbol id="queue" viewBox="0 0 24 24"><path d="M7 3h10M7 21h10M8 3v4a4 4 0 0 0 4 4 4 4 0 0 1 4 4v3M16 3v4a4 4 0 0 1-4 4 4 4 0 0 0-4 4v3"/></symbol>
+<symbol id="ideas" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></symbol>
+<symbol id="posts" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h10"/></symbol>
+<symbol id="nuggets" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></symbol>
+<symbol id="clusters" viewBox="0 0 24 24"><path d="M12 4v16M5 8l14 8M19 8L5 16"/></symbol>
+<symbol id="find" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+<symbol id="chat" viewBox="0 0 24 24"><path d="M4 6h16M4 11h16M4 16h10"/></symbol>
+<symbol id="sig" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+<symbol id="src" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+<symbol id="cfg" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+<symbol id="sched" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+<symbol id="doc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
+<symbol id="add" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+<symbol id="edge" viewBox="0 0 24 24"><path d="M12 5l9 15H3z"/><path d="M12 11v4"/><path d="M12 18h.01"/></symbol>
+</defs></svg>
+<div class="shell">
+  <aside class="side">
+    <div class="ws"><b>J</b><span>Jester</span></div>
+    <div class="grp">Pipeline</div>
+    <button class="nav on" data-page="overview" type="button"><svg class="i"><use href="#home"/></svg><span class="lbl">Overview</span></button>
+    <button class="nav" data-page="runs" type="button"><svg class="i"><use href="#runs"/></svg><span class="lbl">Runs</span><em>214</em></button>
+    <button class="nav" data-page="queue" type="button"><svg class="i"><use href="#queue"/></svg><span class="lbl">Queue</span><em>33</em></button>
+    <div class="grp">Archive</div>
+    <button class="nav" data-page="ideas" type="button"><svg class="i"><use href="#ideas"/></svg><span class="lbl">Ideas</span><em>1,321</em></button>
+    <button class="nav" data-page="posts" type="button"><svg class="i"><use href="#posts"/></svg><span class="lbl">Posts</span><em>402</em></button>
+    <button class="nav" data-page="nuggets" type="button"><svg class="i"><use href="#nuggets"/></svg><span class="lbl">Nuggets</span><em>31,818</em></button>
+    <button class="nav" data-page="clusters" type="button"><svg class="i"><use href="#clusters"/></svg><span class="lbl">Clusters</span><em>12</em></button>
+    <button class="nav" data-page="search" type="button"><svg class="i"><use href="#find"/></svg><span class="lbl">Search</span></button>
+    <div class="grp">Curation</div>
+    <button class="nav" data-page="chat" type="button"><svg class="i"><use href="#chat"/></svg><span class="lbl">Chat</span></button>
+    <div class="grp">the collector</div>
+    <button class="nav" data-page="signals" type="button"><svg class="i"><use href="#sig"/></svg><span class="lbl">Problem signals</span><em>96</em></button>
+    <div class="grp">Setup</div>
+    <button class="nav" data-page="sources" type="button"><svg class="i"><use href="#src"/></svg><span class="lbl">Sources</span><em>7</em></button>
+    <button class="nav" data-page="config" type="button"><svg class="i"><use href="#cfg"/></svg><span class="lbl">Config</span></button>
+    <button class="nav" data-page="schedule" type="button"><svg class="i"><use href="#sched"/></svg><span class="lbl">Schedule</span></button>
+    <div class="grp">Health</div>
+    <button class="nav" data-page="doctor" type="button"><svg class="i"><use href="#doc"/></svg><span class="lbl">Doctor</span><em>3</em></button>
+    <div class="grp">Mockup</div>
+    <button class="nav" data-page="states" type="button"><svg class="i"><use href="#edge"/></svg><span class="lbl">Edge cases</span></button>
+    <div class="side-foot"><span class="led"></span><span>console up</span></div>
+  </aside>
+  <div>
+    <div class="top"><span>Jester</span> / <b id="crumb">Overview</b>
+      <div class="r">
+        <span class="chips"><span class="m">db jester.db</span><span class="m">config jester</span><span class="s running">run active · 12 m</span></span>
+        <button class="btn g" id="theme" type="button">Dark mode</button>
+      </div></div>
+    <div class="wrap nodet" id="wrap">
+      <main class="pane" id="main">
+
+        <section data-page="overview">
+          <div class="head">
+            <div><h1>Overview</h1><p class="sub" id="ov-lede"></p></div>
+            <div class="acts">
+              <button class="btn g" type="button">live models</button>
+              <button class="btn g" type="button">ingest (mock data)</button>
+              <button class="btn p" type="button"><svg class="i"><use href="#runs"/></svg>run pipeline</button>
+            </div>
+          </div>
+          <div class="stats" id="kpis"></div>
+          <div class="stats s3" id="kpis-more"></div>
+          <div id="ov-banners"></div>
+          <div class="blk"><h2>Last run</h2><div id="last-run"></div></div>
+          <div class="blk"><h2>Fetch quota today</h2><div id="quota"></div></div>
+          <div class="blk"><h2>Infrastructure</h2><div id="infra"></div></div>
+        </section>
+
+        <section data-page="runs" hidden>
+          <div class="head">
+            <div><h1>Runs</h1><p class="sub">The pipeline ledger. Origin is the difference between what you pressed and what the host did at 4am.</p></div>
+            <div class="acts"><button class="btn p" type="button"><svg class="i"><use href="#runs"/></svg>run pipeline</button></div>
+          </div>
+          <div class="tool">
+            <span class="seg" id="runs-origin"></span>
+            <span class="sp"></span>
+            <span class="soft xs" id="runs-shown"></span>
+          </div>
+          <div class="tw"><table id="runs-table">
+            <thead><tr><th>Started</th><th>Status</th><th class="n">Kept / ideas</th><th class="n">Duration</th><th>Origin</th><th>Mix</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </section>
+
+        <section data-page="queue" hidden>
+          <div class="head">
+            <div><h1>Queue</h1><p class="sub">What has been scraped and not yet treated. Ingestion and treatment run on separate clocks, so the gap is a standing state, not a moment.</p></div>
+            <div class="acts"><button class="btn g" type="button">treat now</button></div>
+          </div>
+          <div class="tool">
+            <span class="seg" id="queue-kind"></span>
+            <span class="seg" id="queue-status"></span>
+          </div>
+          <div id="queue-treatment"></div>
+          <div class="blk"><h2>Where the waiting work came from</h2><div id="queue-mix"></div></div>
+          <div class="tw"><table id="queue-table">
+            <thead><tr><th>#</th><th>Source</th><th class="n">Comments</th><th>Queued</th><th>Run</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="foot2"><span id="queue-shown"></span><span id="queue-count"></span></div>
+        </section>
+
+        <section data-page="ideas" hidden>
+          <div class="head">
+            <div><h1>Ideas</h1><p class="sub">Synthesized ideas with scores and evidence. Select one to inspect it.</p></div>
+            <div class="acts"><button class="btn p" type="button"><svg class="i"><use href="#add"/></svg>resynth all</button></div>
+          </div>
+          <div class="tool">
+            <label class="q"><svg class="i"><use href="#find"/></svg><input type="search" placeholder="Filter ideas" aria-label="Filter ideas"></label>
+            <span class="sp"></span>
+            <span class="seg" id="ideas-filter"></span>
+          </div>
+          <div id="ideas-note"></div>
+          <div class="tw"><table id="ideas-table">
+            <thead><tr><th data-sort="title">Idea</th><th class="n" data-sort="overall" aria-sort="descending">Overall ↓</th><th class="n">Demand · feas · comp</th><th>Status</th><th class="n">Evidence</th><th class="n" data-sort="created_at">Created</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="foot2"><span id="ideas-shown"></span><span class="pager" id="ideas-pager"></span></div>
+        </section>
+
+        <section data-page="posts" hidden>
+          <div class="head" id="posts-headrow">
+            <div><h1>Posts</h1><p class="sub">Source posts and how much of each thread the archive holds.</p></div>
+          </div>
+          <div class="tool" id="posts-tools">
+            <span class="seg" id="posts-view"></span>
+            <span class="sp"></span>
+            <span class="seg" id="posts-sort"></span>
+          </div>
+          <div id="posts-list">
+            <div class="tw"><table id="posts-table">
+              <thead><tr><th>Post</th><th>Where</th><th class="n">Comments held</th><th class="n">Posted</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+            <div class="foot2"><span id="posts-shown"></span><span class="pager" id="posts-pager"></span></div>
+          </div>
+          <div id="post-detail" hidden></div>
+        </section>
+
+        <section data-page="nuggets" hidden>
+          <div class="head">
+            <div><h1>Nuggets</h1><p class="sub">Extracted pain signals, deduplicated. Facets narrow the table; counts are per facet value.</p></div>
+          </div>
+          <div class="facetbar" id="nug-facets"></div>
+          <div class="tw"><table id="nuggets-table">
+            <thead><tr><th>Insight</th><th>From</th><th>Category</th><th>Flags</th><th class="n">Kept</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="foot2"><span id="nuggets-shown"></span><span class="pager" id="nuggets-pager"></span></div>
+        </section>
+
+        <section data-page="clusters" hidden>
+          <div class="head">
+            <div><h1>Clusters</h1><p class="sub">Nuggets grouped by theme. Select one to open the cluster workspace.</p></div>
+          </div>
+          <div class="tw"><table id="clu-table">
+            <thead><tr><th>Theme</th><th class="n">Nuggets</th><th>Tone</th><th>Flags</th><th>Idea</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </section>
+
+        <section data-page="search" hidden>
+          <div class="head">
+            <div><h1>Search</h1><p class="sub">Ask the archive. Results are nuggets ranked by similarity to your query.</p></div>
+          </div>
+          <div class="tool" style="margin-top:16px">
+            <label class="q w"><svg class="i"><use href="#find"/></svg><input type="search" id="search-input" placeholder='Try "backups fail silently" — press / from anywhere' aria-label="Search the archive"></label>
+          </div>
+          <div class="facetbar" id="search-examples"></div>
+          <div class="facetbar" id="search-recents"></div>
+          <div class="facetbar" id="search-facets"></div>
+          <div id="search-results"></div>
+          <div class="foot2"><span id="search-count"></span></div>
+        </section>
+
+        <section data-page="chat" hidden>
+          <div class="head">
+            <div><h1>Chat</h1><p class="sub">Operator chat with the pipeline. The model proposes; apply and reject run as you.</p></div>
+          </div>
+          <div class="chat">
+            <div class="chat-side" id="chat-sessions"></div>
+            <div class="chat-main">
+              <div id="chat-transcript"></div>
+              <div id="chat-pending"></div>
+              <p class="xs soft" id="chat-state"></p>
+              <div class="chat-composer">
+                <input type="text" id="chat-input" placeholder="Ask the pipeline something…" aria-label="Chat message">
+                <button class="btn p" id="chat-send" type="button">send</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section data-page="signals" hidden>
+          <div class="head">
+            <div><h1>Problem signals</h1><p class="sub">The collector’s own ledger. Live and synthetic counts are split, never summed.</p></div>
+            <div class="acts"><button class="btn p" type="button">run now</button></div>
+          </div>
+          <div class="stats" id="signals-tiles"></div>
+          <p class="xs soft" id="signals-synth" style="margin:8px 0 0"></p>
+          <div class="blk"><h2>Jobs scraper</h2><p class="x">Scrapes “who’s hiring” threads on a cadence. This schedule is separate from the pipeline schedule.</p>
+            <div id="scraper"></div>
+          </div>
+          <div class="blk"><h2>Scraper runs</h2>
+            <div class="tw"><table id="signals-runs">
+              <thead><tr><th>Started</th><th>Kind</th><th>Source</th><th class="n">Collected</th><th class="n">New</th><th class="n">Buyer</th><th class="n">Errors</th><th>Status</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div>
+          <div class="blk"><h2>Records</h2><p class="x" id="sig-path"></p>
+            <div class="facetbar" id="sig-facets"></div>
+            <div class="tw"><table id="signals-records">
+              <thead><tr><th>Record</th><th>Audience</th><th class="n">Confidence</th><th>Why it was kept</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+            <div class="foot2"><span id="signals-shown"></span><span class="pager" id="signals-pager"></span></div>
+          </div>
+        </section>
+
+        <section data-page="sources" hidden>
+          <div class="head">
+            <div><h1>Sources</h1><p class="sub">The curated ingest list the live worker walks. Changes are written to sources.yaml immediately.</p></div>
+            <div class="acts"><button class="btn p" type="button"><svg class="i"><use href="#add"/></svg>add source</button></div>
+          </div>
+          <div class="tool">
+            <select id="src-platform" aria-label="Platform"></select>
+            <input type="text" id="src-url" placeholder="link — platform is detected from it" style="width:320px">
+            <input type="text" id="src-name" placeholder="name (optional)" style="width:180px">
+            <button class="btn" type="button">add</button>
+          </div>
+          <div class="soft xs" id="src-hint" style="margin:0 0 8px"></div>
+          <div class="row2" style="margin-bottom:6px"><span class="soft xs" id="src-count"></span><span class="m soft" id="src-path"></span></div>
+          <div class="tw"><table id="src-table">
+            <thead><tr><th>On</th><th>Name</th><th>Kind</th><th>Target</th><th>Fetch</th><th>Fetched</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </section>
+
+        <section data-page="config" hidden>
+          <div class="head">
+            <div><h1>Config</h1><p class="sub">Pipeline knobs, grouped by stage. Amber border marks an unsaved change.</p></div>
+            <div class="acts"><button class="btn g" type="button">test models</button><button class="btn p" type="button">save</button></div>
+          </div>
+          <div id="cfg-groups"></div>
+          <div class="err wn banner" id="cfg-savebar" style="margin-top:16px">
+            <div class="bstack"><b id="cfg-dirty"></b><p>Changes apply on the next run, not to running jobs.</p></div>
+            <div class="bact"><button class="btn" type="button">discard</button><button class="btn p" type="button">save</button></div>
+          </div>
+          <div class="blk"><h2>Agent models</h2><p class="x">Per-role override of the default provider.</p>
+            <div id="cfg-models"></div>
+          </div>
+          <div class="blk"><h2>Jobs scraper</h2><div class="kv" id="cfg-scraper" style="max-width:480px"></div></div>
+          <div class="blk"><h2>Environment</h2><div class="kv" id="cfg-env" style="max-width:480px"></div></div>
+        </section>
+
+        <section data-page="schedule" hidden>
+          <div class="head">
+            <div><h1>Schedule</h1><p class="sub">The host scheduler runs the full loop with this console closed.</p></div>
+            <div class="acts"><button class="btn g" type="button">remove</button><button class="btn p" type="button">run it now</button></div>
+          </div>
+          <div id="sched-banner"></div>
+          <div class="blk"><h2>State</h2><div class="kv" id="sched-state" style="max-width:560px"></div></div>
+          <div class="blk"><h2>Recent activity</h2><div class="stats s5" id="sched-kpis"></div></div>
+          <div class="blk"><h2>Scope</h2><p class="x" id="sched-sources-hint"></p>
+            <div class="cklist" id="sched-sources"></div>
+            <div class="row2" style="max-width:420px;margin-top:8px">
+              <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="sched-select-all"> <span>all sources</span></label>
+              <span class="xs soft" id="sched-selected-count"></span>
+            </div>
+            <div class="knob" style="max-width:480px;margin-top:8px"><div><b>caps</b><span class="help">what one scheduled run may fetch</span></div>
+              <dd><input type="number" id="sched-max-posts" style="width:80px" aria-label="max posts"><span class="hint">posts</span>
+                  <input type="number" id="sched-max-comments" style="width:80px" aria-label="max comments"><span class="hint">comments</span>
+                  <input type="number" id="sched-max-ideas" style="width:80px" aria-label="max ideas"><span class="hint">ideas</span></dd></div>
+          </div>
+          <div class="blk"><h2>Cadence</h2>
+            <div class="tool" style="margin-bottom:8px"><span class="facet-lab">presets</span><span class="seg" id="sched-presets"></span></div>
+            <div class="tool" style="margin-bottom:0"><input type="number" id="sched-every" style="width:110px" aria-label="every N minutes"><span class="soft xs">minutes</span>
+              <button class="btn" type="button">install every-N</button>
+              <input type="time" id="sched-at" value="04:00" aria-label="daily at"><button class="btn" type="button">install daily-at</button></div>
+          </div>
+          <div class="blk"><h2>Recent ticks</h2>
+            <div class="tw"><table id="sched-ticks-table">
+              <thead><tr><th>Started</th><th>Run</th><th>Status</th><th class="n">Comments</th><th class="n">Nuggets</th><th class="n">Ideas</th></tr></thead>
+              <tbody id="sched-ticks"></tbody>
+            </table></div>
+          </div>
+          <div class="blk"><h2>Scheduler log</h2><pre class="logpre" id="sched-log"></pre></div>
+        </section>
+
+        <section data-page="doctor" hidden>
+          <div class="head">
+            <div><h1>Doctor</h1><p class="sub">Silent-degradation guard: checks that the pipeline is quietly doing less than it looks.</p></div>
+          </div>
+          <div id="doctor-card" style="margin-top:16px"></div>
+          <div class="blk"><h2>Eval gate</h2><p class="x">Regression suite over the idea scorer. Failures block nothing but are loud.</p>
+            <div class="row2" style="max-width:560px"><span class="s failed" id="eval-badge">FAIL</span><button class="btn g" id="eval-rerun" type="button">re-run</button></div>
+            <div id="eval-info"></div>
+          </div>
+        </section>
+
+        <section data-page="states" hidden>
+          <div class="head">
+            <div><h1>Edge cases</h1><p class="sub">Mockup-only page: the states every other page must keep legible.</p></div>
+          </div>
+          <div class="blk"><h2>Empty table</h2><p class="x">A filtered list with no rows keeps its shape and offers the way back.</p>
+            <div class="tw"><table>
+              <thead><tr><th>Run</th><th>Started</th><th>Status</th><th class="n">Kept</th></tr></thead>
+              <tbody><tr><td colspan="4" class="empty" id="st-empty"></td></tr></tbody>
+            </table></div>
+          </div>
+          <div class="blk"><h2>Error state</h2><p class="x">Errors say what failed, what it means, and the one action available.</p>
+            <div id="st-err"></div>
+          </div>
+          <div class="blk"><h2>Long text</h2><p class="x">A long quote and an unbroken URL wrap; they never widen the page.</p>
+            <div id="st-long"></div>
+          </div>
+          <div class="blk"><h2>Missing evidence</h2><p class="x">Data that cannot be fetched is said, not hidden.</p>
+            <div id="st-miss"></div>
+          </div>
+          <div class="blk"><h2>Zero counts</h2><p class="x">Zero is a fact, not an alarm — it stays neutral.</p>
+            <div class="stats" id="st-zero"></div>
+          </div>
+          <div class="blk"><h2>Loading</h2><p class="x" id="st-load"></p></div>
+        </section>
+      </main>
+      <aside class="det" id="det" aria-live="polite"></aside>
+    </div>
+  </div>
+</div>
+<script src="mocks/console-mock-data.js"></script>
+<script>
+'use strict';
+const M = window.JESTER_MOCK;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n).toLocaleString('en-US');
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function when(s){ const d = new Date(s); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; }
+function ago(s){ const t = (new Date(s) - new Date(M.meta.now)) / 1000;
+  if (!Number.isFinite(t) || t < 60) return 'just now';
+  if (t < 3600) return Math.round(t / 60) + ' min ago';
+  if (t < 86400) return Math.round(t / 3600) + ' h ago';
+  return Math.round(t / 86400) + ' days ago'; }
+
+const TITLES = { overview:'Overview', runs:'Runs', queue:'Queue', ideas:'Ideas', posts:'Posts', nuggets:'Nuggets',
+  clusters:'Clusters', search:'Search', chat:'Chat', signals:'Problem signals', sources:'Sources',
+  config:'Config', schedule:'Schedule', doctor:'Doctor', states:'Edge cases' };
+const RUN_STATUS = { running:'running', queued:'queued', completed:'done', failed:'failed' };
+const SHADES = ['1','.75','.55','.4','.3','.22','.16','.12'];
+const FLAG_LABEL = { DEDUP_UNAVAILABLE:'dedup down', QUOTA_EXHAUSTED:'quota spent', LOW_NUGGETS:'nothing new' };
+
+let page = 'overview';
+let selRun = null, selIdea = null, selCluster = null, selBatch = null;
+let runsOrigin = 'all';
+let queueKind = 'comment', queueStatus = 'pending';
+let ideasFilter = 'all';
+let postsView = 'signal', postsSort = 'top';
+let nugPlatform = '', nugCommunity = '', nugCategory = '';
+let folded = new Set(); // folded source platforms
+
+function go(p){
+  page = p;
+  document.querySelectorAll('main.pane > section[data-page]').forEach(s => { s.hidden = s.dataset.page !== p; });
+  document.querySelectorAll('.nav[data-page]').forEach(b => b.classList.toggle('on', b.dataset.page === p));
+  $('crumb').textContent = TITLES[p];
+  document.title = TITLES[p] + ' — Jester';
+  updateDet();
+  window.scrollTo(0, 0);
+}
+
+function updateDet(){
+  const want = (page === 'runs' && selRun) || (page === 'ideas' && selIdea !== null) ||
+               (page === 'clusters' && selCluster !== null) || (page === 'queue' && selBatch);
+  $('wrap').classList.toggle('nodet', !want);
+  if (!want){ $('det').innerHTML = ''; return; }
+  if (page === 'runs') renderRunDet();
+  else if (page === 'ideas') renderIdeaDet();
+  else if (page === 'clusters') renderClusterDet();
+  else if (page === 'queue') renderBatchDet();
+}
+
+function statsInto(el, cells){
+  el.innerHTML = cells.map(c =>
+    `<div><span>${esc(c.label)}</span><strong>${esc(c.value)}</strong>` +
+    (c.spark ? spark(c.spark) : '') +
+    `<small${c.tone ? ` class="${c.tone}"` : ''}>${esc(c.note || '')}</small></div>`
+  ).join('');
+}
+function spark(values){
+  const w = 120, h = 28, pad = 4, n = values.length;
+  const max = Math.max(...values, 1);
+  const pts = values.map((v, i) =>
+    `${(i / (n - 1) * w).toFixed(1)},${(h - pad - (v / max) * (h - pad * 2)).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}"/><polyline points="${pts}"/></svg>`;
+}
+function pagerHTML(){
+  return `<button class="btn xs" type="button" disabled>&lsaquo; prev</button><button class="btn xs" type="button" disabled>next &rsaquo;</button>`;
+}
+function meterHTML(entries, total){
+  return `<div class="meter">${entries.map(([k, v], i) =>
+    `<i style="width:${(v / total * 100).toFixed(2)}%;background:var(--ink);opacity:${SHADES[i] || '.1'}" title="${esc(k)} ${fmt(v)}"></i>`).join('')}</div>` +
+    `<div class="meter-legend">${entries.map(([k, v], i) =>
+    `<span><i style="background:var(--ink);opacity:${SHADES[i] || '.1'}"></i>${esc(k)} <span class="num">${fmt(v)}</span></span>`).join('')}</div>`;
+}
+function zeroYieldWhy(r){
+  if (r.status !== 'completed' || Number(r.n_nuggets_kept) > 0) return '';
+  const f = r.floor_flags_list || [];
+  return f.includes('DEDUP_UNAVAILABLE') ? 'dedup down'
+    : f.includes('QUOTA_EXHAUSTED') ? 'quota spent'
+    : f.includes('LOW_NUGGETS') ? 'nothing new'
+    : Number(r.n_comments) === 0 ? 'nothing fetched' : '';
+}
+
+/* ── overview ─────────────────────────────────────────────────────── */
+function drawOverview(){
+  const c = M.counts, t = M.trends, o = M.overview;
+  const today = k => t[k][t[k].length - 1], sum = k => t[k].reduce((a, b) => a + Number(b), 0);
+  const bits = [
+    today('nuggets') ? `+${fmt(today('nuggets'))} nuggets today` : 'no new nuggets today',
+    today('ideas') ? `+${today('ideas')} idea(s) today` : 'no new ideas today',
+  ];
+  if (today('bad_runs')) bits.push(`${today('bad_runs')} run(s) ended badly`);
+  $('ov-lede').textContent = bits.join(' · ') + '.';
+
+  statsInto($('kpis'), [
+    { label:'nuggets', value:fmt(c.nuggets), spark:t.nuggets, note:`+${fmt(today('nuggets'))} today · ${fmt(sum('nuggets'))} this week`, tone:'up' },
+    { label:'ideas', value:fmt(c.ideas), spark:t.ideas, note:'none this week — see Runs', tone:'' },
+    { label:'pending batches', value:fmt(c.pending), spark:t.queued, note:`${fmt(today('queued'))} queued today`, tone:'' },
+    { label:'failed batches', value:fmt(M.queue.totals.failed), spark:t.bad_runs, note:`${sum('bad_runs')} bad run(s) this week`, tone:'bd' },
+  ]);
+  statsInto($('kpis-more'), [
+    { label:'reembed backlog', value:'7', note:'skipped by dedup and search', tone:'bd' },
+    { label:'unprocessed', value:'412', note:'fetched, not extracted', tone:'' },
+    { label:'runs active', value:'1', note:'the 04:00 cycle', tone:'up' },
+  ]);
+
+  $('ov-banners').innerHTML = o.banners.map(b =>
+    `<div class="err${b.tone ? ' ' + b.tone : ''} banner"><div class="bstack"><b>${esc(b.head)}</b><p>${esc(b.body)}</p></div>` +
+    (b.next ? `<div class="bact"><button class="btn" type="button"${b.next.go ? ` data-goto="${b.next.go}"` : ''}>${esc(b.next.label)}</button></div>` : '') + `</div>`).join('');
+
+  const lr = o.last_run;
+  $('last-run').innerHTML = `<span class="s ${RUN_STATUS[lr.status] || lr.status}">${lr.status}</span>
+    <dl class="kv" style="max-width:560px;margin-top:8px">
+      <div><dt>run</dt><dd class="m">${esc(lr.run_id)}</dd></div>
+      <div><dt>started</dt><dd>${when(lr.started_at)} <span class="xs soft">${ago(lr.started_at)}</span></dd></div>
+      <div><dt>kept / ideas</dt><dd>${fmt(lr.n_nuggets_kept)} / ${fmt(lr.n_ideas)}${zeroYieldWhy(lr) ? ' — ' + esc(zeroYieldWhy(lr)) : ''}</dd></div>
+      <div><dt>duration</dt><dd>${Number(lr.duration_actual_s).toFixed(1)}s <span class="xs soft">expected ${Number(lr.duration_expected_s).toFixed(1)}s</span></dd></div>
+    </dl>
+    <p style="margin:8px 0 0"><button class="btn g" type="button" data-goto="runs">all runs ›</button></p>`;
+
+  const q = o.quota;
+  const used = Object.entries(q.used_by_platform).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  $('quota').innerHTML = `<div class="row2" style="max-width:560px"><b style="font-size:16px;font-variant-numeric:tabular-nums">${fmt(q.used_total)}</b><span class="m soft">${esc(q.day_key)}</span></div>
+    <div style="max-width:560px;margin-top:8px">${meterHTML(used, q.used_total)}</div>`;
+
+  const i = o.infra;
+  const rows = [
+    [i.ollama.up, 'Ollama', i.ollama.up ? `${i.ollama.models.length} model(s) · local models and embeddings` : 'down — live extraction and embeddings fall back to the deterministic stand-in'],
+    [i.cloakserve_9222, 'cloakserve :9222', i.cloakserve_9222 ? 'browser scraping available' : 'down — Reddit, YouTube and real-estate sources are skipped'],
+    [i.vectors.usable, 'Vectors', `${i.vectors.store} · ${i.vectors.dim} dim`],
+    [i.worker_go_available, 'Go worker', i.worker_go_available ? i.go_bin : 'not found — nothing can be fetched'],
+  ];
+  $('infra').innerHTML = rows.map(([up, name, why]) =>
+    `<div class="irow${up ? '' : ' off'}"><span class="led"></span><span style="min-width:0"><b>${esc(name)}</b><span class="why">${esc(why)}</span></span></div>`).join('') +
+    `<p class="xs soft" style="margin:8px 0 0">${i.cached ? 'checked within the last 30 s' : 'checked just now'} · <button class="btn xs" type="button">re-check</button></p>`;
+}
+
+/* ── runs ─────────────────────────────────────────────────────────── */
+function drawRuns(){
+  const counts = { all: M.runs.rows.length };
+  for (const r of M.runs.rows){ counts[r.origin] = (counts[r.origin] || 0) + 1; }
+  const opts = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+  $('runs-origin').innerHTML = opts.map(o =>
+    `<button data-o="${o}" aria-pressed="${runsOrigin === o}">${o}<span class="num">${counts[o]}</span></button>`).join('');
+  const rows = M.runs.rows.filter(r => runsOrigin === 'all' || r.origin === runsOrigin);
+  $('runs-shown').textContent = `Showing ${rows.length} of ${fmt(M.counts.runs)} runs · newest first`;
+  $('runs-table').tBodies[0].innerHTML = rows.map(r => {
+    const ratio = r.duration_actual_s ? Math.min(1, r.duration_actual_s / r.duration_expected_s) : null;
+    const mix = Object.entries(r.platform_counts_obj || {});
+    const mixTotal = mix.reduce((a, [, v]) => a + v, 0);
+    const flags = (r.floor_flags_list || []).map(f => `<span class="chip warn">${esc(FLAG_LABEL[f] || f)}</span>`).join('');
+    const err = r.error ? `<span class="chip bad">error</span>` : '';
+    return `<tr data-run="${esc(r.run_id)}" tabindex="0" class="${r.run_id === selRun ? 'sel' : ''}">
+      <td class="stack2"><span>${ago(r.started_at)}</span><span class="xs soft">${fmt(r.n_posts)} posts · <span class="m">${esc(r.run_id.slice(6, 22))}…</span></span></td>
+      <td><span class="s ${RUN_STATUS[r.status]}">${r.status}</span></td>
+      <td class="n stack2"><span>${fmt(r.n_nuggets_kept)} / ${fmt(r.n_ideas)}</span>${zeroYieldWhy(r) ? `<span class="xs soft">${esc(zeroYieldWhy(r))}</span>` : ''}</td>
+      <td class="n stack2"><span>${r.duration_actual_s ? Number(r.duration_actual_s).toFixed(1) + 's' : '—'}</span>
+        <span class="xs soft">${ratio != null ? `<span class="ratio"><i style="width:${Math.round(ratio * 100)}%"></i></span>exp ${Number(r.duration_expected_s).toFixed(0)}s` : 'exp ' + Number(r.duration_expected_s).toFixed(0) + 's'}</span></td>
+      <td><span class="chip">${esc(r.origin)}</span></td>
+      <td><div class="stack2"><span class="sigbar">${mix.map(([k, v], i) => `<i style="width:${mixTotal ? (v / mixTotal * 100).toFixed(1) : 0}%;opacity:${SHADES[i] || '.1'}" title="${esc(k)} ${fmt(v)}"></i>`).join('')}</span>
+        ${(flags || err) ? `<span class="chiprow">${flags}${err}</span>` : ''}</div></td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">No ${esc(runsOrigin)} runs yet.</td></tr>`;
+}
+
+function renderRunDet(){
+  const r = M.runs.rows.find(x => x.run_id === selRun);
+  if (!r) return;
+  const mix = Object.entries(r.platform_counts_obj || {});
+  const mixTotal = mix.reduce((a, [, v]) => a + v, 0);
+  $('det').innerHTML = `<div><h2 class="m" style="font-size:13px">${esc(r.run_id)}</h2><span class="s ${RUN_STATUS[r.status]}">${r.status}</span></div>
+  <div><h3>Details</h3><dl class="kv">
+    <div><dt>started</dt><dd>${when(r.started_at)} <span class="xs soft">${ago(r.started_at)}</span></dd></div>
+    <div><dt>posts / comments</dt><dd>${fmt(r.n_posts)} / ${fmt(r.n_comments)}</dd></div>
+    <div><dt>kept / ideas</dt><dd>${fmt(r.n_nuggets_kept)} / ${fmt(r.n_ideas)}${zeroYieldWhy(r) ? ' — ' + esc(zeroYieldWhy(r)) : ''}</dd></div>
+    <div><dt>duration</dt><dd>${r.duration_actual_s ? Number(r.duration_actual_s).toFixed(1) + 's' : '—'} <span class="xs soft">exp ${Number(r.duration_expected_s).toFixed(0)}s</span></dd></div>
+    <div><dt>origin</dt><dd>${esc(r.origin)}</dd></div></dl></div>
+  ${mix.length ? `<div><h3>Platform mix</h3><div class="sigbar">${mix.map(([k, v], i) => `<i style="width:${(v / mixTotal * 100).toFixed(1)}%;opacity:${SHADES[i] || '.1'}" title="${esc(k)} ${fmt(v)}"></i>`).join('')}</div>
+    <div class="meter-legend">${mix.map(([k, v]) => `<span>${esc(k)} <span class="num">${fmt(v)}</span></span>`).join('')}</div></div>` : ''}
+  ${r.prefilter_funnel_obj && r.prefilter_funnel_obj.length ? `<div><h3>Prefilter funnel</h3><dl class="kv">${r.prefilter_funnel_obj.map(([k, v]) =>
+    `<div><dt>${esc(k)}</dt><dd>${fmt(v)}</dd></div>`).join('')}</dl></div>` : ''}
+  ${r.phases && r.phases.length ? `<div><h3>Phase checkpoints</h3>${r.phases.map(p =>
+    `<div class="log"><span class="m">${esc(p[2])}</span><span>${esc(p[0])}</span><span class="s ${p[1] === 'ok' ? 'done' : p[1] === 'failed' ? 'failed' : p[1] === 'running' ? 'running' : 'queued'}">${esc(p[1])}</span></div>`).join('')}</div>` : ''}
+  ${r.models && Object.keys(r.models).length ? `<div><h3>Models</h3><dl class="kv">${Object.entries(r.models).map(([k, v]) =>
+    `<div><dt>${esc(k)}</dt><dd class="m">${esc(v)}</dd></div>`).join('')}
+    ${Object.entries(r.prompt_versions || {}).map(([k, v]) => `<div><dt>prompt ${esc(k)}</dt><dd class="m">${esc(v)}</dd></div>`).join('')}</dl></div>` : ''}
+  ${(r.floor_flags_list || []).length ? `<div><h3>Floor flags</h3><div class="chiprow">${r.floor_flags_list.map(f => `<span class="chip warn">${esc(FLAG_LABEL[f] || f)}</span>`).join('')}</div></div>` : ''}
+  ${(r.top_near_misses_list || []).length ? `<div><h3>Top near-misses</h3><div class="chiprow">${r.top_near_misses_list.map(v => `<span class="chip">${Number(v).toFixed(2)}</span>`).join('')}</div></div>` : ''}
+  ${r.error ? `<div><h3>Error</h3><div class="err">${esc(r.error)}</div></div>` : ''}
+  <div class="acts">${r.status === 'failed' ? '<button class="btn p" type="button">requeue</button>' : ''}</div>`;
+}
+
+/* ── queue ────────────────────────────────────────────────────────── */
+function drawQueue(){
+  $('queue-kind').innerHTML = Object.entries({ comment:'comments', listing:'listings' }).map(([k, label]) =>
+    `<button data-kind="${k}" aria-pressed="${queueKind === k}">${label}<span class="num">${fmt((M.queue.by_kind[k] || {}).batches || 0)}</span></button>`).join('');
+  $('queue-status').innerHTML = ['pending', 'failed', 'done'].map(s =>
+    `<button data-qs="${s}" aria-pressed="${queueStatus === s}">${s}<span class="num">${fmt(M.queue.totals[s] || 0)}</span></button>`).join('');
+  const t = M.queue.treatment;
+  $('queue-treatment').innerHTML = t.blocked
+    ? `<div class="err wn banner"><div class="bstack"><b>quota block — ${esc(t.blocks[0].provider)} out of quota for ${esc(t.blocks[0].human)}, until ${when(t.blocks[0].blocked_until)}</b><p>${esc(t.blocks[0].reason)}. ${esc(t.note)}</p></div></div>`
+    : `<div class="err ok banner"><div class="bstack"><b>clear</b><p>No model is rate-limited — treatment drains this queue on its own schedule.</p></div></div>`;
+  $('queue-mix').innerHTML = M.queue.mix.map(r => {
+    const share = Math.round(r.comments / M.queue.total_comments * 100);
+    return `<div class="qmix"><span class="chip" style="min-width:96px;text-align:center">${esc(r.platform)}</span>
+      <div class="qbar"><i style="width:${share}%"></i></div>
+      <span class="xs m soft">${fmt(r.comments)} · ${r.batches} batch(es) · ${share}%</span></div>`;
+  }).join('');
+  const rows = M.queue.batches.filter(b => b.status === queueStatus && (queueKind === 'comment' ? b.kind !== 'listing' : b.kind === 'listing'));
+  $('queue-table').tBodies[0].innerHTML = rows.map(b => {
+    const n = b.n_comments == null ? `<span class="chip bad">unreadable</span>` : `<span class="m">${fmt(b.n_comments)}</span>`;
+    return `<tr data-batch="${esc(b.id)}" tabindex="0" class="${b.id === selBatch ? 'sel' : ''}">
+      <td class="m xs">${esc(b.id)}</td>
+      <td class="stack2"><span class="chip">${esc(b.platform)}</span><span class="xs soft tt" style="max-width:260px">${esc(b.thread_id || b.source)}</span></td>
+      <td class="n">${n}</td>
+      <td class="xs">${ago(b.created_at)}</td>
+      <td class="m xs">${b.run_id ? esc(b.run_id.slice(6, 22)) + '…' : ''}</td>
+      <td class="stack2"><span class="s ${b.status === 'failed' ? 'failed' : b.status === 'done' ? 'done' : 'queued'}">${b.status}</span>${b.attempts ? `<span class="xs soft">${b.attempts} attempt(s)</span>` : ''}</td>
+      <td><button class="btn xs" type="button">open</button></td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="empty">No ${queueKind === 'comment' ? 'comment' : 'listing'} batches ${esc(queueStatus)} in the queue. <button class="btn g" type="button" data-goto="overview">ingest from Overview</button></td></tr>`;
+  $('queue-shown').textContent = `${fmt(M.queue.total_batches)} batch(es) · ${fmt(M.queue.total_comments)} comment(s) · showing the oldest ${M.queue.shown}`;
+  $('queue-count').textContent = ['pending', 'failed', 'done'].map(s => `${s} ${fmt(M.queue.totals[s] || 0)}`).join(' · ');
+}
+
+function renderBatchDet(){
+  const b = M.queue.batches.find(x => x.id === selBatch);
+  if (!b) return;
+  const comments = (M.queue.comments[b.id] || []);
+  $('det').innerHTML = `<div><h2 class="m" style="font-size:13px">${esc(b.id)}</h2><span class="s ${b.status === 'failed' ? 'failed' : b.status === 'done' ? 'done' : 'queued'}">${b.status}</span></div>
+  <div><h3>Batch</h3><dl class="kv">
+    <div><dt>platform</dt><dd>${esc(b.platform)}</dd></div>
+    <div><dt>source</dt><dd>${esc(b.source)}</dd></div>
+    <div><dt>thread</dt><dd class="m">${esc(b.thread_id)}</dd></div>
+    <div><dt>comments</dt><dd>${b.n_comments == null ? 'unreadable' : fmt(b.n_comments)}</dd></div>
+    <div><dt>queued</dt><dd>${ago(b.created_at)}</dd></div>
+    <div><dt>run</dt><dd class="m">${esc(b.run_id || '—')}</dd></div>
+    ${b.attempts ? `<div><dt>attempts</dt><dd>${b.attempts}</dd></div>` : ''}</dl></div>
+  ${b.error ? `<div><h3>Error</h3><div class="err">${esc(b.error)}</div></div>` : ''}
+  <div><h3>Comments in batch</h3>${comments.length ? comments.map(c =>
+    `<div class="cmt"><div class="row"><b>${esc(c.author)}</b><span class="num">${ago(c.created_at)}</span>
+      ${c.trivial ? '<span class="chip warn">trivial</span>' : `<span class="chip">${esc(c.category)}</span>`}</div>
+      <p>${esc(c.text)}</p></div>`).join('')
+    : b.n_comments === null ? '<p class="soft" style="margin:0">JSON unreadable — no comment list.</p>' : '<p class="soft" style="margin:0">No comments stored.</p>'}</div>
+  <div class="acts">${b.status === 'failed' ? '<button class="btn p" type="button">requeue batch</button>' : ''}</div>`;
+}
+
+/* ── ideas ────────────────────────────────────────────────────────── */
+function drawIdeas(){
+  const I = M.ideas;
+  $('ideas-filter').innerHTML = ['all', ...Object.keys(I.status_counts)].map(s =>
+    `<button data-f="${s}" aria-pressed="${ideasFilter === s}">${s}<span class="num">${s === 'all' ? fmt(I.total) : fmt(I.status_counts[s])}</span></button>`).join('');
+  $('ideas-note').innerHTML = I.note
+    ? `<div class="err wn banner"><div class="bstack"><b>${esc(I.note.head)}</b><p>${esc(I.note.body)}</p></div></div>` : '';
+  const rows = I.rows.filter(r => ideasFilter === 'all' || r.status === ideasFilter);
+  $('ideas-table').tBodies[0].innerHTML = rows.map(r => {
+    const idx = M.ideas.rows.indexOf(r);
+    return `<tr data-idea="${idx}" tabindex="0" class="${idx === selIdea ? 'sel' : ''}">
+      <td><div class="tt">${esc(r.title)}</div></td>
+      <td class="n"><strong>${r.overall}</strong></td>
+      <td class="n xs">${r.demand} · ${r.feas} · ${r.comp}</td>
+      <td><span class="s ${r.status}">${r.status}</span></td>
+      <td class="n stack2"><span>${r.ev}</span><span class="xs soft">${r.source_threads} threads</span></td>
+      <td class="n xs soft">${ago(r.created_at)}</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">No ${esc(ideasFilter)} ideas. <button class="btn g" type="button" data-goto="overview">run the pipeline</button></td></tr>`;
+  $('ideas-shown').textContent = `1–${rows.length} of ${fmt(I.total)}`;
+  $('ideas-pager').innerHTML = pagerHTML();
+}
+
+function renderIdeaDet(){
+  const d = M.ideas.rows[selIdea];
+  if (!d) return;
+  $('det').innerHTML = `<div><h2>${esc(d.title)}</h2><span class="s ${d.status}">${d.status}</span></div>
+  <div><h3>Scores</h3><dl class="kv">
+    <div><dt>overall</dt><dd><strong>${d.overall}</strong></dd></div>
+    <div><dt>demand</dt><dd>${d.demand}</dd></div>
+    <div><dt>feasibility</dt><dd>${d.feas}</dd></div>
+    <div><dt>competition</dt><dd>${d.comp}</dd></div>
+    <div><dt>evidence</dt><dd>${d.ev} nuggets · ${d.source_threads} threads</dd></div>
+    <div><dt>created</dt><dd>${ago(d.created_at)}</dd></div></dl></div>
+  ${d.tags && d.tags.length ? `<div><h3>Tags</h3><span class="soft">${esc(d.tags.join(' · '))}</span></div>` : ''}
+  <div><h3>Citations</h3>${d.citations.length ? d.citations.map(c =>
+    `<div class="log"><span class="s ${c.ok ? 'done' : 'failed'}">${c.ok ? 'found' : 'missing'}</span><span>${esc(c.text)}</span></div>`).join('')
+    : '<p class="soft" style="margin:0">No citations kept.</p>'}</div>
+  ${d.notes && d.notes.length ? `<div><h3>Notes</h3>${d.notes.map(n =>
+    `<div class="log"><span class="m">${esc(n.t)}</span><span>${esc(n.text)}</span></div>`).join('')}</div>` : ''}
+  <div><h3>Status</h3><select aria-label="Idea status">${['new', 'reviewed', 'building', 'archived'].map(s =>
+    `<option${s === d.status ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+  <div class="acts"><button class="btn" type="button">archive</button><button class="btn p" type="button">resynth</button></div>`;
+}
+
+/* ── posts ────────────────────────────────────────────────────────── */
+function drawPosts(){
+  $('posts-view').innerHTML = [['signal', 'signal'], ['trivial', 'trivial'], ['all', 'all']].map(([v, l]) =>
+    `<button data-v="${v}" aria-pressed="${postsView === v}">${l}<span class="num">${fmt(v === 'signal' ? 586 : v === 'trivial' ? 305 : 891)}</span></button>`).join('');
+  $('posts-sort').innerHTML = [['top', 'top'], ['oldest', 'oldest'], ['newest', 'newest']].map(([v, l]) =>
+    `<button data-s="${v}" aria-pressed="${postsSort === v}">${l}</button>`).join('');
+  let rows = M.posts.rows.filter(p => postsView === 'all' || (postsView === 'signal' ? p.signal > 0 : p.trivial > 0));
+  if (postsSort === 'top') rows = [...rows].sort((a, b) => (b.score || 0) - (a.score || 0));
+  if (postsSort === 'oldest') rows = [...rows].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  if (postsSort === 'newest') rows = [...rows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  $('posts-table').tBodies[0].innerHTML = rows.map(p =>
+    `<tr data-post="${esc(p.id)}" tabindex="0"><td><div class="tt">${esc(p.title)}</div></td>
+     <td class="stack2"><span>${esc(p.community)}</span><span class="xs soft">${esc(p.platform)}</span></td>
+     <td class="n">${fmt(p.held)}</td><td class="n xs soft">${ago(p.created_at)}</td></tr>`).join('');
+  $('posts-shown').textContent = `1–${rows.length} of ${fmt(M.posts.total)}`;
+  $('posts-pager').innerHTML = pagerHTML();
+}
+
+function openPost(id, back){
+  if (back){ $('post-detail').hidden = true; $('posts-list').hidden = false; $('posts-headrow').hidden = false; $('posts-tools').hidden = false; return; }
+  const p = M.posts.rows.find(x => x.id === id);
+  if (!p) return;
+  $('posts-list').hidden = true; $('posts-tools').hidden = true; $('posts-headrow').hidden = true;
+  $('post-detail').hidden = false;
+  const comments = (M.posts.comments[p.id] || []);
+  const adv = p.comments_advertised, held = p.held, whole = Math.max(adv || 0, held);
+  const notFetched = whole - held;
+  const w = n => whole ? (n / whole * 100).toFixed(1) : 0;
+  const missing = [p.score == null && 'score', p.upvote_ratio == null && 'upvote ratio', p.views == null && 'views'].filter(Boolean);
+  $('post-detail').innerHTML = `
+    <div class="tool"><button class="btn g" type="button" data-back>&lsaquo; all posts</button></div>
+    <h1 style="font-size:18px">${esc(p.title)}</h1>
+    <p class="xs soft" style="margin:4px 0 8px">${esc([p.community, p.author, when(p.created_at)].filter(Boolean).join(' · '))}</p>
+    <div class="chiprow">${p.score != null ? `<span class="chip"><strong class="num">▲ ${fmt(p.score)}</strong></span>` : ''}
+      ${p.upvote_ratio != null ? `<span class="chip"><span class="num">${Math.round(p.upvote_ratio * 100)}%</span> upvoted</span>` : ''}
+      ${p.views != null ? `<span class="chip"><span class="num">${fmt(p.views)}</span> views</span>` : ''}
+      ${missing.length ? `<span class="chip">not reported: ${esc(missing.join(', '))}</span>` : ''}
+      ${p.coverage != null ? `<span class="chip${p.coverage < 0.5 ? ' warn' : ''}"><span class="num">${Math.round(p.coverage * 100)}%</span> held${p.coverage < 0.5 ? ': a sample, not the thread' : ''}</span>` : ''}
+      ${p.url ? `<a class="chip" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">open the original ↗</a>` : ''}</div>
+    <div style="max-width:560px;margin-top:14px">
+      <div class="row2" style="margin-bottom:6px"><span class="xs">${adv ? `what we hold of the <span class="num">${fmt(adv)}</span> comments on the post` : `the <span class="num">${fmt(held)}</span> comments we hold · the source published no count`}</span></div>
+      <div class="meter"><i class="m-signal" style="width:${w(p.signal)}%"></i><i class="m-trivial" style="width:${w(p.trivial)}%"></i>${notFetched ? `<i class="m-missing" style="width:${w(notFetched)}%"></i>` : ''}</div>
+      <div class="meter-legend"><span><i class="m-signal"></i><span class="num">${fmt(p.signal)}</span> signal</span>
+        <span><i class="m-trivial"></i><span class="num">${fmt(p.trivial)}</span> flagged trivial</span>
+        ${notFetched ? `<span><i class="m-missing"></i><span class="num">${fmt(notFetched)}</span> never fetched</span>` : ''}</div>
+    </div>
+    ${p.coverage != null && p.coverage < 0.5 ? `<div class="guard"><span>${Math.round(p.coverage * 100)}% held: a sample, not the thread — treat counts as a lower bound.</span></div>` : ''}
+    <div style="margin-top:14px"><h3 style="margin:0 0 4px">Comments (${comments.length})</h3>${comments.map(c =>
+      `<div class="cmt"><div class="row"><b>${esc(c.author || '—')}</b><span class="num">${ago(c.created_at)}</span>
+        ${c.category ? `<span class="chip">${esc(c.category.replaceAll('_', ' '))}</span>` : ''}
+        ${c.depth ? '<span class="chip">reply</span>' : ''}${c.trivial ? '<span class="chip warn">trivial</span>' : ''}</div>
+        <p>${esc(c.text)}</p></div>`).join('') || '<p class="soft">No comments held — the walk found the post but fetched nothing.</p>'}</div>`;
+}
+/* ── nuggets ──────────────────────────────────────────────────────── */
+function drawNuggets(){
+  const f = M.nuggets.facets;
+  const facetHTML = (lab, key, cur) => `<span class="facet-lab">${lab}</span>` +
+    Object.entries(f[key]).map(([name, n]) =>
+      `<button class="facet${cur === name ? ' on' : ''}" data-fk="${key}" data-fv="${esc(name)}">${esc(name)}<span class="num">${fmt(n)}</span></button>`).join('');
+  $('nug-facets').innerHTML = facetHTML('platform:', 'platform', nugPlatform) +
+    facetHTML('community:', 'community', nugCommunity) + facetHTML('category:', 'category', nugCategory);
+  let rows = M.nuggets.rows;
+  if (nugPlatform) rows = rows.filter(r => (PLATFORM_LABEL[r.platform] || r.platform) === nugPlatform);
+  if (nugCommunity) rows = rows.filter(r => r.community === nugCommunity);
+  if (nugCategory) rows = rows.filter(r => r.category === nugCategory);
+  $('nuggets-table').tBodies[0].innerHTML = rows.map(r =>
+    `<tr tabindex="0"><td><div class="tt w520">${esc(r.insight)}</div></td>
+     <td class="stack2"><span class="chip">${esc(r.community)}</span><span class="xs soft">${esc(r.platform)}</span></td>
+     <td>${esc(r.category)}</td>
+     <td>${r.flags.length ? `<div class="chiprow">${r.flags.map(fl => `<span class="chip">${esc(fl)}</span>`).join('')}</div>` : '<span class="soft xs">—</span>'}</td>
+     <td class="n xs soft">${ago(r.created_at)}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="empty">No nuggets inside that filter. <button class="btn g" type="button" data-nug-clear>clear facets</button></td></tr>`;
+  $('nuggets-shown').textContent = `1–${rows.length} of ${fmt(M.nuggets.total)}`;
+  $('nuggets-pager').innerHTML = pagerHTML();
+}
+const PLATFORM_LABEL = { reddit:'Reddit', hackernews:'Hacker News', discourse:'Discourse', youtube:'YouTube', tiktok:'TikTok', github:'GitHub', lemmy:'Lemmy', steam:'Steam', podcast:'Podcast', stackexchange:'Stack Exchange', realestate:'Real estate' };
+
+/* ── clusters ─────────────────────────────────────────────────────── */
+function drawClusters(){
+  $('clu-table').tBodies[0].innerHTML = M.clusters.rows.map((c, i) =>
+    `<tr data-clu="${i}" tabindex="0" class="${i === selCluster ? 'sel' : ''}">
+      <td><div class="tt">${esc(c.theme)}</div></td>
+      <td class="n">${c.size}</td>
+      <td class="xs soft">${esc(c.tone)}</td>
+      <td><div class="chiprow">${c.single_author ? '<span class="chip warn">one author</span>' : ''}
+        ${c.embedding_model.startsWith('fake') ? '<span class="chip bad">hash vectors — not meaningful</span>' : ''}</div></td>
+      <td class="xs soft">${esc(c.idea_title || '—')}</td></tr>`).join('');
+}
+
+function renderClusterDet(){
+  const c = M.clusters.rows[selCluster];
+  if (!c) return;
+  $('det').innerHTML = `<div><h2>${esc(c.theme)}</h2><span class="s ${c.idea_status ? 'reviewed' : 'off'}">${esc(c.idea_status || 'no idea yet')}</span></div>
+  <div><h3>Cluster</h3><dl class="kv">
+    <div><dt>nuggets</dt><dd>${c.size}</dd></div>
+    <div><dt>tone</dt><dd>${esc(c.tone)}</dd></div>
+    <div><dt>embedding</dt><dd class="m">${esc(c.embedding_model)}</dd></div></dl></div>
+  <div><h3>The problem</h3><p style="margin:0">${esc(c.problem)}</p></div>
+  <div><h3>What to build</h3><p style="margin:0">${esc(c.solution)}</p></div>
+  <div><h3>Scores</h3><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px"><dl class="kv" style="flex:1">
+    <div><dt>demand</dt><dd>${c.scores.demand}</dd></div>
+    <div><dt>feasibility</dt><dd>${c.scores.feas}</dd></div>
+    <div><dt>competition</dt><dd>${c.scores.comp}</dd></div></dl>
+    <div style="text-align:right"><div class="xs soft">overall</div><div class="overall-big">${c.scores.overall}</div></div></div></div>
+  ${c.quotes.length ? `<div><h3>Built from ${c.size} nuggets · the first ${Math.min(3, c.quotes.length)}</h3>${c.quotes.map(q =>
+    `<div class="log"><span class="m">${esc(q.author)}</span><span>${esc(q.text)}</span></div>`).join('')}</div>` : ''}
+  <div class="acts"><button class="btn" type="button">discard</button><button class="btn p" type="button">${c.idea_status ? 'save idea' : 'start idea draft'}</button></div>`;
+}
+
+/* ── search ───────────────────────────────────────────────────────── */
+function drawSearch(){
+  const S = M.search;
+  $('search-examples').innerHTML = S.examples.map(x => `<button class="facet" type="button">${esc(x)}</button>`).join('');
+  $('search-recents').innerHTML = '<span class="facet-lab">recent:</span>' + S.recents.map(x => `<button class="facet" type="button">${esc(x)}</button>`).join('');
+  $('search-facets').innerHTML = '<span class="facet-lab">narrow:</span>' +
+    Object.entries(S.facets.platform).map(([k, n]) => `<button class="facet" type="button">${esc(k)}<span class="num">${n}</span></button>`).join('') +
+    Object.entries(S.facets.category).map(([k, n]) => `<button class="facet" type="button">${esc(k)}<span class="num">${n}</span></button>`).join('');
+  $('search-results').innerHTML = S.results.map(r =>
+    `<div class="result"><div class="row"><span class="chip">${esc(r.platform)}</span><span class="chip">${esc(r.category)}</span>
+      ${r.author ? `<span class="chip">${esc(r.author)}</span>` : ''}<span class="xs soft">${when(r.created_utc)}</span>
+      <span class="rhs"><span class="ratio"><i style="width:${Math.round(r.similarity * 100)}%"></i></span><span class="simlab">${esc(r.strength)} <span class="num">${r.similarity.toFixed(2)}</span></span></span></div>
+      <p><strong>${esc(r.insight)}</strong></p><p class="xs soft">${esc(r.raw_text)}</p>
+      ${r.source_url ? `<a class="xs" href="${esc(r.source_url)}" target="_blank" rel="noopener noreferrer">source ↗</a>` : ''}</div>`).join('');
+  $('search-count').textContent = `${S.results.length} of ${fmt(M.nuggets.total)} nuggets · ranked by similarity`;
+}
+
+/* ── chat ─────────────────────────────────────────────────────────── */
+function drawChat(){
+  const C = M.chat;
+  $('chat-sessions').innerHTML = C.sessions.map(s =>
+    `<button class="chat-session${s.session_id === C.open ? ' is-open' : ''}" data-sid="${esc(s.session_id)}" type="button">
+      <span>${esc(s.title)}</span><span class="xs">${s.messages} msg · ${ago(s.created_utc)}</span></button>`).join('');
+  $('chat-transcript').innerHTML = C.messages.map(m =>
+    `<div class="chat-msg chat-msg--${esc(m.role)}"><span class="who">${m.role === 'you' ? 'you' : 'model'}</span><span class="text">${esc(m.content)}</span></div>`).join('');
+  const pendingHTML = C.pending.map(p =>
+    `<div class="chat-proposal"><div class="chat-proposal-head">proposed · ${esc(p.edit_kind)} · by ${esc(p.actor)} · ${when(p.created_utc)}</div>
+     <pre>${esc(JSON.stringify(p.diff_json, null, 2))}</pre>
+     <div class="row"><button class="btn p" type="button">apply</button><button class="btn" type="button">reject</button></div></div>`).join('');
+  const editsHTML = C.edits.map(e =>
+    `<div class="chat-proposal"><div class="chat-proposal-head">applied · ${esc(e.edit_kind)} · by ${esc(e.actor)} · ${when(e.created_utc)}</div>
+     <pre>${esc(JSON.stringify(e.after_json, null, 2))}</pre>
+     <div class="row"><button class="btn" type="button">revert</button></div></div>`).join('');
+  $('chat-pending').innerHTML = (pendingHTML + editsHTML) || '<p class="xs soft">nothing waiting on you</p>';
+  $('chat-state').textContent = C.state;
+}
+
+/* ── signals ──────────────────────────────────────────────────────── */
+function drawSignals(){
+  const S = M.signals, live = S.counts.live;
+  statsInto($('signals-tiles'), [
+    { label:'collected (live)', value:fmt(live.unique_collected), note:'unique records, deduplicated', tone:'' },
+    { label:'buyer signals', value:fmt(live.buyer), note:'what outreach can act on', tone:'up' },
+    { label:'practitioner', value:fmt(live.practitioner), note:'content material, not leads', tone:'' },
+    { label:'failed fetches', value:fmt(live.errors), note:'stored as rows, not lost', tone:'bd' },
+  ]);
+  const sy = S.counts.synthetic;
+  $('signals-synth').textContent = `synthetic mode (separate ledger, never summed): ${sy.unique_collected} collected · ${sy.buyer} buyer · ${sy.practitioner} practitioner · ${sy.errors} error(s)`;
+  const sc = S.scraper;
+  $('scraper').innerHTML = `<div class="row2" style="max-width:640px"><span class="m">${esc(sc.command)}</span><span class="xs soft">${esc(sc.state)}</span></div>
+    <div class="tool" style="margin:10px 0 0">
+      <span class="seg">${['off', 'daily', '12h', '6h'].map(mo => `<button aria-pressed="${sc.mode === mo}">${mo}</button>`).join('')}</span>
+      <input type="time" value="${esc(sc.at)}" aria-label="run at"><button class="btn" type="button">save cadence</button>
+      <button class="btn" type="button">run now</button></div>`;
+  $('signals-runs').tBodies[0].innerHTML = S.runs.map(r =>
+    `<tr><td class="stack2"><span>${ago(r.started_at)}</span><span class="xs soft">${when(r.started_at)}</span></td>
+     <td><span class="chip">${esc(r.kind)}</span></td><td class="xs">${esc(r.source)}</td>
+     <td class="n">${fmt(r.collected)}</td><td class="n">${fmt(r.new)}</td><td class="n">${fmt(r.buyer)}</td>
+     <td class="n">${r.errors ? `<span class="chip bad"><span class="num">${r.errors}</span></span>` : '0'}</td>
+     <td><span class="s ${r.status === 'completed' ? 'done' : 'failed'}">${r.status}</span></td></tr>`).join('');
+  $('sig-path').textContent = `path: ${S.path} — the archive the records below come from`;
+  $('sig-facets').innerHTML = '<span class="facet-lab">audience:</span>' +
+    Object.entries(S.facets.audience).map(([k, n]) => `<button class="facet" type="button">${esc(k)}<span class="num">${n}</span></button>`).join('') +
+    '<span class="facet-lab">outcome:</span>' +
+    Object.entries(S.facets.outcome).map(([k, n]) => `<button class="facet" type="button">${esc(k)}<span class="num">${n}</span></button>`).join('');
+  $('signals-records').tBodies[0].innerHTML = S.records.map(r =>
+    `<tr><td><div class="tt w520">${esc(r.record)}</div></td><td><span class="chip">${esc(r.audience)}</span></td>
+     <td class="n stack2"><span>${r.conf.toFixed(2)}</span><span class="ratio"><i style="width:${Math.round(r.conf * 100)}%"></i></span></td>
+     <td class="xs soft tt" style="max-width:320px">${esc(r.why)}</td></tr>`).join('');
+  $('signals-shown').textContent = `1–${S.records.length} of ${fmt(S.total)}`;
+  $('signals-pager').innerHTML = pagerHTML();
+}
+
+/* ── sources ──────────────────────────────────────────────────────── */
+function drawSources(){
+  const S = M.sources;
+  $('src-platform').innerHTML = '<option value="auto">detect from link</option>' +
+    Object.keys(PLATFORM_LABEL).map(p => `<option value="${esc(p)}">${esc(PLATFORM_LABEL[p])}</option>`).join('');
+  $('src-count').textContent = `${fmt(M.counts.sources)} enabled / ${fmt(9)} total`;
+  $('src-path').textContent = S.path;
+  const barren = [], unsupported = [];
+  S.groups.forEach(g => g.rows.forEach(r => {
+    if (r.enabled && r.health === 'barren') barren.push(r.name);
+    if (r.enabled && !r.supported) unsupported.push(r.name);
+  }));
+  let notes = '';
+  if (barren.length) notes += `<span class="chip warn">quiet list</span> ${barren.length} enabled source(s) (${esc(barren.join(', '))}) have been walked 3+ times and never queued a comment. Each still costs a rotation slot every run — “park” pauses it without removing it. `;
+  if (unsupported.length) notes += `<span class="chip warn">heads up</span> ${unsupported.length} enabled source(s) (${esc(unsupported.join(', '))}) have no worker adapter yet — runs report them as skipped rather than quietly ingest nothing. `;
+  notes += `<span class="chip">TikTok</span> has no adapter and is not planned: ${esc(S.platform_gaps.tiktok)}.`;
+  $('src-hint').innerHTML = notes;
+
+  let html = '';
+  for (const g of S.groups){
+    const key = 'src:' + g.platform;
+    const on = g.rows.filter(r => r.enabled).length;
+    const barrenN = g.rows.filter(r => r.enabled && r.health === 'barren').length;
+    const meta = [on === g.rows.length ? 'all enabled' : `${on} enabled`, barrenN ? `${barrenN} barren` : ''].filter(Boolean).join(' · ');
+    html += `<tr class="ghrow"><td colspan="8"><div class="gh plain${folded.has(key) ? ' closed' : ''}" data-fold="${esc(key)}">
+      ${esc(PLATFORM_LABEL[g.platform] || g.platform)}<span class="c">${g.rows.length}</span><span class="meta">${esc(meta)}</span>
+      <button class="btn fold" type="button" aria-label="Fold ${esc(g.platform)}"><svg class="i"><use href="#chev"/></svg></button></div></td></tr>`;
+    if (folded.has(key)) continue;
+    html += g.rows.map(s => {
+      const blocked = s.fetch === 'browser' && !M.overview.infra.cloakserve_9222;
+      const HEALTH = { producing:['done', 'producing'], quiet:['off', 'quiet'], barren:['warn', 'nothing yet'], unmeasured:['off', 'yield not recorded'], unknown:['off', 'not yet visited'] };
+      const [cls, label] = !s.enabled ? ['off', 'paused'] : !s.supported ? ['warn', 'no adapter yet'] : (HEALTH[s.health] || HEALTH.unknown);
+      return `<tr>
+        <td><input type="checkbox"${s.enabled ? ' checked' : ''} aria-label="Enable ${esc(s.name)}"></td>
+        <td class="m">${esc(s.name)}</td>
+        <td><span class="chip">${esc(s.kind)}</span></td>
+        <td><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" class="tt" style="display:block;max-width:280px" title="${esc(s.url)}">${esc(s.url.replace(/^https?:\/\/(www\.)?/, ''))}</a>${s.notes ? `<div class="xs soft">${esc(s.notes)}</div>` : ''}</td>
+        <td class="stack2"><span class="chip">${esc(s.fetch)}</span>${blocked ? '<span class="xs" style="color:var(--bd)">blocked · cloakserve down</span>' : ''}</td>
+        <td class="stack2">${s.state ? `<span class="m xs">${ago(s.state.last_fetched_at)}</span><span class="xs soft">${s.state.last_queued ? '+' + s.state.last_queued + ' comment(s)' : 'nothing new'} · ${s.state.visits} visit(s)</span>` : '<span class="xs soft">never · next in line</span>'}</td>
+        <td><span class="s ${cls}" title="${esc(s.health_reason)}">${label}</span></td>
+        <td>${s.enabled && s.health === 'barren' ? '<button class="btn xs" type="button">park</button> ' : ''}<button class="btn xs bad" type="button">remove</button></td></tr>`;
+    }).join('');
+  }
+  $('src-table').tBodies[0].innerHTML = html;
+}
+
+/* ── config ───────────────────────────────────────────────────────── */
+function drawConfig(){
+  const C = M.config;
+  $('cfg-dirty').textContent = `${C.dirty.length} unsaved change(s)`;
+  $('cfg-savebar').hidden = !C.dirty.length;
+  $('cfg-groups').innerHTML = C.groups.map(g =>
+    `<div class="blk"><h2>${esc(g.stage)}</h2><p class="x">${esc(g.blurb)}</p><dl style="margin:0">${g.knobs.map(k => {
+      let ctl = '';
+      if (k.map){
+        ctl = `<table class="mapknob"><tbody>${Object.entries(k.map).map(([mk, mv]) =>
+          `<tr><td><input type="text" value="${esc(mk)}" aria-label="platform" style="width:110px"></td>
+           <td class="n"><input type="number" value="${mv}" style="width:80px" aria-label="threads"></td>
+           <td><button class="btn xs bad" type="button" aria-label="remove row">✕</button></td></tr>`).join('')}</tbody></table>
+           <button class="btn xs" type="button">add row</button>`;
+      } else if (k.choices){
+        ctl = `<select aria-label="${esc(k.key)}"${C.dirty.includes(k.key) ? ' class="dirty"' : ''}>${k.choices.map(c2 => `<option${c2 === k.value ? ' selected' : ''}>${esc(c2)}</option>`).join('')}</select>`;
+      } else {
+        ctl = `<input type="number" value="${esc(k.value)}"${k.range ? ` min="${k.range[0]}" max="${k.range[1]}"` : ''} aria-label="${esc(k.key)}"${C.dirty.includes(k.key) ? ' class="dirty"' : ''}>`;
+      }
+      return `<div class="knob"><div><b>${esc(k.label)}</b><span class="help">${esc(k.help || '')}${k.range ? ` · range ${k.range[0]}–${k.range[1]}` : ''}</span></div><dd>${ctl}<span class="m xs soft">${esc(k.key)}</span></dd></div>`;
+    }).join('')}</dl></div>`).join('');
+  const MD = M.config.models;
+  $('cfg-models').innerHTML =
+    `<div class="row2" style="max-width:560px;margin-bottom:4px"><span class="facet-lab">profile</span><span class="seg">${MD.profiles.map(p2 => `<button aria-pressed="${p2 === MD.profile}">${p2}</button>`).join('')}</span></div>` +
+    MD.roles.map(r2 => `<div class="knob"><div><b>${esc(r2.role)}</b><span class="help">model used for this role</span></div><dd><select aria-label="${esc(r2.role)} model">${r2.choices.map(c2 => `<option${c2 === r2.value ? ' selected' : ''}>${esc(c2)}</option>`).join('')}</select><span class="m xs soft">${esc(r2.role)}</span></dd></div>`).join('') +
+    `<p class="xs soft" style="margin:10px 0 0">ollama ${MD.ollama.up ? 'up' : 'down'} · ${MD.ollama.models.length} model(s): ${esc(MD.ollama.models.join(', '))}</p>`;
+  $('cfg-scraper').innerHTML = `<div><dt>mode</dt><dd>${esc(C.scraper.mode)}</dd></div><div><dt>at</dt><dd class="m">${esc(C.scraper.at)}</dd></div>`;
+  $('cfg-env').innerHTML = C.env.map(e =>
+    `<div><dt class="m">${esc(e.key)}</dt><dd><span class="s ${e.set ? 'done' : 'warn'}">${e.set ? 'set' : 'missing'}</span><span class="xs soft" style="font-weight:400">${esc(e.note)}</span></dd></div>`).join('');
+}
+
+/* ── schedule ─────────────────────────────────────────────────────── */
+function drawSchedule(){
+  const S = M.schedule;
+  $('sched-banner').innerHTML = S.installed
+    ? `<div class="err ok banner"><div class="bstack"><b>Scheduled — ${esc(S.cadence)} via ${esc(S.scheduler)}</b><p>${esc(S.fetch_scope)}.</p></div></div>`
+    : `<div class="err banner"><div class="bstack"><b>Nothing scheduled</b><p>The console runs the pipeline when it is open; the host does not. Install a cadence below.</p></div></div>`;
+  $('sched-state').innerHTML = `
+    <div><dt>status</dt><dd><span class="s ${S.installed ? 'done' : 'off'}">${S.installed ? 'installed' : 'not installed'}</span></dd></div>
+    <div><dt>scheduler</dt><dd>${esc(S.scheduler)}</dd></div>
+    <div><dt>cadence</dt><dd>${esc(S.cadence)}</dd></div>
+    <div><dt>next run</dt><dd>${esc(S.next_run)}</dd></div>
+    <div><dt>what it fetches</dt><dd class="left">${esc(S.fetch_scope)}</dd></div>`;
+  const a = S.activity, w1 = a.windows['1'], w24 = a.windows['24'];
+  const sub = (b, exp) => exp ? `of ${exp} expected${b.partial ? ' so far' : ''}` : 'no cadence to compare';
+  const toneOf = (b, exp) => !exp ? '' : b.runs >= exp ? 'ok' : b.runs >= Math.ceil(exp * 0.6) ? '' : 'bd';
+  statsInto($('sched-kpis'), [
+    { label:'runs · last hour', value:String(w1.runs), note:sub(w1, w1.expected), tone:toneOf(w1, w1.expected) },
+    { label:'runs · 24 h', value:String(w24.runs), note:sub(w24, w24.expected), tone:toneOf(w24, w24.expected) },
+    { label:'runs all time', value:fmt(a.total), note:'since ' + when(a.first_run_at).split(',')[0], tone:'' },
+    { label:'last tick', value:ago(a.last.started_at), note:when(a.last.started_at), tone:'' },
+    { label:'archived · 24 h', value:fmt(w24.nuggets), note:`${w24.ideas} idea(s) · ${w24.runs} run(s)`, tone:'up' },
+  ]);
+  $('sched-sources-hint').textContent = S.sources_hint;
+  const byPlat = {};
+  S.sources.forEach(s => { (byPlat[s.platform] = byPlat[s.platform] || []).push(s); });
+  $('sched-sources').innerHTML = Object.entries(byPlat).map(([p2, list]) =>
+    `<div class="ckgrp">${esc(PLATFORM_LABEL[p2] || p2)}</div>` + list.map(s =>
+      `<label><input type="checkbox"${s.enabled ? ' checked' : ''}${s.supported ? '' : ' disabled'} data-sched-src> <span>${esc(s.name)}</span>${s.supported ? '' : '<span class="xs">no adapter</span>'}</label>`).join('')).join('');
+  const nSel = S.sources.filter(s => s.enabled && s.supported).length;
+  $('sched-selected-count').textContent = `${nSel} of ${S.sources.filter(s => s.supported).length} fetchable selected`;
+  $('sched-presets').innerHTML = S.presets.map(([mins, lab]) =>
+    `<button data-preset="${esc(mins)}" aria-pressed="${mins === '360'}">${esc(lab)}</button>`).join('');
+  $('sched-every').value = 360;
+  $('sched-max-posts').value = S.options.max_posts;
+  $('sched-max-comments').value = S.options.max_comments;
+  $('sched-max-ideas').value = S.options.max_ideas;
+  $('sched-ticks').innerHTML = a.recent.map(r =>
+    `<tr><td class="stack2"><span>${ago(r.started_at)}</span><span class="xs soft">${when(r.started_at)}</span></td>
+     <td class="m xs">${esc(r.run_id.slice(6, 22))}…</td>
+     <td><span class="s ${RUN_STATUS[r.status] || r.status}">${esc(r.status)}</span></td>
+     <td class="n">${fmt(r.n_comments)}</td><td class="n">${fmt(r.n_nuggets_kept)}</td><td class="n">${fmt(r.n_ideas)}</td></tr>`).join('');
+  $('sched-log').textContent = S.log.join('\n');
+}
+
+/* ── doctor ───────────────────────────────────────────────────────── */
+function drawDoctor(){
+  const D = M.doctor;
+  $('doctor-card').innerHTML = D.findings.length ? D.findings.map(f =>
+    `<div class="fix ${f.sev === 'bad' ? '' : 'warn'}"><span class="sevdot"></span><span class="grow"><b>${esc(f.text)}</b>${f.why ? `<span class="why">${esc(f.why)}</span>` : ''}</span>
+     ${f.fix ? `<button class="btn xs" type="button"${f.fix.go ? ` data-goto="${f.fix.go}"` : ''}>${esc(f.fix.label)}</button>` : ''}</div>`).join('')
+    : `<div class="err ok banner"><div class="bstack"><b>Doctor clean</b><p>No silent-degradation guard tripped.</p></div></div>`;
+  const e = D.eval;
+  $('eval-badge').className = 's ' + (e.ok ? 'done' : 'failed');
+  $('eval-badge').textContent = e.ok ? 'PASS' : 'FAIL';
+  $('eval-info').innerHTML = `<dl class="kv" style="max-width:560px;margin-top:8px">
+      <div><dt>gate</dt><dd>${e.gate}</dd></div>
+      <div><dt>checks</dt><dd>${e.checks}</dd></div>
+      <div><dt>failures</dt><dd>${e.failures}</dd></div></dl>
+    <div class="tw" style="margin-top:8px"><table>
+      <thead><tr><th>Case</th><th class="n">Overall</th><th>Verdict</th></tr></thead>
+      <tbody>${e.details.map(d =>
+        `<tr><td><div class="tt">${esc(d.title)}</div></td><td class="n">${d.overall}</td>
+         <td><span class="s ${d.ok ? 'done' : 'failed'}">${d.ok ? 'pass' : 'fail'}${d.expect_pass ? '' : ' · expected'}</span></td></tr>`).join('')}</tbody></table></div>`;
+}
+
+/* ── states ───────────────────────────────────────────────────────── */
+function drawStates(){
+  const st = M.states;
+  $('st-empty').innerHTML = `${esc(st.empty.message)} <button class="btn g" type="button">${esc(st.empty.action)}</button>`;
+  $('st-err').innerHTML = `<div class="err banner"><div class="bstack"><b>${esc(st.error.title)}</b><p>${esc(st.error.body)}</p></div><div class="bact"><button class="btn" type="button">${esc(st.error.action)}</button></div></div>`;
+  $('st-long').innerHTML = `<div class="result"><p><strong>${esc(st.longText.evidence)}</strong></p>
+    <p class="xs soft brk">${esc(st.longText.url)}</p><p class="m xs soft brk">${esc(st.longText.token)}</p></div>`;
+  $('st-miss').innerHTML = `<div class="fix warn"><span class="sevdot"></span><span class="grow"><b>${esc(st.missingEvidence.title)}</b><span class="why">${esc(st.missingEvidence.body)}</span></span></div>`;
+  statsInto($('st-zero'), st.zero.map(z => ({ label:z.label, value:z.value, note:z.note, tone:z.tone })));
+  $('st-load').textContent = st.loading;
+}
+
+/* ── wiring ───────────────────────────────────────────────────────── */
+document.addEventListener('click', e => {
+  const nav = e.target.closest('.nav[data-page]');
+  if (nav){ go(nav.dataset.page); return; }
+  const gt = e.target.closest('[data-goto]');
+  if (gt){ go(gt.dataset.goto); return; }
+  const runRow = e.target.closest('tr[data-run]');
+  if (runRow){ selRun = runRow.dataset.run; drawRuns(); renderRunDet(); return; }
+  const ideaRow = e.target.closest('tr[data-idea]');
+  if (ideaRow){ selIdea = Number(ideaRow.dataset.idea); drawIdeas(); renderIdeaDet(); return; }
+  const cluRow = e.target.closest('tr[data-clu]');
+  if (cluRow){ selCluster = Number(cluRow.dataset.clu); drawClusters(); renderClusterDet(); return; }
+  const batchRow = e.target.closest('tr[data-batch]');
+  if (batchRow){ selBatch = batchRow.dataset.batch; drawQueue(); renderBatchDet(); return; }
+  const postRow = e.target.closest('tr[data-post]');
+  if (postRow && !e.target.closest('[data-back]')){ openPost(postRow.dataset.post); return; }
+  if (e.target.closest('[data-back]')){ openPost(null, true); return; }
+  const fold = e.target.closest('[data-fold]');
+  if (fold){ const k = fold.dataset.fold; if (folded.has(k)) folded.delete(k); else folded.add(k); drawSources(); return; }
+  const nug = e.target.closest('.facet[data-fk]');
+  if (nug){ const k = nug.dataset.fk, v = nug.dataset.fv;
+    if (k === 'platform') nugPlatform = nugPlatform === v ? '' : v;
+    if (k === 'community') nugCommunity = nugCommunity === v ? '' : v;
+    if (k === 'category') nugCategory = nugCategory === v ? '' : v;
+    drawNuggets(); return; }
+  if (e.target.closest('[data-nug-clear]')){ nugPlatform = nugCommunity = nugCategory = ''; drawNuggets(); return; }
+  const o = e.target.closest('#runs-origin [data-o]');
+  if (o){ runsOrigin = o.dataset.o; drawRuns(); return; }
+  const qk = e.target.closest('#queue-kind [data-kind]');
+  if (qk){ queueKind = qk.dataset.kind; drawQueue(); return; }
+  const qs = e.target.closest('#queue-status [data-qs]');
+  if (qs){ queueStatus = qs.dataset.qs; selBatch = null; drawQueue(); return; }
+  const f = e.target.closest('#ideas-filter [data-f]');
+  if (f){ ideasFilter = f.dataset.f; drawIdeas(); return; }
+  const pv = e.target.closest('#posts-view [data-v]');
+  if (pv){ postsView = pv.dataset.v; drawPosts(); return; }
+  const ps = e.target.closest('#posts-sort [data-s]');
+  if (ps){ postsSort = ps.dataset.s; drawPosts(); return; }
+  const pre = e.target.closest('#sched-presets [data-preset]');
+  if (pre){ $('sched-every').value = pre.dataset.preset; $('sched-presets').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === pre))); return; }
+  const sid = e.target.closest('.chat-session[data-sid]');
+  if (sid){ M.chat.open = sid.dataset.sid; drawChat(); return; }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){
+    e.preventDefault();
+    if (page !== 'search') go('search');
+    $('search-input').focus();
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && document.activeElement.matches('tr[data-run],tr[data-idea],tr[data-batch],tr[data-clu],tr[data-post]')){
+    e.preventDefault();
+    document.activeElement.click();
+  }
+});
+
+$('sched-select-all').addEventListener('change', e => {
+  document.querySelectorAll('#sched-sources input[type="checkbox"]').forEach(cb => { if (!cb.disabled) cb.checked = e.target.checked; });
+});
+
+$('theme').addEventListener('click', () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  $('theme').textContent = r.dataset.theme === 'dark' ? 'Light mode' : 'Dark mode';
+});
+
+/* ── init ─────────────────────────────────────────────────────────── */
+drawOverview(); drawRuns(); drawQueue(); drawIdeas(); drawPosts(); drawNuggets();
+drawClusters(); drawSearch(); drawChat(); drawSignals(); drawSources();
+drawConfig(); drawSchedule(); drawDoctor(); drawStates();
+go('overview');
+</script>
+</body>
+</html>
