@@ -10,7 +10,7 @@ qdrant-client>=1.19.1
 # `pip install -e .[dev]` (see pyproject.toml); these rows stay until
 # pylock.toml is regenerated on Linux, because Docker and CI install from
 # that lock and this file is its human-readable source.
-pytest>=8.0
+pytest>=9.1.1
 # Coverage is a gate input, not a nicety: SonarCloud's quality gate requires
 # 80% on new code, and with no report uploaded it reads 0% and fails.
 pytest-cov>=7.1.0
