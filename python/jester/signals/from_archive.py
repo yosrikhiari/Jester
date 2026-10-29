@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from . import Signal, upsert
-from .filters import classify, load_rules
+from .filters import classify, load_rules, reason_with_matched
 
 #: Where a record came from, in the words the signals archive uses. The worker
 #: stores a thread URL; the community is the room inside it.
@@ -258,7 +258,7 @@ def score_archive(nuggets_db: sqlite3.Connection, signals_db: sqlite3.Connection
             run_id=run_id,
             audience=verdict.audience,
             match_confidence=verdict.confidence,
-            match_reason=verdict.reason,
+            match_reason=reason_with_matched(verdict),
             relevant=1,
             # Never inferred. A subreddit advert names no company field, and
             # guessing one out of prose is the inference this collector does

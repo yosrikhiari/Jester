@@ -1,11 +1,11 @@
-"""the 20-case fixture gate, and the machinery that grades it.
+"""the 21-case fixture gate, and the machinery that grades it.
 
-The bar: twenty labeled cases spanning relevant/irrelevant, ambiguous,
+The bar: twenty-one labeled cases spanning relevant/irrelevant, ambiguous,
 edits/deletions and failures, every one checked deterministically.
 
 Two things are tested here, and the second matters as much as the first:
 
-1. **The cases pass.** `jester signals check` grades all twenty and exits
+1. **The cases pass.** `jester signals check` grades all twenty-one and exits
    non-zero on any miss.
 2. **The harness cannot be fooled.** A gate that reports 100% on a set that
    quietly lost its failure cases, or on a set of three, is not a gate. So the

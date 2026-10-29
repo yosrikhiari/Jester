@@ -2316,7 +2316,7 @@ def cmd_signals(args):
             by_role.setdefault(fam.role, []).append(fam)
         print(f"config_version {rules.config_version} · {len(rules.families)} families · "
               f"{len(rules.hard_reject)} hard reject · {len(rules.frame_phrases)} frame phrase(s)")
-        for role in ("buyer_required", "buyer_boost", "pain_marker", "negative"):
+        for role in ("buyer_required", "buyer_boost", "pain_marker", "negative", "veto"):
             fams = by_role.get(role, [])
             if not fams:
                 continue

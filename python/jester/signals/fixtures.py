@@ -1,6 +1,6 @@
 """The labeled fixture set and the command that grades it.
 
-The bar this set has to clear: twenty labeled cases spanning
+The bar this set has to clear: twenty-one labeled cases spanning
 relevant/irrelevant, ambiguous, edits/deletions and failures, every one
 checked deterministically.
 
@@ -40,7 +40,7 @@ CASES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "signal
 REQUIRED_CATEGORIES = ("relevant", "irrelevant", "ambiguous", "edits", "failures")
 
 #: How many the gate asks for.
-REQUIRED_TOTAL = 20
+REQUIRED_TOTAL = 21
 
 
 class FixtureError(RuntimeError):
@@ -162,7 +162,7 @@ def _check_replay(case: dict, rules, db_path: str) -> dict:
 def check(rules=None, directory: Path | str | None = None) -> dict:
     """Grade every case. Returns the table the CLI prints and the test asserts.
 
-    Coverage is graded too: the gate names five categories and twenty cases,
+    Coverage is graded too: the gate names five categories and twenty-one cases,
     and a set that has quietly lost its failure cases still reads 100%.
     """
     rules = rules or load_rules()

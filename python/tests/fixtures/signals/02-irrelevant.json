@@ -2,7 +2,7 @@
   "category": "irrelevant",
   "why": [
     "Collected and rejected, with the reason recorded - a rejection nobody can",
-    "audit is a guess with a number on it. Every one of these four is a real",
+    "audit is a guess with a number on it. Every one of these five is a real",
     "false positive the classifier produced against archived posts before the",
     "rule that now catches it."
   ],
@@ -45,6 +45,16 @@
         "source_id": "t3_fx0204", "kind": "post", "community": "r/synthetic-smallbiz",
         "title": "We run a small agency and everything is still done by hand",
         "text": "Invoicing, scheduling and reporting are all manual and it costs us days every month. We are hiring an operations engineer to fix it."
+      }
+    },
+    {
+      "id": "irr-05-launch-post",
+      "expect": {"audience": "none", "ambiguous": false},
+      "why": "The finding from the first live HN run: four of the six buyer signals were vendors' launch posts, because a vendor's pitch quotes the buyer's words on purpose. This text hits owner_voice, capacity, needs_built, work_pain, work_named and cost at once and scored 0.95 buyer while vendor_pitch was a weight; the frame the site's own convention announces (Launch HN) is a veto instead - the verdict ends regardless of what the prose scored, and no thread frame offered beneath it can rescue a record whose own words are an announcement.",
+      "record": {
+        "source_id": "fx0205", "kind": "post", "community": "hn/show",
+        "title": "Launch HN: Rudus (YC P26) - AI takeoffs for concrete contractors",
+        "text": "Hi HN, we've built Rudus, an AI copilot for concrete contractors. A small business on our waitlist told us: 'We run a building company and our team spends hours a week doing manual takeoffs on spreadsheets, copying estimates between Excel and our invoicing tool. We are looking for someone to build us something that reads the plans automatically.' Our platform turns a set of plans into an estimate. Pricing starts at $99/mo - try it free, book a demo at rudus.example.com."
       }
     }
   ]

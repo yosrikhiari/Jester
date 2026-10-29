@@ -45,6 +45,7 @@ def _rules_file(tmp_path, **families):
 
 def test_shipped_rules_load_and_separate(rules):
     assert rules.by_role("buyer_required") and rules.by_role("pain_marker") and rules.by_role("negative")
+    assert rules.by_role("veto"), "the shipped set carries the launch-post veto"
     assert 0 < rules.practitioner_at <= rules.buyer_at <= 1
     assert 3 <= len(rules.communities_for("buyer")) <= 5, "the task asks for 3-5 communities"
     assert rules.communities_for("practitioner"), "content sources are named apart from buyer sources"
@@ -182,6 +183,64 @@ def test_a_rejection_says_which_half_was_missing(rules):
     assert "no business voice" in pain_only.reason
 
 
+# ---- vetoes: the frame ends the verdict before the prose votes --------------
+
+def test_rules_file_refuses_a_veto_with_a_non_negative_weight(tmp_path):
+    """A veto's weight is a file convention, not a number a sum spends - but it
+    still has to be written like one, so a rules file that drifted into a
+    positive veto is caught the same way a positive negative is."""
+    p = _rules_file(tmp_path, vendor={"weight": 0.4, "role": "veto", "phrases": ["show hn"]})
+    with pytest.raises(f.RulesError, match="veto"):
+        f.load_rules(p)
+
+
+def test_a_launch_post_is_vetoed_however_much_buyer_language_it_quotes(rules):
+    """THE FINDING from the first live HN run, pinned: four of the six buyer
+    signals were vendors' launch posts. Their pitch quotes the buyer's
+    vocabulary on purpose - this text hits owner_voice, capacity, needs_built,
+    work_pain, work_named and cost at once, and scored 0.95 buyer while
+    vendor_pitch was a -0.60 weight (the clamp happens after the subtraction).
+    With role `veto` the score is untouched - it still says what the prose
+    says - and the announced frame ends the verdict instead."""
+    v = f.classify(
+        "Hi HN, we've built Rudus, an AI copilot for concrete contractors. A small "
+        "business on our waitlist told us: 'We run a building company and our team "
+        "spends hours a week doing manual takeoffs on spreadsheets, copying estimates "
+        "between Excel and our invoicing tool. We are looking for someone to build us "
+        "something that reads the plans automatically.' Our platform turns a set of "
+        "plans into an estimate. Pricing starts at $99/mo - try it free, book a demo "
+        "at rudus.example.com.", rules,
+        title="Launch HN: Rudus (YC P26) - AI takeoffs for concrete contractors")
+    assert v.audience == f.NONE and v.relevant == 0 and v.ambiguous is False
+    assert v.reason.startswith("veto:") and "vendor_pitch" in v.reason
+    assert v.confidence >= rules.buyer_at, \
+        "a veto decides; it does not fudge the score down to look defeated"
+    assert "vendor_pitch" in v.against
+
+
+def test_a_veto_subtracts_nothing(tmp_path):
+    """Same property, isolated: a mini rule set whose buyer-side text is worth
+    exactly 0.40 + 0.30, under a veto at -0.90. If vetoes still subtracted, this
+    would read 0.0; instead the score stays the score and the verdict is none."""
+    rules = f.load_rules(_rules_file(
+        tmp_path, sky={"weight": -0.9, "role": "veto", "phrases": ["launch hn"]}))
+    v = f.classify("My business does its invoicing manually. Launch HN.", rules)
+    assert v.audience == f.NONE and v.reason.startswith("veto:")
+    assert v.confidence == 0.70
+
+
+def test_a_thread_frame_cannot_rescue_a_launch_post(rules):
+    """Inheritance lends a buyer voice to a reply under a buyer frame - but a
+    record whose own words are an announcement has a frame of its own, and the
+    thread's is the weaker evidence."""
+    v = f.classify(
+        "Check out our platform - book a demo and try it free.", rules,
+        context="What's one part of running your small business you wish you could automate?",
+        context_title="What would you automate in your business?")
+    assert v.audience == f.NONE and v.reason.startswith("veto:")
+    assert v.inherited is False, "the borrowed voice must not survive its own veto"
+
+
 def test_a_hiring_post_is_hard_rejected_however_much_pain_it_describes(rules):
     v = f.classify(
         "We run a small agency and everything is done manually by hand every week. "
@@ -225,6 +284,19 @@ def test_apply_to_writes_the_verdict_onto_the_signal(rules):
     f.apply_to(s, rules)
     assert s.match_reason and 0 <= s.match_confidence <= 1
     assert s.relevant in (0, 1) and s.audience in (f.BUYER, f.PRACTITIONER, f.NONE)
+
+
+def test_the_reason_helper_is_shared_provenance(rules):
+    """`apply_to` and `score_archive` must store the same shape of reason, so a
+    reader of the archive is never surprised by a column that changes format
+    depending on which of the two pipelines wrote the row."""
+    v = f.classify(
+        "We run a small shop and do the invoicing by hand.", rules)
+    s = f.apply_to(
+        sig.Signal(source_id="t3_x", text="We run a small shop and do the invoicing by hand."),
+        rules)
+    assert s.match_reason == f.reason_with_matched(v)
+    assert "[matched:" in s.match_reason
 
 
 # ---- fixtures are graded by the classifier, not by themselves --------------
