@@ -187,7 +187,14 @@ CREATE TABLE IF NOT EXISTS runs (
     origin              TEXT NOT NULL DEFAULT 'manual',
     n_posts             INTEGER,
     duration_expected_s REAL,
-    duration_actual_s   REAL
+    duration_actual_s   REAL,
+    -- T-C2: the environment the run executed in, as JSON (run_env_fingerprint
+    -- builds it; start_run writes it once at row creation). The journal keeps
+    -- the same pattern for experiment runs (lab.fingerprint): models_used
+    -- says what was ASKED to run, and this says what machine and what code
+    -- actually produced the numbers. DEFAULT '{}' covers a caller that does
+    -- not pass one -- an empty record is a fact, never fabricated keys.
+    env                 TEXT NOT NULL DEFAULT '{}'
 );
 -- ── The edit regime (plans/2026-10-17) ──────────────────────────────────
 -- Everything a chat, agent or scheduler changes to this archive is routed
@@ -339,6 +346,14 @@ _ADD_COLUMNS = [
     # NULL on rows written before this existed, which is a different fact from
     # 0 — the runs that died on exactly this recorded nothing at all.
     "ALTER TABLE runs ADD COLUMN n_dedup_deferred INTEGER",
+    # T-C2: the pipeline run environment (mirror of the journal's
+    # lab.fingerprint for experiment runs) — os/python/machine/cpu_count plus
+    # a code snapshot of the repo root, written ONCE at start_run and never
+    # merged into afterwards. The NOT NULL DEFAULT backfills every row a
+    # legacy archive already holds, so the ALTER is legal with rows present;
+    # old rows read '{}' — "no environment was recorded", which is true of
+    # them rather than a fabricated stamp.
+    "ALTER TABLE runs ADD COLUMN env TEXT NOT NULL DEFAULT '{}'",
 ]
 
 
@@ -1138,17 +1153,98 @@ def nugget_by_key(db: sqlite3.Connection, unique_key: str) -> Optional[sqlite3.R
 # --- M2.4: run ledger (jester-setup.md 13.1) -------------------------------
 
 
+# T-C2 ---------------------------------------------------------------------
+#
+# THE RUN'S ENVIRONMENT. The journal stamps its experiment runs with a
+# fingerprint (journal/lab.py fingerprint()) and refuses to count runs whose
+# code is uncommitted; a pipeline run recorded models_used — what was ASKED
+# to run — and nothing about the machine, the interpreter, or the checkout
+# that produced the numbers. A score that cannot be traced to its
+# environment is not reproducible: exactly the gap the journal closed.
+#
+# journal/lab is deliberately NOT imported here — the store is a leaf module
+# the journal imports, and inverting that for one dict would couple pipeline
+# storage to the experiments feature for good. The code part is therefore a
+# small local recreation of what lab.code_state measures (rev-parse HEAD +
+# status --porcelain), and cli.cmd_run passes the finished dict into
+# start_run, which writes it once at row creation.
+
+def _env_git(argv: List[str], timeout: float = 10.0) -> Optional[str]:
+    """stdout of a git command, or None when it failed, timed out or is not
+    installed — the same contract as lab._quiet, kept local for the same
+    decoupling reason. The caller turns None into an explicit
+    {"unavailable": ...} entry: a missing stamp must not read as "clean"."""
+    import subprocess
+
+    try:
+        done = subprocess.run(list(argv), capture_output=True, text=True,
+                              encoding="utf-8", timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def _env_code_state(code_dir: Path) -> dict:
+    """The checkout's commit + dirty flag, or {"unavailable": why}.
+
+    Every degradation here is EXPLICIT. A run whose code state could not be
+    read must not look like a run from a clean checkout."""
+    commit = _env_git(["git", "-C", str(code_dir), "rev-parse", "HEAD"])
+    if commit is None:
+        return {"unavailable": "git rev-parse HEAD did not answer "
+                               "(not a checkout, or no git binary?)"}
+    status = _env_git(["git", "-C", str(code_dir), "status", "--porcelain"])
+    return {"commit": commit.strip(), "dirty": bool(status and status.strip())}
+
+
+def run_env_fingerprint(code_dir: Optional[Path] = None) -> dict:
+    """The environment a pipeline run executes in, JSON-ready.
+
+    Written once onto the run row (see start_run) — never merged into later,
+    and deliberately not a field of update_run_summary. os/python/machine/
+    cpu_count mirror lab.fingerprint; code mirrors lab.code_state for the
+    repo root this store lives in (python/jester/store.py → parents[2]), or
+    the code_dir a caller passes. The whole collection is wrapped: a
+    fingerprint problem — no git, a failed platform call, anything —
+    degrades the record to a single {"unavailable": ...} entry instead of
+    failing or materially slowing the very run it describes.
+    """
+    import platform
+
+    try:
+        root = Path(code_dir) if code_dir else Path(__file__).resolve().parents[2]
+        return {
+            "os": platform.platform(),
+            "python": sys.version.split()[0],
+            "machine": platform.machine(),
+            "cpu_count": os.cpu_count(),
+            "code": _env_code_state(root),
+        }
+    except Exception as exc:  # noqa: BLE001 — the snapshot must never fail a run
+        return {"unavailable": f"{type(exc).__name__}: {exc}"}
+
+
 def start_run(
-    db: sqlite3.Connection, run_id: str, models_used=None, origin: str = "manual"
+    db: sqlite3.Connection, run_id: str, models_used=None, origin: str = "manual",
+    env: Optional[dict] = None,
 ) -> int:
-    """Open a new run row. Refuses while another run is still 'running' (R25)."""
+    """Open a new run row. Refuses while another run is still 'running' (R25).
+
+    T-C2: ``env`` is the run's environment fingerprint (run_env_fingerprint
+    builds it). It is written ONCE, right here, and is deliberately NOT a
+    field of update_run_summary — merging into it afterwards would let a
+    run's environment be back-dated, and the row exists precisely so a score
+    can be traced to the machine and code that produced it. A caller that
+    passes none records '{}' — an empty environment is a fact, same as the
+    DEFAULT the column carries."""
     row = db.execute("SELECT id FROM runs WHERE status='running' LIMIT 1").fetchone()
     if row is not None:
         raise ConcurrentRunError(f"run already in progress (id={row[0]})")
     cur = db.execute(
-        "INSERT INTO runs(run_id, status, started_at, models_used, origin) "
-        "VALUES(?, 'running', datetime('now'), ?, ?)",
-        (run_id, json.dumps(models_used) if models_used else None, origin),
+        "INSERT INTO runs(run_id, status, started_at, models_used, origin, env) "
+        "VALUES(?, 'running', datetime('now'), ?, ?, ?)",
+        (run_id, json.dumps(models_used) if models_used else None, origin,
+         json.dumps(env) if env is not None else "{}"),
     )
     db.commit()
     return cur.lastrowid

@@ -293,6 +293,16 @@ def cmd_run(args):
     # Same 60-minute default as `cycle`, so the two agree on what dead means.
     reap_running(db, older_than_minutes=getattr(args, "stale_after", 60) or 60)
     origin = os.environ.get("JESTER_ORIGIN", "manual")
+    # T-C2: fingerprint the environment before the row exists, so it is
+    # written once, at creation — models_used says what was ASKED to run;
+    # this says what machine and what code actually produced the numbers.
+    # The helper is self-guarding (it degrades to {"unavailable": ...} rather
+    # than raising), so reading it here can neither fail nor stall the run.
+    # Local import keeps the module's import block untouched; `journal` is
+    # not imported by the store either, so the pipeline storage stays a leaf.
+    from jester.store import run_env_fingerprint
+
+    run_env = run_env_fingerprint()
     try:
         start_run(
             db,
@@ -315,6 +325,7 @@ def cmd_run(args):
                 "rubric_version": RUBRIC_VERSION,
             },
             origin=origin,
+            env=run_env,
         )
     except ConcurrentRunError as exc:
         print(f"refusing to start run '{args.run}': {exc}")
