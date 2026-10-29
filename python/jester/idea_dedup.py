@@ -87,8 +87,16 @@ def rescore_after_merge(db, existing_id: int, critic, critic_llm, checker=None):
 
     Without this the score on screen belongs to a smaller evidence set than the
     citations underneath it — the exact mismatch R49 exists to prevent.
+
+    R53 gates the web half: the competitor check runs again only when the
+    verdict on file is stale (never checked, or older than
+    `competitor_ttl_days`). Until this gate existed the TTL knob was
+    console-editable dead config — every merge re-ran the search, and the
+    re-check could land right after the last one. The critic re-score itself
+    always runs; a merge means the evidence changed, whatever the check says.
     """
     from jester.agents.critic import row_to_idea  # local: avoids an import cycle
+    from jester.competitors import needs_recheck  # local: avoids an import cycle
 
     row = get_idea(db, existing_id)
     if row is None:
@@ -98,7 +106,20 @@ def rescore_after_merge(db, existing_id: int, critic, critic_llm, checker=None):
     # A critic that did not answer leaves the idea marked `needs_score` with
     # its old numbers; there is no fresh score for a competitor verdict to
     # fold into, so the web check waits for the real re-score.
-    if not idea.needs_score and checker is not None and checker.enabled:
+    #
+    # A never-backend critic config (a stub without `.config`) falls back to
+    # the pre-TTL behaviour: re-check every merge, as R49 shipped. With the
+    # knob present, a verdict inside its window is trusted — including one
+    # apply_scores just preserved on the re-score above.
+    ttl = getattr(getattr(critic, "config", None), "competitor_ttl_days", None)
+    verdict_fresh = (
+        ttl is not None
+        and idea.competition_checked
+        and idea.scores.competition is not None
+        and not needs_recheck(idea.competition_checked_at, ttl)
+    )
+    if not idea.needs_score and checker is not None and checker.enabled \
+            and not verdict_fresh:
         verdict = checker.check(idea)
         apply_verdict(idea, verdict)
         update_idea(db, idea)
@@ -113,6 +134,12 @@ def apply_verdict(idea, verdict) -> None:
     idea.scores.competition = verdict.competition
     idea.competition_checked = bool(verdict.checked)
     idea.competitor_notes = verdict.notes
+    # T-A2 R53: stamp the moment a check actually produced a verdict. A
+    # squeezed budget or failed search carries `checked` False and leaves any
+    # existing stamp alone — the score below is imputed (R29), and needs_recheck
+    # must not treat that non-check as a fresh one.
+    if verdict.checked:
+        idea.competition_checked_at = _now()  # T-A2 R53
     idea.scores.overall = compute_overall(
         idea.scores.demand_signal, idea.scores.feasibility, verdict.competition
     )

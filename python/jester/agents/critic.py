@@ -24,7 +24,7 @@ def row_to_idea(row) -> Idea:
     # Scores stay None when the row has none. Turning NULL into 0.0 here made
     # an unscored idea look like one the critic had scored at the bottom of
     # the scale, and a later update wrote those zeros back as if they were.
-    return Idea(
+    idea = Idea(
         id=row["id"],
         title=row["title"] or "",
         problem_statement=row["problem_statement"] or "",
@@ -47,6 +47,13 @@ def row_to_idea(row) -> Idea:
         run_id=row["run_id"] or "",
         needs_score=bool(_get(row, "needs_score", 0)),
     )
+    # T-A2 R53: when the competition verdict was last verified on the web.
+    # Kept as a plain attribute (models.Idea pins no field for it) so a story
+    # that only needs the score stays untouched; the store reads it with
+    # getattr, so a row from a pre-migration database (no such column yet)
+    # simply carries None, and _get lives above.
+    idea.competition_checked_at = _get(row, "competition_checked_at")
+    return idea
 
 
 def _get(row, key, default=None):
@@ -63,6 +70,16 @@ def apply_scores(idea: Idea, critic_llm: CriticLLM, config: Thresholds) -> bool:
     kept. A new idea is left unscored (all four numbers None); an existing
     one keeps the scores it had, which are now stale rather than wrong. Either
     way `needs_score` is set so a later run tries again.
+
+    R53, the one exception to the wipe: a critic that DID answer but supplied
+    no competition number must not erase a competition verdict the web step
+    verified earlier. Before, `rescore_pending` (a later run finally answering
+    the idea that grew) overwrote `competition` with None imputed at 5,
+    checked=False, and notes=None — three ideas out of ten lost their only
+    verified field to a re-score that was asked for demand, not competition.
+    Now demand/feasibility move onto the fresh answer and overall recomputes
+    against the verdict that is still on file; the check stamp does not move,
+    because no new check happened.
     """
     c = critic_llm.score(idea)
     if not critic_answered(c, critic_llm):
@@ -73,14 +90,31 @@ def apply_scores(idea: Idea, critic_llm: CriticLLM, config: Thresholds) -> bool:
             idea.competition_checked = False
             idea.critic_model = ""
         return False
-    idea.scores = IdeaScores(
-        demand_signal=c.demand_signal,
-        feasibility=c.feasibility,
-        competition=c.competition,
-        overall=compute_overall(c.demand_signal, c.feasibility, c.competition),
+    previously_verdicted = (
+        idea.competition_checked and idea.scores.competition is not None
     )
-    idea.competition_checked = c.competition is not None
-    idea.competitor_notes = None  # never fabricated (R29/R41)
+    if c.competition is None and previously_verdicted:
+        # The verdict on file is still the row's competition state (its TTL
+        # governs whether a later check replaces it — see rescore_after_merge).
+        idea.scores = IdeaScores(
+            demand_signal=c.demand_signal,
+            feasibility=c.feasibility,
+            competition=idea.scores.competition,
+            overall=compute_overall(
+                c.demand_signal, c.feasibility, idea.scores.competition),
+        )
+        # competition_checked stays True and competitor_notes stay exactly as
+        # they were: notes describe a search that RAN, and dropping them here
+        # would be pretending it did not.
+    else:
+        idea.scores = IdeaScores(
+            demand_signal=c.demand_signal,
+            feasibility=c.feasibility,
+            competition=c.competition,
+            overall=compute_overall(c.demand_signal, c.feasibility, c.competition),
+        )
+        idea.competition_checked = c.competition is not None
+        idea.competitor_notes = None  # never fabricated (R29/R41)
     # What answered, not what the config asked for (see CriticDraft.model).
     idea.critic_model = c.model or model_name(critic_llm, config.critic_model)
     idea.last_scored_at = _now()

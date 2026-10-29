@@ -339,6 +339,13 @@ _ADD_COLUMNS = [
     # NULL on rows written before this existed, which is a different fact from
     # 0 — the runs that died on exactly this recorded nothing at all.
     "ALTER TABLE runs ADD COLUMN n_dedup_deferred INTEGER",
+    # ---- T-A2 R53: when competition was last verified on the web ------------
+    # `competitors.needs_recheck` consults this stamp so a merged idea inside
+    # the TTL window keeps its verdict instead of paying the search budget
+    # again. NULL means the idea was never web-checked (the critic saw it and
+    # answered, or the check failed/skipped) — a different fact from a recent
+    # check, and the shape needs_recheck already treats as "must check".
+    "ALTER TABLE ideas ADD COLUMN competition_checked_at TEXT",
 ]
 
 
@@ -1017,6 +1024,10 @@ def _now() -> str:
 def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
     """Persist a synthesized + scored idea. ``competition`` None is stored as
     NULL (R29/R41: never fabricated). Returns the new row id."""
+    # T-A2 R53: the web-check stamp round-trips. getattr (not an attribute
+    # access) because Idea pins no field for it — a hand- or model-built idea
+    # with no verdict behind it simply stores NULL, which is the truth.
+    stamp = getattr(idea, "competition_checked_at", None)  # T-A2 R53
     cur = db.execute(
         """
         INSERT INTO ideas
@@ -1024,8 +1035,8 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
              source_threads, source_platforms, demand_signal, feasibility,
              competition, overall, competitor_notes, competition_checked,
              status, last_scored_at, critic_model, synthesis_model, run_id,
-             needs_score)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             needs_score, competition_checked_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             idea.title,
@@ -1046,6 +1057,7 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
             idea.synthesis_model,
             idea.run_id,
             1 if idea.needs_score else 0,
+            stamp,  # T-A2 R53
         ),
     )
     db.commit()
@@ -1054,6 +1066,7 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
 
 def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
     """Persist mutable score/status fields of an existing idea (R49/R53 re-scoring)."""
+    stamp = getattr(idea, "competition_checked_at", None)  # T-A2 R53
     db.execute(
         """
         UPDATE ideas SET
@@ -1061,7 +1074,7 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             competitor_notes=?, competition_checked=?, status=?,
             last_scored_at=?, critic_model=?, synthesis_model=?,
             supporting_nuggets=?, source_threads=?, source_platforms=?,
-            needs_score=?
+            needs_score=?, competition_checked_at=?
         WHERE id=?
         """,
         (
@@ -1079,6 +1092,9 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             idea.source_threads,
             json.dumps(idea.source_platforms),
             1 if idea.needs_score else 0,
+            stamp,  # T-A2 R53: a re-score must not erase a check stamp it did
+            # not renew (apply_scores' preserve path leaves the attr untouched;
+            # apply_verdict stamps when a verdict really checked).
             idea.id,
         ),
     )
