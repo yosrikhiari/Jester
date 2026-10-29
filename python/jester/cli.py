@@ -71,6 +71,10 @@ from jester.store import (
 from jester.vector import (
     UnavailableVectorStore,
     VectorDimensionMismatch,
+    # reembed stamps embedding_id from the SAME function the store writes its
+    # point ids with — one site changing and not the other is how emb:...
+    # stops naming a point that exists.
+    point_id_for,
     VectorStore,
 )
 from jester.worker import ingest as worker_ingest
@@ -1944,13 +1948,13 @@ def cmd_reembed(args):
                 continue
             for r in chunk:
                 mark_reembedded(db, r["unique_key"],
-                                f"emb:{abs(hash(r['unique_key'])) % (2**63)}")
+                                f"emb:{point_id_for(r['unique_key'])}")
                 ok += 1
     for row in rows:
         key = row["unique_key"]
         try:
             vector.upsert(key, row["raw_text"] or "", {})
-            mark_reembedded(db, key, f"emb:{abs(hash(key)) % (2**63)}")
+            mark_reembedded(db, key, f"emb:{point_id_for(key)}")
             ok += 1
         except Exception as exc:
             failed += 1

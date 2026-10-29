@@ -1,13 +1,21 @@
 """TDD tests for the M1.5 archivist agent: dedup, R32 model-refuse, needs_reembed."""
 import tempfile
 
-from jester.agents.archivist import Archivist, ModelMismatch
+import pytest
+
+from jester.agents import archivist as archivist_module
+from jester.agents.archivist import (
+    NEAR_MISS_WIDTH,
+    Archivist,
+    ModelMismatch,
+    classify_similarity,
+)
 from jester.config import Thresholds, load_thresholds
 from jester.embed import FakeEmbedding
 from jester.llm import FakeLLM, ALLOWED_CATEGORIES
 from jester.agents.extractor import extract
 from jester.store import open_db, meta_get, meta_set
-from jester.vector import VectorStore
+from jester.vector import VectorStore, point_id_for
 
 
 def _db():
@@ -186,3 +194,115 @@ def test_dimension_mismatch_is_not_treated_as_unavailability():
     # cmd_run, which re-raises before reaching here.
     arch.run(_nuggets())
     assert len(arch.deferred) == 2
+
+
+# ---- the crash window: a point with no row behind it -----------------------
+#
+# The archivist writes the vector point BEFORE the nugget row (the upsert is
+# the call that can fail slow; the row is the fast local write). A process
+# killed between those two lines leaves a point whose key no row answers, and
+# its cosine is ~1.0 against the same text arriving again — the old decision
+# read that as "duplicate" and locked the door on material that existed
+# nowhere.
+
+
+def _thresholds(category_mode: dict | None = None) -> Thresholds:
+    return Thresholds(embedding_model="nomic-embed-text",
+                      dedup_threshold_by_category=category_mode or {})
+
+
+def test_own_reflection_in_the_store_does_not_dedup_its_own_nugget():
+    """Seed the vector with the candidate's own key and no row: the pre-crash
+    state. The candidate must proceed to upsert + insert, not be refused on
+    its own reflection."""
+    db = _db()
+    vec = _vector()
+    n = _nuggets()[0]
+    vec.upsert(n.unique_key, n.raw_text, {"category": n.category})
+    assert db.execute("SELECT COUNT(*) FROM nuggets").fetchone()[0] == 0
+
+    arch = Archivist(db, vec, _thresholds())
+    kept = arch.run([n])
+
+    assert kept == [n], "the reflection is the candidate itself, not a duplicate"
+    assert db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE unique_key=?",
+        (n.unique_key,)).fetchone()[0] == 1
+    assert n.embedding_id == f"emb:{point_id_for(n.unique_key)}"
+    assert n.needs_reembed is False
+    # the guard worked BY the reflection, not around it: its score was seen
+    # and must not pollute the near-miss list either
+    assert arch.near_misses == []
+
+
+def test_crash_between_upsert_and_insert_recovers_on_the_next_run(monkeypatch):
+    """First run: the point is written, then insert_nugget never runs
+    (simulated by the process dying inside the window). Second run: the
+    reflection must NOT register as a duplicate — exactly one row, no
+    ghost-continue. The old `any(s >= threshold for s, _k in scored)` failed
+    this by refusing on the archivist's own zombie point."""
+    db = _db()
+    vec = _vector()
+    n = _nuggets()[0]
+    arch = Archivist(db, vec, _thresholds())
+
+    real_insert = archivist_module.insert_nugget
+
+    def die_after_upsert(db_, row):
+        raise KeyboardInterrupt("worker killed mid-nugget")
+
+    monkeypatch.setattr(archivist_module, "insert_nugget", die_after_upsert)
+    with pytest.raises(KeyboardInterrupt):
+        arch.run([n])
+    assert vec.count() == 1, "the point was written; the row was not"
+    assert db.execute("SELECT COUNT(*) FROM nuggets").fetchone()[0] == 0
+
+    monkeypatch.setattr(archivist_module, "insert_nugget", real_insert)
+    kept = arch.run([n])
+
+    assert kept == [n]
+    rows = db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE unique_key=?", (n.unique_key,)
+    ).fetchone()[0]
+    assert rows == 1, "no ghost-continue: the nugget lands on the recovery pass"
+    assert vec.count() == 1, "the upsert is idempotent: no second point"
+
+
+def test_a_ghost_point_with_no_row_behind_it_does_not_block_the_nugget():
+    """An over-threshold neighbour whose key has NO row (row pruned, or the
+    crash window) is a ghost. A text that exists nowhere gets archived."""
+    db = _db()
+    vec = _vector()
+    ghost_key = "nugget/pruned-row/01"
+    same_text = "self host email is painful"
+    vec.upsert(ghost_key, same_text, {"category": "pain_point"})
+    n = _nuggets()[0]  # raw_text == same_text, unique_key different
+    assert n.unique_key != ghost_key
+
+    arch = Archivist(db, vec, _thresholds())
+    kept = arch.run([n])
+
+    assert kept == [n]
+    assert db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE unique_key=?", (n.unique_key,)
+    ).fetchone()[0] == 1
+
+
+def test_one_real_duplicate_refusal_survives_the_ghost_guard():
+    """The guard relaxes only when EVERY over-threshold match is a ghost. One
+    real row behind a match and this is a genuine duplicate — refuse."""
+    db = _db()
+    vec = _vector()
+    n = _nuggets()[0]
+    arch = Archivist(db, vec, _thresholds())
+    arch.run([n])
+    n2 = _nuggets()[1]  # same text, different unique_key
+    ghost = "ghost/with-no-row/09"
+    vec.upsert(ghost, n2.raw_text, {"category": "pain_point"})
+
+    kept = arch.run([n2])
+
+    assert kept == [], "a real duplicate behind one of the matches is decisive"
+    assert db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE unique_key=?", (n2.unique_key,)
+    ).fetchone()[0] == 0

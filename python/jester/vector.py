@@ -1,4 +1,5 @@
 """Qdrant vector store wrapper. Local mode (no server) for mock/Checkpoint 1."""
+import hashlib
 import time
 
 from qdrant_client import QdrantClient, models
@@ -39,6 +40,29 @@ RETRY_BACKOFF_S = 0.5
 #: they could have scanned. That cost is bounded and paid once; the scan cost
 #: is paid on every one of tens of thousands of dedup lookups per run.
 INDEXING_THRESHOLD = 1000
+
+
+def point_id_for(unique_key: str) -> int:
+    """The Qdrant point id a keyed document is written under.
+
+    First 8 bytes of sha256, masked to 63 bits (Qdrant ids are unsigned
+    64-bit; the mask keeps the value on the safe side of that while staying
+    positive and collision-unfriendly). Deterministic on PURPOSE: the point
+    id is how a nugget's vector is found again, and every id below this line
+    used to be `abs(hash(key)) % 2**63` — Python salts str hashing per
+    process, so that value changed on every interpreter start. A `reembed
+    --all` run in a fresh process re-pointed every nugget while leaving the
+    old points behind, silently doubling the collection; the `emb:...`
+    embedding_id stamped into the archive described coordinates that no
+    longer existed; and the doctor's rows-vs-points parity check filled with
+    noise nobody could attribute to a cause.
+
+    sha256 of the key is the cheapest primitive that makes the id a pure
+    function of the key's bytes: same key, same point, across processes,
+    machines, and runs.
+    """
+    digest = hashlib.sha256(unique_key.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
 
 
 def _with_retry(call, *, attempts: int = RETRIES + 1):
@@ -192,7 +216,7 @@ class VectorStore:
                 self.collection,
                 points=[
                     models.PointStruct(
-                        id=abs(hash(unique_key)) % (2**63),
+                        id=point_id_for(unique_key),
                         vector=vec,
                         payload={**payload, "unique_key": unique_key},
                     )
@@ -224,7 +248,7 @@ class VectorStore:
                 self.collection,
                 points=[
                     models.PointStruct(
-                        id=abs(hash(key)) % (2**63),
+                        id=point_id_for(key),
                         vector=vec,
                         payload={**payload, "unique_key": key},
                     )
