@@ -5,6 +5,14 @@ judged at a glance; FAILED_BATCHES is the only flag that fails the CLI exit code
 """
 from typing import List
 
+#: T-A4: how many `needs_score` ideas a run may leave behind before the
+#: residue stops being per-demand noise and becomes a backlog. With the
+#: default `rescore_per_run: 1` (~150 a day) a whole run's answer only moves
+#: the line by one, so a few refusals in a row — quota dry spell, model
+#: rolled away — takes days to tell anyone. Five is past that noise floor:
+#: one refuses-to-answer critic week is visible, one bad night is not.
+SCORE_BACKLOG_THRESHOLD = 5
+
 
 def compute_floor_flags(
     *,
@@ -13,6 +21,7 @@ def compute_floor_flags(
     all_trivial: bool,
     failed_batches: int,
     dedup_deferred: int = 0,
+    pending_scores: int = 0,
 ) -> List[str]:
     """Derive the flag set for one run.
 
@@ -25,6 +34,10 @@ def compute_floor_flags(
       one nugget, so its batch was left queued rather than archived unchecked.
       Without this a run where Qdrant was down finishes 'completed' having kept
       nothing, which is indistinguishable from a run that found nothing.
+    - SCORE_BACKLOG (T-A4) : more than SCORE_BACKLOG_THRESHOLD archived ideas
+      sit at `needs_score` when the run finished. The critic that was asked did not
+      answer, and `rescore_pending`'s per-run budget spent what it had; when
+      re-scoring is off entirely this is the ONLY line the run says about it.
     """
     flags: List[str] = []
     if kept == 0:
@@ -39,4 +52,6 @@ def compute_floor_flags(
         flags.append("FAILED_BATCHES")
     if dedup_deferred > 0:
         flags.append("DEDUP_UNAVAILABLE")
+    if pending_scores > SCORE_BACKLOG_THRESHOLD:  # T-A4
+        flags.append("SCORE_BACKLOG")
     return flags

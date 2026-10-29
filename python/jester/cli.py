@@ -13,7 +13,7 @@ from pathlib import Path
 DEFAULT_CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "config")
 
 from jester.agents.archivist import Archivist
-from jester.agents.critic import Critic, rescore_pending, row_to_idea
+from jester.agents.critic import Critic, pending_scores, rescore_pending, row_to_idea
 from jester.agents.extractor import extract, extract_batch
 from jester.agents.synthesizer import Synthesizer
 from jester.competitors import CompetitorChecker
@@ -784,12 +784,24 @@ def cmd_run(args):
     checkpoint("synthesize")
 
     failed = count_failed_batches(db)
+    # T-A4: the needs_score residue this run leaves behind, after rescore_
+    # pending spent its <= rescore_per_run answers on the backlog. Stamped as
+    # a floor flag so a nightly's quality glance sees a slow-motion problem
+    # (quota dry spell, a critic rolled away) — and when re-scoring is off,
+    # this count is the run line's only admission it exists.
+    pending = pending_scores(db)  # T-A4
+    if pending and not (int(cfg.thresholds.rescore_per_run or 0) > 0):
+        print(
+            f"{pending} idea(s) still waiting for a real score "
+            "(needs_score; rescore_per_run is 0, so this run did not re-score)"
+        )
     flags = compute_floor_flags(
         kept=len(kept),
         ideas=len(ideas),
         all_trivial=_run_all_trivial(db, args.run),
         failed_batches=failed,
         dedup_deferred=len(archivist.deferred),
+        pending_scores=pending,  # T-A4
     )
     durations = _duration_fields(db, args.run, origin)
     finish_run(
