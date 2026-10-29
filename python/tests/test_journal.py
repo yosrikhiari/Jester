@@ -10,6 +10,7 @@ will write the rows these gates read. Here the tests write them directly,
 which is exactly the contract those slices must meet.
 """
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 
@@ -163,6 +164,14 @@ def test_an_article_walks_every_state_and_each_gate_blocks_first(db):
     assert "no finished run" in _blocked(db, slug, "drafting")
     J.add_run(db, e, status="ok", raw_path="runs/1.jsonl")
     J.answer_checklist(db, e, FULL_CHECKLIST)
+    # The drafting gate reads a code record off the run's env, and "no
+    # record" is not "clean": the walk writes the envelope the lab tools
+    # themselves put on every run they file (run_command fingerprints the
+    # checkout, attach_ledger names the ledger), so this hand-written row
+    # must carry the same proof to pass.
+    db.execute("UPDATE experiment_run SET env=? WHERE experiment_id=?",
+               (json.dumps({"code": {"path": "x", "commit": "a" * 40, "dirty": False}}), e))
+    db.commit()
     js.move(db, slug, "drafting")
 
     assert "no saved version" in _blocked(db, slug, "in_review")

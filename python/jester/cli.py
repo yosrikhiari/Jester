@@ -3281,7 +3281,16 @@ def _add_journal_parser(sub):
 
     p = experiment_arg(common(jsub.add_parser(
         "run", help="run the experiment: jester journal run SLUG -- python bench.py")))
-    p.add_argument("--code", default="", help="the code's git checkout (its commit is recorded)")
+    # REQUIRED, not defaulted: a run without its code's commit cannot stand
+    # behind the numbers it produced -- the commit IS the reproducibility
+    # record, and the README's rule ("a run from uncommitted code does not
+    # count toward drafting") must not be waivable by leaving the flag out.
+    # A folder that is not a git checkout is still accepted; it is recorded
+    # as dirty: None with a note, which the gate reads as deliberately
+    # stated, not missing.
+    p.add_argument("--code", required=True,
+                   help="the code's git checkout, REQUIRED: its commit is the "
+                        "reproducibility record the run stands behind")
     p.add_argument("--seed", default="")
     p.add_argument("--timeout", type=float, default=None, help="seconds")
     p.add_argument("--data-before-plan", action="store_true",
