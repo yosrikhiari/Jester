@@ -12,7 +12,8 @@ The order is the point:
    fingerprint of the machine and the code: OS, Python, GPU and driver, the
    code's commit and whether it had uncommitted changes. A run from
    uncommitted code cannot be reproduced, so the drafting gate does not
-   count it.
+   count it -- and neither does a run that recorded nothing about its code:
+   silence is not a clean slate.
 3. `attach_ledger` turns a run Jester already recorded (a signals collection,
    a pipeline pass) into an experiment run, with the ledger row saved as
    its raw data. Jester's own nightly work is evidence too.
@@ -265,6 +266,13 @@ def attach_ledger(db: sqlite3.Connection, root: Path, slug: str, ledger: str, le
     # marked so the article says so.
     env = {"ledger": ledger, "ledger_db": str(Path(path)), "ledger_run": ledger_run,
            "before_plan": _earlier(started, exp["created_at"])}
+    # An attached run has no code checkout of its own to fingerprint, but
+    # silence is not allowed either: counts_for_gate reads an absent code
+    # envelope as unevidenced, and an attached run's evidence IS the ledger
+    # row. Declaring how it was captured keeps the gate working for ledger
+    # runs -- every field of this envelope is absent, and absent fields are
+    # "not dirty", exactly the documented attach semantics.
+    env["code"] = {"source": "ledger"}
     rid = _start_run(db, exp["id"], f"ledger:{ledger}", f"{ledger} run {ledger_run}", env, started)
     folder = run_dir(root, slug, rid)
     folder.mkdir(parents=True, exist_ok=True)
@@ -293,10 +301,22 @@ def _earlier(a: str, b: str) -> bool:
 
 def counts_for_gate(run: sqlite3.Row) -> bool:
     """Whether a run can stand behind an article: finished ok, raw data kept,
-    and not made from uncommitted code."""
+    and a code envelope on record that does not say uncommitted work.
+
+    No record of the code is NOT "not dirty". A run whose env carries no
+    code envelope at all says nothing about what it ran from, and silence is
+    not evidence: without this check, the README's rule -- a run from
+    uncommitted code does not count toward drafting -- was waivable by
+    simply leaving the record off. Only an envelope that exists is judged by
+    its fields, and one that exists passes when its `dirty` is not True
+    (False for a clean checkout; None for code that is no git repository,
+    which cannot be carrying uncommitted changes).
+    """
     if run["status"] != "ok" or not run["raw_path"]:
         return False
     code = json.loads(run["env"] or "{}").get("code") or {}
+    if not code:
+        return False
     return code.get("dirty") is not True
 
 

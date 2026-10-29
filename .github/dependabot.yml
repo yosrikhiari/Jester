@@ -1,6 +1,14 @@
-# F-07: track floating Docker tags, pip, and npm weekly so `latest` stops
-# drifting silently. Version bumps land as PRs; digests are pinned at merge
-# time once CI resolves them, rather than fabricated by hand.
+# F-07: track floating Docker tags, pip, and npm weekly so images and
+# dependencies stop drifting silently. WHAT THIS FILE ACTUALLY ENFORCES:
+# weekly update PRs — nothing more. For docker, Dependabot only understands
+# references that carry a runnable tag: `repo:tag@sha256:<digest>` gets a PR
+# that moves tag and digest together, while an untagged `repo` reference
+# gets nothing at all and stays on whatever was pushed last — which is why
+# docker-compose.yml names a tag on every image line. The digests themselves
+# were resolved once by hand through the Docker Hub registry HTTP API
+# (2026-10-29); the previous version of this comment claimed CI pinned
+# digests "at merge time" — no mechanism ever did that, and the untagged
+# cloakbrowser reference proved it.
 version: 2
 updates:
   - package-ecosystem: "docker"

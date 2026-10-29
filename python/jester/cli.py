@@ -293,6 +293,16 @@ def cmd_run(args):
     # Same 60-minute default as `cycle`, so the two agree on what dead means.
     reap_running(db, older_than_minutes=getattr(args, "stale_after", 60) or 60)
     origin = os.environ.get("JESTER_ORIGIN", "manual")
+    # T-C2: fingerprint the environment before the row exists, so it is
+    # written once, at creation — models_used says what was ASKED to run;
+    # this says what machine and what code actually produced the numbers.
+    # The helper is self-guarding (it degrades to {"unavailable": ...} rather
+    # than raising), so reading it here can neither fail nor stall the run.
+    # Local import keeps the module's import block untouched; `journal` is
+    # not imported by the store either, so the pipeline storage stays a leaf.
+    from jester.store import run_env_fingerprint
+
+    run_env = run_env_fingerprint()
     try:
         start_run(
             db,
@@ -315,6 +325,7 @@ def cmd_run(args):
                 "rubric_version": RUBRIC_VERSION,
             },
             origin=origin,
+            env=run_env,
         )
     except ConcurrentRunError as exc:
         print(f"refusing to start run '{args.run}': {exc}")
@@ -3293,7 +3304,16 @@ def _add_journal_parser(sub):
 
     p = experiment_arg(common(jsub.add_parser(
         "run", help="run the experiment: jester journal run SLUG -- python bench.py")))
-    p.add_argument("--code", default="", help="the code's git checkout (its commit is recorded)")
+    # REQUIRED, not defaulted: a run without its code's commit cannot stand
+    # behind the numbers it produced -- the commit IS the reproducibility
+    # record, and the README's rule ("a run from uncommitted code does not
+    # count toward drafting") must not be waivable by leaving the flag out.
+    # A folder that is not a git checkout is still accepted; it is recorded
+    # as dirty: None with a note, which the gate reads as deliberately
+    # stated, not missing.
+    p.add_argument("--code", required=True,
+                   help="the code's git checkout, REQUIRED: its commit is the "
+                        "reproducibility record the run stands behind")
     p.add_argument("--seed", default="")
     p.add_argument("--timeout", type=float, default=None, help="seconds")
     p.add_argument("--data-before-plan", action="store_true",

@@ -175,6 +175,33 @@ def test_runs_from_uncommitted_code_do_not_open_drafting(db, tmp_path):
     assert "uncommitted code" in " ".join(js.blockers(db, J.get(db, slug), "drafting"))
 
 
+def test_counts_for_gate_reads_the_code_record_not_its_absence(db, jid):
+    e = L.plan(db, jid)
+
+    def gate_run(env):
+        rid = J.add_run(db, e, raw_path="r/1")
+        db.execute("UPDATE experiment_run SET env=? WHERE id=?", (json.dumps(env), rid))
+        db.commit()
+        return db.execute("SELECT * FROM experiment_run WHERE id=?", (rid,)).fetchone()
+
+    # No code envelope -- or an envelope key that says nothing -- is "no
+    # record of the code", which is NOT "not dirty": the run cannot stand
+    # behind the numbers any more than a dirty one can.
+    assert not L.counts_for_gate(gate_run({}))
+    assert not L.counts_for_gate(gate_run({"os": "x", "seed": "7"}))
+    assert not L.counts_for_gate(gate_run({"code": {}}))
+    # An envelope that exists is judged by its fields.
+    assert not L.counts_for_gate(
+        gate_run({"code": {"path": "c", "commit": "x" * 40, "dirty": True}}))
+    assert L.counts_for_gate(
+        gate_run({"code": {"path": "c", "commit": "x" * 40, "dirty": False}}))
+    # Code that is no git repository cannot carry uncommitted changes; the
+    # checkout's absence is recorded, so the envelope counts.
+    assert L.counts_for_gate(gate_run(
+        {"code": {"path": "c", "commit": None, "dirty": None,
+                  "note": "not a git repository"}}))
+
+
 # ---- ledger -------------------------------------------------------------------
 
 def _ledgers(tmp_path):
@@ -204,6 +231,11 @@ def test_attach_a_ledger_run(db, jid, tmp_path):
     assert run["status"] == "ok" and run["source"] == "ledger:signals"
     assert result["collected"] == 722 and result["queries"] == ["r/forhire"]
     assert run["started_at"] == "2026-10-01T08:30:48+00:00"
+    # Attached runs declare how they were captured instead of carrying
+    # silence: a code envelope naming the ledger as the source, every other
+    # field absent, which counts_for_gate reads as "not dirty".
+    assert json.loads(run["env"])["code"] == {"source": "ledger"}
+    assert L.counts_for_gate(run)
     saved = json.loads((tmp_path / run["raw_path"] / "ledger.json").read_text(encoding="utf-8"))
     assert saved["buyer"] == 11
     assert C.check_numbers(db, tmp_path, jid, f"It kept [11](run:{run['id']}#buyer) buyers.").ok
@@ -211,6 +243,7 @@ def test_attach_a_ledger_run(db, jid, tmp_path):
     assert failed["status"] == "failed" and json.loads(failed["result"])["queries"] == "{bad"
     treat = L.attach_ledger(db, tmp_path, "lab", "pipeline", "treat-1", ledger_db=str(pipe))
     assert treat["status"] == "ok" and json.loads(treat["result"])["n_batches"] == 58
+    assert json.loads(treat["env"])["code"] == {"source": "ledger"}
 
 
 def test_a_ledger_run_older_than_the_plan_is_marked(db, jid, tmp_path):
@@ -342,7 +375,8 @@ def cli_run(tmp_path, capsys):
 
 def test_cli_plan_run_table_figure_show(cli_run, tmp_path):
     cli_run("new", "Bench")
-    assert "no experiment yet" in cli_run("run", "bench", "--", sys.executable, "-c", "print(1)", ok=False)
+    assert "no experiment yet" in cli_run("run", "bench", "--code", str(tmp_path), "--",
+                                          sys.executable, "-c", "print(1)", ok=False)
     assert "experiment 1 planned for bench" in cli_run(
         "plan", "bench", "--hypothesis", "rules lose", "--metric", "F1", "--threshold", "+0.05",
         "--baseline", "rules", "--runs", "2", "--threat", "one labeller")
@@ -373,17 +407,20 @@ def test_cli_run_failure_and_dirty_code(cli_run, tmp_path):
     assert "UNCOMMITTED CODE" in cli_run("show", "fails")
 
 
-def test_cli_run_of_data_recorded_before_the_plan(cli_run):
+def test_cli_run_of_data_recorded_before_the_plan(cli_run, tmp_path):
     cli_run("new", "Recount")
     cli_run("plan", "recount", "--runs", "1")
-    cli_run("run", "recount", "--data-before-plan", "--", sys.executable, "-c", "print(1)")
+    # --code is required and a plain folder is fine: a re-count of data that
+    # predates the plan is recorded like any run, right down to its code.
+    cli_run("run", "recount", "--code", str(tmp_path), "--data-before-plan", "--",
+            sys.executable, "-c", "print(1)")
     assert "ran before the plan was written" in cli_run("show", "recount")
 
 
-def test_cli_run_note_is_printed(cli_run):
+def test_cli_run_note_is_printed(cli_run, tmp_path):
     cli_run("new", "Noted")
     cli_run("plan", "noted")
-    out = cli_run("run", "noted", "--", sys.executable, "-c",
+    out = cli_run("run", "noted", "--code", str(tmp_path), "--", sys.executable, "-c",
                   "import os; open(os.path.join(os.environ['JESTER_RUN_DIR'], 'result.json'), 'w').write('x')",
                   ok=False)
     assert "note: result.json is not valid JSON" in out
@@ -402,3 +439,15 @@ def test_cli_attach_and_checklist(cli_run, tmp_path):
     assert "takes key=answer" in cli_run("checklist", "ledger", "--set", "tuned", ok=False)
     out = cli_run("show", "ledger")
     assert "checklist: 2/10 answered" in out and "ran before the plan was written" in out
+
+
+def test_journal_run_requires_its_code_arg(tmp_path, capsys):
+    # A run with no --code is a usage error, not silently a run "from
+    # nowhere": parsing refuses before anything else happens, because the
+    # commit is the reproducibility record and cannot be defaulted away.
+    args = ["journal", "run", "--db", str(tmp_path / "j.db"), "--root",
+            str(tmp_path / "articles"), "x", "--", sys.executable, "-c", "print(1)"]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(args)
+    assert exc.value.code == 2
+    assert "--code" in capsys.readouterr().err
