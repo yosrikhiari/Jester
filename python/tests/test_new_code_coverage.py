@@ -425,8 +425,8 @@ def test_extract_batch_bad_item_falls_back_per_comment():
 
     llm = OllamaLLM(model="m", client=_ReplyClient([
         json.dumps({"items": [
-            {"category": "pain_point", "insight": "fine"},
-            {"category": "bogus", "insight": "   "}]}),
+            {"i": 0, "category": "pain_point", "insight": "fine"},
+            {"i": 1, "category": "bogus", "insight": "   "}]}),
         '{"category": "pain_point", "insight": "first again"}',
         '{"category": "question", "insight": "second again"}',
     ]))

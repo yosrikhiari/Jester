@@ -102,8 +102,8 @@ class _CannedClient:
 def test_live_role_batch_parses_enumerated_reply():
     bodies = ["first pain", "second pain"]
     reply = json.dumps({"items": [
-        {"category": "pain_point", "insight": "insight one"},
-        {"category": "feature_request", "insight": "insight two"},
+        {"i": 0, "category": "pain_point", "insight": "insight one"},
+        {"i": 1, "category": "feature_request", "insight": "insight two"},
     ]})
     llm = OllamaLLM(model="test-model", client=_CannedClient(reply))
     drafts = llm.extract_batch(bodies)
@@ -114,13 +114,99 @@ def test_live_role_batch_parses_enumerated_reply():
     ]
 
 
+def test_live_role_batch_reversed_reply_falls_back_per_comment():
+    """The misattribution bug, pinned silent: a compliant-looking batch reply
+    holding every item but in REVERSED order, each keeping its original
+    ("correct") i. Position-based zipping would file insight two onto
+    'first pain'. The echo check catches the mismatch at position 0, rejects
+    the whole reply, and the legacy per-comment path produces drafts that
+    match the single-call oracle for each body."""
+    bodies = ["first pain", "second pain"]
+    script = [
+        # The bad reply: correct items, reversed order, original i values.
+        json.dumps({"items": [
+            {"i": 1, "category": "feature_request", "insight": "insight two"},
+            {"i": 0, "category": "pain_point", "insight": "insight one"},
+        ]}),
+        # Per-comment retries supply the oracle rows.
+        '{"category": "pain_point", "insight": "insight one"}',
+        '{"category": "feature_request", "insight": "insight two"}',
+    ]
+
+    class _SeqClient:
+        def __init__(self):
+            self.calls = 0
+            self.user_payloads = []
+
+        def chat(self, **kw):
+            self.calls += 1
+            self.user_payloads.append(kw["messages"][1]["content"])
+            return {"message": {"content": script[self.calls - 1]}}
+
+    client = _SeqClient()
+    llm = OllamaLLM(model="test-model", client=client)
+    drafts = llm.extract_batch(bodies)
+    assert client.calls == 1 + 2  # one rejected batch + two singles
+    assert llm.fallbacks == 1
+    # last_error is cleared by each later successful call; the bounded reason
+    # sample is the durable record of WHY the batch fell back.
+    assert "batch reply failed the item/echo check; retrying per comment" \
+        in llm.fallback_reasons
+    # The oracle: identical rows to calling extract() once per body.
+    oracle = OllamaLLM(model="test-model", client=_CannedClient(
+        '{"category": "pain_point", "insight": "insight one"}'))
+    one = oracle.extract(bodies[0])
+    oracle2 = OllamaLLM(model="test-model", client=_CannedClient(
+        '{"category": "feature_request", "insight": "insight two"}'))
+    two = oracle2.extract(bodies[1])
+    assert [(d.category, d.extracted_insight, d.model) for d in drafts] == [
+        (one.category, one.extracted_insight, one.model),
+        (two.category, two.extracted_insight, two.model),
+    ]
+    # The user payload carries the enumeration the echo refers to, not bare
+    # strings: {"i", "comment"} pairs, in order.
+    sent = json.loads(client.user_payloads[0])
+    assert sent == [{"i": 0, "comment": "first pain"},
+                    {"i": 1, "comment": "second pain"}]
+
+
+def test_live_role_batch_order_right_but_echo_swapped_falls_back():
+    """The echo is the contract, not a hint: correct order with swapped i
+    values is still rejected — position alone must not be trusted to fix an
+    identity the model got wrong."""
+    reply = json.dumps({"items": [
+        {"i": 1, "category": "pain_point", "insight": "insight one"},
+        {"i": 0, "category": "feature_request", "insight": "insight two"},
+    ]})
+    script = [
+        reply,
+        '{"category": "pain_point", "insight": "insight one"}',
+        '{"category": "feature_request", "insight": "insight two"}',
+    ]
+
+    class _SeqClient:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, **kw):
+            self.calls += 1
+            return {"message": {"content": script[self.calls - 1]}}
+
+    llm = OllamaLLM(model="test-model", client=_SeqClient())
+    drafts = llm.extract_batch(["first pain", "second pain"])
+    assert llm.fallbacks == 1
+    assert [(d.category, d.extracted_insight) for d in drafts] == [
+        ("pain_point", "insight one"), ("feature_request", "insight two")]
+
+
 def test_live_role_batch_mismatch_falls_back_per_item():
     """A short/garbled batch reply retries per comment through the SAME
     single path (and its stand-in accounting), never shipping guesses."""
     bodies = ["first pain", "second pain"]
     script = [
-        json.dumps({"items": [{"category": "pain_point",
-                               "insight": "only one"}]}),  # short: mismatch
+        # short: mismatch (the one item still identifies itself)
+        json.dumps({"items": [{"i": 0, "category": "pain_point",
+                               "insight": "only one"}]}),
         '{"category": "pain_point", "insight": "single one"}',
         '{"category": "question", "insight": "single two"}',
     ]
@@ -178,8 +264,8 @@ def test_live_role_batch_bad_category_coerced_bad_item_retried():
 
     llm = OllamaLLM(model="test-model", client=_ScriptedClient([
         json.dumps({"items": [
-            {"category": "not-a-category", "insight": "coerced insight"},
-            {"category": "pain_point", "insight": "   "}]}),
+            {"i": 0, "category": "not-a-category", "insight": "coerced insight"},
+            {"i": 1, "category": "pain_point", "insight": "   "}]}),
         '{"category": "pain_point", "insight": "first again"}',
         '{"category": "question", "insight": "second again"}',
     ]))

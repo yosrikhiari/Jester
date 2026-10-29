@@ -410,12 +410,19 @@ class _ExtractorRole:
         '"insight": "<one-sentence distilled insight>"}.'
     )
     EXTRACT_BATCH_SYSTEM = (
-        "You classify developer-pain comments. The user message holds N comments "
-        "as a JSON array of strings. Reply with ONLY a JSON object shaped like "
-        '{"items": [{"category": <one of pain_point|feature_request|workaround|'
-        "complaint|question>, "
-        '"insight": "<one-sentence distilled insight>"}]} with EXACTLY N items '
-        "in the same order: item i describes comment i and no other."
+        "You classify developer-pain comments. The user message holds N "
+        "comments as a JSON array of {\"i\": <position>, \"comment\": str}, "
+        "position counting from 0. Reply with ONLY a JSON object shaped like "
+        '{"items": [{"i": <int>, "category": <one of '
+        "pain_point|feature_request|workaround|complaint|question>, "
+        '"insight": "<one-sentence distilled insight>"}]} with EXACTLY N '
+        "items in the same order, each echoing the \"i\" of the comment it "
+        "describes: items[j] must carry \"i\": j, so item 0 describes comment "
+        "0 and no other. The echo is REQUIRED: a reader cannot tell a "
+        "reordered or off-by-one reply apart from a correct one without it, "
+        'and any reply whose "i" does not match its position is rejected and '
+        "re-processed one comment at a time (N extra calls). Echo the index; "
+        "keep the order."
     )
 
     def extract(self, comment_body: str) -> NuggetDraft:
@@ -439,16 +446,25 @@ class _ExtractorRole:
 
         Falls back to per-comment extract() — which itself falls back to the
         named stand-in — on ANY shape problem: transport failure, malformed
-        JSON, wrong item count, or a bad item. A batch reply is cheaper but
-        less trustworthy than N single replies, so validation is strict and
-        the fallback preserves the legacy per-comment accounting (including
-        `rate_limited`, which the caller's quota brake reads).
+        JSON, wrong item count, an unusable or missing/mismatched item echo,
+        or a bad item. A batch reply is cheaper but less trustworthy than N
+        single replies, so validation is strict and the fallback preserves
+        the legacy per-comment accounting (including `rate_limited`, which
+        the caller's quota brake reads).
+
+        The user message enumerates the comments as {"i", "comment"} pairs
+        and each replied item must echo its comment's "i". Without that echo
+        a reversed reply parsed cleanly and zipped onto the wrong comments —
+        insights attributed to comments they never described, with nothing
+        failed and nothing logged (the misattribution bug class F-05's
+        "never misattribute" comment was about, caught only now).
         """
         bodies = [b or "" for b in bodies]
         if len(bodies) == 1:
             return [self.extract(bodies[0])]
         limited_before = int(getattr(self, "rate_limited", 0) or 0)
-        obj = self._obj(self.EXTRACT_BATCH_SYSTEM, json.dumps(bodies),
+        payload = json.dumps([{"i": i, "comment": b} for i, b in enumerate(bodies)])
+        obj = self._obj(self.EXTRACT_BATCH_SYSTEM, payload,
                         temperature=0.2)
         if int(getattr(self, "rate_limited", 0) or 0) > limited_before:
             # Quota exhausted by the batch call itself: retrying per comment
@@ -460,9 +476,20 @@ class _ExtractorRole:
         if isinstance(items, list) and len(items) == len(bodies) and all(
                 isinstance(it, dict) for it in items):
             drafts = []
-            for body, it in zip(bodies, items):
+            for idx, (_body, it) in enumerate(zip(bodies, items)):
                 insight = it.get("insight")
                 if not isinstance(insight, str) or not insight.strip():
+                    break
+                identity = it.get("i")
+                # bool rides on int in Python; a JSON true/false would still
+                # compare equal to 1/0, so bar it explicitly.
+                if (isinstance(identity, bool) or not isinstance(identity, int)
+                        or identity != idx):
+                    # Position idx holding some other comment's index means
+                    # the ordering claim collapsed — every later mapping is
+                    # suspect, so the WHOLE reply degrades, not just this
+                    # item. Misattribution is the one failure the per-comment
+                    # path exists to prevent.
                     break
                 category = it.get("category")
                 if category not in ALLOWED_CATEGORIES:
@@ -472,7 +499,7 @@ class _ExtractorRole:
                     model=self._model))
             else:
                 return drafts
-            self._reject("batch reply has an unusable item; retrying per comment")
+            self._reject("batch reply failed the item/echo check; retrying per comment")
         elif obj is not None:
             self._reject("batch reply is not an N-item list; retrying per comment")
         # obj is None (transport failure / rate limit) already recorded its
