@@ -51,7 +51,13 @@ def cmd_eval(args):
     for path, expect_pass in ((args.good, True), (args.bad, False)):
         if not path:
             continue
-        for line in Path(path).read_text().splitlines():
+        # encoding="utf-8": eval files are ascii today, but the default here
+        # is Windows-1252 on Windows and cp437 elsewhere — the exact bug class
+        # ci.yml exists because of (a requirements.txt byte pip could not
+        # decode). Any non-ascii title in a future eval case would crash or
+        # mis-decode depending on the host. Read explicitly, like the console
+        # twin in console/api.py does.
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
             parsed = _parse_eval_line(line)
             if not parsed:
                 continue

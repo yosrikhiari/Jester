@@ -96,6 +96,17 @@ jobs:
       - name: Fixture gate
         run: python -m jester.cli signals check
 
+      # The scoring-formula gate, on the repo's committed pairs, in a clean
+      # checkout. It shipped with no CI step, so `eval/known_good|bad.md`
+      # drifted only as far as local machines ran it — and this exact command
+      # is also what kills the second bug class in this workflow's header:
+      # cli_review.py read the files without encoding="utf-8", so the default
+      # codec was load-bearing. The parser's --good/--bad defaults resolve
+      # from the checkout (Path(__file__).parents[2]/eval/...), so no argument
+      # is needed; --config defaults to the repo config/ dir the same way.
+      - name: eval gate
+        run: python -m jester.cli eval
+
       # --cov-report=xml because that is what the scanner reads. Without a
       # report the gate does not read "coverage unknown", it reads 0% and
       # fails the 80% condition, which looks like a coverage collapse rather

@@ -175,8 +175,14 @@ class Thresholds:
     #: Comments per extractor model call (F-05). 1 is the legacy behaviour —
     #: one call per comment — so shipped profiles change nothing until this is
     #: raised. Higher values spend one enumerated-prompt call per chunk and
-    #: fall back to per-comment calls on any malformed batch reply, with the
-    #: eval/known_good|bad.md gate deciding whether the saving is worth it.
+    #: fall back to per-comment calls on any malformed batch reply. Whether
+    #: the saving is worth promoting is NOT decided by the eval/known_good|
+    #: bad.md gate — those files calibrate the scoring formula only (they
+    #: check `compute_overall` against the thresholds, no model call at all).
+    #: The batch-vs-single promotion guard is journey-level parity:
+    #: python/tests/test_e2e_changes.py::test_batched_run_archives_the_same_
+    #: nuggets (J2) asserts a batched run archives exactly the rows the
+    #: legacy path archives. That test failing is what keeps the knob on 1.
     extractor_batch_size: int = 1
     #: Chat tool loop: how many model↔tool round trips ONE user turn may take
     #: before the session stops and reports what it did anyway. A bound, not
