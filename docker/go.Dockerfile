@@ -1,5 +1,10 @@
 # Build the Go ingestion worker, then ship a tiny runtime image.
-FROM golang:latest AS build
+#
+# Same golang pin as Dockerfile.python (F-07, 2026-10-29, go/go.mod declares
+# `go 1.26`): one digest for one toolchain, so the console image and this
+# one cannot rebuild the worker against different Go versions without an
+# edit saying so.
+FROM golang:1.26@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS build
 WORKDIR /src
 # Cache module downloads.
 COPY go/go.mod go/go.sum ./
