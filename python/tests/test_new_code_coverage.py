@@ -312,7 +312,7 @@ def test_api_reembed_batch_and_fallback(tmp_path, offline_config, monkeypatch):
     per-row fallback when the batch call fails."""
     from jester.console.api import ConsoleAPI
     from jester.embed import FakeEmbedding
-    from jester.vector import VectorStore
+    from jester.vector import VectorStore, point_id_for
 
     monkeypatch.delenv("JESTER_QDRANT_URL", raising=False)
     main = str(tmp_path / "j.db")
@@ -326,6 +326,14 @@ def test_api_reembed_batch_and_fallback(tmp_path, offline_config, monkeypatch):
                         lambda cfg, p: VectorStore.in_memory(FakeEmbedding()))
     res = ConsoleAPI(main, str(offline_config)).reembed()
     assert res == {"ok": True, "fixed": 2, "failed": 0, "last_error": None}
+
+    # The console's stamp must be the same pure function of the key the CLI
+    # and archivist use — not a process-salted hash() that dies on restart.
+    db = open_db(main)
+    stamped = {r[0]: r[1] for r in db.execute(
+        "SELECT unique_key, embedding_id FROM nuggets WHERE unique_key IN ('c1','c2')")}
+    db.close()
+    assert stamped == {k: f"emb:{point_id_for(k)}" for k in ("c1", "c2")}
 
     db = open_db(main)
     insert_nugget(db, Nugget(unique_key="c3", platform="hn",

@@ -3,6 +3,26 @@
 max_comments_per_thread: 500
 min_upvotes: 1
 dedup_threshold: 0.87
+# Per-category override of dedup_threshold. The nugget pipeline labels amidst
+# five categories (pain_point, feature_request, workaround, complaint,
+# question) and the cosine scale is not the same on all of them: comment-shaped
+# material paraphrases loosely, while a template complaint repeats itself
+# almost verbatim, so one bar cannot be right for both. Set a category here and
+# every nugget of it is judged against its own bar; absent categories keep the
+# global 0.87. Values are the same boundary check as the global knob
+# ([0.5, 0.995]) and fail validation per entry. The near-miss band under the
+# bar follows the APPLIED threshold (archivist.classify_similarity), so a
+# category-specific bar also moves that category's near-miss strip — do not
+# tune one without expecting the other to follow.
+#
+# Shape (empty by default, so nothing changes until a table backs a number —
+# see `jester dedup-sweep --pairs-dir testdata/dedup/pairs` and
+# docs/dedup-calibration.md):
+#
+# dedup_threshold_by_category:
+#   pain_point: 0.85
+#   feature_request: 0.90
+dedup_threshold_by_category: {}
 prefilter_min_chars: 40
 # Forum prose (Hacker News, Discourse) runs longer than a Reddit comment;
 # 600 was tuned on Reddit alone and dropped most of it before extraction.

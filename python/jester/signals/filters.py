@@ -47,7 +47,7 @@ NONE = "none"
 class Family:
     name: str
     weight: float
-    role: str          # buyer_marker | pain_marker | negative
+    role: str          # buyer_required | buyer_boost | pain_marker | negative | veto
     phrases: tuple
     note: str = ""
 
@@ -61,7 +61,7 @@ class Verdict:
     ambiguous: bool        # kept, but just under the bar
     families: tuple        # families that fired, in weight order
     matched: tuple         # the phrases that fired them
-    against: tuple         # negative families that fired
+    against: tuple         # negative families that fired, and any veto
     #: True when the buyer voice came from the thread rather than the record
     #: itself. Stored so a digest can say so: an inherited voice is weaker
     #: evidence than a stated one, and pretending otherwise is how a survey
@@ -128,12 +128,12 @@ def load_rules(path: str | Path | None = None) -> Rules:
         if not isinstance(spec, dict) or "phrases" not in spec:
             raise RulesError(f"family {name!r} needs `phrases`")
         role = spec.get("role", "pain_marker")
-        if role not in ("buyer_required", "buyer_boost", "pain_marker", "negative"):
+        if role not in ("buyer_required", "buyer_boost", "pain_marker", "negative", "veto"):
             raise RulesError(f"family {name!r}: unknown role {role!r}")
         weight = float(spec.get("weight", 0.0))
-        if role == "negative" and weight >= 0:
-            raise RulesError(f"family {name!r} is negative but its weight is {weight}")
-        if role != "negative" and not 0 < weight <= 1:
+        if role in ("negative", "veto") and weight >= 0:
+            raise RulesError(f"family {name!r} is {role} but its weight is {weight}")
+        if role not in ("negative", "veto") and not 0 < weight <= 1:
             raise RulesError(f"family {name!r}: weight must be in (0, 1], got {weight}")
         phrases = tuple(str(x).lower() for x in spec["phrases"] if str(x).strip())
         if not phrases:
@@ -230,7 +230,13 @@ def classify(text: str, rules: Optional[Rules] = None, *, title: str = "",
         if found:
             hits[fam.name] = (fam, found)
 
-    score = sum(f.weight for f, _p in hits.values())
+    # A veto family contributes NO weight — it is not a discount the raw sum
+    # can out-argue. Measured: the Rudus launch post quotes a customer whose
+    # words hit owner_voice, capacity, needs_built, work_pain, work_named and
+    # cost at once, and as a -0.60 weight vendor_pitch still left the sum at
+    # 0.95 buyer. Only negative weights subtract; a veto is a decision, taken
+    # further down, and the score stays the honest sum of what fired.
+    score = sum(f.weight for f, _p in hits.values() if f.role != "veto")
     score = max(0.0, min(1.0, score))
 
     # A buyer signal REQUIRES ownership language. Hiring and cost only raise
@@ -254,11 +260,22 @@ def classify(text: str, rules: Optional[Rules] = None, *, title: str = "",
     buyer_markers = required + boosts
     pain_markers = [n for n, (f, _p) in hits.items() if f.role == "pain_marker"]
     negatives = tuple(n for n, (f, _p) in hits.items() if f.role == "negative")
+    vetoes = tuple(n for n, (f, _p) in hits.items() if f.role == "veto")
     ordered = tuple(n for n, _ in sorted(hits.items(), key=lambda kv: -abs(kv[1][0].weight)))
     phrases = tuple(p for _n, (_f, ps) in hits.items() for p in ps)[: rules.max_reasons * 2]
 
     def named(names):
         return ", ".join(names[: rules.max_reasons])
+
+    # A veto ends the verdict before the prose gets a vote, and the reason
+    # says which family did it — a "none" on a post full of buyer vocabulary
+    # is exactly the verdict a reviewer re-checks first, so it has to name
+    # the structural marker that ended it.
+    if vetoes:
+        return Verdict(NONE, 0, round(score, 3),
+                       f"veto: {named(list(vetoes))} fired — the record's own frame "
+                       "decides before its prose gets a vote",
+                       False, ordered, phrases, tuple(negatives) + vetoes)
 
     # A buyer needs BOTH halves: a business/hiring/cost voice AND work that
     # software could remove. Either alone is a hobbyist or a vent.
@@ -339,9 +356,27 @@ def apply_to(signal, rules: Optional[Rules] = None, *,
     # reviewer checking the claim finds nothing and concludes the classifier
     # is wrong. Naming the phrases makes the verdict checkable against the
     # source link, which is the evidence that is actually wanted.
-    signal.match_reason = (
-        v.reason + (f" [matched: {', '.join(v.matched)}]" if v.matched else ""))
+    signal.match_reason = reason_with_matched(v)
     return signal
+
+
+def reason_with_matched(verdict: Verdict) -> str:
+    """A stored reason carries the WORDS, not just the family names.
+
+    Found the hard way: the verdict is computed from the whole post, and the
+    # archive keeps a 600-character excerpt (retention §14). So a record can
+    # say "buyer signal: owner_voice + work_pain" while the text beside it
+    # contains neither phrase, because both were at character 900 — and a
+    # reviewer checking the claim finds nothing and concludes the classifier
+    # is wrong. Naming the phrases makes the verdict checkable against the
+    # source link, which is the evidence that is actually wanted.
+
+    Shared with `from_archive`, which upserts records it scored outside the
+    collector: a store row's `match_reason` reads the same whichever of the
+    two pipelines wrote it.
+    """
+    return verdict.reason + (
+        f" [matched: {', '.join(verdict.matched)}]" if verdict.matched else "")
 
 
 # ---------------------------------------------------------------------------

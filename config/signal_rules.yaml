@@ -431,7 +431,7 @@ families:
 
   vendor_pitch:
     weight: -0.60
-    role: negative
+    role: veto
     note: >
       THE FINDING FROM THE FIRST LIVE RUN, and the most useful one so far.
       461 records, 6 scored buyer, and four of those six were vendors:
@@ -451,9 +451,19 @@ families:
       defined by the site as product announcements - which makes this the one
       place the frame can be read off the text with certainty.
 
-      Weighted heavier than supply_side because it is more certain: a
-      freelancer might also be a buyer of something else, a launch post is
-      never a buyer.
+      Role changed to `veto`, second calibration. As a -0.60 weight it was a
+      discount, and a discount can be argued with: the Rudus post quoted one
+      customer whose words hit owner_voice, capacity, needs_built, work_pain,
+      work_named and cost at once, and still scored 0.95 buyer (kept as a
+      vendor in the buyer pool). A launch post is NEVER a buyer, because the
+      frame is announced by the site's own convention - so when any of these
+      phrases fires, the verdict ENDS as none, whatever the prose scored, and
+      no thread frame inherited under a survey post can rescue it. The weight
+      now contributes nothing to the score; it only ranks the family among
+      the matched evidence, and must stay negative as a file convention. The
+      price of that certainty: the markers are HN-conventional, so a launch
+      phrased for another platform is not caught here - supply_side stays a
+      negative weight, because a freelancer genuinely might also buy.
     phrases: ["show hn", "launch hn", "(yc ", "we're launching", "were launching",
               "we've developed", "weve developed", "we've built", "weve built",
               "our platform", "our product", "our saas", "founder of",
