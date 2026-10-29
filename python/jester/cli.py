@@ -1856,26 +1856,81 @@ def cmd_doctor(args):
 
 
 def cmd_dedup_sweep(args):
-    """F-06: calibrate the dedup cosine threshold over a labelled pair file.
+    """F-06: calibrate the dedup cosine threshold over labelled pair FILES.
 
     Advisory, never mutating: prints the P/R/F1 table and names the best-F1
     threshold next to the configured one. Promoting a new threshold is a
     config edit after reading the table, not something this command does.
+
+    `--pairs` grades one file. `--pairs-dir` grades a directory of
+    `<category>.jsonl` files side by side, one annotated table per file, so a
+    per-category bar is argued from that category's own labels. A file below
+    the pair floor gets the refusal printed, not a table: that few labelled
+    pairs describe the labeler's luck, and a table would dress it as
+    evidence.
     """
-    from jester.dedup_sweep import default_thresholds, load_pairs, sweep
+    from jester.dedup_sweep import (
+        default_thresholds,
+        load_pairs,
+        sweep,
+        sweep_over_pairs_dir,
+    )
     from jester.embed import select_embedding
 
-    pairs, skipped = load_pairs(args.pairs)
+    if not getattr(args, "pairs", None) and not getattr(args, "pairs_dir", None):
+        print("dedup-sweep: give --pairs FILE or --pairs-dir DIR "
+              "(testdata/dedup/pairs is the seeded set)")
+        sys.exit(1)
     minimum = int(getattr(args, "min_pairs", 20) or 0)
-    if len(pairs) < minimum:
-        print(f"dedup-sweep: only {len(pairs)} usable pair(s) "
-              f"(minimum {minimum}) — label more before trusting the table")
     cfg = load_config(args.config)
     embed = select_embedding(cfg.thresholds)
     print(f"embedding backend: {type(embed).__name__} "
           f"(dim {getattr(embed, 'dim', '?')})")
+
+    if getattr(args, "pairs_dir", None):
+        categories = [args.category] if getattr(args, "category", None) else None
+        results = sweep_over_pairs_dir(
+            args.pairs_dir, embed,
+            thresholds=default_thresholds(cfg.thresholds.dedup_threshold),
+            min_pairs=minimum, categories=categories)
+        if categories and results == {}:
+            present = sorted(Path(args.pairs_dir).glob("*.jsonl"))
+            print(f"no pair file named {args.category}.jsonl in "
+                  f"{args.pairs_dir} (files there: "
+                  f"{', '.join(p.stem for p in present)})")
+            sys.exit(1)
+        for category, res in results.items():
+            print(f"\n== {category} ==")
+            if res["refused"]:
+                print(f"dedup-sweep: {category}: {res['n_pairs']} usable "
+                      f"pair(s) (minimum {minimum}) — refusing to print a "
+                      "table this thin")
+                continue
+            _print_sweep_table(res, res["skipped"], cfg, category)
+        return
+
+    # Single-file mode: unchanged since F-06 — a thin file gets the same
+    # "label more" note and still prints, because a run of this shape is a
+    # manual one-off and the note carries the context. The refusal lives in
+    # --pairs-dir mode, where tables print en masse and a short file next to
+    # real categories would read as evidence it is not.
+    pairs, skipped = load_pairs(args.pairs)
+    if len(pairs) < minimum:
+        print(f"dedup-sweep: only {len(pairs)} usable pair(s) "
+              f"(minimum {minimum}) — label more before trusting the table")
     result = sweep(pairs, embed,
                    default_thresholds(cfg.thresholds.dedup_threshold))
+    _print_sweep_table(result, skipped, cfg, None)
+
+
+def _print_sweep_table(result, skipped, cfg, category):
+    """The P/R/F1 grid. `category` names the pair file when the sweep ran per
+    category, so the "configured" number is that category's own bar when it
+    has one — comparing a category's best against the global knob would
+    recommend the wrong key."""
+    configured_by_category = cfg.thresholds.dedup_threshold_by_category or {}
+    current = round(float(configured_by_category.get(category,
+                          cfg.thresholds.dedup_threshold)), 2)
     print(f"pairs: {result['n_pairs']}  skipped lines: {skipped}")
     print(" thr |    P |    R |   F1 | tp fp fn tn")
     for r in result["rows"]:
@@ -1884,12 +1939,16 @@ def cmd_dedup_sweep(args):
               f"{r['recall']:.2f} | {r['f1']:.2f} | "
               f"{r['tp']} {r['fp']} {r['fn']} {r['tn']}")
     best = result["best"]
-    current = round(float(cfg.thresholds.dedup_threshold), 2)
     if best is not None:
         print(f"best F1: {best['threshold']:.2f} (configured: {current:.2f})")
         if best["threshold"] != current:
-            print("to adopt it: set dedup_threshold in config/thresholds.yaml "
-                  "and re-run this sweep to confirm")
+            if category:
+                print(f"to adopt it: set "
+                      f"dedup_threshold_by_category.{category} in "
+                      "config/thresholds.yaml and re-run this sweep to confirm")
+            else:
+                print("to adopt it: set dedup_threshold in config/thresholds.yaml "
+                      "and re-run this sweep to confirm")
 
 
 def cmd_reembed(args):
@@ -3729,14 +3788,22 @@ def main(argv=None):
 
     ds = sub.add_parser(
         "dedup-sweep",
-        help="calibrate the dedup cosine threshold over a labelled pair file "
+        help="calibrate the dedup cosine threshold over labelled pair files "
              "(advisory: prints P/R/F1, changes nothing)",
     )
-    ds.add_argument("--pairs", required=True,
+    ds.add_argument("--pairs", default=None,
                     help="JSONL file of {a, b, same} pairs (see jester/dedup_sweep.py)")
+    ds.add_argument("--pairs-dir", default=None,
+                    help="directory of per-category pair files "
+                         "<category>.jsonl; one annotated table per file "
+                         "(testdata/dedup/pairs is the seeded set)")
+    ds.add_argument("--category", default=None,
+                    help="with --pairs-dir: sweep only <category>.jsonl "
+                         "instead of every file in the directory")
     ds.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     ds.add_argument("--min-pairs", type=int, default=20,
-                    help="warn when fewer usable pairs than this")
+                    help="refuse the per-category table below this many "
+                         "usable pairs (single-file mode keeps its note)")
     ds.set_defaults(func=cmd_dedup_sweep)
 
     cl = sub.add_parser(

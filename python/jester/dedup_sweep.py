@@ -8,11 +8,29 @@ has a table behind it — per category, once pair files exist for them.
 Pair file: JSONL, one object per line:
   {"a": "first text", "b": "second text", "same": true}
 
+A DIRECTORY of pair files (`sweep_over_pairs_dir`, wired to
+`jester dedup-sweep --pairs-dir`) reads one file per category, each named
+`<category>.jsonl`, and reports one annotated table per file so a category's
+proposed bar is judged on ITS labelled material, not on the archive average.
+
 Malformed lines are skipped and counted, never fatal: a hand-built label file
 with one bad row should still calibrate on the rest.
+
+A file below the pair floor does not get a table printed; it gets the refusal
+printed. Precision and recall over 8 labelled pairs describe the labeler's
+luck, not the threshold.
 """
 import json
 import math
+from pathlib import Path
+
+SWEEP_START = 0.80
+SWEEP_STOP = 0.92
+SWEEP_STEP = 0.01
+
+#: The pair floor the CLI has always defaulted `--min-pairs` to. One constant
+#: so the sweep driver refuses on the same floor the argparse documents.
+DEFAULT_MIN_PAIRS = 20
 
 SWEEP_START = 0.80
 SWEEP_STOP = 0.92
@@ -93,3 +111,48 @@ def sweep(pairs, embed, thresholds=None):
                      "tp": tp, "fp": fp, "fn": fn, "tn": tn})
     best = max(rows, key=lambda r: (r["f1"], -r["threshold"]))
     return {"rows": rows, "best": best, "n_pairs": len(pairs)}
+
+
+def pairs_dir_categories(path) -> list:
+    """The category stems of every *.jsonl pair file under `path`, sorted."""
+    return sorted(Path(path).glob("*.jsonl"))
+
+
+def sweep_over_pairs_dir(path, embed, *, thresholds=None,
+                         min_pairs: int = DEFAULT_MIN_PAIRS,
+                         categories=None) -> dict:
+    """Per-category driver: one labelled pair file per category.
+
+    Reads `<path>/<category>.jsonl` for every file present (or just the ones
+    named in `categories`) and returns {category: result} sorted by category.
+    Each result carries `n_pairs`, `skipped`, `rows`, `best` and `refused`. A
+    file at or above the floor gets the real sweep table; a thin one gets
+    `refused: True` with empty rows and the command prints the refusal
+    instead of a table of noise. The flag is always present on every result.
+    """
+    d = Path(path)
+    if not d.is_dir():
+        raise FileNotFoundError(f"no pairs directory at {d}")
+    wanted = sorted(categories) if categories else None
+    out: dict = {}
+    for f in d.glob("*.jsonl"):
+        category = f.stem
+        if wanted is not None and category not in wanted:
+            continue
+        pairs, skipped = load_pairs(f)
+        result = {
+            "category": category,
+            # An at-or-above-the-floor file gets the real sweep table; a thin
+            # one gets rows=[] and the refusal flag, and the command prints
+            # the honest message instead of a table of noise.
+            "rows": [],
+            "best": None,
+            "n_pairs": len(pairs),
+            "skipped": skipped,
+            "refused": len(pairs) < min_pairs,
+        }
+        if not result["refused"]:
+            live = sweep(pairs, embed, thresholds)
+            result["rows"], result["best"] = live["rows"], live["best"]
+        out[category] = result
+    return out

@@ -4,12 +4,7 @@ import tempfile
 import pytest
 
 from jester.agents import archivist as archivist_module
-from jester.agents.archivist import (
-    NEAR_MISS_WIDTH,
-    Archivist,
-    ModelMismatch,
-    classify_similarity,
-)
+from jester.agents.archivist import Archivist, ModelMismatch
 from jester.config import Thresholds, load_thresholds
 from jester.embed import FakeEmbedding
 from jester.llm import FakeLLM, ALLOWED_CATEGORIES

@@ -60,6 +60,14 @@ class Thresholds:
     max_comments_per_thread: int = 500
     min_upvotes: int = 1
     dedup_threshold: float = 0.87
+    #: Per-category override of `dedup_threshold`. Categories the nugget
+    #: pipeline emits (jester.llm.ALLOWED_CATEGORIES) may carry their own bar
+    #: where the cosine scale is demonstrably different; any category absent
+    #: from the map — or an empty map — keeps the global value, so an
+    #: untouched entry list changes nothing. The near-miss band derives from
+    #: the threshold actually applied, not from this map: see
+    #: archivist.classify_similarity for that coupling.
+    dedup_threshold_by_category: dict[str, float] = field(default_factory=dict)
     prefilter_min_chars: int = 40
     prefilter_max_chars: int = 600
     prefilter_max_emoji: int = 5
@@ -296,6 +304,24 @@ class Thresholds:
                 raise ValueError(
                     f"max_threads_per_platform.{platform}={n} out of range "
                     f"[{depth_lo},{depth_hi}]"
+                )
+        # Per-category dedup bars. Same boundary the global knob enforces,
+        # checked per VALUE rather than once, because each entry is its own
+        # threshold a run will actually clamp against. Keys are not checked
+        # against the category vocabulary: an unknown key is inert (nothing
+        # reads it) rather than wrong, and the vocabulary lives behind
+        # jester.llm, which a config-time check would pull in sideways.
+        dedup_lo, dedup_hi = self._RANGES["dedup_threshold"]
+        for category, value in (self.dedup_threshold_by_category or {}).items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ConfigError(
+                    f"dedup_threshold_by_category.{category} must be a "
+                    f"number, got {value!r}"
+                )
+            if not (dedup_lo <= value <= dedup_hi):
+                raise ConfigError(
+                    f"dedup_threshold_by_category.{category}={value} out of "
+                    f"range [{dedup_lo},{dedup_hi}]"
                 )
         for key, (lo, hi) in self._RANGES.items():
             v = getattr(self, key)
