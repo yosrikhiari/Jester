@@ -143,6 +143,20 @@ def test_git_failure_marks_the_code_entry_unavailable(tmp_path):
     assert "git rev-parse HEAD" in snapshot["code"]["unavailable"]
 
 
+def test_status_failure_keeps_the_commit_and_says_dirty_is_unknown(tmp_path, monkeypatch):
+    """`rev-parse` answering but `status` failing is the half-record case: the
+    commit is real and must be kept, and the unknown dirty state must NOT be
+    written as False (clean) — the same silence-is-not-clean rule as C1."""
+    def half(argv, timeout=10.0):
+        return "a" * 40 + "\n" if "rev-parse" in argv else None
+
+    monkeypatch.setattr(store, "_env_git", half)
+    snapshot = run_env_fingerprint(code_dir=tmp_path)
+    assert snapshot["code"]["commit"] == "a" * 40
+    assert snapshot["code"]["dirty"] is None
+    assert "git status --porcelain" in snapshot["code"]["unavailable"]
+
+
 def test_a_platform_failure_degrades_the_whole_snapshot(tmp_path, monkeypatch):
     def boom():
         raise RuntimeError("os query exploded")

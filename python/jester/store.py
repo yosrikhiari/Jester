@@ -1201,16 +1201,23 @@ def _env_git(argv: List[str], timeout: float = 10.0) -> Optional[str]:
 
 
 def _env_code_state(code_dir: Path) -> dict:
-    """The checkout's commit + dirty flag, or {"unavailable": why}.
+    """The checkout's commit + dirty flag, or an explicit unavailable entry.
 
     Every degradation here is EXPLICIT. A run whose code state could not be
-    read must not look like a run from a clean checkout."""
+    read must not look like a run from a clean checkout. A failed `rev-parse`
+    loses the whole code entry; a failed `status` keeps the commit it did
+    read and writes `dirty: None` plus the reason, because "could not ask"
+    is not "clean"."""
     commit = _env_git(["git", "-C", str(code_dir), "rev-parse", "HEAD"])
     if commit is None:
         return {"unavailable": "git rev-parse HEAD did not answer "
                                "(not a checkout, or no git binary?)"}
     status = _env_git(["git", "-C", str(code_dir), "status", "--porcelain"])
-    return {"commit": commit.strip(), "dirty": bool(status and status.strip())}
+    if status is None:
+        return {"commit": commit.strip(), "dirty": None,
+                "unavailable": "git status --porcelain did not answer; "
+                               "dirty state unknown"}
+    return {"commit": commit.strip(), "dirty": bool(status.strip())}
 
 
 def run_env_fingerprint(code_dir: Optional[Path] = None) -> dict:
