@@ -1,7 +1,7 @@
 # Final implementation report — Jester assessment cycle, 2026-10-29
 
 **Baseline:** `771d3d5` on `feat/ui-corporate-redesign` (clean tree)
-**Integration branch:** `integ/master-roadmap-2026-10-29`
+**Integration branch:** `integ/master-roadmap-2026-10-29` — promoted to `main` as `7ce8d44` and pushed to `origin/main`
 **Scope:** three review areas (extraction/scoring/evaluation, dedup/clustering/classification, provenance/reproducibility), nine registered tasks plus one stretch, implemented in isolated worktrees, integrated and gated.
 **Companion documents:** `docs/plans/2026-10-29-project-assessment-and-master-roadmap.md`, `docs/plans/2026-10-29-implementation-iteration-log.md`, `docs/reviews/2026-10-29-*.md`.
 
@@ -14,7 +14,7 @@
 - All **nine registered tasks** are implemented and verified: A1–A3, B1–B3, C1–C3.
 - The **stretch** (T-A4) is **partial**: the `SCORE_BACKLOG` floor flag shipped; the per-idea rescore-attempt counter did not. It remains tracked as EX-G3.
 - Zero unresolved **blocker** or **high** findings from the review cycle.
-- Full Python, Go, frontend, CI-mirror, and new-gate checks pass on the integration branch.
+- Full Python, Go, frontend, CI-mirror, and new-gate checks pass on `main` after promotion.
 - Global critic score: **8.9 / 10** (weighted; §2), above the 8.5 gate.
 
 ---
@@ -105,12 +105,13 @@ Every edit to an existing test was read against the new contract:
 
 ## 5. Integration result
 
-- **Branch:** `integ/master-roadmap-2026-10-29`, created from `771d3d5`.
+- **Branch:** `integ/master-roadmap-2026-10-29`, created from `771d3d5`; promoted by fast-forward to `main` (`7ce8d44`) and pushed to `origin/main`.
+- **Upstream sync:** `origin/main` was 8 commits ahead when promoting (PR #74 UI follow-ups and the earlier 2026-10-25 roadmap/research set). Merged as `7ce8d44` with no conflicts; the full suite was re-run after the merge.
 - **Merges:** A fast-forwarded (`a445ab7`); C merged as `eeeb0e0`; B merged as `61783bc`.
 - **Conflict:** one, in `python/jester/store.py` `_ADD_COLUMNS`, where A adds `ideas.competition_checked_at` and C adds `runs.env`. Resolved by keeping both ALTERs with their comments; both migrations then ran in the full suite (fresh and legacy DB tests).
 - **Cross-workstream failure found by the full suite:** `dedup_threshold_by_category` was live in `thresholds.yaml` but missing from the registry table in `jester-setup.md`; the lint failed. Fixed by adding the row locally (the spec doc is gitignored). Re-run: 9 passed.
-- **Final diff:** `git diff --stat 771d3d5..HEAD` → **49 files, +3043 / −112** (43 files, +2472 / −112 before the review/roadmap/report documents).
-- **Main is untouched.** All work is on the integration branch; the three builder branches and worktrees remain available for audit.
+- **Final diff:** cycle delta vs `origin/main` → **49 files, +3043 / −112** (43 files, +2472 / −112 before the review/roadmap/report documents); total vs `771d3d5` → **59 files, +3985 / −122**.
+- **Branch cleanup:** the three builder branches, the integration branch, and every other branch fully merged into `main` were deleted; the three cycle worktrees were removed. Unmerged pre-existing branches and the user worktrees that hold them were left intact.
 
 ---
 
@@ -146,7 +147,7 @@ No known **blocker** or **high** defect is unresolved. No test is skipped to mak
 
 ## 8. Files and commits
 
-### 8.1 Commits on the integration branch (oldest first)
+### 8.1 Commits promoted to `main` (oldest first)
 
 | Commit | Workstream | Subject |
 |---|---|---|
@@ -176,9 +177,10 @@ No known **blocker** or **high** defect is unresolved. No test is skipped to mak
 
 ## 9. Repo status and reproduction
 
-- **Branch:** `integ/master-roadmap-2026-10-29` (main untouched at `771d3d5`).
-- **Worktrees:** `wsa-eval-gate` (`a445ab7`), `wsb-dedup-labels` (`1b4c424`), `wsc-run-provenance` (`a265647`) — all clean and inspectable.
-- **Working tree:** clean after the documentation commit, except the gitignored `jester-setup.md` registry edit noted above.
+- **Branch:** `main` at `7ce8d44`, tracking and equal to `origin/main` (pushed this session).
+- **Worktrees:** the three cycle worktrees were removed after their branches merged. The two pre-existing user worktrees (`Jester-journal` on `feat/journal-data-before-plan`, `Jester-models` on `docs/scope-decision-a`) remain untouched.
+- **Branch cleanup:** deleted `wsa/eval-and-scoring`, `wsb/dedup-points-and-labels`, `wsc/run-provenance-and-pins`, `integ/master-roadmap-2026-10-29`, `feat/ui-corporate-redesign`, `feat/autonomous-curation`, and `fix/sonar-js-promises-2` (all fully merged). Left intact: `docs/scope-decision-a` (merged but checked out in the user's `Jester-models` worktree), `feat/journal-data-before-plan`, `feat/journal-j3`, and `fix/sonar-js-promises` (unmerged; deleting them would lose work).
+- **Working tree:** clean, except the gitignored `jester-setup.md` registry edit noted above.
 
 Reproduce the gate from the repository root (PowerShell):
 
@@ -203,5 +205,5 @@ The documented-command idempotence check and the Go contract test need a fresh t
 3. **Calibration data are small and partly synthetic.** The real-estate file derives six pairs from the existing validation doc; the rest are hand-authored. The real-embedding table is advisory; no threshold was promoted. The fake-backend run is shown explicitly as degenerate so it cannot be mistaken for evidence.
 4. **Docker digests were resolved once** (2026-10-29, Docker Hub registry API) and are pinned in the compose file; the test asserts tag+digest shape and the recorded values, not a live registry lookup during this final gate.
 5. **The final full-suite gate ran offline** with the repository's fake/mock embedding paths, as CI does. The builder's real-Ollama dedup run is recorded in `docs/dedup-calibration.md`, not re-run here.
-6. **No deployment was performed.** Docker, Sonar, and production data paths were not exercised beyond `docker compose config` and the unit test; this cycle is code, tests, and documentation on an integration branch.
+6. **No deployment was performed.** Docker, Sonar, and production data paths were not exercised beyond `docker compose config` and the unit test; this cycle is code, tests, and documentation merged to `main`, not a production rollout.
 7. **`jester-setup.md` is gitignored.** The registry row needed by the local lint is therefore not in the integration commit; a clean clone skips that lint. This is recorded as a remaining medium issue, not papered over.

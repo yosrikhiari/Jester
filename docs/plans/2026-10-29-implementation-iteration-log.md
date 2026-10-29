@@ -25,6 +25,13 @@ This log is chronological and auditable. It records the builders, what verificat
 | 15 | C2 audit | Orchestrator found one half-record in C2: a failed `git status` was written as `dirty: false` even though `rev-parse` had proved the checkout. | Fixed in `1f999ac`: keep the commit, write `dirty: null` plus the reason; `test_run_env` pins the half-record case. Target suites **60 passed**. |
 | 16 | Final regression + critique | Orchestrator re-ran the full Python suite after the C2 fix: **1741 passed, 5 skipped, 13 deselected** (414.3 s); assembled the weighted critic score and remaining-issue register; committed documentation. | Score **8.9/10**; final report and roadmap §7 updated. |
 
+## Promotion (after iteration 16)
+
+- `origin/main` had moved 8 commits ahead of the cycle head (PR #74 UI follow-ups plus the earlier 2026-10-25 roadmap/research set). It was merged into the integration branch as `7ce8d44`; no conflicts, including the README.
+- The full gate was re-run on the merged tree: Python **1741 passed, 5 skipped, 13 deselected** (409.8 s); Go, frontend lint/build, `eval`, and `signals check` all green.
+- Local `main` was 76 commits behind `origin/main`; it was fast-forwarded to `origin/main` (`86c7a31`), then fast-forwarded to the merged tip `7ce8d44` and pushed (`86c7a31..7ce8d44 main -> main`).
+- Branches fully merged into `main` were deleted, including all three builder branches and the integration branch; the three cycle worktrees were removed. Unmerged branches and the user worktrees that hold them were left intact.
+
 ## What the iterations changed about the plan
 
 - **No task was silently dropped.** T-A4 (stretch) is explicitly **partial**: the `SCORE_BACKLOG` flag shipped, the per-idea rescore-attempt counter did not. It remains tracked under EX-G3.

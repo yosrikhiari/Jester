@@ -56,7 +56,7 @@
 
 ### 1.4 Final state (this cycle, after integration)
 
-- Integration branch `integ/master-roadmap-2026-10-29` built from `771d3d5`; main untouched.
+- Integration branch `integ/master-roadmap-2026-10-29` built from `771d3d5`; `origin/main` merged, then `main` fast-forwarded to `7ce8d44` and pushed to `origin/main`.
 - All nine registered tasks landed (A1–A3, B1–B3, C1–C3); stretch T-A4 partial (`SCORE_BACKLOG` flag only).
 - Final full Python suite: **1741 passed, 5 skipped, 13 deselected**; Go all ok; frontend lint/build ok; CI-mirror checks ok (eval 20, fixture gate 21/21, export idempotence, Go contract).
 - Three verifier-fix commits after builder sign-off: console reembed ID, sweep cleanup, `runs.env` status half-record; plus a local registry-row fix for the config lint.
@@ -192,5 +192,6 @@ Stretch (only if T-A1..A3 green): T-A4 `SCORE_BACKLOG` floor flag + rescore atte
 | 16 | CI mirrors | export **5 new/0** then **0 new/5** with manifest reconcile; Go contract **3 PASS**; fixture gate **21/21**; eval **20**; dedup-sweep three tables, exit 0 | iteration 14 |
 | 17 | C2 audit fix | Failed `git status` no longer recorded as clean (`1f999ac`); **60 passed** in run-env/journal suites; README committed | iteration 15 |
 | 18 | Final full suite + critique | **1741 passed, 5 skipped, 13 deselected** (414.3 s) at final head; weighted critic **8.9/10**; zero blocker/high open | iteration 16 |
+| 19 | Upstream sync + promotion | `origin/main` was 8 commits ahead; merged as `7ce8d44` with no conflicts; full suite re-run **1741 passed** (409.8 s); `main` fast-forwarded to `7ce8d44` and pushed to `origin/main` | promotion |
 
 *(Final state recorded above; the closing report is `docs/reports/2026-10-29-final-implementation-report.md` and the chronology is `docs/plans/2026-10-29-implementation-iteration-log.md`.)*
