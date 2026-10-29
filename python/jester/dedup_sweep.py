@@ -32,10 +32,6 @@ SWEEP_STEP = 0.01
 #: so the sweep driver refuses on the same floor the argparse documents.
 DEFAULT_MIN_PAIRS = 20
 
-SWEEP_START = 0.80
-SWEEP_STOP = 0.92
-SWEEP_STEP = 0.01
-
 
 def cosine(a, b) -> float:
     dot = sum(x * y for x, y in zip(a, b))
@@ -111,11 +107,6 @@ def sweep(pairs, embed, thresholds=None):
                      "tp": tp, "fp": fp, "fn": fn, "tn": tn})
     best = max(rows, key=lambda r: (r["f1"], -r["threshold"]))
     return {"rows": rows, "best": best, "n_pairs": len(pairs)}
-
-
-def pairs_dir_categories(path) -> list:
-    """The category stems of every *.jsonl pair file under `path`, sorted."""
-    return sorted(Path(path).glob("*.jsonl"))
 
 
 def sweep_over_pairs_dir(path, embed, *, thresholds=None,

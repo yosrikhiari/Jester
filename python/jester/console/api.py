@@ -95,6 +95,7 @@ from jester.store import (
     pending_reembeds,
     requeue_failed,
 )
+from jester.vector import point_id_for
 
 _LIVE_CONFIG_DIR = "config-live"
 # Moved to jester/console/api_signals.py with its only users (F-04);
@@ -2312,13 +2313,13 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
                     continue
                 for r in chunk:
                     mark_reembedded(self.db, r["unique_key"],
-                                    f"emb:{abs(hash(r['unique_key'])) % (2 ** 63)}")
+                                    f"emb:{point_id_for(r['unique_key'])}")
                     fixed += 1
         for r in rows:
             key = r["unique_key"]
             try:
                 vector.upsert(key, r["raw_text"] or "", {})
-                mark_reembedded(self.db, key, f"emb:{abs(hash(key)) % (2 ** 63)}")
+                mark_reembedded(self.db, key, f"emb:{point_id_for(key)}")
                 fixed += 1
             except Exception as exc:  # noqa: BLE001
                 failed += 1
