@@ -114,6 +114,11 @@ ADDED_COLUMNS = (
     ("publication", "body_path", _EMPTY_TEXT),
     ("publication", "approved_sha256", _EMPTY_TEXT),
     ("publication", "external_id", _EMPTY_TEXT),
+    # F9: the date the FIRST export put on the page, sticky from then on.
+    # Before publication there is no published_at, so re-exports used the
+    # clock -- re-exporting on a later day wrote new bytes and moved the
+    # display date. Only the first export stamps it.
+    ("journal", "first_export_at", _EMPTY_TEXT),
 )
 
 DDL = """
@@ -135,7 +140,8 @@ CREATE TABLE IF NOT EXISTS journal (
   abandoned_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  published_at TEXT NOT NULL DEFAULT ''
+  published_at TEXT NOT NULL DEFAULT '',
+  first_export_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS transition (
   id INTEGER PRIMARY KEY,
@@ -358,6 +364,21 @@ def update_brief(db: sqlite3.Connection, slug: str, **fields: str) -> sqlite3.Ro
 
 def set_path(db: sqlite3.Connection, slug: str, path: str) -> None:
     db.execute("UPDATE journal SET path = ? WHERE slug = ?", (path, slug))
+    db.commit()
+
+
+def stamp_first_export(db: sqlite3.Connection, slug: str, at: str) -> None:
+    """Record when the FIRST export stamped the page (F9).
+
+    The `AND first_export_at=''` guard makes it sticky: a later export
+    finds the column already set, keeps it, and does not touch the row.
+    Before publication there is no published_at, so the clock would
+    otherwise move the display date and rewrite identical pages as new
+    commits on every re-export.
+    """
+    db.execute(
+        "UPDATE journal SET first_export_at=? WHERE slug=? AND first_export_at=''",
+        (at, slug))
     db.commit()
 
 

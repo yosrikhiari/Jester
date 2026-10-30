@@ -497,15 +497,27 @@ def artifacts(db: sqlite3.Connection, journal_id: int) -> List[sqlite3.Row]:
     return db.execute("SELECT * FROM artifact WHERE journal_id = ? ORDER BY id", (journal_id,)).fetchall()
 
 
+def _artifact_row(db: sqlite3.Connection, journal_id: int, article_dir: str,
+                  target: str) -> Optional[sqlite3.Row]:
+    rel = (Path(article_dir) / target).as_posix()
+    return db.execute("SELECT * FROM artifact WHERE journal_id = ? AND path = ? ORDER BY id DESC LIMIT 1",
+                      (journal_id, rel)).fetchone()
+
+
+def artifact_sha(db: sqlite3.Connection, journal_id: int, article_dir: str,
+                 target: str) -> Optional[str]:
+    """The registered sha256 of a figure, or None when nothing is registered."""
+    row = _artifact_row(db, journal_id, article_dir, target)
+    return row["sha256"] if row is not None else None
+
+
 def artifact_problem(db: sqlite3.Connection, root: Path, journal_id: int, article_dir: str,
                      target: str) -> Optional[str]:
     """None if a figure the article shows is one Jester made from runs, as made."""
-    rel = (Path(article_dir) / target).as_posix()
-    row = db.execute("SELECT * FROM artifact WHERE journal_id = ? AND path = ? ORDER BY id DESC LIMIT 1",
-                     (journal_id, rel)).fetchone()
+    row = _artifact_row(db, journal_id, article_dir, target)
     if row is None:
         return f"{target} was not made from runs (journal figure)"
-    path = Path(root) / rel
+    path = Path(root) / (Path(article_dir) / target).as_posix()
     if not path.exists():
         return f"{target} is missing"
     if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:

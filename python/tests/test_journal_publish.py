@@ -8,6 +8,7 @@ the one that runs for real.
 """
 import io
 import json
+import shutil
 import subprocess
 import urllib.error
 
@@ -206,6 +207,78 @@ def test_export_refuses_a_figure_that_is_gone(setup):
     (setup["root"] / "rules" / "figures" / "buyers.svg").unlink()
     with pytest.raises(J.JournalError, match="buyers.svg is missing"):
         P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_export_verifies_the_shipped_figure_bytes_and_cleans_up(setup, monkeypatch):
+    """F8: between the pre-copy hash and `copyfile` a race can swap a file.
+    The bytes that SHIP must be hashed themselves against the registry, and
+    a mismatch aborts the export and returns the worktree to its last
+    committed state — nothing half-shipped is left behind."""
+    db, root, tmp = setup["db"], setup["root"], setup["tmp"]
+    site = _site(tmp)
+    worktree = root / P.SITE_DIR / "rules"
+    real_copy = shutil.copyfile
+
+    def tamper(src, dst):
+        real_copy(src, dst)
+        with open(dst, "ab") as fh:
+            fh.write(b"<!-- tampered mid-flight -->")
+
+    monkeypatch.setattr(shutil, "copyfile", tamper)
+    with pytest.raises(J.JournalError, match="not match the registered figure"):
+        P.export(db, root, "rules", site, base_url=BASE)
+    assert _git(worktree, "status", "--porcelain").strip() == "", \
+        "the aborted export must leave nothing staged in the worktree"
+    assert not (worktree / "journal" / "rules" / "index.html").exists()
+
+
+def test_export_aborts_when_the_article_changes_mid_export(setup, monkeypatch):
+    """F8, article text: the page must be built from the version the
+    approvals cover; an edit landing between the check and the write ships
+    unapproved text unless the shipped bytes are re-verified. A re-read
+    after everything is written must therefore agree with the approved
+    text, failing the export when it does not."""
+    db, root, tmp = setup["db"], setup["root"], setup["tmp"]
+    site = _site(tmp)
+    real_page = P.article_page
+
+    def page_then_edit(*args, **kw):
+        out = real_page(*args, **kw)
+        path = root / J.get(db, "rules")["path"]
+        path.write_text("# Rules beat the model on short posts\n\nI changed my "
+                        "conclusions after the checks ran.\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(P, "article_page", page_then_edit)
+    with pytest.raises(J.JournalError, match="changed after it was verified"):
+        P.export(db, root, "rules", site, base_url=BASE)
+    worktree = root / P.SITE_DIR / "rules"
+    assert _git(worktree, "status", "--porcelain").strip() == ""
+    assert not (worktree / "journal" / "rules" / "index.html").exists(), \
+        "an aborted export leaves nothing behind, committed or not"
+    assert "I changed my conclusions" not in _git(worktree, "log", "--patch", "--all")
+
+
+def test_export_stamps_its_date_once_and_keeps_it(setup, monkeypatch):
+    """F9: before publication the export shows nothing that the clock
+    should move. Today's date is recorded as the first export date and
+    reused on every later export, so re-exporting on a later day writes
+    the same bytes instead of a new commit and a drifting timestamp."""
+    db, root, tmp = setup["db"], setup["root"], setup["tmp"]
+    site = _site(tmp)
+    first = P.export(db, root, "rules", site, base_url=BASE)
+    stamped = J.get(db, "rules")["first_export_at"]
+    assert stamped, "the first export must record the date it stamped"
+    page = (first["site"] / "journal" / "rules" / "index.html").read_text(encoding="utf-8")
+    assert stamped[:10] in page
+
+    monkeypatch.setattr(J, "now_utc", lambda: "2027-05-05T09:00:00+00:00")
+    later = P.export(db, root, "rules", site, base_url=BASE)
+    assert J.get(db, "rules")["first_export_at"] == stamped, \
+        "only the first export stamps the date"
+    page = (later["site"] / "journal" / "rules" / "index.html").read_text(encoding="utf-8")
+    assert stamped[:10] in page and "2027-05-05" not in page
+    assert not later["changed"], "a re-export with nothing changed must not commit"
 
 
 def test_export_reuses_an_existing_branch(setup):

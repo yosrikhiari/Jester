@@ -320,6 +320,21 @@ def _remote_default(site_repo: Path) -> str:
     raise J.JournalError("cannot tell the site's default branch (no origin/HEAD, main or master)")
 
 
+def _abandon_export(site: Path) -> None:
+    """Return the site worktree to its last committed state (F8).
+
+    A failed or aborted export must not leave half-written pages sitting
+    uncommitted in the worktree, where the next export would commit them
+    around. Best effort: if even the restore fails, export surfaces the
+    original error — the mess it left behind is the smaller problem.
+    """
+    try:
+        _git(site, "reset", "--hard", "-q")
+        _git(site, "clean", "-fd", "-q", "--", "journal")
+    except J.JournalError:
+        pass
+
+
 def site_worktree(site_repo: Path, root: Path, slug: str) -> Path:
     """A worktree of the site on branch journal/<slug>, cut from the remote default."""
     site_repo = Path(site_repo)
@@ -356,6 +371,14 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
     md = (Path(root) / j["path"]).read_text(encoding="utf-8")
     article_dir = Path(root) / Path(j["path"]).parent
     article_rel = Path(j["path"]).parent.as_posix()
+    rev = J.latest_revision(db, j["id"])
+    # The approved hash was checked a few statements ago (inside
+    # ready_to_export); this read is a different one. A file that changed in
+    # between means the text handed to the page was never approved — refuse
+    # before anything is written.
+    if F.content_sha256(Path(root) / j["path"]) != rev["content_sha256"]:
+        raise J.JournalError("cannot export: the article file changed after "
+                             "it was verified for export")
     # Re-hash every figure BEFORE the site worktree is touched: a figure the
     # check accepted at `journal check` time can be edited afterwards, and the
     # export is the moment it would leave the machine. A missing or
@@ -371,23 +394,62 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
                                    for t in figures) if p]
     if figure_problems:
         raise J.JournalError("cannot export: " + "; ".join(figure_problems))
-    published_on = (j["published_at"] or at or J.now_utc())[:10]
+    # F9: the stamped date never moves. published_at once published; else the
+    # moment of the FIRST export, recorded here; `at` (explicit to tests and
+    # one-off wraps) still dictates, and is recorded the same way.
+    stamp = at or J.now_utc()
+    if j["published_at"]:
+        published_on = j["published_at"][:10]
+    elif j["first_export_at"]:
+        published_on = j["first_export_at"][:10]
+    else:
+        published_on = stamp[:10]
     site = site_worktree(site_repo, root, slug)
-    out_dir = site / "journal" / slug
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "index.html").write_bytes(article_page(db, j, md, url, published_on).encode("utf-8"))
-    copied = []
-    for target in figures:
-        src = article_dir / target
-        dst = out_dir / target
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dst)
-        copied.append(target)
-    journal_dir = site / "journal"
-    (journal_dir / "journal.css").write_bytes(CSS.encode("utf-8"))
-    (journal_dir / "index.html").write_bytes(index_page(db, root, base_url, also=j["id"]).encode("utf-8"))
-    (journal_dir / "feed.xml").write_bytes(feed_xml(db, root, base_url, also=j["id"]).encode("utf-8"))
-    rev = J.latest_revision(db, j["id"])
+    try:
+        out_dir = site / "journal" / slug
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "index.html").write_bytes(article_page(db, j, md, url, published_on).encode("utf-8"))
+        copied = []
+        for target in figures:
+            src = article_dir / target
+            dst = out_dir / target
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            copied.append(target)
+        journal_dir = site / "journal"
+        (journal_dir / "journal.css").write_bytes(CSS.encode("utf-8"))
+        (journal_dir / "index.html").write_bytes(index_page(db, root, base_url, also=j["id"]).encode("utf-8"))
+        (journal_dir / "feed.xml").write_bytes(feed_xml(db, root, base_url, also=j["id"]).encode("utf-8"))
+        # The shipped bytes, verified after the copy: what pre-copy hashing
+        # read is not what copyfile deposited. Anything that differs from
+        # the registry (or the approved text) aborts the export and returns
+        # the worktree to its last committed state.
+        shipped_problems = []
+        if (Path(root) / j["path"]).read_text(encoding="utf-8") != md:
+            shipped_problems.append("the article file changed after it was "
+                                    "verified for export; the page kept the "
+                                    "approved text")
+        for target in copied:
+            reg = L.artifact_sha(db, j["id"], article_rel, target)
+            if reg is None:
+                shipped_problems.append(f"{target}: no registered figure to verify against")
+            elif F.content_sha256(out_dir / target) != reg:
+                shipped_problems.append(f"{target}: the copied bytes do not "
+                                        "match the registered figure")
+        if shipped_problems:
+            _abandon_export(site)
+            raise J.JournalError("export aborted, the worktree was restored: "
+                                 + "; ".join(shipped_problems))
+    except J.JournalError:
+        raise
+    except Exception:
+        # A half-written export must not sit as an uncommitted mess of a
+        # worktree the next export then happily commits around.
+        _abandon_export(site)
+        raise
+    if not j["published_at"] and not j["first_export_at"]:
+        J.stamp_first_export(db, slug, stamp)
+        j = J.get(db, slug)
     _git(site, "add", "--", "journal")
     status = _git(site, "status", "--porcelain", "--", "journal")
     if status:
