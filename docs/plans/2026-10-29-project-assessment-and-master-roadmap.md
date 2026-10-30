@@ -213,7 +213,9 @@ Selected from the still-open items in §1.5 and the 2026-10-25 Batch 1 work orde
 
 **Deferred from this batch, with reasons:** `extractor_batch_size` cap (needs a batching measurement, not a guess), model digest/quantisation (provider API work), UI smoke (no browser harness), per-role LLM counters (needs hooks in every client), DD-M1/M2/M4/M5/M6 and the remaining PR findings (separate designs; see reviews), and the source-scope decision (owner input).
 
-**Batch exit criteria:** targeted tests green; full Python suite, Go suite, frontend lint/build, eval gate, and signals fixture gate green; independent verification where quota allows (orchestrator-run verification disclosed if not); critic ≥ 8.5/10; zero unresolved blocker/high findings; documents updated with evidence. **Met, with the independence caveat stated above.**
+**Batch exit criteria:** targeted tests green; full Python suite, Go suite, frontend lint/build, eval gate, and signals fixture gate green; independent verification where quota allows (orchestrator-run verification disclosed if not); critic ≥ 8.5/10; zero unresolved blocker/high findings; documents updated with evidence.
+
+**Status: all test and quality gates met; the independent critic score is not claimed.** The free-subagent quota did not allow a second-party review, so the last independent score remains **8.9/10 from the 2026-10-29 cycle**; this batch's verification is orchestrator-run and disclosed. P-H1 and P-H3 are closed. **EX-G3 remains open** — rated **high** in the extraction review and carried as a warning in the final report — and was explicitly deferred, so this batch does not claim that every historical high finding is closed.
 
 ---
 
