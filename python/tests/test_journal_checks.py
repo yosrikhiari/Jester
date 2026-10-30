@@ -308,6 +308,44 @@ def test_a_before_plan_run_cannot_back_a_number(db, tmp_path):
     assert "before the plan was written" in block.findings[0]["message"]
 
 
+def test_a_block_backing_must_be_something_that_records_numbers(db, tmp_path):
+    """`backed-by` is how a whole table is proved at once, and the proof is the
+    set of values those runs recorded. A backing that names no run carried no
+    values and no problem, so the value rule was skipped and every number in
+    the block passed as backed -- an observation link or a quoted page proves
+    the one number linked to it, never a table of numbers nobody checked."""
+    jid = J.create_journal(db, "Free pass")["id"]
+    run = J.add_run(db, J.add_experiment(db, jid), result={"f1": 0.9})
+    S.take(db, tmp_path, URL, opener=F.FakeWeb({URL: _page("numbers live here")}))
+    table = "| metric | value |\n|---|---|\n| f1 | 0.9 |"
+
+    for backing in ("obs:labelling", URL, f"run:{run}, obs:labelling"):
+        out = C.check_numbers(db, tmp_path, jid, f"<!-- backed-by: {backing} -->\n{table}")
+        assert not out.ok, f"{backing!r} backed a whole table with nothing that records a number"
+        assert out.stats["block"] == 0, out.findings
+        assert "backed by run ids" in out.findings[0]["message"]
+
+    proved = C.check_numbers(db, tmp_path, jid, f"<!-- backed-by: run:{run} -->\n{table}")
+    assert proved.ok and proved.stats["block"] == 1
+
+
+def test_a_backing_list_written_with_spaces_names_every_run(db, tmp_path):
+    """`run:3, run:4` is what an author types by hand (`journal lab table`
+    writes the same list without the space). The capture took the first
+    whitespace-free token and then demanded `-->`, found none, and the comment
+    was not recognised at all -- so the block read as having no backing and
+    every number in it failed with "has no proof", over a space after a comma."""
+    jid = J.create_journal(db, "Two runs")["id"]
+    exp = J.add_experiment(db, jid)
+    one = J.add_run(db, exp, result={"f1": 0.9})
+    two = J.add_run(db, exp, result={"f2": 0.44})
+
+    out = C.check_numbers(db, tmp_path, jid,
+                          f"<!-- backed-by: run:{one}, run:{two} -->\n"
+                          "| metric | value |\n|---|---|\n| f2 | 0.44 |")
+    assert out.ok, out.findings
+
+
 # ---- gates --------------------------------------------------------------------
 
 def test_g2_citations_gate():

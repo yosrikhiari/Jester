@@ -25,7 +25,7 @@ _HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
 _LIST = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _QUOTE = re.compile(r"^\s{0,3}>")
 _TABLE = re.compile(r"^\s*\|")
-_BACKED_BY = re.compile(r"<!--\s*backed-by:\s*(\S+)\s*-->")
+_BACKED_BY = re.compile(r"<!--\s*backed-by:\s*([^\n>]+?)\s*-->")
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _INLINE_COMMENT = re.compile(r"<!--.*?-->", re.S)
 #: [text](target) and ![alt](target). Nested brackets in link text are rare in

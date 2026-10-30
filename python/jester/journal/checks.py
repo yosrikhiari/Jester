@@ -307,7 +307,11 @@ def _block_runs(db, journal_id: int, backing: str) -> Tuple[Optional[List[float]
     or why the proof does not hold."""
     targets = [t.strip() for t in backing.split(",") if t.strip()]
     if not all(t.startswith("run:") for t in targets):
-        return None, None
+        # Anything else carries no values: an obs: link or a quoted page proves
+        # the one number linked to it, so a block backed by one had no number it
+        # could not show. Fail the block rather than wave it through.
+        return None, ("must be backed by run ids only (`<!-- backed-by: run:1 -->`); "
+                      "link each number to its own obs: or source instead")
     values: List[float] = []
     for t in targets:
         run_id = t[len("run:"):].partition("#")[0]
@@ -354,8 +358,6 @@ def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) 
         block_problem, block_values = None, None
         if block.backing:
             block_values, block_problem = _block_runs(db, journal_id, block.backing)
-            if block_values is None and block_problem is None:
-                _, block_problem = _verify_link(db, root, journal_id, block.backing, None)
         for start, _end, token in _figures(T.mask(block.text)):
             out.stats["numbers"] += 1
             line = block.line_at(start)
