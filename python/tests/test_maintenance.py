@@ -142,7 +142,8 @@ def test_young_or_clustered_nuggets_stay_unflagged(db):
 # ---- queues ---------------------------------------------------------------------
 
 def test_queue_counts_surface_both_queues_and_only_then_append(db):
-    assert queue_counts(db) == {"needs_reembed": 0, "needs_score": 0}
+    assert queue_counts(db) == {"needs_reembed": 0, "needs_score": 0,
+                                "stalled_scores": 0}
     assert check_queues(db) == []
     insert_nugget(db, Nugget(unique_key="reddit/r/test/k1", platform="reddit",
                              extracted_insight="old", run_id="r1",
@@ -150,11 +151,29 @@ def test_queue_counts_surface_both_queues_and_only_then_append(db):
     db.execute("INSERT INTO ideas(title, needs_score) VALUES ('x', 1)")
     db.commit()
     counts = queue_counts(db)
-    assert counts == {"needs_reembed": 1, "needs_score": 1}
+    assert counts == {"needs_reembed": 1, "needs_score": 1, "stalled_scores": 0}
     events = check_queues(db)
     assert len(events) == 1 and events[0]["kind"] == "queues"
     assert "1 nugget(s) need re-embedding" in events[0]["reason"]
     assert "1 idea(s) need re-scoring" in events[0]["reason"]
+    assert events[0]["inputs"] == {"needs_reembed": 1, "needs_score": 1,
+                                   "stalled_scores": 0}
+
+
+def test_a_stalled_rescore_is_surfaced_with_its_attempt_count(db):
+    """A queue head-count alone cannot say the queue is not moving: one idea
+    refused every night reads exactly like one idea waiting since yesterday."""
+    from jester.ops import SCORE_STALL_ATTEMPTS
+
+    db.execute("INSERT INTO ideas(title, needs_score, rescore_attempts) "
+               "VALUES ('x', 1, ?)", (SCORE_STALL_ATTEMPTS,))
+    db.commit()
+
+    counts = queue_counts(db)
+    assert counts["needs_score"] == 1 and counts["stalled_scores"] == 1
+    event = check_queues(db)[0]
+    assert f"refused at least {SCORE_STALL_ATTEMPTS} time(s)" in event["reason"]
+    assert event["inputs"]["stalled_scores"] == 1
 
 
 # ---- the pass -------------------------------------------------------------------
@@ -231,6 +250,7 @@ def test_cmd_maintenance_runs_and_prints(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "maintenance: 1 event(s) appended" in out
     assert "ME-" in out and "queues" in out
+    assert "stalled_scores=0" in out
     # the schema really appeared beside the run
     con = open_db(str(db_path), migrate=False)
     assert con.execute(

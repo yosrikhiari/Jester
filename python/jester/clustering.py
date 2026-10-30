@@ -121,6 +121,9 @@ class Cluster:
     coherence: float = 0.0
     label: str = ""
     problem_statement: str = ""
+    #: DD-M1: the labeller looked at the members and said they do NOT share a
+    #: theme. A threshold grouped them; this is the first step able to dissent.
+    incoherent: bool = False
 
     @property
     def size(self) -> int:
@@ -574,6 +577,7 @@ def to_payload(cluster: Cluster, stats: dict, embedding_model: str) -> dict:
         "coherence": cluster.coherence,
         "embedding_model": embedding_model,
         "nugget_keys": json.dumps(cluster.nugget_keys),
+        "incoherent": bool(cluster.incoherent),
         **stats,
         "platforms": json.dumps(stats.get("platforms") or []),
     }

@@ -261,6 +261,14 @@ def test_console_markup_declares_no_duplicate_ids():
     assert dupes == []
 
 
+def test_the_clusters_page_marks_an_incoherent_theme_and_detached_drafts():
+    """The API can now say "the labeller says these share no subject" and
+    "this draft outlived its theme"; the page has to say both out loud."""
+    js = _static("app.js")
+    assert "c.incoherent" in js and "no shared subject" in js
+    assert "c.detached" in js and "detached from every theme" in js
+
+
 # ── the queue (scraped, not yet treated) ─────────────────────────────────────
 # Ingestion and treatment run on separate clocks by design, so the gap between
 # them is a standing state that can hold tens of thousands of comments for

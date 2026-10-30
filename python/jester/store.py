@@ -50,6 +50,14 @@ class ConcurrentRunError(Exception):
     pass
 
 
+#: The `cluster_ideas.cluster_id` a draft carries when a fresh clustering pass
+#: no longer groups any of the comments it was built from. Zero is safe as a
+#: sentinel: `clusters.id` is AUTOINCREMENT and starts at 1, and
+#: `cluster_ideas.cluster_id` has no foreign key. The draft is kept -- it is
+#: somebody's work -- and surfaced as a synthetic "Detached drafts" group.
+DETACHED_CLUSTER_ID = 0
+
+
 BASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -99,7 +107,11 @@ CREATE TABLE IF NOT EXISTS ideas (
     synthesis_model       TEXT,
     run_id               TEXT,
     created_at           TEXT NOT NULL DEFAULT (datetime('now')),
-    needs_score          INTEGER NOT NULL DEFAULT 0
+    needs_score          INTEGER NOT NULL DEFAULT 0,
+    -- EX-G3: failed re-score attempts since the idea entered (or last re-
+    -- entered) the queue. Ordering by this before id is what stops one
+    -- permanently refused idea from being asked first every single run.
+    rescore_attempts     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS clusters (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -124,6 +136,9 @@ CREATE TABLE IF NOT EXISTS clusters (
     embedding_model    TEXT,
     single_author      INTEGER NOT NULL DEFAULT 0,
     single_thread      INTEGER NOT NULL DEFAULT 0,
+    -- DD-M1: the labeller's disagreement with the threshold. Kept, not hidden:
+    -- a group the model says shares no subject is a finding about the pass.
+    incoherent         INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS cluster_members (
@@ -266,6 +281,10 @@ _ADD_COLUMNS = [
     # by a later run. A column rather than a `status` value because status is
     # the operator's own marking and a failed re-score must not overwrite it.
     "ALTER TABLE ideas ADD COLUMN needs_score INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE ideas ADD COLUMN rescore_attempts INTEGER NOT NULL DEFAULT 0",
+    # DD-M1: the labeller's `coherent: false` verdict survived parsing but had
+    # nowhere to live, so the console could not mark the theme it described.
+    "ALTER TABLE clusters ADD COLUMN incoherent INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN trivial_share REAL",
     "ALTER TABLE runs ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'",
     "ALTER TABLE runs ADD COLUMN n_posts INTEGER",
@@ -855,9 +874,22 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
     two contradictory groupings of the same nuggets with no way to tell which
     is current. Draft ideas are preserved: those are somebody's work, not
     derived data, so they outlive the cluster that prompted them.
+
+    A draft also has to outlive the cluster ID. The pass deletes every cluster
+    row and mints fresh ids, so a surviving `cluster_ideas.cluster_id` names a
+    group that no longer exists — and on an archive whose `clusters` table
+    predates AUTOINCREMENT, an id another theme now reuses. Either way the
+    draft silently vanishes from every theme's list. Each draft is re-homed to
+    the new cluster sharing the most comments with it; one that shares none
+    moves to `DETACHED_CLUSTER_ID` instead of being deleted or left orphaned.
     """
+    cur = db.cursor()
+    cur.row_factory = sqlite3.Row
+    drafts = cur.execute(
+        "SELECT id, supporting_nuggets FROM cluster_ideas").fetchall()
     db.execute("DELETE FROM cluster_members")
     db.execute("DELETE FROM clusters")
+    placed = []  # (new cluster id, its nugget keys), in payload order
     n = 0
     for p in payloads:
         cur = db.execute(
@@ -865,8 +897,8 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
             INSERT INTO clusters
                 (run_id, label, problem_statement, size, n_nuggets, n_authors,
                  authors_unknown, n_threads, platforms, nugget_keys, coherence,
-                 embedding_model, single_author, single_thread)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 embedding_model, single_author, single_thread, incoherent)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 run_id,
@@ -883,9 +915,15 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
                 p.get("embedding_model") or "",
                 1 if p.get("single_author") else 0,
                 1 if p.get("single_thread") else 0,
+                1 if p.get("incoherent") else 0,
             ),
         )
         cid = cur.lastrowid
+        try:
+            keys = set(json.loads(p.get("nugget_keys") or "[]"))
+        except (TypeError, ValueError):
+            keys = set()
+        placed.append((cid, keys))
         for m in p.get("members") or []:
             db.execute(
                 "INSERT OR REPLACE INTO cluster_members "
@@ -895,6 +933,18 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
                  m.get("text") or "", float(m.get("similarity") or 0.0)),
             )
         n += 1
+    for draft in drafts:
+        try:
+            keys = set(json.loads(draft["supporting_nuggets"] or "[]"))
+        except (TypeError, ValueError):
+            keys = set()
+        best_id, best_overlap = DETACHED_CLUSTER_ID, 0
+        for cid, cluster_keys in placed:
+            overlap = len(keys & cluster_keys)
+            if overlap > best_overlap:
+                best_id, best_overlap = cid, overlap
+        db.execute("UPDATE cluster_ideas SET cluster_id=? WHERE id=?",
+                   (best_id, draft["id"]))
     db.commit()
     return n
 
@@ -1160,8 +1210,16 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
 
 
 def mark_needs_score(db: sqlite3.Connection, idea_id: int) -> None:
-    """Flag an idea for a later re-score without touching its scores."""
-    db.execute("UPDATE ideas SET needs_score=1 WHERE id=?", (idea_id,))
+    """Flag an idea for a later re-score without touching its scores.
+
+    Entering the queue is a fresh reason to ask, so a counter left over from
+    attempts for the PREVIOUS reason starts at zero. Without this, growth
+    would put an idea behind every row that merely failed more recently.
+    """
+    db.execute(
+        "UPDATE ideas SET needs_score=1, rescore_attempts=0 WHERE id=?",
+        (idea_id,),
+    )
     db.commit()
 
 

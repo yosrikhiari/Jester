@@ -16,6 +16,7 @@ from typing import Optional
 from jester.config import Thresholds
 from jester.llm import CriticLLM, FakeCriticLLM, critic_answered, model_name
 from jester.models import Idea, IdeaScores
+from jester.ops import SCORE_STALL_ATTEMPTS
 from jester.scoring import compute_overall
 from jester.store import _now, get_idea, update_idea
 
@@ -146,20 +147,44 @@ def pending_scores(db) -> int:
     return db.execute("SELECT COUNT(*) FROM ideas WHERE needs_score=1").fetchone()[0]
 
 
+def stalled_scores(db) -> int:
+    """Waiting ideas whose last SCORE_STALL_ATTEMPTS re-score calls were refused.
+
+    A backlog can be healthy: last night's failures, being drained one per run.
+    This is the number that says the queue is not draining at all, and it is
+    deliberately a subset of `pending_scores`, not a replacement for it.
+    """
+    return db.execute(
+        "SELECT COUNT(*) FROM ideas WHERE needs_score=1 AND rescore_attempts>=?",
+        (SCORE_STALL_ATTEMPTS,),
+    ).fetchone()[0]
+
+
 def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -> dict:
-    """Give up to `limit` waiting ideas a real score, oldest first.
+    """Give up to `limit` waiting ideas a real score, least-tried first.
+
+    Ordering by `rescore_attempts` before `id` is the fairness fix: with a
+    per-run budget of one, `ORDER BY id` asked the same permanently refused
+    idea first every night and never reached the rest. A failed attempt
+    increments the counter, so the next run starts with somebody else; a
+    successful one clears it. `mark_needs_score` also clears it, because a new
+    reason to ask deserves a fresh place in the queue.
 
     Stops at the first rate-limit exhaustion, for the reason the synthesizer
     does: every call after it would be another stand-in. An idea whose critic
-    still does not answer stays waiting; nothing about it changes.
+    still does not answer stays waiting; nothing about it changes except its
+    attempt count.
     """
-    out = {"scored": 0, "still_waiting": 0, "stopped_on_quota": False}
+    out = {"scored": 0, "still_waiting": 0, "stopped_on_quota": False,
+           "stalled": 0}
     if limit <= 0:
         out["still_waiting"] = pending_scores(db)
+        out["stalled"] = stalled_scores(db)
         return out
     db.row_factory = sqlite3.Row
     rows = db.execute(
-        "SELECT * FROM ideas WHERE needs_score=1 ORDER BY id LIMIT ?", (int(limit),)
+        "SELECT * FROM ideas WHERE needs_score=1 "
+        "ORDER BY rescore_attempts, id LIMIT ?", (int(limit),)
     ).fetchall()
     critic = Critic(db, config)
     for row in rows:
@@ -167,10 +192,21 @@ def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -
         idea = critic.score(row_to_idea(row), critic_llm)
         if not idea.needs_score:
             out["scored"] += 1
+            # A success earns a clean slate: if growth later re-queues it, it
+            # starts level with everybody else.
+            db.execute("UPDATE ideas SET rescore_attempts=0 WHERE id=?",
+                       (row["id"],))
+        else:
+            db.execute(
+                "UPDATE ideas SET rescore_attempts=rescore_attempts+1 "
+                "WHERE id=?", (row["id"],),
+            )
         if int(getattr(critic_llm, "rate_limited", 0) or 0) > before:
             out["stopped_on_quota"] = True
             break
+    db.commit()
     out["still_waiting"] = pending_scores(db)
+    out["stalled"] = stalled_scores(db)
     return out
 
 

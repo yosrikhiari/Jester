@@ -77,6 +77,7 @@ from jester.sources import (
 )
 from jester.store import (
     _NUGGET_DETAIL_COLUMNS,
+    DETACHED_CLUSTER_ID,
     cluster_members,
     count_nuggets,
     delete_cluster_idea,
@@ -938,6 +939,47 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
 
     # ---- clusters (semantic regrouping) ---------------------------------
 
+    def _cluster_ideas(self, cluster_id: int):
+        """Drafts for one group, with the stored JSON list decoded.
+
+        The brief shows the comments an idea was built from, so this has to be
+        a list rather than the string the table holds.
+        """
+        ideas = [self._rowdict(i) for i in list_cluster_ideas(self.db, cluster_id)]
+        for i in ideas:
+            try:
+                i["supporting_nuggets"] = json.loads(i.get("supporting_nuggets") or "[]")
+            except (TypeError, ValueError):
+                i["supporting_nuggets"] = []
+        return ideas
+
+    def _detached_group(self, ideas):
+        """The synthetic row that keeps detached drafts clickable.
+
+        `cluster_id=0` is a sentinel, not a clusters row: the group has no
+        membership of its own and cannot be drafted from. It exists so work
+        that outlived its theme is visible instead of orphaned.
+        """
+        best = max((i["overall"] for i in ideas
+                    if i.get("overall") is not None), default=None)
+        return {
+            "id": DETACHED_CLUSTER_ID,
+            "run_id": "",
+            "label": "Detached drafts",
+            "problem_statement": ("These drafts no longer share a theme: a "
+                                  "fresh clustering pass grouped none of the "
+                                  "comments they were built from. They are "
+                                  "kept until you save or discard them."),
+            "size": 0, "n_nuggets": 0, "n_authors": 0, "authors_unknown": 0,
+            "n_threads": 0, "platforms": [], "nugget_keys": [],
+            "coherence": 0.0, "embedding_model": "",
+            "single_author": 0, "single_thread": 0, "incoherent": 0,
+            "created_at": None, "n_ideas": len(ideas), "idea_best": best,
+            "n_ideas_saved": sum(1 for i in ideas
+                                 if i.get("promoted_idea_id") is not None),
+            "detached": True,
+        }
+
     def clusters(self):
         """Every theme the last clustering pass produced.
 
@@ -945,11 +987,15 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         """
         rows = [self._rowdict(r) for r in list_clusters(self.db)]
         for r in rows:
+            r["detached"] = False
             for key in ("platforms", "nugget_keys"):
                 try:
                     r[key] = json.loads(r.get(key) or "[]")
                 except (TypeError, ValueError):
                     r[key] = []
+        detached = self._cluster_ideas(DETACHED_CLUSTER_ID)
+        if detached:
+            rows.append(self._detached_group(detached))
         stale = any(
             (r.get("embedding_model") or "").startswith("fake") for r in rows
         )
@@ -967,26 +1013,26 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
 
     def cluster(self, cluster_id: int):
         """One theme, its members, and any draft ideas made from it."""
+        if cluster_id == DETACHED_CLUSTER_ID:
+            ideas = self._cluster_ideas(DETACHED_CLUSTER_ID)
+            if not ideas:
+                return {"ok": False, "error": "no detached drafts"}
+            group = self._detached_group(ideas)
+            group["members"] = []
+            group["ideas"] = ideas
+            return {"ok": True, "cluster": group}
         row = get_cluster(self.db, cluster_id)
         if row is None:
             return {"ok": False, "error": f"no cluster {cluster_id}"}
         d = self._rowdict(row)
+        d["detached"] = False
         for key in ("platforms", "nugget_keys"):
             try:
                 d[key] = json.loads(d.get(key) or "[]")
             except (TypeError, ValueError):
                 d[key] = []
         d["members"] = [self._rowdict(m) for m in cluster_members(self.db, cluster_id)]
-        d["ideas"] = [
-            self._rowdict(i) for i in list_cluster_ideas(self.db, cluster_id)
-        ]
-        # A list, not the stored JSON string: the brief shows the comments an
-        # idea was built from, and the page matches them against `members`.
-        for i in d["ideas"]:
-            try:
-                i["supporting_nuggets"] = json.loads(i.get("supporting_nuggets") or "[]")
-            except (TypeError, ValueError):
-                i["supporting_nuggets"] = []
+        d["ideas"] = self._cluster_ideas(cluster_id)
         return {"ok": True, "cluster": d}
 
     def cluster_run_async(self, threshold=None, min_size=None, min_nuggets=None,

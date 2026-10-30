@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, unquote
 
 from jester.console.api import ConsoleAPI
 from jester.env import load_env_once
+from jester.ops import SCORE_STALL_ATTEMPTS
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -165,6 +166,11 @@ def _metrics_text(api) -> str:
             backlog = api.db.execute(
                 "SELECT COUNT(*) FROM ideas WHERE needs_score = 1").fetchone()[0]
             lines.append(f"jester_rescore_backlog {backlog}")
+            stalled = api.db.execute(
+                "SELECT COUNT(*) FROM ideas WHERE needs_score = 1 "
+                "AND rescore_attempts >= ?", (SCORE_STALL_ATTEMPTS,)
+            ).fetchone()[0]
+            lines.append(f"jester_rescore_stalled {stalled}")
         except Exception:  # noqa: BLE001 - a count must never take /metrics down
             pass
     return "\n".join(lines) + "\n"

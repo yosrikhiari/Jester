@@ -1370,7 +1370,7 @@ function clusterBreadth(c) {
   if ((c.n_threads || 0) >= 4) return { rank: 2, tone: 'tone-ok', label: 'recurring', why: `${c.n_threads} separate threads` };
   return { rank: 1, tone: 'tone-neutral', label: 'a few threads', why: `${c.n_threads || 0} threads` };
 }
-const breadthPill = c => { const b = clusterBreadth(c);
+const breadthPill = c => { if (c.detached) return ''; const b = clusterBreadth(c);
   return `<span class="pill ${b.tone}" title="${esc(b.why)} · coherence ${Number(c.coherence || 0).toFixed(2)}">${b.label}</span>`; };
 
 const CLUSTER_SORTS = {
@@ -1531,6 +1531,10 @@ function ideaSummaryBoxHTML(c, ideas) {
 }
 
 function emptyIdeaBoxHTML(c) {
+  if (c.detached) {
+    return `<div class="cws-box"><b>Nothing to draft from</b>
+      <p class="xs" style="margin-block-start:4px">These drafts outlived the theme they were built from, so there are no comments to draft against. Save or discard them below.</p></div>`;
+  }
   const note = CL_DISCARDED === c.id
     ? '<p class="xs" style="margin-block-end:var(--s-4)">Draft discarded. The theme and its comments are untouched.</p>' : '';
   return `<div class="cws-box">${note}
@@ -1579,12 +1583,15 @@ function fullBriefHTML(c, d) {
 
 function clusterHeadHTML(c) {
   const flags = [
+    c.incoherent ? '<span class="pill tone-failed">no shared subject</span>' : '',
+    c.detached ? '<span class="pill tone-warn">detached from every theme</span>' : '',
     c.single_author ? '<span class="pill tone-warn">one author</span>' : '',
     (c.embedding_model || '').startsWith('fake') ? '<span class="pill tone-failed">hash vectors — not meaningful</span>' : '',
   ].join('');
   const who = c.n_authors > 0 ? c.n_authors + ' people' : 'authors not recorded';
   const where = (c.platforms || []).map(p => PLATFORM_LABEL[p] || p).join(', ');
-  const facts = [c.n_nuggets + ' comments', who, where, clusterBreadth(c).why].filter(Boolean).map(esc).join(' · ');
+  const breadth = c.detached ? 'no current theme' : clusterBreadth(c).why;
+  const facts = [c.n_nuggets + ' comments', who, where, breadth].filter(Boolean).map(esc).join(' · ');
   return `<div class="cws-head"><h2 title="${esc(clusterTitle(c))}">${esc(clusterTitle(c))}</h2>
     <div class="cws-meta">${breadthPill(c)}${flags}<span>${facts}</span></div></div>`;
 }

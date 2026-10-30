@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from jester.ops import SCORE_STALL_ATTEMPTS
+
 #: A trailing window shorter than this cannot tell drift from occasion.
 MIN_WINDOW_ROWS = 3
 
@@ -207,11 +209,14 @@ def check_stale_nuggets(cfg, db: sqlite3.Connection,
 # ---- queues: surface, do not re-implement --------------------------------------
 
 def queue_counts(db: sqlite3.Connection) -> Dict[str, int]:
+    from jester.agents.critic import stalled_scores
+
     re_ = db.execute("SELECT COUNT(*) FROM nuggets WHERE needs_reembed=1"
                      ).fetchone()[0]
     rs = db.execute("SELECT COUNT(*) FROM ideas WHERE needs_score=1"
                     ).fetchone()[0]
-    return {"needs_reembed": int(re_), "needs_score": int(rs)}
+    return {"needs_reembed": int(re_), "needs_score": int(rs),
+            "stalled_scores": int(stalled_scores(db))}
 
 
 def check_queues(db: sqlite3.Connection) -> List[Dict[str, Any]]:
@@ -223,6 +228,11 @@ def check_queues(db: sqlite3.Connection) -> List[Dict[str, Any]]:
         what.append(f"{counts['needs_reembed']} nugget(s) need re-embedding")
     if counts["needs_score"]:
         what.append(f"{counts['needs_score']} idea(s) need re-scoring")
+    if counts["stalled_scores"]:
+        # A head-count cannot distinguish a draining queue from one whose
+        # front has been refused every night for a week.
+        what.append(f"{counts['stalled_scores']} idea(s) refused at least "
+                    f"{SCORE_STALL_ATTEMPTS} time(s)")
     return [_append_event(
         db, kind="queues", actor_kind="scheduler", actor="maintenance",
         reason="; ".join(what) + " - the queues own the fixing, this only "
@@ -283,7 +293,8 @@ def cmd_maintenance(args) -> int:
             print(f"    {e['reason']}")
         counts = queue_counts(db)
         print(f"queues now: needs_reembed={counts['needs_reembed']} "
-              f"needs_score={counts['needs_score']}")
+              f"needs_score={counts['needs_score']} "
+              f"stalled_scores={counts['stalled_scores']}")
         return 0
     finally:
         db.close()

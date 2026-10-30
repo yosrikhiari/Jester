@@ -15,6 +15,7 @@ from jester.console.api import ConsoleAPI
 from jester.jobs import get_job
 from jester.models import Idea, IdeaScores, Nugget
 from jester.store import (
+    DETACHED_CLUSTER_ID,
     insert_cluster_idea,
     insert_nugget,
     list_clusters,
@@ -26,7 +27,7 @@ from jester.store import (
 REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
 
-def _seed(db):
+def _seed(db, incoherent=False):
     for k in ("n1", "n2", "n3"):
         insert_nugget(db, Nugget(unique_key=k, platform="reddit", thread_id="t1",
                                  raw_text=f"body {k}", extracted_insight=f"i {k}"))
@@ -37,7 +38,22 @@ def _seed(db):
         "nugget_keys": json.dumps(["n1", "n2", "n3"]),
         "coherence": 0.85, "embedding_model": "nomic-embed-text",
         "single_author": False, "single_thread": False,
+        "incoherent": incoherent,
         "members": [{"nugget_key": "n1", "chunk_index": 0, "text": "x", "similarity": 0.9}],
+    }])
+    return list_clusters(db)[0]["id"]
+
+
+def _n3_only(db):
+    """A fresh pass that no longer groups the comments the draft was built on."""
+    replace_clusters(db, "r2", [{
+        "label": "only n3", "problem_statement": "ps",
+        "size": 1, "n_nuggets": 1, "n_authors": 1, "authors_unknown": 0,
+        "n_threads": 1, "platforms": '["reddit"]',
+        "nugget_keys": json.dumps(["n3"]),
+        "coherence": 0.9, "embedding_model": "nomic-embed-text",
+        "single_author": False, "single_thread": True,
+        "members": [{"nugget_key": "n3", "chunk_index": 0, "text": "x", "similarity": 0.9}],
     }])
     return list_clusters(db)[0]["id"]
 
@@ -141,3 +157,34 @@ def test_drafting_an_unknown_theme_is_refused_before_any_job(env):
     res = ConsoleAPI(path, str(REPO_CONFIG)).cluster_generate_idea_async(cid + 999)
     assert res["ok"] is False
     assert "no cluster" in res["error"]
+
+
+def test_an_incoherent_theme_reaches_the_list_and_detail(tmp_path):
+    """The labeller can say the members share no subject. That verdict must
+    survive the store round-trip so the page can mark it."""
+    path = str(tmp_path / "c.db")
+    db = open_db(path)
+    cid = _seed(db, incoherent=True)
+    api = ConsoleAPI(path, str(REPO_CONFIG))
+
+    row = next(c for c in api.clusters()["clusters"] if c["id"] == cid)
+    assert row["incoherent"] == 1
+    assert api.cluster(cid)["cluster"]["incoherent"] == 1
+
+
+def test_detached_drafts_are_a_visible_group_not_a_lost_row(env):
+    path, db, cid = env
+    insert_cluster_idea(db, cid, _draft())
+    _n3_only(db)  # the draft's comments no longer share a theme
+
+    api = ConsoleAPI(path, str(REPO_CONFIG))
+    groups = {c["id"]: c for c in api.clusters()["clusters"]}
+    assert DETACHED_CLUSTER_ID in groups, \
+        "a draft outside every theme must still have a row to click"
+    detached = groups[DETACHED_CLUSTER_ID]
+    assert detached["detached"] is True
+    assert detached["n_ideas"] == 1 and detached["n_nuggets"] == 0
+
+    detail = api.cluster(DETACHED_CLUSTER_ID)
+    assert detail["ok"] is True
+    assert detail["cluster"]["ideas"][0]["title"] == "Backup Sentinel"

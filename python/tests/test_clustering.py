@@ -17,16 +17,20 @@ from jester.agents.labeller import FakeLabeller, keyword_label
 from jester.chunking import MAX_CHARS, chunk_nugget, chunk_text
 from jester.clustering import (
     DEFAULT_MIN_NUGGETS,
+    Cluster,
+    ClusterMember,
     FakeEmbeddingRefused,
     brute_force_neighbours,
     build_clusters,
     cluster_stats,
     cluster_vectors,
     is_fake_embedding,
+    to_payload,
 )
 from jester.embed import FakeEmbedding
 from jester.models import Nugget
 from jester.store import (
+    DETACHED_CLUSTER_ID,
     insert_cluster_idea,
     insert_nugget,
     list_cluster_ideas,
@@ -279,7 +283,7 @@ def db(tmp_path):
     return open_db(str(tmp_path / "c.db"))
 
 
-def _seed_cluster(db):
+def _seed_cluster(db, incoherent=False):
     for k in ("n1", "n2", "n3"):
         insert_nugget(db, Nugget(unique_key=k, platform="reddit", thread_id="t1",
                                  raw_text=f"body {k}", extracted_insight=f"i {k}"))
@@ -290,19 +294,35 @@ def _seed_cluster(db):
         "nugget_keys": json.dumps(["n1", "n2", "n3"]),
         "coherence": 0.85, "embedding_model": "nomic-embed-text",
         "single_author": False, "single_thread": False,
+        "incoherent": incoherent,
         "members": [{"nugget_key": "n1", "chunk_index": 0, "text": "x", "similarity": 0.9}],
     }])
     return list_clusters(db)[0]["id"]
 
 
-def _draft(cid):
+def _draft(cid, keys=("n1", "n2", "n3")):
     from jester.models import Idea, IdeaScores
 
     return Idea(title="Backup Sentinel", problem_statement="p",
-                proposed_solution="s", supporting_nuggets=["n1", "n2", "n3"],
+                proposed_solution="s", supporting_nuggets=list(keys),
                 scores=IdeaScores(demand_signal=8, feasibility=6,
                                   competition=None, overall=7.0),
                 synthesis_model="test-model")
+
+
+def _cluster_payload(label, keys, **extra):
+    payload = {
+        "label": label, "problem_statement": "ps",
+        "size": len(keys), "n_nuggets": len(keys), "n_authors": len(keys),
+        "authors_unknown": 0, "n_threads": 1, "platforms": '["reddit"]',
+        "nugget_keys": json.dumps(list(keys)),
+        "coherence": 0.85, "embedding_model": "nomic-embed-text",
+        "single_author": False, "single_thread": True,
+        "members": [{"nugget_key": k, "chunk_index": 0, "text": "x",
+                     "similarity": 0.9} for k in keys],
+    }
+    payload.update(extra)
+    return payload
 
 
 def test_a_draft_does_not_reach_the_ideas_archive(db):
@@ -341,6 +361,53 @@ def test_replacing_clusters_keeps_drafts(db):
     insert_cluster_idea(db, cid, _draft(cid))
     _seed_cluster(db)  # a fresh pass wipes and rewrites the clusters
     assert len(list_cluster_ideas(db)) == 1
+
+
+def test_a_cluster_payload_carries_the_labellers_incoherence_verdict():
+    """`ClusterLabel.incoherent` was parsed by the labeller and then dropped:
+    the console could not mark a theme the model said had no shared subject."""
+    c = Cluster(members=[ClusterMember("n1", 0, "x", 0.9)],
+                coherence=0.72, label="two subjects",
+                problem_statement="ps", incoherent=True)
+    stats = {"n_nuggets": 1, "n_authors": 1, "authors_unknown": 0,
+             "n_threads": 1, "platforms": ["reddit"],
+             "single_author": False, "single_thread": True}
+    assert to_payload(c, stats, "nomic-embed-text")["incoherent"] is True
+
+
+def test_reclustering_persists_incoherence(db):
+    _seed_cluster(db, incoherent=True)
+    assert list_clusters(db)[0]["incoherent"] == 1
+
+
+def test_reclustering_rehomes_a_draft_to_the_cluster_that_still_cites_it(db):
+    """A fresh pass deletes every cluster row and mints new ids; a draft must
+    follow its comments rather than keep a cluster_id that names nothing."""
+    old = _seed_cluster(db)
+    draft_id = insert_cluster_idea(db, old, _draft(old))
+    replace_clusters(db, "r2", [
+        _cluster_payload("only n3", ["n3"]),
+        _cluster_payload("n1 n2", ["n1", "n2"]),
+    ])
+
+    row = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                     (draft_id,)).fetchone()
+    by_label = {c["label"]: c["id"] for c in list_clusters(db)}
+    assert row[0] == by_label["n1 n2"], \
+        "the draft follows the comments it was built from"
+
+
+def test_a_draft_with_no_surviving_comments_is_detached_not_deleted(db):
+    """No overlap is a real outcome: the theme dissolved. The work stays,
+    visibly outside every theme, until somebody promotes or discards it."""
+    old = _seed_cluster(db)
+    draft_id = insert_cluster_idea(db, old, _draft(old, ["n1", "n2"]))
+    replace_clusters(db, "r2", [_cluster_payload("only n3", ["n3"])])
+
+    row = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                     (draft_id,)).fetchone()
+    assert row[0] == DETACHED_CLUSTER_ID
+    assert len(list_cluster_ideas(db, DETACHED_CLUSTER_ID)) == 1
 
 
 # ---- qdrant wiring --------------------------------------------------------

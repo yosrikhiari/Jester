@@ -184,6 +184,27 @@ def test_pending_rescores_the_marked_ideas(archive, monkeypatch):
     assert row["critic_model"] == "openai/gpt-oss-120b"
 
 
+def test_pending_says_when_an_idea_stops_moving(archive, monkeypatch, capsys):
+    """The operator's line must distinguish a queue that is draining from one
+    whose head has been refused every run for a week."""
+    from jester.ops import SCORE_STALL_ATTEMPTS
+
+    path, db, ids = archive
+    cmd_rescore(_args(path, apply=True))
+    _with_critic(monkeypatch, json.dumps(
+        {"demand_signal": 6, "feasibility": 8, "competition": 3}))
+    db.execute("UPDATE ideas SET rescore_attempts=? WHERE id=?",
+               (SCORE_STALL_ATTEMPTS, ids["standin_small"]))
+    db.execute("UPDATE ideas SET rescore_attempts=1 WHERE id=?",
+               (ids["standin_capped"],))
+    db.commit()
+
+    res = cmd_rescore(_args(path, standin=False, pending=True, limit=0))
+    out = capsys.readouterr().out
+    assert res["stalled"] == 1
+    assert f"1 stalled after {SCORE_STALL_ATTEMPTS} attempt(s)" in out
+
+
 @pytest.mark.parametrize("key", [CRITIC_KEY, "groq"])
 def test_pending_honours_a_recorded_quota_block(archive, monkeypatch, key):
     """The critic's own model block, and an old provider-wide "groq" row."""

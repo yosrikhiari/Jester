@@ -37,7 +37,7 @@ from jester.llm import (
 )
 from jester.notify import dispatch_notify
 from jester import schedule as _schedule
-from jester.ops import compute_floor_flags
+from jester.ops import SCORE_STALL_ATTEMPTS, compute_floor_flags
 from jester.prefilter import prefilter_comment
 from jester.scoring import compute_overall
 from jester.triviality import judge_trivial
@@ -775,12 +775,16 @@ def cmd_run(args):
         rescored = rescore_pending(
             db, cfg.thresholds, critic_llm, int(cfg.thresholds.rescore_per_run or 0))
         if rescored["scored"] or rescored["still_waiting"]:
-            print(
+            line = (
                 f"re-scored {rescored['scored']} waiting idea(s); "
                 f"{rescored['still_waiting']} still waiting for the critic"
                 + (" (stopped: the critic's quota ran out)"
                    if rescored["stopped_on_quota"] else "")
             )
+            if rescored["stalled"]:
+                line += (f"; {rescored['stalled']} stalled after "
+                         f"{SCORE_STALL_ATTEMPTS} attempt(s)")
+            print(line)
     print(f"synthesized {len(ideas)} idea(s)")
     update_run_summary(db, args.run, n_ideas=len(ideas))
 
@@ -2154,7 +2158,11 @@ def _rescore_pending_now(args):
             return {"ok": True, "scored": 0, "blocked": True}
 
     res = rescore_pending(db, cfg.thresholds, critic_llm, int(args.limit))
-    print(f"re-scored {res['scored']} idea(s); {res['still_waiting']} still waiting")
+    line = f"re-scored {res['scored']} idea(s); {res['still_waiting']} still waiting"
+    if res["stalled"]:
+        line += (f" ({res['stalled']} stalled after "
+                 f"{SCORE_STALL_ATTEMPTS} attempt(s))")
+    print(line)
     for line in fallback_report(critic_llm):
         print("degraded: " + line)
     llm_quota.settle(db, {"critic": critic_llm}, "rescore --pending")

@@ -258,6 +258,25 @@ def test_metrics_queue_depth_matches_the_overview(console):
         assert f"{metric} {overview[key]}" in text
 
 
+def test_metrics_reports_stalled_rescores_not_just_the_backlog(console, tmp_path):
+    """`jester_rescore_backlog` says how many wait; it cannot say whether any
+    of them has stopped moving. The stalled gauge is the one an alert watches."""
+    from jester.ops import SCORE_STALL_ATTEMPTS
+    from jester.store import open_db
+
+    db = open_db(str(tmp_path / "j.db"))
+    db.execute("INSERT INTO ideas(title, needs_score, rescore_attempts) "
+               "VALUES ('stuck', 1, ?)", (SCORE_STALL_ATTEMPTS,))
+    db.execute("INSERT INTO ideas(title, needs_score, rescore_attempts) "
+               "VALUES ('moving', 1, 1)")
+    db.commit()
+    db.close()
+
+    text = _get(console, "/metrics")[2].decode("utf-8")
+    assert "jester_rescore_backlog 2" in text
+    assert "jester_rescore_stalled 1" in text
+
+
 @pytest.fixture()
 def stale_console(tmp_path, offline_config):
     """A real server pointed at an archive that predates the schema."""

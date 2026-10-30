@@ -13,6 +13,13 @@ from typing import List
 #: one refuses-to-answer critic week is visible, one bad night is not.
 SCORE_BACKLOG_THRESHOLD = 5
 
+#: EX-G3: how many refused re-score attempts an idea may accumulate before the
+#: run line, maintenance ledger and /metrics call it stalled. `rescore_pending`
+#: rotates by attempt count, so a queue that keeps refusing still gives every
+#: idea its turn; this is the point where "waiting" becomes "not moving" and an
+#: operator has to look at the critic rather than the queue.
+SCORE_STALL_ATTEMPTS = 5
+
 
 def compute_floor_flags(
     *,

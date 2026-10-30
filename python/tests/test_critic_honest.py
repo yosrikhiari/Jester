@@ -15,7 +15,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from jester.agents.critic import Critic, apply_scores, pending_scores, rescore_pending
+from jester.agents.critic import (
+    Critic,
+    apply_scores,
+    pending_scores,
+    rescore_pending,
+    stalled_scores,
+)
 from jester.agents.synthesizer import Synthesizer
 from jester.cli import cmd_list, cmd_show
 from jester.config import load_config
@@ -27,7 +33,14 @@ from jester.llm import (
     critic_answered,
 )
 from jester.models import Idea, IdeaScores, Nugget
-from jester.store import get_idea, insert_idea, insert_nugget, open_db, unprocessed_nuggets
+from jester.store import (
+    get_idea,
+    insert_idea,
+    insert_nugget,
+    mark_needs_score,
+    open_db,
+    unprocessed_nuggets,
+)
 
 REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 GOOD = json.dumps({"demand_signal": 8, "feasibility": 7, "competition": 4})
@@ -171,7 +184,8 @@ def test_rescore_pending_scores_the_oldest_and_clears_the_flag(tmp_path):
     assert pending_scores(db) == 3
 
     res = rescore_pending(db, _cfg(), _critic(GOOD), limit=2)
-    assert res == {"scored": 2, "still_waiting": 1, "stopped_on_quota": False}
+    assert res == {"scored": 2, "still_waiting": 1, "stopped_on_quota": False,
+                   "stalled": 0}
     first = _rows(db)[0]
     assert first["needs_score"] == 0
     assert first["critic_model"] == "openai/gpt-oss-120b"
@@ -194,6 +208,77 @@ def test_rescore_limit_zero_does_nothing(tmp_path):
     critic = _critic(GOOD)
     assert rescore_pending(db, _cfg(), critic, limit=0)["still_waiting"] == 1
     assert critic._client.calls == 0
+
+
+def test_rescore_pending_rotates_so_one_refusal_cannot_starve_the_queue(tmp_path):
+    """With one answer per run, ORDER BY id alone asks the same refused idea
+    first every night and never reaches the rest. Least-tried goes first."""
+    db = _db(tmp_path, groups=3)
+    Synthesizer(db, _cfg()).run(FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    assert [r["rescore_attempts"] for r in _rows(db)] == [0, 0, 0]
+
+    for _ in range(3):
+        rescore_pending(db, _cfg(), _critic("not json"), limit=1)
+    # Each idea got its first attempt before the oldest got a second.
+    assert [r["rescore_attempts"] for r in _rows(db)] == [1, 1, 1]
+
+    rescore_pending(db, _cfg(), _critic("not json"), limit=1)
+    assert [r["rescore_attempts"] for r in _rows(db)] == [2, 1, 1]
+
+
+def test_a_successful_rescore_clears_the_attempt_counter(tmp_path):
+    db = _db(tmp_path, groups=1)
+    Synthesizer(db, _cfg()).run(FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    idea_id = _rows(db)[0]["id"]
+    db.execute("UPDATE ideas SET rescore_attempts=4 WHERE id=?", (idea_id,))
+    db.commit()
+
+    res = rescore_pending(db, _cfg(), _critic(GOOD), limit=1)
+    row = get_idea(db, idea_id)
+    assert res["scored"] == 1 and res["stalled"] == 0
+    assert row["needs_score"] == 0 and row["rescore_attempts"] == 0
+
+
+def test_mark_needs_score_resets_a_stale_attempt_counter(tmp_path):
+    """Growth is a fresh reason to ask, so prior refusals must not push the
+    idea to the back of the queue it just re-entered."""
+    db = _db(tmp_path, groups=1)
+    Synthesizer(db, _cfg()).run(FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    idea_id = _rows(db)[0]["id"]
+    db.execute("UPDATE ideas SET rescore_attempts=9 WHERE id=?", (idea_id,))
+    db.commit()
+
+    mark_needs_score(db, idea_id)
+    row = get_idea(db, idea_id)
+    assert row["needs_score"] == 1 and row["rescore_attempts"] == 0
+
+
+def test_stalled_scores_counts_only_ideas_past_the_attempt_limit(tmp_path):
+    from jester.ops import SCORE_STALL_ATTEMPTS
+
+    db = _db(tmp_path, groups=3)
+    Synthesizer(db, _cfg()).run(FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    ids = [r["id"] for r in _rows(db)]
+    for idea_id, attempts in zip(ids, (SCORE_STALL_ATTEMPTS - 1,
+                                      SCORE_STALL_ATTEMPTS,
+                                      SCORE_STALL_ATTEMPTS + 2)):
+        db.execute("UPDATE ideas SET rescore_attempts=? WHERE id=?",
+                   (attempts, idea_id))
+    db.commit()
+
+    assert stalled_scores(db) == 2
+    assert rescore_pending(db, _cfg(), _critic("not json"), limit=0)["stalled"] == 2
+
+
+def test_rescore_pending_reports_an_idea_that_keeps_refusing(tmp_path):
+    from jester.ops import SCORE_STALL_ATTEMPTS
+
+    db = _db(tmp_path, groups=1)
+    Synthesizer(db, _cfg()).run(FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    res = {}
+    for _ in range(SCORE_STALL_ATTEMPTS):
+        res = rescore_pending(db, _cfg(), _critic("not json"), limit=1)
+    assert res["still_waiting"] == 1 and res["stalled"] == 1
 
 
 def test_apply_scores_on_a_new_idea_reports_the_failure():
