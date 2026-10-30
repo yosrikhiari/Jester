@@ -262,5 +262,6 @@ Selected from the still-open items in §1.5 and the 2026-10-25 Batch 1 work orde
 | 25 | Targeted suites | journal **107 passed**; console **57 passed** (server/API + contrast); store schema **3 passed** — one pre-existing journal-lab assertion was updated because N6 intentionally changed its premise (plan now predates the ledger run) | 2026-10-30 |
 | 26 | Full gates | Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go build + all tests ok; frontend lint/build exit 0; eval **20 cases (gate=7.0)**; signals **21/21** | 2026-10-30 |
 | 27 | Documents refreshed with evidence | §1.5 statuses, §5.1 batch status, review addenda (P-H1/P-H3), work-order pre-flight, final-report addendum, iteration log | 2026-10-30 |
+| 28 | Promotion | Batch commit `ad52b87` pushed to `origin/main`; `HEAD == origin/main` at close | 2026-10-30 |
 
 *(Final state recorded above; the closing report is `docs/reports/2026-10-29-final-implementation-report.md` and the chronology is `docs/plans/2026-10-29-implementation-iteration-log.md`.)*

@@ -40,6 +40,7 @@ This log is chronological and auditable. It records the builders, what verificat
 | 18 | RED | Added failing tests for N1–N7 and fixed one test regex that matched the font-reset rule instead of the form-control rule | 13 expected failures / 2 expected passes before implementation |
 | 19 | GREEN | Implemented `journal measure` + metric-time validation, `experiment_run.output_sha256`, `/metrics`, schema preflight, `--line-control`, before-plan refusal, export figure re-hash | Journal **106**, console **54**, contrast **3** passed |
 | 20 | Gate + document | Full Python, Go, frontend, eval and signals gates; added characterization tests for a locked archive and a missing figure; one pre-existing ledger assertion re-dated because N6 changed its premise; appended evidence to the roadmap, review addendum, work order, README and final report | Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go all ok; frontend lint/build 0; eval 20; signals 21/21 |
+| 21 | Promote | Batch commit `ad52b87` pushed to `origin/main`; `HEAD == origin/main` at close | 2026-10-30 |
 
 ## What the iterations changed about the plan
 

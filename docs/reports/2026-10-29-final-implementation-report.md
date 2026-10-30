@@ -212,7 +212,7 @@ The documented-command idempotence check and the Go contract test need a fresh t
 
 ## 11. Post-merge batch addendum (2026-10-30)
 
-**Base:** `main` at `70f966f` (clean, `== origin/main`). Scope: the seven tasks registered in the master roadmap §5.1 (N1–N7), selected from the still-open 2026-10-29 findings and the unimplemented 2026-10-25 Batch 1 work order. Every task was written as a failing test first; the expected failures were observed before implementation.
+**Base:** `main` at `70f966f` (clean, `== origin/main`). **Batch commit:** `ad52b87`, pushed to `origin/main` (`HEAD == origin/main`). Scope: the seven tasks registered in the master roadmap §5.1 (N1–N7), selected from the still-open 2026-10-29 findings and the unimplemented 2026-10-25 Batch 1 work order. Every task was written as a failing test first; the expected failures were observed before implementation.
 
 | Task | Status | Evidence |
 |---|---|---|
