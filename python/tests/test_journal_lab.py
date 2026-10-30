@@ -135,6 +135,39 @@ def test_run_command_keeps_output_result_env_and_locks(db, jid, tmp_path):
     assert L.counts_for_gate(run)
 
 
+def test_output_hash_is_stable_for_the_same_output_and_changes_with_it(db, jid, tmp_path):
+    L.plan(db, jid, n_planned=3)
+    code = _repo(tmp_path)
+    first = L.run_command(db, tmp_path, "lab", [sys.executable, "-c", WRITE_RESULT],
+                          code_dir=code, seed="42", gpu_query=lambda: None)
+    second = L.run_command(db, tmp_path, "lab", [sys.executable, "-c", WRITE_RESULT],
+                           code_dir=code, seed="42", gpu_query=lambda: None)
+    assert first["env"] == second["env"], "the fingerprint must not be what changed"
+    assert len(first["output_sha256"]) == 64
+    assert first["output_sha256"] == second["output_sha256"]
+
+    other = ("import json, os; d = os.environ['JESTER_RUN_DIR']; "
+             "json.dump({'accuracy': 0.913, 'n': 500, 'label': 'rules', 'seed': os.environ['JESTER_SEED']}, "
+             "open(os.path.join(d, 'result.json'), 'w')); print('done')")
+    third = L.run_command(db, tmp_path, "lab", [sys.executable, "-c", other],
+                          code_dir=code, seed="42", gpu_query=lambda: None)
+    assert third["output_sha256"] != first["output_sha256"]
+    assert len(third["output_sha256"]) == 64
+
+
+def test_manual_runs_get_a_hash_and_old_rows_say_not_recorded(db, jid, capsys):
+    e = L.plan(db, jid)
+    rid = J.add_run(db, e, result={"accuracy": 0.9})
+    row = db.execute("SELECT * FROM experiment_run WHERE id = ?", (rid,)).fetchone()
+    assert len(row["output_sha256"]) == 64
+    db.execute("UPDATE experiment_run SET output_sha256 = '' WHERE id = ?", (rid,))
+    db.commit()
+    row = db.execute("SELECT * FROM experiment_run WHERE id = ?", (rid,)).fetchone()
+    assert row["output_sha256"] == ""
+    cli._print_run(row)
+    assert "output sha256: not recorded" in capsys.readouterr().out
+
+
 def test_a_failing_command_and_bad_results(db, jid, tmp_path):
     L.plan(db, jid)
     failed = L.run_command(db, tmp_path, "lab", [sys.executable, "-c", "import sys; sys.exit(3)"],
@@ -225,7 +258,9 @@ def _ledgers(tmp_path):
 
 def test_attach_a_ledger_run(db, jid, tmp_path):
     sig, pipe = _ledgers(tmp_path)
-    L.plan(db, jid)
+    # The plan predates the ledger run on purpose: a run recorded after the
+    # plan can back its numbers. The before-plan refusal has its own test.
+    L.plan(db, jid, at="2026-09-30T00:00:00+00:00")
     run = L.attach_ledger(db, tmp_path, "lab", "signals", "hn-1", ledger_db=str(sig))
     result = json.loads(run["result"])
     assert run["status"] == "ok" and run["source"] == "ledger:signals"

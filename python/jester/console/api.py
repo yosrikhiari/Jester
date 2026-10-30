@@ -148,6 +148,18 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
             self.db = open_db(self.db_path, migrate=True)
         self._signals_db_path = signals_db
 
+    @property
+    def schema_problem(self):
+        """None when this archive has the tables/columns this build reads.
+
+        The server answers one actionable 503 instead of letting every route
+        fail with its own "no such table" message; `/metrics` and the static
+        shell stay up, and `/api/migrate` is still reachable.
+        """
+        from jester.store import schema_problem
+
+        return schema_problem(self.db)
+
     def _has_schema(self) -> bool:
         """Has anyone ever built this archive?
 

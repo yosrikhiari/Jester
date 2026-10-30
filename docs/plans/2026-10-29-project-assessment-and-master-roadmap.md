@@ -1,6 +1,7 @@
 # Jester — Project Assessment and Master Roadmap
 
 **Date:** 2026-10-29 · **Baseline commit:** `771d3d5` on `feat/ui-corporate-redesign` (working tree clean)
+**Current-state re-check:** `main` at `70f966f` (== `origin/main`, clean tree). The baseline sections below are kept as the historical record; §1.5 maps every load-bearing claim forward, and §5.1 records the next approved batch.
 **Author:** orchestrated assessment (owner + three independent review agents + multi-builder implementation)
 **Scope of this document:** current state, bibliography, workstream mapping, gap register, task register, checklist, verification log. Companion review reports live in `docs/reviews/2026-10-29-*.md`.
 
@@ -22,9 +23,10 @@
 ### 1.2 Prior-work ledger (what is already approved and done)
 
 - F-01…F-12 of the 2026-10-14 audit: landed (Appendix C, PR #54), except deferred items:
-  image-digest pinning (Dependabot configured), non-root images, per-category dedup
-  thresholds (tool shipped, labels pending), `/metrics` + OTel spans (access log is the
-  first slice), `vitest` for the console static UI.
+  non-root images, per-category dedup thresholds (tool shipped, labels pending),
+  `/metrics` + OTel spans (access log is the first slice; `/metrics` is in the next
+  batch), `vitest` for the console static UI. Image-digest pinning was listed as
+  deferred at the baseline and **landed after it**; see §1.5.
 - Signals: deterministic classifier, `mode` column, failures-as-rows, tri-way reconcile
   (`signals evidence`), fixture gate in CI (`.github/workflows/ci.yml` lines 72–97).
 - Journal J0–J3: publishes with gates, run fingerprints, plan locks, export to site
@@ -37,18 +39,23 @@
 - `jester eval` (`python/jester/cli_review.py:46-68`) checks only the scoring arithmetic
   (`compute_overall` vs `good_idea_min` gate) on the labelled lines of
   `eval/known_good.md` / `known_bad.md`. It does **not** exercise the extractor or
-  nugget quality, and grep shows **no CI job runs it** (`.github/workflows/ci.yml`).
+  nugget quality. At the baseline no CI job ran it; **resolved after the baseline** —
+  `.github/workflows/ci.yml:107-108` now runs it. See §1.5.
 - `PROMPT_VERSIONS = {"extractor": 2, "synthesizer": 1, "critic": 1, "labeller": 1}`
   (`python/jester/llm.py:46`); recorded per run (`cli.py:314`) and exposed in the console
   (`console/api.py:277`).
 - `dedup-sweep` (`python/jester/dedup_sweep.py`) is offline/deterministic and pure over a
-  JSONL pairs file; **no labelled pairs dataset exists** (`testdata/` holds one Reddit
-  thread fixture only). Per-category thresholds remain unapplied in the archivist.
+  JSONL pairs file. At the baseline no labelled pairs dataset existed; **resolved after
+  the baseline** — `testdata/dedup/pairs/` now holds three labelled files and the sweep
+  has a `--pairs-dir` mode. The per-category map is still empty by default, so production
+  dedup remains at the global 0.87 until an operator promotes a table (§1.5).
 - `runs` table (`python/jester/store.py:168-191`) records `models_used`, funnel,
-  `trivial_share`, `origin` — but **no OS/interpreter/code fingerprint** of the kind the
-  journal's `journal run` records for experiment runs.
-- `pyproject.toml:10-16`: runtime `dependencies` still list `pytest>=8.0`; no
-  `import pytest` exists in shipped code (`python/jester/**` grep clean).
+  `trivial_share`, `origin`. At the baseline it had **no OS/interpreter/code
+  fingerprint**; **resolved after the baseline** by the `runs.env` column (§1.5).
+- `python/pyproject.toml:10-16`: runtime `dependencies` still list `pytest>=8.0`; no
+  `import pytest` exists in shipped code (`python/jester/**` grep clean). The old
+  root-level `pyproject.toml` path in the original note no longer exists; the package
+  metadata has always lived under `python/`.
 - CI today (`.github/workflows/ci.yml`): clean-clone lock install, signals
   export-twice idempotence, `signals check` fixture gate, pytest+coverage, advisory
   pip-audit (`continue-on-error`), Go build/test + contract tests against a
@@ -61,6 +68,33 @@
 - Final full Python suite: **1741 passed, 5 skipped, 13 deselected**; Go all ok; frontend lint/build ok; CI-mirror checks ok (eval 20, fixture gate 21/21, export idempotence, Go contract).
 - Three verifier-fix commits after builder sign-off: console reembed ID, sweep cleanup, `runs.env` status half-record; plus a local registry-row fix for the config lint.
 - Global critic score **8.9/10**; zero blocker/high findings open. Full detail in `docs/reports/2026-10-29-final-implementation-report.md`; chronology in `docs/plans/2026-10-29-implementation-iteration-log.md`.
+
+### 1.5 Current-state re-check (2026-10-29, post-merge)
+
+Re-checked every load-bearing claim in this roadmap and the three reviews against the tree now on `main`, not against the baseline. `HEAD == origin/main == 70f966f`, clean tree; `main` carries 76 upstream commits beyond the baseline (chat, scheduler, specs, maintenance, console chat). The comparison changes no historical finding; it changes which ones are still open.
+
+| Baseline claim / task | Current state | Evidence |
+|---|---|---|
+| T-A1 eval gate wired in, UTF-8 input | **RESOLVED** — CI runs `python -m jester.cli eval` after the fixture gate; both eval files are read with `encoding="utf-8"` | `.github/workflows/ci.yml:107-108`; `python/jester/cli_review.py:54-66`; eval reports **20 cases (gate=7.0)** |
+| T-A2 competition preservation + TTL | **RESOLVED** — a missing competition number preserves the web-checked value/notes/stamp; `needs_recheck` is consulted on merge | `python/jester/agents/critic.py:66-110`; `python/jester/idea_dedup.py:99-140`; `python/jester/competitors.py:179` |
+| T-A3 batch order echo | **RESOLVED** — each batch item must echo its comment index; missing/wrong `i` falls back per comment | `python/jester/llm.py:444-505`; `test_extract_batch_reversed_reply` |
+| T-B1 deterministic point IDs + self-match guard | **RESOLVED** — `point_id_for` is sha256-derived; a match carrying the candidate's own key proceeds to insert | `python/jester/vector.py:45-66`; `python/jester/agents/archivist.py:94-115` |
+| T-B2 per-category thresholds + labelled pairs | **SHIPPED, LABELS STILL ADVISORY** — per-category map and `--pairs-dir` exist; three pair files (20/24/24) exist; `dedup_threshold_by_category` is still `{}` in config, so production behaviour is unchanged until an operator promotes a table | `config/thresholds.yaml:6-25`; `python/jester/agents/archivist.py:48-55`; `testdata/dedup/pairs/`; `docs/dedup-calibration.md` |
+| T-B3 vendor veto + from-archive provenance | **RESOLVED** — `veto` role forces `NONE`; from-archive records keep `[matched: …]` | `python/jester/signals/filters.py:233-245`; `python/jester/signals/from_archive.py`; fixture gate **21/21** |
+| T-C1 `--code` required / code envelope gate | **RESOLVED** — parser requires `--code`; `counts_for_gate` rejects an absent code envelope; attached ledger runs carry `code.source=ledger` | `python/jester/cli.py:3372-3381`; `python/jester/journal/lab.py:302-320` |
+| T-C2 pipeline `runs.env` | **RESOLVED** — `runs.env` exists and is populated at start; failed collection records a reason instead of a false clean flag | `python/jester/store.py:363`; `test_run_env.py` |
+| T-C3 digest pinning | **RESOLVED** — all four compose images carry `sha256:` digests; `qdrant`/`ollama` keep a `latest` tag but are immutable by digest, which `test_docker_pins.py` deliberately accepts | `docker-compose.yml:45,176,225,253`; `python/tests/test_docker_pins.py` |
+| T-A4 `SCORE_BACKLOG` + attempt counter | **PARTIAL** — the floor flag ships; the per-idea attempt counter does not | `python/jester/ops.py:14,55-56`; no `rescore_attempts` column |
+| EX-G3 607-idea re-score backlog | **OPEN** — live archive still reports **607 `needs_score` of 2627 ideas** (`rescore_per_run: 1`) | read-only `sqlite3` query against `data/jester.db`, 2026-10-29 |
+| P-H1 `before_plan` is display-only | **RESOLVED (N6)** — `_verify_run` and `_block_runs` now refuse a pre-plan run as proof, with a message that says why | `python/jester/journal/checks.py:194-222,258-273`; `test_a_before_plan_run_cannot_back_a_number` |
+| P-H3 export does not re-hash figures | **RESOLVED (N7)** — `publish.export` re-hashes every `figures/*` image with `artifact_problem` before touching the site worktree | `python/jester/journal/publish.py:356-377`; `test_export_refuses_a_figure_edited_after_it_was_made` |
+| DD-M1/M2/M4/M5/M6, PR-H1/H3/H4/M1..M5 | **OPEN, DEFERRED** — recorded in the reviews; no code has landed for them | review reports; no matching tests or symbols |
+| Upstream Batch 1 (2026-10-25) | **PARTIAL** — N1–N7 implemented 2026-10-30; the `extractor_batch_size` cap, model digest, and UI smoke are still absent | `python/jester/journal/__init__.py` (`output_sha256`, `parse_metric_at`); `python/jester/cli.py` (`measure`); `python/jester/console/server.py` (`/metrics`, preflight); `python/jester/console/static/app.css` (`--line-control`); `python/jester/journal/{checks,publish}.py` |
+| Post-merge batch N1–N7 | **IMPLEMENTED 2026-10-30** — each task test-first; full Python **1760 passed, 5 skipped, 13 deselected**; Go all ok; frontend lint/build; eval **20**; signals **21/21** | §5.1, §7 rows 24–27, review addenda |
+| Source-scope decision | **STILL PROVISIONAL** — `status: provisional`, `decided_on: ""` | `config/signal_rules.yaml:1-9` |
+| New subsystems not covered by the 2026-10-29 reviews | **NOT YET AUDITED** — `chat/`, `scheduler.py`, `edits.py`, `specs.py`, `maintenance.py`, console chat | file inventory; no section in any of the three reviews |
+
+**Deliberate exclusions from this re-check.** The reviews keep their original severity labels and line citations as the historical record; only this table and their status addenda say what is resolved. Live archive numbers are observations, not test assertions: `data/jester.db` is not reproducible from the repository.
 
 ---
 
@@ -98,14 +132,14 @@
 
 ## 4. Gap register
 
-Consolidated from the three review reports (full enumerations live there). Disposition key: **ADOPT** → task register below · **DEFER** → recorded, not in this cycle · severity: blocker/high/medium/low.
+Consolidated from the three review reports (full enumerations live there). Disposition key: **ADOPT** → task register below · **DEFER** → recorded, not in this cycle · severity: blocker/high/medium/low. This table records the **2026-10-29 cycle disposition**; the post-merge status of each item is in §1.5 and is not rewritten here except where the disposition itself is now misleading.
 
 | ID | Area | Severity | One-line statement (evidence, verified) | Disposition |
 |---|---|---|---|---|
 | EX-G1 | Extraction/eval | high | `jester eval` checks only the scoring arithmetic, no LLM, and runs in no CI job, scheduler task, doctor check, or test (`cli_review.py:46-68`; `ci.yml`) | ADOPT → T-A1 |
 | EX-G2 | Scoring | high | `apply_scores` clobbers web-verified competition: wipes `competitor_notes`, flips `competition_checked`; `rescore_pending` never consults the TTL (`critic.py:76-88,115-140`) | ADOPT → T-A2 |
 | EX-G4 | Extraction | high | Batched extraction trusts item order; acceptance is list+length only (`llm.py:412-480`) — reordered reply misattributes insights | ADOPT → T-A3 |
-| EX-G3 | Scoring | high | 607 `needs_score` backlog (measured), no floor flag/alarm/attempt counter | DEFER (stretch for A-builder if all green) |
+| EX-G3 | Scoring | high | 607 `needs_score` backlog (measured), no floor flag/alarm/attempt counter | PARTIAL — `SCORE_BACKLOG` shipped; attempt counter still open (§1.5) |
 | EX-G5,G7,G8, L1-L6 | Extraction | med/low | Unmeasured promotion metrics; hung-model brake absent; run-granular prompt provenance; misnomers, minor coersion counters | DEFER (recorded in review) |
 | EX-G6 | Scoring | medium | `competitor_ttl_days` knob dead-wired (zero non-test callers) | ADOPT → T-A2 |
 | EX-G9 | Eval | medium | `cmd_eval` reads eval files with platform encoding → Windows crash on non-ASCII (`cli_review.py:54`) | ADOPT → T-A1 |
@@ -121,7 +155,7 @@ Consolidated from the three review reports (full enumerations live there). Dispo
 | PR-B1 | Journal gate | **blocker** | Code provenance opt-in: omitted `--code` → `{}` envelope → `counts_for_gate` passes trivially (`lab.py:118-126,294-301`; `cli.py:3284,2943`) — contradicts the README's documented rule | ADOPT → T-C1 |
 | PR-H2 | Pipeline runs | high | `runs` rows carry no environment/code fingerprint (`store.py:168-191`) | ADOPT → T-C2 |
 | PR-M2 | Supply chain | medium | 4 compose images unpinned (2× `latest`, 1 untagged, 1 tag-no-digest); dependabot comment describes pinning that does not happen (`docker-compose.yml:39,163,209,235`) | ADOPT → T-C3 |
-| PR-H1,H3,H4,M1..M5 | Provenance | med | `before_plan` display-only; export lacks figure re-verification; overwrite claims without audit rows; etc. | DEFER (recorded in review) |
+| PR-H1,H3,H4,M1..M5 | Provenance | med | `before_plan` display-only; export lacks figure re-verification; overwrite claims without audit rows; etc. | P-H1/P-H3 **resolved** by N6/N7 (§5.1); H4/M1..M5 still deferred |
 
 ## 5. Task register (approved remaining work — this cycle)
 
@@ -156,6 +190,33 @@ Stretch (only if T-A1..A3 green): T-A4 `SCORE_BACKLOG` floor flag + rescore atte
 
 ---
 
+## 5.1 Next approved batch (2026-10-29, post-merge) — implemented 2026-10-30
+
+Selected from the still-open items in §1.5 and the 2026-10-25 Batch 1 work order. The batch is deliberately **journal + console + provenance**: it closes both open 2026-10-29 high findings and the upstream P1/P2 tasks that need no human labels or product decision. Every task is test-first; none changes an existing published article or the live archive by default.
+
+| ID | Task | Scope | Acceptance criteria |
+|---|---|---|---|
+| N1 | `journal measure` | `python/jester/journal/__init__.py` (validation helper only if needed), `python/jester/cli.py` (parser + handler), journal tests, README journal section | `jester journal measure SLUG --channel CH --at ISO --views N [--points N] [--comments N]` records one `channel_metric` row on that channel's latest **posted** publication; refuses a channel with no posted article; refuses an empty metric row and a timestamp without a timezone; prints the next blocked reason. A journal posted on two channels reaches `measured` after 7-day and 30-day rows per channel. |
+| N2 | Per-run output hash | `python/jester/journal/__init__.py` (`experiment_run` DDL + `ADDED_COLUMNS` + `add_run`), `python/jester/journal/lab.py` (`run_command`/`_finish_run`), `python/jester/cli.py` (`_print_run`, `journal show`), journal tests | `experiment_run.output_sha256` migrated in place; writer hashes canonical `result` + `stdout` + `stderr`; same output → same hash, different output with the same fingerprint → different hash; legacy/empty rows render “not recorded”; no hand-edited hash path. |
+| N3 | Console `/metrics` | `python/jester/console/server.py`, `python/jester/console/api.py` (gauges only), console tests | `GET /metrics` returns Prometheus text (`text/plain; version=0.0.4`); process counters for requests/errors/duration by route+status; DB gauges for queue depth, pending batches, active runs, re-score backlog, nugget/idea totals. Queue gauge matches `/api/overview` counts. Metrics never require a schema migration. |
+| N4 | Console schema preflight | `python/jester/store.py` (`schema_problem`), `python/jester/console/api.py`, `python/jester/console/server.py`, tests | A stale archive yields **one** 503 JSON message naming missing tables/columns and the exact `python -m jester.cli migrate --db <path>` command; static UI still serves; `/metrics` still serves; `/api/migrate` remains reachable as the recovery route. A current archive has no preflight error. |
+| N5 | `--line-control` contrast | `python/jester/console/static/app.css`, new contrast/encoding test | Light and dark `--line-control` tokens are ≥ 3:1 against their `--surface`; `input/select/textarea` use `--line-control`; static assets contain no U+FFFD replacement characters. |
+| N6 | `before_plan` gate (P-H1) | `python/jester/journal/checks.py`, journal checks tests | `run:N` used as a number's proof or as a `backed-by` block is refused when the run's env says `before_plan`; the message says why. Runs without the flag are unchanged. |
+| N7 | Export figure re-hash (P-H3) | `python/jester/journal/publish.py`, publish tests | `export` calls `artifact_problem` for every `figures/*` image before copying; an edited, missing, or unregistered figure blocks export with a specific message; a clean figure exports unchanged. |
+
+**Batch status (2026-10-30): IMPLEMENTED and gated.** Every task was written as a failing test first, then implemented; the new test files/assertions were observed failing for the missing behaviour before the code changed. Evidence:
+
+- **Targeted:** `test_journal_{cli,lab,checks,publish}.py` **107 passed**; `test_console_server.py` + `test_console_api.py` **54 passed**; `test_console_contrast.py` **3 passed**; `test_store_schema.py` **3 passed**.
+- **Full gates:** Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go `go build ./...` + `go test ./...` all ok; frontend `npm run lint` and `npm run build` exit 0; `python -m jester.cli eval` **20 cases (gate=7.0)**; `python -m jester.cli signals check` **21/21**.
+- **Contract change disclosed:** N6 intentionally changed the old behaviour where a ledger run attached before the plan could back a number. `test_attach_a_ledger_run` now dates the plan before its ledger run, preserving that test's attach/number intent; the refusal itself is pinned by `test_a_before_plan_run_cannot_back_a_number`.
+- **No independent critic sign-off was available** (free-subagent quota). The results above are orchestrator-run and are disclosed as such, consistent with the cycle's standing limitation.
+
+**Deferred from this batch, with reasons:** `extractor_batch_size` cap (needs a batching measurement, not a guess), model digest/quantisation (provider API work), UI smoke (no browser harness), per-role LLM counters (needs hooks in every client), DD-M1/M2/M4/M5/M6 and the remaining PR findings (separate designs; see reviews), and the source-scope decision (owner input).
+
+**Batch exit criteria:** targeted tests green; full Python suite, Go suite, frontend lint/build, eval gate, and signals fixture gate green; independent verification where quota allows (orchestrator-run verification disclosed if not); critic ≥ 8.5/10; zero unresolved blocker/high findings; documents updated with evidence. **Met, with the independence caveat stated above.**
+
+---
+
 ## 6. Checklist (acceptance gate conditions)
 
 | # | Condition | Status | Evidence |
@@ -166,7 +227,7 @@ Stretch (only if T-A1..A3 green): T-A4 `SCORE_BACKLOG` floor flag + rescore atte
 | 4 | Full Python suite, Go suite, frontend lint/build, and the new gates pass on the integrated branch. | **PASS** | Python **1741 passed, 5 skipped, 13 deselected**; Go all ok + 3 contract tests; frontend lint/build exit 0; eval 20 cases; fixture gate 21/21; export idempotence; dedup-sweep exit 0. |
 | 5 | Global critic score ≥ 8.5/10 with weighted breakdown. | **PASS** | **8.9/10**; dimension table in final report §2. |
 | 6 | Zero unresolved blocker/high findings; medium/low tracked as warnings. | **PASS** | Only medium/low warnings remain (final report §7); no blocker/high open. |
-| 7 | Documentation: roadmap + reviews + verification log merged on the integration branch. | **PASS** | This roadmap, the iteration log, the final report, three reviews, and `docs/dedup-calibration.md` are committed on `integ/master-roadmap-2026-10-29`. |
+| 7 | Documentation: roadmap + reviews + verification log merged on the integration branch, then promoted to `main`. | **PASS** | This roadmap, the iteration log, the final report, three reviews, and `docs/dedup-calibration.md` were committed on `integ/master-roadmap-2026-10-29` and promoted to `main` at `70f966f`; the 2026-10-29 post-merge refresh is in §1.5 and §5.1. |
 
 ---
 
@@ -193,5 +254,13 @@ Stretch (only if T-A1..A3 green): T-A4 `SCORE_BACKLOG` floor flag + rescore atte
 | 17 | C2 audit fix | Failed `git status` no longer recorded as clean (`1f999ac`); **60 passed** in run-env/journal suites; README committed | iteration 15 |
 | 18 | Final full suite + critique | **1741 passed, 5 skipped, 13 deselected** (414.3 s) at final head; weighted critic **8.9/10**; zero blocker/high open | iteration 16 |
 | 19 | Upstream sync + promotion | `origin/main` was 8 commits ahead; merged as `7ce8d44` with no conflicts; full suite re-run **1741 passed** (409.8 s); `main` fast-forwarded to `7ce8d44` and pushed to `origin/main` | promotion |
+| 20 | Post-merge re-check: repository state | `HEAD == origin/main == 70f966f`; clean tree; 76 upstream commits beyond the baseline; new `chat/`, `scheduler.py`, `edits.py`, `specs.py`, `maintenance.py`, console chat present | post-merge |
+| 21 | Post-merge re-check: task claims | T-A1/A2/A3, T-B1/B2/B3, T-C1/C2/C3 re-verified against current symbols; T-A4 partial; EX-G3 **607/2627** on the live DB; P-H1/P-H3 re-verified open | post-merge |
+| 22 | Post-merge re-check: upstream Batch 1 | `journal measure`, `output_sha256`, `/metrics`, schema preflight, batch cap, model digest, UI smoke all still absent; `signal_rules.yaml` still provisional | post-merge |
+| 23 | Next batch scoped | §5.1 N1–N7 selected; deferred items listed with reasons | post-merge |
+| 24 | N1–N7 test-first implementation | 13 expected failures observed first (2 measure, 2 output-hash, 1 before-plan, 2 export, 5 metrics/preflight, 2 contrast minus 1 expected pass); then implemented `measure`, `output_sha256`, `/metrics`, schema preflight, `--line-control`, before-plan refusal, export re-hash | 2026-10-30 |
+| 25 | Targeted suites | journal **107 passed**; console **57 passed** (server/API + contrast); store schema **3 passed** — one pre-existing journal-lab assertion was updated because N6 intentionally changed its premise (plan now predates the ledger run) | 2026-10-30 |
+| 26 | Full gates | Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go build + all tests ok; frontend lint/build exit 0; eval **20 cases (gate=7.0)**; signals **21/21** | 2026-10-30 |
+| 27 | Documents refreshed with evidence | §1.5 statuses, §5.1 batch status, review addenda (P-H1/P-H3), work-order pre-flight, final-report addendum, iteration log | 2026-10-30 |
 
 *(Final state recorded above; the closing report is `docs/reports/2026-10-29-final-implementation-report.md` and the chronology is `docs/plans/2026-10-29-implementation-iteration-log.md`.)*

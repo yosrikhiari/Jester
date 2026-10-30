@@ -188,6 +188,26 @@ def test_export_writes_the_site_branch_and_leaves_the_checkout_alone(setup):
     assert not again["changed"] and again["commit"] == made["commit"]
 
 
+def test_export_refuses_a_figure_edited_after_it_was_made(setup):
+    figure = setup["root"] / "rules" / "figures" / "buyers.svg"
+    figure.write_text(figure.read_text(encoding="utf-8") + "<!-- edited -->\n", encoding="utf-8")
+    with pytest.raises(J.JournalError, match="edited after it was made"):
+        P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_export_refuses_a_figure_that_no_run_made(setup):
+    setup["db"].execute("DELETE FROM artifact")
+    setup["db"].commit()
+    with pytest.raises(J.JournalError, match="was not made from runs"):
+        P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_export_refuses_a_figure_that_is_gone(setup):
+    (setup["root"] / "rules" / "figures" / "buyers.svg").unlink()
+    with pytest.raises(J.JournalError, match="buyers.svg is missing"):
+        P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
+
+
 def test_export_reuses_an_existing_branch(setup):
     db, root, tmp = setup["db"], setup["root"], setup["tmp"]
     site = _site(tmp)

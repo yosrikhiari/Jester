@@ -32,6 +32,15 @@ This log is chronological and auditable. It records the builders, what verificat
 - Local `main` was 76 commits behind `origin/main`; it was fast-forwarded to `origin/main` (`86c7a31`), then fast-forwarded to the merged tip `7ce8d44` and pushed (`86c7a31..7ce8d44 main -> main`).
 - Branches fully merged into `main` were deleted, including all three builder branches and the integration branch; the three cycle worktrees were removed. Unmerged branches and the user worktrees that hold them were left intact.
 
+## Post-merge batch (2026-10-30)
+
+| # | Phase | What was done | Evidence |
+|---|---|---|---|
+| 17 | Re-check + re-scope | Re-verified every load-bearing 2026-10-29 claim against `main` at `70f966f`; updated the roadmap §1.5, the three review addenda, and the 2026-10-25 work order; selected N1–N7 | Documents committed with the batch; no code changed in this step |
+| 18 | RED | Added failing tests for N1–N7 and fixed one test regex that matched the font-reset rule instead of the form-control rule | 13 expected failures / 2 expected passes before implementation |
+| 19 | GREEN | Implemented `journal measure` + metric-time validation, `experiment_run.output_sha256`, `/metrics`, schema preflight, `--line-control`, before-plan refusal, export figure re-hash | Journal **106**, console **54**, contrast **3** passed |
+| 20 | Gate + document | Full Python, Go, frontend, eval and signals gates; added characterization tests for a locked archive and a missing figure; one pre-existing ledger assertion re-dated because N6 changed its premise; appended evidence to the roadmap, review addendum, work order, README and final report | Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go all ok; frontend lint/build 0; eval 20; signals 21/21 |
+
 ## What the iterations changed about the plan
 
 - **No task was silently dropped.** T-A4 (stretch) is explicitly **partial**: the `SCORE_BACKLOG` flag shipped, the per-idea rescore-attempt counter did not. It remains tracked under EX-G3.

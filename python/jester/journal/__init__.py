@@ -41,6 +41,7 @@ table blocks, which is the honest answer until the slice that fills it lands.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -103,6 +104,13 @@ ADDED_COLUMNS = (
     ("experiment_run", "env", "TEXT NOT NULL DEFAULT '{}'"),
     ("experiment_run", "exit_code", "INTEGER"),
     ("experiment_run", "duration_s", "REAL"),
+    # What the run PRODUCED, not just where it ran: an environment/code
+    # fingerprint can prove two runs differ, never that either is right. The
+    # hash is over the canonical result + stdout/stderr, so two reruns with
+    # the same fingerprint and different numbers are visibly different here.
+    # Empty means "not recorded" (rows written before this column existed),
+    # never "the output was empty" -- the hash of an empty output is a hash.
+    ("experiment_run", "output_sha256", _EMPTY_TEXT),
     ("publication", "body_path", _EMPTY_TEXT),
     ("publication", "approved_sha256", _EMPTY_TEXT),
     ("publication", "external_id", _EMPTY_TEXT),
@@ -187,7 +195,8 @@ CREATE TABLE IF NOT EXISTS experiment_run (
   started_at TEXT NOT NULL,
   finished_at TEXT NOT NULL DEFAULT '',
   raw_path TEXT NOT NULL DEFAULT '',
-  result TEXT NOT NULL DEFAULT '{}'
+  result TEXT NOT NULL DEFAULT '{}',
+  output_sha256 TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS publication (
   id INTEGER PRIMARY KEY,
@@ -464,16 +473,48 @@ def answer_checklist(db: sqlite3.Connection, experiment_id: int, answers: Dict[s
     db.commit()
 
 
+def output_digest(result: Optional[Dict] = None, stdout: str = "", stderr: str = "") -> str:
+    """Hash what a run produced: its result object plus its two streams.
+
+    The environment fingerprint says where a run happened; this says what it
+    returned. Two reruns can share a machine, a commit and a seed and still
+    disagree -- a nondeterministic model, an unseeded shard, a changed input
+    on disk -- and only the output hash makes that visible. Keys are sorted
+    so the same JSON object always hashes the same way.
+    """
+    payload = json.dumps(
+        {"result": result or {}, "stdout": stdout or "", "stderr": stderr or ""},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def parse_metric_at(text: str) -> str:
+    """Validate a measurement timestamp and return it as ISO with a zone.
+
+    A measurement without a timezone cannot be placed against the posting
+    time, so it cannot prove the 7/30-day gate. Refuse it rather than guess.
+    """
+    try:
+        when = datetime.fromisoformat(str(text).replace(" ", "T"))
+    except ValueError:
+        raise JournalError(f"--at must be an ISO timestamp like 2026-10-08T09:00:00+00:00 (got {text!r})")
+    if when.tzinfo is None:
+        raise JournalError("--at must include a timezone (e.g. +00:00); "
+                           "a local time cannot be compared with the posting time")
+    return when.isoformat()
+
+
 def add_run(db: sqlite3.Connection, experiment_id: int, status: str = "ok",
             raw_path: str = "", result: Optional[Dict] = None,
-            started_at: Optional[str] = None, finished_at: Optional[str] = None) -> int:
+            started_at: Optional[str] = None, finished_at: Optional[str] = None,
+            stdout: str = "", stderr: str = "") -> int:
     """Record one run. The first run locks the experiment's pre-registration."""
     at = started_at or now_utc()
     cur = db.execute(
-        "INSERT INTO experiment_run (experiment_id, status, started_at, finished_at, raw_path, result) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO experiment_run (experiment_id, status, started_at, finished_at, raw_path, result, "
+        "output_sha256) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (experiment_id, status, at, finished_at or (at if status == "ok" else ""),
-         raw_path, json.dumps(result or {})))
+         raw_path, json.dumps(result or {}), output_digest(result, stdout, stderr)))
     db.execute("UPDATE experiment SET locked_at = ? WHERE id = ? AND locked_at = ''",
                (at, experiment_id))
     db.commit()

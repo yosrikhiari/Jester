@@ -354,21 +354,35 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
         J.update_brief(db, slug, canonical_url=url)
         j = J.get(db, slug)
     md = (Path(root) / j["path"]).read_text(encoding="utf-8")
+    article_dir = Path(root) / Path(j["path"]).parent
+    article_rel = Path(j["path"]).parent.as_posix()
+    # Re-hash every figure BEFORE the site worktree is touched: a figure the
+    # check accepted at `journal check` time can be edited afterwards, and the
+    # export is the moment it would leave the machine. A missing or
+    # unregistered image fails the same way as one edited by hand.
+    from jester.journal import lab as L
+
+    figures = []
+    for b in T.prose_blocks(md):
+        for ln in T.links(b.text):
+            if ln.image and ln.target.startswith("figures/") and ln.target not in figures:
+                figures.append(ln.target)
+    figure_problems = [p for p in (L.artifact_problem(db, root, j["id"], article_rel, t)
+                                   for t in figures) if p]
+    if figure_problems:
+        raise J.JournalError("cannot export: " + "; ".join(figure_problems))
     published_on = (j["published_at"] or at or J.now_utc())[:10]
     site = site_worktree(site_repo, root, slug)
     out_dir = site / "journal" / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "index.html").write_bytes(article_page(db, j, md, url, published_on).encode("utf-8"))
-    article_dir = Path(root) / Path(j["path"]).parent
     copied = []
-    for b in T.prose_blocks(md):
-        for ln in T.links(b.text):
-            if ln.image and ln.target.startswith("figures/"):
-                src = article_dir / ln.target
-                dst = out_dir / ln.target
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(src, dst)
-                copied.append(ln.target)
+    for target in figures:
+        src = article_dir / target
+        dst = out_dir / target
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        copied.append(target)
     journal_dir = site / "journal"
     (journal_dir / "journal.css").write_bytes(CSS.encode("utf-8"))
     (journal_dir / "index.html").write_bytes(index_page(db, root, base_url, also=j["id"]).encode("utf-8"))

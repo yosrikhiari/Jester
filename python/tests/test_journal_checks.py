@@ -236,6 +236,23 @@ def test_numbers_in_run_results_can_be_nested_lists(db, tmp_path):
     assert not C.check_numbers(db, tmp_path, jid, "It scored [0.7](run:abc).").ok
 
 
+def test_a_before_plan_run_cannot_back_a_number(db, tmp_path):
+    jid = J.create_journal(db, "Before plan")["id"]
+    rid = J.add_run(db, J.add_experiment(db, jid), result={"f1": 0.9})
+    db.execute("UPDATE experiment_run SET env = ? WHERE id = ?",
+               (json.dumps({"before_plan": True}), rid))
+    db.commit()
+
+    linked = C.check_numbers(db, tmp_path, jid, f"Scored [0.9](run:{rid}#f1).")
+    assert not linked.ok
+    assert "before the plan was written" in linked.findings[0]["message"]
+
+    block = C.check_numbers(db, tmp_path, jid,
+                            f"<!-- backed-by: run:{rid} -->\n| metric | value |\n|---|---|\n| f1 | 0.9 |")
+    assert not block.ok
+    assert "before the plan was written" in block.findings[0]["message"]
+
+
 # ---- gates --------------------------------------------------------------------
 
 def test_g2_citations_gate():

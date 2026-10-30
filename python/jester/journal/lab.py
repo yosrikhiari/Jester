@@ -159,10 +159,12 @@ def _start_run(db, exp_id: int, source: str, command: str, env: Dict, at: str) -
 
 
 def _finish_run(db, run_id: int, status: str, raw_path: str, result: Dict,
-                exit_code: Optional[int], duration: Optional[float], at: str) -> sqlite3.Row:
+                exit_code: Optional[int], duration: Optional[float], at: str,
+                stdout: str = "", stderr: str = "") -> sqlite3.Row:
     db.execute("UPDATE experiment_run SET status = ?, finished_at = ?, raw_path = ?, result = ?, "
-               "exit_code = ?, duration_s = ? WHERE id = ?",
-               (status, at, raw_path, json.dumps(result), exit_code, duration, run_id))
+               "exit_code = ?, duration_s = ?, output_sha256 = ? WHERE id = ?",
+               (status, at, raw_path, json.dumps(result), exit_code, duration,
+                J.output_digest(result, stdout, stderr), run_id))
     db.commit()
     return db.execute("SELECT * FROM experiment_run WHERE id = ?", (run_id,)).fetchone()
 
@@ -224,7 +226,9 @@ def run_command(db: sqlite3.Connection, root: Path, slug: str, argv: Sequence[st
     if note:
         result = {**result, "_note": note}
     rel = folder.relative_to(Path(root)).as_posix()
-    return _finish_run(db, rid, status, rel, result, code, duration, J.now_utc())
+    return _finish_run(db, rid, status, rel, result, code, duration, J.now_utc(),
+                       stdout=stdout if isinstance(stdout, str) else stdout.decode("utf-8", "replace"),
+                       stderr=stderr if isinstance(stderr, str) else stderr.decode("utf-8", "replace"))
 
 
 def _decode_json_columns(row: Dict) -> Dict:

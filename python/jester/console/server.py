@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -77,6 +78,98 @@ def _api(args):
                       read_only=bool(getattr(args, "read_only", False)))
 
 
+# ---- metrics ---------------------------------------------------------------
+#
+# Counters live in the process, not in SQLite: /metrics must answer while the
+# archive is locked by the pipeline, which is exactly when the numbers matter.
+# A restart starts them at zero, like every process-level Prometheus exporter.
+
+_METRICS_LOCK = threading.Lock()
+_REQUESTS = {}   # (route, status) -> count
+_DURATIONS = {}  # route -> (seconds_total, count)
+
+#: Prefixes whose tail is an identifier. Labelling by the raw path would make
+#: one series per thread id -- unbounded cardinality for no information.
+_DYNAMIC_ROUTES = ("/api/post/", "/api/job/", "/api/cluster/", "/api/idea/",
+                   "/api/queue/batch/")
+
+
+def _metric_route(path: str) -> str:
+    route = path.partition("?")[0] or "/"
+    for prefix in _DYNAMIC_ROUTES:
+        if route.startswith(prefix):
+            route = prefix + ":id"
+            break
+    else:
+        if not route.startswith("/api/") and route != "/metrics":
+            route = "/static"
+    # Label values are quoted: a path is request-controlled text.
+    return route.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "").replace("\r", "")
+
+
+def _observe_request(path: str, status: int, seconds: float) -> None:
+    route = _metric_route(path)
+    with _METRICS_LOCK:
+        key = (route, int(status or 0))
+        _REQUESTS[key] = _REQUESTS.get(key, 0) + 1
+        total, count = _DURATIONS.get(route, (0.0, 0))
+        _DURATIONS[route] = (total + max(0.0, seconds), count + 1)
+
+
+def _metrics_text(api) -> str:
+    """Prometheus text for the console: process counters plus archive gauges.
+
+    A stale archive still answers /metrics. DB gauges are omitted there --
+    emitting zero would say "an empty archive" when the truth is "unreadable
+    schema" -- and `jester_schema_ok 0` is the series that says so.
+    """
+    problem = api.schema_problem
+    with _METRICS_LOCK:
+        requests = sorted(_REQUESTS.items())
+        durations = sorted(_DURATIONS.items())
+    lines = [
+        "# HELP jester_console_requests_total HTTP requests handled, by route and status.",
+        "# TYPE jester_console_requests_total counter",
+    ]
+    for (route, status), count in requests:
+        lines.append(f'jester_console_requests_total{{route="{route}",status="{status}"}} {count}')
+    lines += [
+        "# HELP jester_console_request_duration_seconds Wall time per request.",
+        "# TYPE jester_console_request_duration_seconds summary",
+    ]
+    for route, (total, count) in durations:
+        lines.append(f'jester_console_request_duration_seconds_sum{{route="{route}"}} {total:.6f}')
+        lines.append(f'jester_console_request_duration_seconds_count{{route="{route}"}} {count}')
+    lines += [
+        "# HELP jester_schema_ok 1 when the archive has the schema this build reads.",
+        "# TYPE jester_schema_ok gauge",
+        f"jester_schema_ok {0 if problem else 1}",
+    ]
+    if problem is None:
+        counts = api.overview()["counts"]
+        gauges = (
+            ("jester_nuggets_total", "nuggets"),
+            ("jester_ideas_total", "ideas"),
+            ("jester_pending_batches", "pending_batches"),
+            ("jester_pending_listings", "pending_listings"),
+            ("jester_failed_batches", "failed_batches"),
+            ("jester_reembed_backlog", "reembed_backlog"),
+            ("jester_unprocessed_nuggets", "unprocessed"),
+            ("jester_runs_active", "runs_active"),
+        )
+        for name, key in gauges:
+            value = counts.get(key)
+            if value is not None:
+                lines.append(f"{name} {value}")
+        try:
+            backlog = api.db.execute(
+                "SELECT COUNT(*) FROM ideas WHERE needs_score = 1").fetchone()[0]
+            lines.append(f"jester_rescore_backlog {backlog}")
+        except Exception:  # noqa: BLE001 - a count must never take /metrics down
+            pass
+    return "\n".join(lines) + "\n"
+
+
 def _static_path(url_path: str):
     """Resolve a URL path inside static/, or None if it escapes or is missing."""
     rel = url_path.lstrip("/") or "index.html"
@@ -97,6 +190,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "jester-console"
 
     def _send(self, body: bytes, content_type: str, code=200, extra=()):
+        self._status = code
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -146,6 +240,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
             except Exception:  # noqa: BLE001
                 self.close_connection = True
+        finally:
+            _observe_request(self.path, getattr(self, "_status", 0),
+                             time.time() - self._t0)
+
+    def _refuse_schema(self, problem):
+        missing = ", ".join(problem["missing"][:6])
+        extra = len(problem["missing"]) - 6
+        if extra > 0:
+            missing += f" (+{extra} more)"
+        self._json({
+            "ok": False,
+            "error": (f"this archive is missing schema this build needs: {missing}; "
+                      f"run: python -m jester.cli migrate --db {self.args.db}"),
+            "schema": problem,
+        }, 503)
 
     def _route_get(self):
         path, _, query = self.path.partition("?")
@@ -153,12 +262,24 @@ class Handler(BaseHTTPRequestHandler):
             if not self._static("index.html"):
                 self._json({"ok": False, "error": "console UI missing from static/"}, 500)
             return
+        if path == "/metrics":
+            # Deliberately ahead of the schema preflight: an operator whose
+            # archive is stale needs the exporter most, and `jester_schema_ok`
+            # is how the alert says why the other gauges are absent.
+            api = _api(self.args)
+            self._send(_metrics_text(api).encode("utf-8"),
+                       "text/plain; version=0.0.4; charset=utf-8")
+            return
         if not path.startswith("/api/"):
             if not self._static(path):
                 self._json({"ok": False, "error": "not found"}, 404)
             return
 
         api = _api(self.args)
+        problem = api.schema_problem
+        if problem is not None:
+            self._refuse_schema(problem)
+            return
         routes = {
             "/api/overview": api.overview,
             "/api/runs": api.runs,
@@ -309,13 +430,22 @@ class Handler(BaseHTTPRequestHandler):
         if not _is_authorized(self):
             self._json({"ok": False, "error": "missing or invalid console token"}, 401)
             return
+
+        api = _api(self.args)
+        # `/api/migrate` is the recovery route: it must stay reachable from a
+        # stale archive, and it is the only write that does not need the
+        # schema it is about to install.
+        if path != "/api/migrate":
+            problem = api.schema_problem
+            if problem is not None:
+                self._refuse_schema(problem)
+                return
         try:
             body = self._read_json()
         except ValueError as exc:
             self._json({"ok": False, "error": f"bad JSON body: {exc}"}, 400)
             return
 
-        api = _api(self.args)
         simple = {
             "/api/run": lambda: api.run_pipeline(
                 live_models=bool(body.get("live_models")),

@@ -179,6 +179,19 @@ def _run_row(db, journal_id: int, run_id: str) -> Optional[sqlite3.Row]:
         "WHERE r.id = ? AND e.journal_id = ?", (int(run_id), journal_id)).fetchone()
 
 
+def _before_plan(row: sqlite3.Row) -> bool:
+    """A run that was already there when the plan was written cannot confirm it.
+
+    The env flag is set by `attach` and `run --data-before-plan`; the display
+    already says so, and the numbers check must say so too -- otherwise the
+    article can cite a result the plan was written to explain.
+    """
+    try:
+        return bool(json.loads(row["env"] or "{}").get("before_plan"))
+    except (ValueError, TypeError, IndexError, KeyError):
+        return False
+
+
 def _dig(result: Dict, path: str):
     cur = result
     for key in path.split("."):
@@ -200,6 +213,8 @@ def _verify_run(db, journal_id: int, target: str, token: str) -> Optional[str]:
         return f"{target}: no run {run_id or '?'} in this journal's experiments"
     if row["status"] != "ok":
         return f"{target}: that run did not finish ok ({row['status']})"
+    if _before_plan(row):
+        return f"{target}: that run was made before the plan was written, so it cannot back a number"
     if not path or token is None:
         return None
     got = _dig(json.loads(row["result"] or "{}"), path)
@@ -262,6 +277,8 @@ def _block_runs(db, journal_id: int, backing: str) -> Tuple[Optional[List[float]
             return None, f"{t}: no run {run_id or '?'} in this journal's experiments"
         if row["status"] != "ok":
             return None, f"{t}: that run did not finish ok ({row['status']})"
+        if _before_plan(row):
+            return None, f"{t}: that run was made before the plan was written, so it cannot back a block"
         values += _leaves(json.loads(row["result"] or "{}"))
     return values, None
 

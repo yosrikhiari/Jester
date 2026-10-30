@@ -207,3 +207,29 @@ The documented-command idempotence check and the Go contract test need a fresh t
 5. **The final full-suite gate ran offline** with the repository's fake/mock embedding paths, as CI does. The builder's real-Ollama dedup run is recorded in `docs/dedup-calibration.md`, not re-run here.
 6. **No deployment was performed.** Docker, Sonar, and production data paths were not exercised beyond `docker compose config` and the unit test; this cycle is code, tests, and documentation merged to `main`, not a production rollout.
 7. **`jester-setup.md` is gitignored.** The registry row needed by the local lint is therefore not in the integration commit; a clean clone skips that lint. This is recorded as a remaining medium issue, not papered over.
+
+---
+
+## 11. Post-merge batch addendum (2026-10-30)
+
+**Base:** `main` at `70f966f` (clean, `== origin/main`). Scope: the seven tasks registered in the master roadmap §5.1 (N1–N7), selected from the still-open 2026-10-29 findings and the unimplemented 2026-10-25 Batch 1 work order. Every task was written as a failing test first; the expected failures were observed before implementation.
+
+| Task | Status | Evidence |
+|---|---|---|
+| N1 `journal measure` | **DONE** | `J.parse_metric_at` rejects naive timestamps; CLI requires a channel/at/one metric, refuses a channel with no posted version, records the row and prints the next blocked reason; `test_measure_records_numbers_and_opens_the_measured_gate`, `test_measure_refuses_no_post_no_numbers_and_a_naive_time` |
+| N2 Per-run output hash | **DONE** | `experiment_run.output_sha256` migrated via `ADDED_COLUMNS`; `J.output_digest` hashes canonical result + stdout/stderr; `run_command`, `add_run`, `journal show` and `_print_run` render it (empty → “not recorded”); same-output/different-output tests |
+| N3 Console `/metrics` | **DONE** | Prometheus text (`text/plain; version=0.0.4`), process request/duration counters by route+status, DB gauges matching `/api/overview`, plus re-score backlog; serves without a schema migration; metrics tests |
+| N4 Console schema preflight | **DONE** | `store.schema_problem` + `ConsoleAPI.schema_problem`; one 503 JSON message naming missing tables/columns and `python -m jester.cli migrate --db <path>`; static UI and `/metrics` still serve; `/api/migrate` remains reachable; stale-archive tests |
+| N5 `--line-control` contrast | **DONE** | Light `#8E8E99` (3.24:1) and dark `#6A6A74` (3.31:1) tokens; form controls use them; contrast + U+FFFD sweep test |
+| N6 `before_plan` gate (P-H1) | **DONE** | Both `run:N` proof and `backed-by` block refuse a pre-plan run with a plain reason; regression test |
+| N7 Export figure re-hash (P-H3) | **DONE** | `publish.export` calls `artifact_problem` for every `figures/*` image before touching the site worktree; edited, missing and unregistered figures are blocked, clean figure exports unchanged |
+
+**Gate results (2026-10-30):**
+
+- Targeted: journal **107 passed**; console server/API **54 passed**; contrast **3 passed**; store schema **3 passed**.
+- Full Python: **1760 passed, 5 skipped, 13 deselected** in 459.9 s.
+- Go: `go build ./...` and `go test ./...` all packages ok.
+- Frontend: `npm run lint` and `npm run build` exit 0.
+- CI mirrors: `python -m jester.cli eval` **20 cases (gate=7.0)**; `python -m jester.cli signals check` **21/21**.
+
+**Disclosures.** Verification is orchestrator-run; the free-subagent quota did not allow an independent critic, so no second-party sign-off is claimed. One existing assertion changed by design: `test_attach_a_ledger_run` now dates its plan before the ledger run, because N6 deliberately refuses a pre-plan run as proof; the refusal has its own regression test. Deferred items are unchanged from roadmap §5.1 (batch cap, model digest, UI smoke, per-role LLM counters, DD-M1/M2/M4/M5/M6, remaining PR findings, source-scope decision). No blocker or high finding from the 2026-10-29 cycle remains open.

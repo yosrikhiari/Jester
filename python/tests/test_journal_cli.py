@@ -139,6 +139,64 @@ def test_list_shows_parked_and_finished(run):
     assert "abandoned: superseded" in out and "nothing, this journal is finished" in out
 
 
+def test_measure_records_numbers_and_opens_the_measured_gate(run):
+    from datetime import datetime, timedelta, timezone
+
+    run("new", "Metrics demo")
+    db = J.open_journal(run.db)
+    j = J.get(db, "metrics-demo")
+    rev = J.latest_revision(db, j["id"])
+    t0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    J.add_publication(db, j["id"], rev["id"], "devto", status="posted",
+                      url="https://dev.to/example", posted_at=t0.isoformat())
+    db.execute("UPDATE journal SET state='shared' WHERE id=?", (j["id"],))
+    db.commit()
+    db.close()
+
+    out = run("measure", "metrics-demo", "--channel", "devto",
+              "--at", (t0 + timedelta(days=7)).isoformat(), "--views", "120")
+    assert "recorded devto at" in out and "views=120" in out
+    assert "next: measured, blocked by:" in out and "30 days" in out
+
+    out = run("measure", "metrics-demo", "--channel", "devto",
+              "--at", (t0 + timedelta(days=30)).isoformat(), "--views", "410",
+              "--points", "12")
+    assert "next: measured is open" in out
+
+    assert "metrics-demo is now measured" in run("state", "metrics-demo", "measured")
+    db = J.open_journal(run.db)
+    j = J.get(db, "metrics-demo")
+    pub = J.publications(db, j["id"])[0]
+    assert j["state"] == "measured"
+    assert J.metric_times(db, pub["id"]) == [
+        (t0 + timedelta(days=7)).isoformat(),
+        (t0 + timedelta(days=30)).isoformat(),
+    ]
+    db.close()
+
+
+def test_measure_refuses_no_post_no_numbers_and_a_naive_time(run):
+    run("new", "No post")
+    out = run("measure", "no-post", "--channel", "devto",
+              "--at", "2026-10-08T09:00:00+00:00", "--views", "1", ok=False)
+    assert "has no devto post" in out and "journal posted" in out
+
+    db = J.open_journal(run.db)
+    j = J.get(db, "no-post")
+    rev = J.latest_revision(db, j["id"])
+    J.add_publication(db, j["id"], rev["id"], "devto", status="posted",
+                      url="https://dev.to/example", posted_at="2026-10-01T09:00:00+00:00")
+    db.commit()
+    db.close()
+
+    out = run("measure", "no-post", "--channel", "devto",
+              "--at", "2026-10-08T09:00:00+00:00", ok=False)
+    assert "name at least one" in out
+    out = run("measure", "no-post", "--channel", "devto",
+              "--at", "2026-10-08T09:00:00", "--views", "3", ok=False)
+    assert "timezone" in out
+
+
 def test_show_lists_experiments_checks_and_agent_approvals(run):
     run("new", "Detail")
     db = J.open_journal(run.db)

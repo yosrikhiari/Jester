@@ -18,6 +18,7 @@ These tests drive a real ThreadingHTTPServer over a real socket, because a
 test that calls the handler's methods directly would not have caught either.
 """
 import json
+import sqlite3
 import threading
 import urllib.error
 import urllib.request
@@ -232,3 +233,75 @@ def test_every_request_leaves_one_stderr_line(console, capsys):
     _get(console, "/api/config")
     err = capsys.readouterr().err
     assert "GET" in err and "/api/config" in err and "200" in err and "ms" in err
+
+
+def test_metrics_serves_prometheus_text_and_counts_requests(console):
+    _get(console, "/api/config")
+    status, headers, body = _get(console, "/metrics")
+    assert status == 200
+    assert headers["Content-Type"].startswith("text/plain")
+    text = body.decode("utf-8")
+    assert "# TYPE jester_console_requests_total counter" in text
+    assert 'jester_console_requests_total{route="/api/config",status="200"}' in text
+    assert "# TYPE jester_console_request_duration_seconds" in text
+
+
+def test_metrics_queue_depth_matches_the_overview(console):
+    overview = json.loads(_get(console, "/api/overview")[2])["counts"]
+    text = _get(console, "/metrics")[2].decode("utf-8")
+    for metric, key in (
+        ("jester_pending_batches", "pending_batches"),
+        ("jester_runs_active", "runs_active"),
+        ("jester_nuggets_total", "nuggets"),
+        ("jester_ideas_total", "ideas"),
+    ):
+        assert f"{metric} {overview[key]}" in text
+
+
+@pytest.fixture()
+def stale_console(tmp_path, offline_config):
+    """A real server pointed at an archive that predates the schema."""
+    import argparse
+
+    db = tmp_path / "stale.db"
+    conn = sqlite3.connect(db)
+    conn.executescript("CREATE TABLE runs (id INTEGER PRIMARY KEY, run_id TEXT);")
+    conn.close()
+    args = argparse.Namespace(db=str(db), config=str(offline_config),
+                              signals_db=str(tmp_path / "s.db"),
+                              host="127.0.0.1", port=0)
+    previous = srv.Handler.args
+    srv.Handler.args = args
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        srv.Handler.args = previous
+
+
+def test_a_stale_archive_gets_one_actionable_503(stale_console):
+    status, _, body = _get(stale_console, "/api/config")
+    assert status == 503
+    payload = json.loads(body)
+    assert payload["ok"] is False
+    assert "migrate" in payload["error"]
+    assert "python -m jester.cli migrate --db" in payload["error"]
+    assert payload["schema"]["missing"]
+
+
+def test_a_stale_archive_still_serves_the_shell_and_metrics(stale_console):
+    assert _get(stale_console, "/")[0] == 200
+    status, _, body = _get(stale_console, "/metrics")
+    assert status == 200
+    assert b"jester_schema_ok 0" in body
+
+
+def test_the_migrate_route_is_reachable_through_the_preflight(stale_console):
+    status, _, body = _get(stale_console, "/api/migrate", method="POST", body=b"{}")
+    assert status == 200 and json.loads(body)["ok"] is True
+    assert _get(stale_console, "/api/config")[0] == 200

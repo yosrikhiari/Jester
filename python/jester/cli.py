@@ -2870,7 +2870,8 @@ def _print_journal(db, root, j):
             env = json.loads(r["env"] or "{}")
             dirty = " UNCOMMITTED CODE" if (env.get("code") or {}).get("dirty") else ""
             early = " - ran before the plan was written" if env.get("before_plan") else ""
-            print(f"    run {r['id']}: {r['status']} ({r['source']}){dirty}{early}")
+            digest = (r["output_sha256"] or "")[:12] or "not recorded"
+            print(f"    run {r['id']}: {r['status']} ({r['source']}){dirty}{early}, output {digest}")
     for p in J.publications(db, j["id"]):
         where = f" {p['url']}" if p["url"] else ""
         print(f"  {p['channel']}: {p['status']}{where}")
@@ -2945,6 +2946,41 @@ def _journal_posted(db, root, j, args):
 
     pub = CH.record_posted(db, j["slug"], args.channel, args.url)
     print(f"recorded the {args.channel} post: {pub['url']}")
+
+
+def _journal_measure(db, j, args):
+    """Record one reading of a posted article's numbers.
+
+    The 7/30-day gate needs two facts per channel: when it was posted and
+    when the numbers were read. Both carry a timezone, because a local time
+    cannot be placed against the other without guessing.
+    """
+    from jester import journal as J
+    from jester.journal import states as js
+
+    if args.views is None and args.points is None and args.comments is None:
+        raise J.JournalError("name at least one number to record: --views, --points or --comments")
+    at = J.parse_metric_at(args.at)
+    posted = [p for p in J.publications(db, j["id"])
+              if p["channel"] == args.channel and p["status"] == "posted"]
+    if not posted:
+        raise J.JournalError(
+            f"{j['slug']} has no {args.channel} post yet "
+            f"(post it, then: jester journal posted {j['slug']} {args.channel} --url <link>)")
+    pub = posted[-1]
+    J.add_metric(db, pub["id"], at, views=args.views, points=args.points, comments=args.comments)
+    given = [f"{k}={v}" for k, v in (("views", args.views), ("points", args.points),
+                                     ("comments", args.comments)) if v is not None]
+    print(f"recorded {args.channel} at {at}: " + ", ".join(given))
+    to, reasons = js.next_step(db, j)
+    if to is None:
+        print("  next: nothing, this journal is finished")
+    elif reasons:
+        print(f"  next: {to}, blocked by:")
+        for r in reasons:
+            print(f"    - {r}")
+    else:
+        print(f"  next: {to} is open -> jester journal state {j['slug']} {to}")
 
 
 _PUBLISHING = {"export": _journal_export, "variant": _journal_variant,
@@ -3092,6 +3128,7 @@ def _print_run(run):
     took = f", {run['duration_s']} s" if run["duration_s"] is not None else ""
     print(f"run {run['id']}: {run['status']}{took}{where}")
     print(f"  raw data: {run['raw_path']}")
+    print(f"  output sha256: {run['output_sha256'] or 'not recorded'}")
     keys = [k for k in json.loads(run["result"] or "{}") if not k.startswith("_")]
     if keys:
         print(f"  result keys: {', '.join(keys[:12])}{' ...' if len(keys) > 12 else ''}")
@@ -3263,6 +3300,10 @@ def cmd_journal(args):
             _journal_publishing(db, root, j, args)
             return
 
+        if args.action == "measure":
+            _journal_measure(db, j, args)
+            return
+
         if args.action == "check":
             from jester.journal import checks as jchecks
 
@@ -3431,6 +3472,16 @@ def _add_journal_parser(sub):
     p.add_argument("slug")
     p.add_argument("channel", choices=tuple(CHANNELS))
     p.add_argument("--url", required=True)
+
+    p = common(jsub.add_parser("measure", help="record the numbers a posted article got"))
+    p.add_argument("slug")
+    p.add_argument("--channel", required=True,
+                   help="the platform whose post these numbers are for (e.g. devto)")
+    p.add_argument("--at", required=True,
+                   help="when the numbers were read: ISO timestamp WITH a timezone")
+    p.add_argument("--views", type=int, default=None)
+    p.add_argument("--points", type=int, default=None)
+    p.add_argument("--comments", type=int, default=None)
 
 
 def main(argv=None):

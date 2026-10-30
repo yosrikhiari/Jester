@@ -6,6 +6,24 @@
 
 ---
 
+## Post-merge status (2026-10-29, updated 2026-10-30)
+
+Baseline `771d3d5`; re-checked against `main` at `70f966f` (clean, `== origin/main`) and updated after the N1–N7 batch landed. Findings are kept as written; this table is the current disposition.
+
+| Finding | Status | Current evidence |
+|---|---|---|
+| B1 code provenance opt-in | **RESOLVED** | `journal run --code` is required (`cli.py:3372-3381`); `counts_for_gate` rejects an absent code envelope (`lab.py:302-320`); attached ledger runs write `code.source=ledger` |
+| P-H1 `before_plan` display-only | **RESOLVED (N6, 2026-10-30)** | `checks._before_plan` is consulted by both `_verify_run` and `_block_runs` (`checks.py:194-222,258-273`); `test_a_before_plan_run_cannot_back_a_number` pins both paths |
+| P-H2 `runs` has no env/code fingerprint | **RESOLVED** | `runs.env` column (`store.py:363`), populated at start; failed collection records a reason (`test_run_env.py`) |
+| P-H3 export does not re-hash figures | **RESOLVED (N7, 2026-10-30)** | `publish.export` re-hashes every `figures/*` image with `lab.artifact_problem` before creating the site worktree (`publish.py:356-377`); edited/unregistered/missing figures each have a regression test |
+| Per-run output hash (P1-3 / N2) | **RESOLVED (2026-10-30)** | `experiment_run.output_sha256` is migrated in place; `output_digest` hashes canonical result + stdout/stderr (`journal/__init__.py`, `journal/lab.py`); same output → same hash, changed output → different hash |
+| M/M2 docker images unpinned | **RESOLVED** | all four compose images carry `sha256:` digests; `qdrant`/`ollama` retain `latest` only as a tag, made immutable by the digest; `test_docker_pins.py` accepts that shape deliberately |
+| Deferred signal-audit findings | **OPEN** | `INSERT OR REPLACE` overwrite semantics, `set_outcome` without an audit row, `reclassify --apply` history, `origin='manual'` reuse — unchanged, not in the next batch |
+
+**Not covered by this review, now on `main`:** `chat/`, `scheduler.py`, `edits.py`, `specs.py`, `maintenance.py`, console chat.
+
+---
+
 ## 1. What exists and how it works
 
 - **Journal fingerprinting (designed right):** `fingerprint()` (`journal/lab.py:129-143`) records OS, Python version, machine, CPU count, GPU list, `code_state()` (git HEAD + porcelain → `dirty`, `lab.py:118-126`), seed; runs carry `env` (`lab.py:189-191`); `_start_run` locks the plan at first run (`lab.py:148-157`); `journal attach` derives `before_plan` by comparing timestamps (`lab.py:242-276`), naive stamps treated as UTC (`lab.py:279-291`).

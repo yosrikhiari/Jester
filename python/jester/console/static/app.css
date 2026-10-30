@@ -40,6 +40,9 @@ html[data-theme="light"]{
   --bg:#F6F6F7; --surface:#FFFFFF; --surface-2:#EFEFF1; --surface-3:#E9E9EE;
   --ink:#16161A; --ink-2:#44444C; --ink-mute:#6A6A74; --ink-soft:#8E8E98;
   --line:#E4E4E8; --line-strong:#D8D8DE;
+  /* A control's border is not decoration: it is the only thing that says
+     "this is an input" until focus. 3.24:1 on --surface (WCAG 1.4.11). */
+  --line-control:#8E8E99;
   --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#B3362F; --bell:var(--accent);
   --ok:#1F7A4C; --ok-bg:#E3F3EA; --warn:#8A6100; --warn-bg:#FAF0D2; --bad:#B3362F; --bad-bg:#FBE6E4;
   --lav:#6E70B8;
@@ -57,6 +60,8 @@ html[data-theme="dark"]{
   --bg:#101013; --surface:#18181C; --surface-2:#222227; --surface-3:#26262C;
   --ink:#F2F2F5; --ink-2:#D0D0D8; --ink-mute:#A0A0AC; --ink-soft:#7E7E8A;
   --line:#2C2C33; --line-strong:#3A3A41;
+  /* 3.31:1 on the dark --surface. */
+  --line-control:#6A6A74;
   --gold:var(--accent); --plum:var(--accent); --teal:var(--accent); --coral:#EF7D75; --bell:var(--accent);
   --accent:#E0645C; --accent-soft:#3A201E; --accent-line:#52302E; --accent-text:#F08C85;
   --nav:#0B0B0D; --nav-ink:#E9E9EE; --nav-muted:#9A9AA6; --nav-line:#1E1E23;
@@ -354,7 +359,7 @@ td a[href]:hover{text-decoration-color:currentColor}
 .field label{font-size:var(--fs-xs);font-weight:500;color:var(--ink-mute)}
 .field .hint{font-size:var(--fs-xs);color:var(--ink-soft)}
 input,select,textarea{
-  font-size:var(--fs-body);background:var(--surface);border:1px solid var(--line-strong);
+  font-size:var(--fs-body);background:var(--surface);border:1px solid var(--line-control);
   border-radius:var(--r-ctrl);padding:9px 12px;inline-size:100%;color:var(--ink);
   transition:border-color var(--t-fast) var(--ease),box-shadow var(--t-fast) var(--ease);
 }

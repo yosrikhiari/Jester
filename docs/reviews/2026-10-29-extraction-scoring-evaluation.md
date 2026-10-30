@@ -6,6 +6,27 @@
 
 ---
 
+## Post-merge status (2026-10-29)
+
+Baseline `771d3d5`; re-checked against `main` at `70f966f` (clean, `== origin/main`). Findings are kept as written; this table is the current disposition.
+
+| Finding | Status | Current evidence |
+|---|---|---|
+| G-1 eval gate never automated | **RESOLVED** | `.github/workflows/ci.yml:107-108` runs `python -m jester.cli eval`; `cli_review.py:54-66` reads UTF-8; eval reports **20 cases (gate=7.0)** |
+| G-2 re-scores clobber competition | **RESOLVED** | `critic.py:66-110` preserves a web-checked verdict when the reply has no number; `idea_dedup.py:99-140` consults `needs_recheck` |
+| G-3 607-idea re-score backlog | **PARTIAL / OPEN** | `SCORE_BACKLOG` ships (`ops.py:14,55-56`); no attempt counter; live DB still **607 `needs_score` of 2627 ideas** |
+| G-4 batch order trusted | **RESOLVED** | `llm.py:444-505` validates the per-item `i` echo and falls back per comment on mismatch |
+| G-5 promotion metrics never computed | **OPEN** | no promotion-metric computation found |
+| G-6 `competitor_ttl_days` dead-wired | **RESOLVED** | non-test callers now in `idea_dedup.py:114-140` |
+| G-7 hung-model brake absent | **OPEN** | no consecutive-failure brake found |
+| G-8 run-granular prompt versions | **OPEN** | per-comment fallback still records the run-level version only |
+| G-9 eval platform encoding | **RESOLVED** | `cli_review.py:54` passes `encoding="utf-8"` |
+| L-1…L-6 | **OPEN** | misnomers/derived-count/doctor-coverage/coercion-counter/duplication unchanged; not promoted into the next batch |
+
+**Not covered by this review, now on `main`:** `chat/`, `scheduler.py`, `edits.py`, `specs.py`, `maintenance.py`, console chat. They need a separate audit; this review's scope was the extraction/scoring/evaluation chain.
+
+---
+
 ## 1. Chain map (verified highlights)
 
 Ingest → `ingest_batch` → `cmd_run` (roles resolved; per-model quota pauses; stale-run reap; run row stamped `models_used` incl. role records, env overrides, `prompt_versions`/`rubric_version`; bounded bite ≈120 comments with 60-min reap pairing). Per-comment prefilter → extraction via single call or batched path (`extractor_batch_size`, malformed/short/throwing batches degrade to the same single path; fake-stamp refusal; quota stop). R37 triviality tag → archivist (dedup, model-mismatch guard, defer on outage) → run summary incl. `trivial_share`.

@@ -2,6 +2,18 @@
 
 > **Date:** 2026-10-25 · **Base commit:** `5c1800f` · **Integration branch:** `feat/roadmap-batch-1`
 > **Authority:** `docs/roadmap/2026-10-25-project-assessment.md` §6 (task register).
+>
+> **Pre-flight re-check (2026-10-29, `main` at `70f966f`):** W1 (journal measure + output hash),
+> W2 (`/metrics`, schema preflight, control contrast), W3 (batch cap + model digest), and W4
+> (UI smoke) were all still unimplemented at that point. The later 2026-10-29 cycle resolved the
+> code-provenance `--code` gate, `runs.env`, and Docker digest pinning, but did not touch this
+> work order.
+>
+> **Implementation update (2026-10-30):** W1 and W2 are now implemented and gated via
+> `docs/plans/2026-10-29-project-assessment-and-master-roadmap.md` §5.1 (N1–N7), together with
+> the two then-open provenance findings P-H1/P-H3. W3's `extractor_batch_size` cap and model
+> digest, and W4's browser smoke, remain deferred with reasons recorded there. The worktrees
+> named above are historical; do not create them blindly against the current tree.
 
 ## 1. Scope of this batch
 

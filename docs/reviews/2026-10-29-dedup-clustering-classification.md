@@ -6,6 +6,28 @@
 
 ---
 
+## Post-merge status (2026-10-29)
+
+Baseline `771d3d5`; re-checked against `main` at `70f966f` (clean, `== origin/main`). Findings are kept as written; this table is the current disposition.
+
+| Finding | Status | Current evidence |
+|---|---|---|
+| H1 process-salted point IDs | **RESOLVED** | `vector.point_id_for` is sha256-derived (`vector.py:45-66`) and used at the upsert/search/reembed/idea-dedup sites |
+| H2 self-match swallows a nugget | **RESOLVED** | `archivist.py:94-115` ignores a match carrying the candidate's own key and proceeds to insert; ghost/upsert tests added |
+| H3 negative families cannot veto buyer | **RESOLVED** | `filters.py:233-245` makes `veto` a decision that forces `NONE`; launch-post fixture added; fixture gate **21/21** |
+| M1 `coherent:false` dropped | **OPEN** | no `incoherent` payload/reader found |
+| M2 re-clustering orphans drafts | **OPEN** | delete-all re-insert remains |
+| M3 global threshold / no pairs | **RESOLVED TOOLING, LABELS ADVISORY** | `--pairs-dir` + three pair files (20/24/24) + `docs/dedup-calibration.md`; `dedup_threshold_by_category` is still `{}`, so production stays at 0.87 until promoted |
+| M4 property semantic layer unreachable | **OPEN** | no `sync_property_vectors` or unknown→structured-only gate found |
+| M5 indexing threshold only on create | **OPEN** | exists-branch still checks dimension only |
+| M6 `reembed --all` cannot complete a model change | **OPEN** | no completing step/update of `corpus_embedding_model` found |
+| M7 from-archive loses `[matched: …]` | **RESOLVED** | `signals/from_archive.py` mirrors the live-path provenance line |
+| L1…L8 | **OPEN** | recorded, unchanged; not promoted into the next batch |
+
+**Not covered by this review, now on `main`:** `chat/`, `scheduler.py`, `edits.py`, `specs.py`, `maintenance.py`, console chat.
+
+---
+
 ## 1. How it works (map)
 
 - **Nugget dedup path.** Per-DB vector store namespacing (`cli.py:88-126`); open failure → `UnavailableVectorStore` (`vector.py:67-107`), dimension mismatch fatal (`cli.py:596-603`). `Archivist.run` (`agents/archivist.py:33-84`): DB `exists_unique_key` skip → `search_scored` top-5 (`vector.py:244-252`) → duplicate if `score >= dedup_threshold` (`archivist.py:69`) → near-miss band recorded (hard-coded 0.85, `archivist.py:14-19`) → `upsert` (1 retry; `vector.py:44-56`) → `insert_nugget`; upsert failure still archives with `needs_reembed=1` (`archivist.py:74-81`). Search failure defers; batches stay queued; `n_dedup_deferred` in run summary (`cli.py:604-629`). Corpus-model guard R32 (`archivist.py:36-43`).

@@ -429,6 +429,49 @@ def _schema_columns():
 DERIVED_TABLES = frozenset({"clusters", "cluster_members"})
 
 
+def schema_problem(db: sqlite3.Connection) -> Optional[dict]:
+    """What this archive is missing for the current build, or None.
+
+    The console opens with ``migrate=False`` on purpose: it must not reshape
+    an archive another process owns. That leaves a stale file able to answer
+    every request with a different "no such table/column" 500. This is the
+    one check that turns those into a single actionable sentence instead.
+
+    Tables and columns are compared against BASE_SCHEMA plus the columns
+    ``open_db`` would add in place. Extra columns are not a problem here:
+    reads ignore them, and reconcile_schema owns incompatible shapes.
+    """
+    try:
+        have_tables = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        want = {table: list(columns) for table, columns in _schema_columns().items()}
+        for table, columns in _alter_supplied().items():
+            want.setdefault(table, [])
+            want[table].extend(c for c in sorted(columns) if c not in want[table])
+        missing_tables: List[str] = []
+        missing_columns: List[str] = []
+        for table, columns in want.items():
+            if table not in have_tables:
+                missing_tables.append(table)
+                continue
+            have = {r[1] for r in db.execute(f'PRAGMA table_info("{table}")')}
+            missing_columns.extend(f"{table}.{c}" for c in columns if c not in have)
+    except sqlite3.OperationalError as exc:
+        # A writer holds the lock: answer "nothing known to be missing" and let
+        # the route's own lock handling decide. Refusing the console because a
+        # check could not run is worse than the check not running.
+        if "locked" in str(exc) or "busy" in str(exc):
+            return None
+        raise
+    if not missing_tables and not missing_columns:
+        return None
+    return {
+        "tables": sorted(missing_tables),
+        "columns": sorted(missing_columns),
+        "missing": sorted(missing_tables) + sorted(missing_columns),
+    }
+
+
 def reconcile_schema(db: sqlite3.Connection):
     """Bring tables written by an older build up to BASE_SCHEMA.
 
