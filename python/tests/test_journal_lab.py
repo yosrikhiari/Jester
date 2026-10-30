@@ -6,6 +6,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+from datetime import timedelta
 
 import pytest
 
@@ -291,7 +292,81 @@ def test_a_ledger_run_older_than_the_plan_is_marked(db, jid, tmp_path):
     later = L.attach_ledger(db, tmp_path, "lab", "pipeline", "treat-1", ledger_db=str(pipe),
                             experiment_id=early)
     assert json.loads(later["env"])["before_plan"] is False
-    assert L._earlier("not a time", "2026-01-01") is False
+    verdict = L._run_before_plan("not a time", "2026-01-01T00:00:00+00:00", True)
+    assert verdict[0] is True, "an unparseable timestamp cannot prove it ran after the plan"
+
+
+def test_a_ledger_run_with_no_start_timestamp_cannot_back_numbers(db, jid, tmp_path):
+    """F1, fail closed: a ledger row that carries no start timestamp cannot
+    prove it ran after the plan, so it must not be able to backs a number.
+    The old behaviour fell back to the clock, which 'proves' the run started
+    after the plan it predates."""
+    sig = tmp_path / "silent.db"
+    c = sqlite3.connect(sig)
+    c.execute("CREATE TABLE signal_run (run_id TEXT, status TEXT, started_utc TEXT, "
+              "finished_utc TEXT, queries TEXT, collected INTEGER, buyer INTEGER)")
+    c.execute("INSERT INTO signal_run VALUES ('s-1', 'ok', NULL, '', '{\"a\": 1}', 722, 11)")
+    c.commit()
+    c.close()
+    L.plan(db, jid, at="2026-09-30T00:00:00+00:00")
+    run = L.attach_ledger(db, tmp_path, "lab", "signals", "s-1", ledger_db=str(sig))
+    env = json.loads(run["env"])
+    assert env["before_plan"] is True
+    assert "no start timestamp" in env["before_plan_reason"], env
+    out = C.check_numbers(db, tmp_path, jid, f"It kept [11](run:{run['id']}#buyer) buyers.")
+    assert not out.ok
+    assert any("before the plan" in f["message"] for f in out.findings), out.findings
+
+
+def test_an_unparseable_start_is_marked_before_the_plan(db, jid, tmp_path):
+    sig = tmp_path / "garbled.db"
+    c = sqlite3.connect(sig)
+    c.execute("CREATE TABLE signal_run (run_id TEXT, status TEXT, started_utc TEXT, "
+              "finished_utc TEXT, queries TEXT, collected INTEGER, buyer INTEGER)")
+    c.execute("INSERT INTO signal_run VALUES ('s-2', 'ok', 'not a time', '', '{}', 3, 1)")
+    c.commit()
+    c.close()
+    L.plan(db, jid, at="2026-09-30T00:00:00+00:00")
+    run = L.attach_ledger(db, tmp_path, "lab", "signals", "s-2", ledger_db=str(sig))
+    env = json.loads(run["env"])
+    assert env["before_plan"] is True
+    assert "cannot be parsed" in env["before_plan_reason"], env
+
+
+def test_a_trailing_z_offsets_the_same_on_every_python(db, jid, tmp_path):
+    """F2: fromisoformat() accepts a trailing Z only from 3.11 on, so the
+    same ledger row gives opposite verdicts across interpreters. The Z is
+    normalised explicitly, and that parsed offset is pinned here."""
+    sig = tmp_path / "zulu.db"
+    c = sqlite3.connect(sig)
+    c.execute("CREATE TABLE signal_run (run_id TEXT, status TEXT, started_utc TEXT, "
+              "finished_utc TEXT, queries TEXT, collected INTEGER, buyer INTEGER)")
+    c.execute("INSERT INTO signal_run VALUES ('s-3', 'ok', '2026-10-01T08:30:48Z', '', '{}', 3, 1)")
+    c.commit()
+    c.close()
+    L.plan(db, jid, at="2026-09-01T00:00:00+00:00")
+    run = L.attach_ledger(db, tmp_path, "lab", "signals", "s-3", ledger_db=str(sig))
+    assert json.loads(run["env"])["before_plan"] is False, \
+        "the Z row is unambiguous UTC, after a 2026-09-01 plan"
+    parsed = L._parse_utc("2026-10-01T08:30:48Z")
+    assert parsed is not None and parsed.utcoffset() == timedelta(0)
+
+
+def test_a_naive_start_from_a_foreign_ledger_is_refused(db, jid, tmp_path):
+    """F3: a naive timestamp carries a timezone the ledger does not declare.
+    Only Jester's own pipeline ledger is known UTC by contract
+    (datetime('now') writes UTC); anything else must refuse the attach, not
+    assume."""
+    sig = tmp_path / "foreign.db"
+    c = sqlite3.connect(sig)
+    c.execute("CREATE TABLE signal_run (run_id TEXT, status TEXT, started_utc TEXT, "
+              "finished_utc TEXT, queries TEXT, collected INTEGER, buyer INTEGER)")
+    c.execute("INSERT INTO signal_run VALUES ('s-4', 'ok', '2026-10-01T08:30:48', '', '{}', 3, 1)")
+    c.commit()
+    c.close()
+    L.plan(db, jid, at="2026-09-01T00:00:00+00:00")
+    with pytest.raises(J.JournalError, match="no offset"):
+        L.attach_ledger(db, tmp_path, "lab", "signals", "s-4", ledger_db=str(sig))
 
 
 def test_attach_refuses_unknown_ledgers_dbs_and_runs(db, jid, tmp_path):

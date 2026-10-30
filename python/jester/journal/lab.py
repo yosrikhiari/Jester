@@ -47,10 +47,15 @@ from jester import journal as J
 PLAN_FIELDS = ("hypothesis", "metric", "threshold", "baseline", "n_planned", "threats")
 OK_LEDGER_STATUSES = frozenset({"ok", "done", "completed", "complete", "success", "finished"})
 #: The two ledgers Jester keeps, and which table and key each lives under.
+#: Naive timestamps in the pipeline ledger are still UTC by contract:
+#: `runs.started_at` is written by SQLite's datetime('now') (UTC by
+#: definition). Every other ledger stamps an explicit offset, so a naive
+#: timestamp there is unverifiable and must refuse.
 LEDGERS = {
     "signals": ("signal_run", "run_id", "data/signals-live.db"),
     "pipeline": ("runs", "run_id", "data/jester.db"),
 }
+KNOWN_NAIVE_UTC_LEDGERS = frozenset({"pipeline"})
 
 
 # ---- the plan -----------------------------------------------------------------
@@ -264,12 +269,17 @@ def attach_ledger(db: sqlite3.Connection, root: Path, slug: str, ledger: str, le
     record = _decode_json_columns(dict(row))
     j = J.get(db, slug)
     exp = experiment(db, j["id"], experiment_id)
-    started = str(record.get("started_utc") or record.get("started_at") or J.now_utc())
     # A run that happened before the plan was written cannot confirm that
-    # plan -- the result was there to be seen. It is still data; it is
-    # marked so the article says so.
+    # plan -- the result was there to be seen. A run whose ORDER cannot be
+    # proven is treated the same way (fail closed): it cannot back a
+    # number, and the reason is recorded next to the flag.
+    before_plan, reason = _run_before_plan(
+        record.get("started_utc") or record.get("started_at"),
+        exp["created_at"], ledger)
     env = {"ledger": ledger, "ledger_db": str(Path(path)), "ledger_run": ledger_run,
-           "before_plan": _earlier(started, exp["created_at"])}
+           "before_plan": before_plan}
+    if reason:
+        env["before_plan_reason"] = reason
     # An attached run has no code checkout of its own to fingerprint, but
     # silence is not allowed either: counts_for_gate reads an absent code
     # envelope as unevidenced, and an attached run's evidence IS the ledger
@@ -277,6 +287,7 @@ def attach_ledger(db: sqlite3.Connection, root: Path, slug: str, ledger: str, le
     # runs -- every field of this envelope is absent, and absent fields are
     # "not dirty", exactly the documented attach semantics.
     env["code"] = {"source": "ledger"}
+    started = str(record.get("started_utc") or record.get("started_at") or "unknown")
     rid = _start_run(db, exp["id"], f"ledger:{ledger}", f"{ledger} run {ledger_run}", env, started)
     folder = run_dir(root, slug, rid)
     folder.mkdir(parents=True, exist_ok=True)
@@ -288,19 +299,55 @@ def attach_ledger(db: sqlite3.Connection, root: Path, slug: str, ledger: str, le
                        None, None, finished or J.now_utc())
 
 
-def _earlier(a: str, b: str) -> bool:
-    """Is timestamp `a` before `b`? Ledgers write "2026-10-01 12:09:03"
-    (no zone, UTC) or ISO with an offset; both are compared as UTC."""
-    from datetime import datetime, timezone
+def _parse_utc(ts: str):
+    """Parse a ledger timestamp, zona untouched, or None.
 
-    def parse(ts):
-        try:
-            d = datetime.fromisoformat(str(ts).replace(" ", "T"))
-        except ValueError:
-            return None
-        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-    pa, pb = parse(a), parse(b)
-    return bool(pa and pb and pa < pb)
+    A trailing `Z` is normalised to `+00:00` BEFORE parsing: fromisoformat
+    accepted a bare Z only from Python 3.11 on, and the verdict cannot
+    depend on which interpreter ran the attach.
+    """
+    from datetime import datetime
+
+    text = str(ts).strip().replace(" ", "T")
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _run_before_plan(raw, created_at: str, ledger: str):
+    """(before_plan, reason) for an attached run -- fail closed.
+
+    True means the run cannot prove it started after `created_at`: either
+    it IS before the plan (that cannot confirm it) or its timestamp is
+    silent, unparseable, or naive without a timezone contract. Either way
+    it must not back a number. The reason is recorded for the audit; the
+    plan's own timestamp is Jester's, so only the ledger side fails.
+    """
+    from datetime import timezone
+
+    if raw is None or not str(raw).strip():
+        return True, "the ledger row has no start timestamp"
+    started = _parse_utc(raw)
+    if started is None:
+        return True, (f"the ledger's start timestamp {str(raw)!r} "
+                      "cannot be parsed")
+    if started.tzinfo is None:
+        if ledger not in KNOWN_NAIVE_UTC_LEDGERS:
+            raise J.JournalError(
+                f"the {ledger} ledger's start timestamp {str(raw)!r} carries "
+                "no offset, and only Jester's own pipeline ledger is known "
+                "UTC; attach with an offset-stamped ledger or re-record the "
+                "run so its ordering against the plan is verifiable")
+        started = started.replace(tzinfo=timezone.utc)
+    plan_ts = _parse_utc(created_at)
+    if plan_ts is None:
+        return True, "the plan's own timestamp cannot be parsed"
+    if plan_ts.tzinfo is None:
+        plan_ts = plan_ts.replace(tzinfo=timezone.utc)
+    return (started < plan_ts), ""
 
 
 def counts_for_gate(run: sqlite3.Row) -> bool:
