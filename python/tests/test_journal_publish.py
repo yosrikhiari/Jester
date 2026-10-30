@@ -288,6 +288,41 @@ def test_export_verifies_the_shipped_figure_bytes_and_cleans_up(setup, monkeypat
     assert not (worktree / "journal" / "rules" / "index.html").exists()
 
 
+def test_an_abort_that_could_not_clean_up_does_not_claim_it_did(setup, monkeypatch):
+    """F8's cleanup is best effort; the sentence describing it is not. When the
+    restore itself fails, the abort still told the operator "the worktree was
+    restored" - and that is the one line they act on without looking, because
+    it says there is nothing left to look at. Half-shipped pages stay sitting
+    uncommitted in the worktree, and the next export commits around them."""
+    db, root, tmp = setup["db"], setup["root"], setup["tmp"]
+    site = _site(tmp)
+    worktree = root / P.SITE_DIR / "rules"
+    real_git, real_copy = P._git, shutil.copyfile
+
+    def tamper(src, dst):
+        real_copy(src, dst)
+        with open(dst, "ab") as fh:
+            fh.write(b"<!-- tampered mid-flight -->")
+
+    def refusing_reset(cwd, *args):
+        if args and args[0] == "reset":
+            raise J.JournalError("git reset --hard: worktree is locked")
+        return real_git(cwd, *args)
+
+    monkeypatch.setattr(shutil, "copyfile", tamper)
+    monkeypatch.setattr(P, "_git", refusing_reset)
+    with pytest.raises(J.JournalError) as got:
+        P.export(db, root, "rules", site, base_url=BASE)
+
+    message = str(got.value)
+    assert "not restored" in message, message
+    assert "git reset --hard: worktree is locked" in message, \
+        "the reason the cleanup failed has to be in the message, not swallowed"
+    assert "was restored:" not in message
+    assert _git(worktree, "status", "--porcelain").strip(), \
+        "the page is still sitting there, which is what the message must admit"
+
+
 def test_export_aborts_when_the_article_changes_mid_export(setup, monkeypatch):
     """F8, article text: the page must be built from the version the
     approvals cover; an edit landing between the check and the write ships

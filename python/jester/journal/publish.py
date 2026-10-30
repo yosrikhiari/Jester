@@ -367,19 +367,22 @@ def _remote_default(site_repo: Path) -> str:
     raise J.JournalError("cannot tell the site's default branch (no origin/HEAD, main or master)")
 
 
-def _abandon_export(site: Path) -> None:
+def _abandon_export(site: Path) -> Optional[str]:
     """Return the site worktree to its last committed state (F8).
 
     A failed or aborted export must not leave half-written pages sitting
     uncommitted in the worktree, where the next export would commit them
-    around. Best effort: if even the restore fails, export surfaces the
-    original error — the mess it left behind is the smaller problem.
+    around. Best effort — but the caller is told whether it worked, and must
+    not say "restored" without reading the answer. The operator stops reading
+    at that word; a swallowed failure here is a dirty worktree nobody knows
+    about, and the next export happily commits around it.
     """
     try:
         _git(site, "reset", "--hard", "-q")
         _git(site, "clean", "-fd", "-q", "--", "journal")
-    except J.JournalError:
-        pass
+    except J.JournalError as exc:
+        return str(exc)
+    return None
 
 
 def site_worktree(site_repo: Path, root: Path, slug: str) -> Path:
@@ -485,8 +488,10 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
                 shipped_problems.append(f"{target}: the copied bytes do not "
                                         "match the registered figure")
         if shipped_problems:
-            _abandon_export(site)
-            raise J.JournalError("export aborted, the worktree was restored: "
+            unrestored = _abandon_export(site)
+            back = ("the worktree was restored" if unrestored is None else
+                    f"the worktree was not restored ({unrestored})")
+            raise J.JournalError(f"export aborted, {back}: "
                                  + "; ".join(shipped_problems))
     except J.JournalError:
         raise
