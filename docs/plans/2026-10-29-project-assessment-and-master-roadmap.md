@@ -84,11 +84,12 @@ Re-checked every load-bearing claim in this roadmap and the three reviews agains
 | T-C1 `--code` required / code envelope gate | **RESOLVED** — parser requires `--code`; `counts_for_gate` rejects an absent code envelope; attached ledger runs carry `code.source=ledger` | `python/jester/cli.py:3372-3381`; `python/jester/journal/lab.py:302-320` |
 | T-C2 pipeline `runs.env` | **RESOLVED** — `runs.env` exists and is populated at start; failed collection records a reason instead of a false clean flag | `python/jester/store.py:363`; `test_run_env.py` |
 | T-C3 digest pinning | **RESOLVED** — all four compose images carry `sha256:` digests; `qdrant`/`ollama` keep a `latest` tag but are immutable by digest, which `test_docker_pins.py` deliberately accepts | `docker-compose.yml:45,176,225,253`; `python/tests/test_docker_pins.py` |
-| T-A4 `SCORE_BACKLOG` + attempt counter | **PARTIAL** — the floor flag ships; the per-idea attempt counter does not | `python/jester/ops.py:14,55-56`; no `rescore_attempts` column |
-| EX-G3 607-idea re-score backlog | **OPEN** — live archive still reports **607 `needs_score` of 2627 ideas** (`rescore_per_run: 1`) | read-only `sqlite3` query against `data/jester.db`, 2026-10-29 |
+| T-A4 `SCORE_BACKLOG` + attempt counter | **RESOLVED (2026-10-30 batch)** — the per-idea attempt counter ships; `rescore_pending` rotates least-tried-first; success and `mark_needs_score` reset it; the stalled count surfaces in the run line, maintenance and `/metrics` | `python/jester/store.py:114,284`; `python/jester/agents/critic.py:150,163-210`; `python/jester/ops.py:21` |
+| EX-G3 607-idea re-score backlog | **RESOLVED mechanism (2026-10-30 batch); live backlog still 607/2627** — the remediation this finding named (assertion + alarm + staleness bound) is implemented and verified. The live archive has not migrated (`rescore_attempts` column absent), so the backlog drains at `rescore_per_run: 1` only after the operator migrates — an observation, not a test failure | schema/code evidence in §5.2; read-only `sqlite3` re-measure 2026-10-30: **607 `needs_score` of 2627 ideas** |
 | P-H1 `before_plan` is display-only | **RESOLVED (N6)** — `_verify_run` and `_block_runs` now refuse a pre-plan run as proof, with a message that says why | `python/jester/journal/checks.py:194-222,258-273`; `test_a_before_plan_run_cannot_back_a_number` |
 | P-H3 export does not re-hash figures | **RESOLVED (N7)** — `publish.export` re-hashes every `figures/*` image with `artifact_problem` before touching the site worktree | `python/jester/journal/publish.py:356-377`; `test_export_refuses_a_figure_edited_after_it_was_made` |
-| DD-M1/M2/M4/M5/M6, PR-H1/H3/H4/M1..M5 | **OPEN, DEFERRED** — recorded in the reviews; no code has landed for them | review reports; no matching tests or symbols |
+| DD-M1/M2 re-clustering schema churn | **RESOLVED (2026-10-30 batch)** — the labeller's `coherent:false` verdict is persisted (`clusters.incoherent`, payload carried, console "no shared subject" pill); drafts re-home by `supporting_nuggets` overlap, no-overlap drafts surface as the synthetic `DETACHED_CLUSTER_ID` group | `python/jester/store.py:58,141,287,869-949`; `python/jester/clustering.py:126,580`; `python/jester/console/api.py:942-1035`; `python/jester/console/static/app.js` (`clusterHeadHTML`) |
+| DD-M4/M5/M6, PR-H4/M1..M5 | **OPEN, DEFERRED** — recorded in the reviews; no code has landed for them | review reports; no matching tests or symbols |
 | Upstream Batch 1 (2026-10-25) | **PARTIAL** — N1–N7 implemented 2026-10-30; the `extractor_batch_size` cap, model digest, and UI smoke are still absent | `python/jester/journal/__init__.py` (`output_sha256`, `parse_metric_at`); `python/jester/cli.py` (`measure`); `python/jester/console/server.py` (`/metrics`, preflight); `python/jester/console/static/app.css` (`--line-control`); `python/jester/journal/{checks,publish}.py` |
 | Post-merge batch N1–N7 | **IMPLEMENTED 2026-10-30** — each task test-first; full Python **1760 passed, 5 skipped, 13 deselected**; Go all ok; frontend lint/build; eval **20**; signals **21/21** | §5.1, §7 rows 24–27, review addenda |
 | Source-scope decision | **STILL PROVISIONAL** — `status: provisional`, `decided_on: ""` | `config/signal_rules.yaml:1-9` |
@@ -139,7 +140,7 @@ Consolidated from the three review reports (full enumerations live there). Dispo
 | EX-G1 | Extraction/eval | high | `jester eval` checks only the scoring arithmetic, no LLM, and runs in no CI job, scheduler task, doctor check, or test (`cli_review.py:46-68`; `ci.yml`) | ADOPT → T-A1 |
 | EX-G2 | Scoring | high | `apply_scores` clobbers web-verified competition: wipes `competitor_notes`, flips `competition_checked`; `rescore_pending` never consults the TTL (`critic.py:76-88,115-140`) | ADOPT → T-A2 |
 | EX-G4 | Extraction | high | Batched extraction trusts item order; acceptance is list+length only (`llm.py:412-480`) — reordered reply misattributes insights | ADOPT → T-A3 |
-| EX-G3 | Scoring | high | 607 `needs_score` backlog (measured), no floor flag/alarm/attempt counter | PARTIAL — `SCORE_BACKLOG` shipped; attempt counter still open (§1.5) |
+| EX-G3 | Scoring | high | 607 `needs_score` backlog (measured), no floor flag/alarm/attempt counter | **RESOLVED 2026-10-30** — attempt counter + rotation + stalled/alarm surfacing (§5.2); `SCORE_BACKLOG` shipped earlier |
 | EX-G5,G7,G8, L1-L6 | Extraction | med/low | Unmeasured promotion metrics; hung-model brake absent; run-granular prompt provenance; misnomers, minor coersion counters | DEFER (recorded in review) |
 | EX-G6 | Scoring | medium | `competitor_ttl_days` knob dead-wired (zero non-test callers) | ADOPT → T-A2 |
 | EX-G9 | Eval | medium | `cmd_eval` reads eval files with platform encoding → Windows crash on non-ASCII (`cli_review.py:54`) | ADOPT → T-A1 |
@@ -148,7 +149,7 @@ Consolidated from the three review reports (full enumerations live there). Dispo
 | DD-H3 | Classification | high | Negative families cannot veto a buyer verdict; vendor launch post can clear the bar with "against it" printed but ungated (`filters.py:265-280`) | ADOPT → T-B3 |
 | DD-M3 | Dedup | medium | Global 0.87; no labelled pairs anywhere; `dedup-sweep` has no per-category mode (`dedup_sweep.py`, `cli.py:3726`) | ADOPT → T-B2 |
 | DD-M7 | Classification | medium | From-archive records lose `[matched: …]` provenance (`from_archive.py:261`) | ADOPT → T-B3 |
-| DD-M1,M2 | Clustering | medium | Labeller `coherent:false` dropped; re-clustering orphans cluster drafts (schema churn) | DEFER (follow-up PR) |
+| DD-M1,M2 | Clustering | medium | Labeller `coherent:false` dropped; re-clustering orphans cluster drafts (schema churn) | **RESOLVED 2026-10-30** (§5.2) — verdict persisted; drafts re-homed / detached group |
 | DD-M4 | Property dedup | medium | Semantic layer unreachable; empty-collection bypasses unknown-semantics gate | DEFER (needs vector-sync design) |
 | DD-M5,M6 | Dedup ops | medium | `INDEXING_THRESHOLD` applies only on create; `reembed --all` cannot complete an embedding-model change | DEFER (follow-up PR) |
 | DD-L1..L8 | Dedup | low | Hard-coded embedding_model/near-miss band/payload asymmetry/etc. | DEFER (recorded) |
@@ -170,7 +171,7 @@ Nine tasks, three per workstream. Each task: one builder, one verifier, defined 
 | T-A3 Batch order echo | `llm.py` batch prompt gains a per-item `i` (echo of the comment index) validated on parse; mismatch (missing/wrong `i`) → per-comment fallback as today; `agents/extractor.py` passes nothing extra (indices derive from bodies order in `llm.py`); scripted reversed-reply test | `pytest -k extract_batch` all green incl. new `test_extract_batch_reversed_reply`: reversed items → fallback engaged (`fallbacks==1`), comments carry their own insights (compared against single-call oracle), no mis-zipped row archived |
 
 Stretch (only if T-A1..A3 green): T-A4 `SCORE_BACKLOG` floor flag + rescore attempt counter (EX-G3).
-**Status: PARTIAL** — `SCORE_BACKLOG` shipped in `a445ab7` and is wired into the run floor flags; the per-idea attempt counter did not ship and remains tracked under EX-G3.
+**Status: COMPLETE** — `SCORE_BACKLOG` shipped in `a445ab7`; the per-idea attempt counter, least-tried rotation and stalled-surfacing shipped in the 2026-10-30 batch (§5.2), closing the EX-G3 mechanism.
 
 ### WS-B — Dedup / clustering / classification (builder B · worktree `wsb-dedup-labels`)
 
@@ -215,7 +216,28 @@ Selected from the still-open items in §1.5 and the 2026-10-25 Batch 1 work orde
 
 **Batch exit criteria:** targeted tests green; full Python suite, Go suite, frontend lint/build, eval gate, and signals fixture gate green; independent verification where quota allows (orchestrator-run verification disclosed if not); critic ≥ 8.5/10; zero unresolved blocker/high findings; documents updated with evidence.
 
-**Status: all test and quality gates met; the independent critic score is not claimed.** The free-subagent quota did not allow a second-party review, so the last independent score remains **8.9/10 from the 2026-10-29 cycle**; this batch's verification is orchestrator-run and disclosed. P-H1 and P-H3 are closed. **EX-G3 remains open** — rated **high** in the extraction review and carried as a warning in the final report — and was explicitly deferred, so this batch does not claim that every historical high finding is closed.
+**Status: all test and quality gates met; the independent critic score is not claimed.** The free-subagent quota did not allow a second-party review, so the last independent score remains **8.9/10 from the 2026-10-29 cycle**; this batch's verification is orchestrator-run and disclosed. P-H1 and P-H3 are closed. **EX-G3 remains open** — rated **high** in the extraction review and carried as a warning in the final report — and was explicitly deferred, so this batch does not claim that every historical high finding is closed. *(Addendum 2026-10-30: the follow-on batch in §5.2 implemented the EX-G3 attempt-counter work and closed the mechanism; the live backlog number is an observation tracked in §1.5.)*
+
+---
+
+## 5.2 Second post-merge batch (2026-10-30) — EX-G3 completion, DD-M1, DD-M2
+
+Locked from the §1.5 open register after the N1–N7 batch. Three items, all test-first: the new tests were authored and the first targeted run was started **before** any implementation edit, and that run failed at the first missing symbol (`stalled_scores` unimportable from `jester.agents.critic`) — the batch's expected-failure gate.
+
+| ID | Task | Scope | Acceptance criteria |
+|---|---|---|---|
+| EX-G3 | Fair re-score queue + staleness alarm | `store.py`: `ideas.rescore_attempts` (schema + `_ADD_COLUMNS`), `mark_needs_score` reset; `critic.py`: `stalled_scores`, least-tried-first rotation, increment on refusal, reset on success; `ops.SCORE_STALL_ATTEMPTS = 5`; run line (`cli.py`), `maintenance.queue_counts`/`check_queues`/`cmd_maintenance`; `/metrics` gauge `jester_rescore_stalled` | `rescore_pending` orders by attempts then id; a refusal rotates the queue and increments; a success and `mark_needs_score` clear the counter; `stalled` counts only ideas at ≥5 failed attempts; exact shapes of `rescore_pending` and `queue_counts` extended; the count surfaces in the run line, the maintenance ledger line and `/metrics` |
+| DD-M1 | Persist the labeller's incoherence verdict | `clustering.Cluster.incoherent` + `to_payload`; `clusters.incoherent` column (`BASE_SCHEMA` + `_ADD_COLUMNS`), inserted by `replace_clusters`; console list/detail expose it; `app.js` renders a "no shared subject" pill | `to_payload` carries the verdict; a reclustering pass persists `incoherent=1`; `ConsoleAPI.clusters()` and `cluster()` round-trip it; the page marks the theme in list and detail |
+| DD-M2 | Re-home drafts across re-clustering | `replace_clusters` re-homes surviving drafts to the new cluster sharing the most `supporting_nuggets`; no-overlap drafts move to `DETACHED_CLUSTER_ID = 0` and surface as a synthetic "Detached drafts" group; drafting from the sentinel stays refused (`cluster_generate_idea(0)` → `no cluster 0`); `app.js` renders the group without a draft button | overlap re-home test (draft follows its comments); no-overlap test (sentinel, not deleted); the detached group is clickable in list and detail; the sentinel has no clusters row |
+
+**Batch status: IMPLEMENTED and gated.** Evidence:
+
+- **Targeted:** the seven touched suites — `test_critic_honest.py`, `test_clustering.py`, `test_console_clusters.py`, `test_maintenance.py`, `test_console_server.py`, `test_rescore_standin.py`, `test_console_api.py` — **137 passed**.
+- **Full gates:** Python **1775 passed, 5 skipped, 13 deselected, 41 warnings** (411.95 s; +15 tests over the N1–N7 baseline of 1760); Go `go build ./...` + `go test ./...` all ok; frontend `npm run lint` and `npm run build` exit 0; `python -m jester.cli eval` **20 cases (gate=7.0)**; `python -m jester.cli signals check` **21/21**.
+- **Live archive re-measure (read-only, observation not assertion):** still **607 `needs_score` of 2627 ideas**; **85 clusters, 5 drafts, 2 drafts pointing at clusters that no longer exist** — the DD-M2 orphan, visible in production data; neither `ideas.rescore_attempts` nor `clusters.incoherent` is present, because the live DB has not been migrated. The columns arrive with the next operator `jester migrate` (or a nightly `open_db`), the drafts re-home on the next clustering pass, and the backlog drains at `rescore_per_run: 1`.
+- **No independent critic sign-off was available** (free-subagent quota) and none is claimed: verification is orchestrator-run and disclosed; the 2026-10-29 cycle's **8.9/10** remains the last independent score.
+
+**Design contract kept:** `_ADD_COLUMNS` entries were also added to `BASE_SCHEMA`, because `schema_problem` compares a live archive against the declared columns — a migrate in place and a fresh create produce the same shape.
 
 ---
 
@@ -265,5 +287,11 @@ Selected from the still-open items in §1.5 and the 2026-10-25 Batch 1 work orde
 | 26 | Full gates | Python **1760 passed, 5 skipped, 13 deselected** (459.9 s); Go build + all tests ok; frontend lint/build exit 0; eval **20 cases (gate=7.0)**; signals **21/21** | 2026-10-30 |
 | 27 | Documents refreshed with evidence | §1.5 statuses, §5.1 batch status, review addenda (P-H1/P-H3), work-order pre-flight, final-report addendum, iteration log | 2026-10-30 |
 | 28 | Promotion | Batch commit `ad52b87` pushed to `origin/main`; `HEAD == origin/main` at close | 2026-10-30 |
+| 29 | Post-merge re-check of the N1–N7 batch | docs audited against actual code; stale-claim correction: no independent critic score claimed, EX-G3 not claimed closed; next batch locked (EX-G3 completion, DD-M1, DD-M2) | 2026-10-30 |
+| 30 | EX-G3/DD-M1/DD-M2 failing tests authored on top of `a71ea1f`; targeted run started before any implementation edit | failed at the first missing symbol (`stalled_scores` unimportable) — the batch's expected-failure gate | 2026-10-30 |
+| 31 | Implementation + targeted suites | **137 passed** (critic-honest, clustering, console-clusters, maintenance, console-server, rescore-standin, console-api) | 2026-10-30 |
+| 32 | Full gates | Python **1775 passed, 5 skipped, 13 deselected** (411.95 s); Go build + all tests ok; frontend lint/build exit 0; eval **20 cases (gate=7.0)**; signals **21/21** | 2026-10-30 |
+| 33 | Live archive re-measure (read-only) | **607/2627** needs_score; 85 clusters, 5 drafts, **2 orphaned** (DD-M2 visible); `rescore_attempts`/`clusters.incoherent` absent | 2026-10-30 |
+| 34 | Documents updated + promotion (this batch) | §1.5, §4, §5 stretch, §5.2, review addenda; batch commit `9d1157d` + docs commit pushed; `HEAD == origin/main` at close | 2026-10-30 |
 
 *(Final state recorded above; the closing report is `docs/reports/2026-10-29-final-implementation-report.md` and the chronology is `docs/plans/2026-10-29-implementation-iteration-log.md`.)*

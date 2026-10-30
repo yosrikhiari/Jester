@@ -14,7 +14,7 @@ Baseline `771d3d5`; re-checked against `main` at `70f966f` (clean, `== origin/ma
 |---|---|---|
 | G-1 eval gate never automated | **RESOLVED** | `.github/workflows/ci.yml:107-108` runs `python -m jester.cli eval`; `cli_review.py:54-66` reads UTF-8; eval reports **20 cases (gate=7.0)** |
 | G-2 re-scores clobber competition | **RESOLVED** | `critic.py:66-110` preserves a web-checked verdict when the reply has no number; `idea_dedup.py:99-140` consults `needs_recheck` |
-| G-3 607-idea re-score backlog | **PARTIAL / OPEN** | `SCORE_BACKLOG` ships (`ops.py:14,55-56`); no attempt counter; live DB still **607 `needs_score` of 2627 ideas** |
+| G-3 607-idea re-score backlog | **RESOLVED mechanism (2026-10-30 batch); live backlog unchanged** | `ops.SCORE_STALL_ATTEMPTS`; `ideas.rescore_attempts` (`store.py:114,284`); `stalled_scores` + least-tried-first rotation in `rescore_pending` (`critic.py:150,163-210`), reset on success and on `mark_needs_score` (`store.py:1212-1223`); the stalled count surfaces in the run line (`cli.py:778-787,2160-2165`), the maintenance ledger (`maintenance.py:209-240`) and `/metrics` as `jester_rescore_stalled` (`server.py:169-173`). The live DB still reports **607/2627** and carries neither new column: it drains at `rescore_per_run: 1` only after a migrate — roadmap §5.2 |
 | G-4 batch order trusted | **RESOLVED** | `llm.py:444-505` validates the per-item `i` echo and falls back per comment on mismatch |
 | G-5 promotion metrics never computed | **OPEN** | no promotion-metric computation found |
 | G-6 `competitor_ttl_days` dead-wired | **RESOLVED** | non-test callers now in `idea_dedup.py:114-140` |
