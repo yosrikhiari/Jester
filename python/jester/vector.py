@@ -39,6 +39,9 @@ RETRY_BACKOFF_S = 0.5
 #: The cost of a low threshold is that small collections pay to build an index
 #: they could have scanned. That cost is bounded and paid once; the scan cost
 #: is paid on every one of tens of thousands of dedup lookups per run.
+#:
+#: Applied when a collection is opened, not only when it is created: a store
+#: made before this number existed would otherwise keep scanning forever.
 INDEXING_THRESHOLD = 1000
 
 
@@ -192,11 +195,10 @@ class VectorStore:
         # (768,) into shape (32,)" — an error that names neither the config
         # key that caused it nor the store that has to be rebuilt.
         try:
-            have = self.client.get_collection(
-                self.collection
-            ).config.params.vectors.size
+            info = self.client.get_collection(self.collection)
         except Exception:  # noqa: BLE001 - an unreadable config is not fatal here
             return
+        have = info.config.params.vectors.size
         want = int(self.embed.dim)
         if have is not None and int(have) != want:
             raise VectorDimensionMismatch(
@@ -206,6 +208,31 @@ class VectorStore:
                 "old store and re-embed (`jester reembed`), or point "
                 "JESTER_QDRANT_URL at a different server."
             )
+        self._fix_indexing_threshold(info)
+
+    def _fix_indexing_threshold(self, info) -> None:
+        """Bring an existing collection to INDEXING_THRESHOLD (DD-M5).
+
+        The number below was only ever passed to `create_collection`, so every
+        collection made before it shipped still holds Qdrant's own default --
+        20,000 points per segment before an HNSW index is built. A corpus
+        under that is scanned brute force on every dedup lookup, which is the
+        83 ms median that grows with the archive.
+
+        Only a store sitting ABOVE the threshold is moved: whoever tuned it
+        lower is not being overruled by an open call.
+        """
+        try:
+            have = info.config.optimizer_config.indexing_threshold
+            if have is not None and int(have) <= INDEXING_THRESHOLD:
+                return
+            self.client.update_collection(
+                self.collection,
+                optimizers_config=models.OptimizersConfigDiff(
+                    indexing_threshold=INDEXING_THRESHOLD),
+            )
+        except Exception:  # noqa: BLE001 - a store that will not tell or take still answers queries
+            return
 
     def upsert(self, unique_key: str, text: str, payload: dict) -> None:
         if self.force_fail:
