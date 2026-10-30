@@ -134,37 +134,46 @@ class UnavailableVectorStore:
     def vector_for(self, unique_key: str):
         raise self._exc
 
+    def recreate(self) -> None:
+        raise self._exc
+
     def count(self) -> int:
         raise self._exc
 
 
 class VectorStore:
     def __init__(self, client: QdrantClient, embed: EmbeddingClient, force_fail: bool = False,
-                 collection: str = COLLECTION):
+                 collection: str = COLLECTION, check_dimension: bool = True):
         self.client = client
         self.embed = embed
         self.force_fail = force_fail
         self.collection = collection
-        self._ensure()
+        self._ensure(check_dimension)
 
     @classmethod
     def in_memory(cls, embed: EmbeddingClient = None, force_fail: bool = False,
-                  collection: str = COLLECTION) -> "VectorStore":
-        return cls(QdrantClient(":memory:"), embed or FakeEmbedding(), force_fail=force_fail,
-                   collection=collection)
+                  collection: str = COLLECTION,
+                  check_dimension: bool = True) -> "VectorStore":
+        return cls(QdrantClient(":memory:"), embed or FakeEmbedding(),
+                   force_fail=force_fail, collection=collection,
+                   check_dimension=check_dimension)
 
     @classmethod
     def open(cls, path: str, embed: EmbeddingClient = None, force_fail: bool = False,
-             collection: str = COLLECTION) -> "VectorStore":
-        return cls(QdrantClient(path=path), embed or FakeEmbedding(), force_fail=force_fail,
-                   collection=collection)
+             collection: str = COLLECTION,
+             check_dimension: bool = True) -> "VectorStore":
+        return cls(QdrantClient(path=path), embed or FakeEmbedding(),
+                   force_fail=force_fail, collection=collection,
+                   check_dimension=check_dimension)
 
     @classmethod
     def for_url(cls, url: str, embed: EmbeddingClient = None, force_fail: bool = False,
-                collection: str = COLLECTION) -> "VectorStore":
+                collection: str = COLLECTION,
+                check_dimension: bool = True) -> "VectorStore":
         """Shared-server mode (§37.17): many processes against one Qdrant."""
         return cls(QdrantClient(url=url, timeout=TIMEOUT_S), embed or FakeEmbedding(),
-                   force_fail=force_fail, collection=collection)
+                   force_fail=force_fail, collection=collection,
+                   check_dimension=check_dimension)
 
     @staticmethod
     def count_points_at(url: str, collection: str = COLLECTION) -> int:
@@ -181,7 +190,7 @@ class VectorStore:
     def count(self) -> int:
         return self.client.count(self.collection, exact=True).count
 
-    def _ensure(self):
+    def _ensure(self, check_dimension: bool = True):
         if not self.client.collection_exists(self.collection):
             self.client.create_collection(
                 self.collection,
@@ -206,7 +215,7 @@ class VectorStore:
             return
         have = info.config.params.vectors.size
         want = int(self.embed.dim)
-        if have is not None and int(have) != want:
+        if check_dimension and have is not None and int(have) != want:
             raise VectorDimensionMismatch(
                 f"collection {self.collection!r} was built for {have}-dimension "
                 f"vectors but the current embedding backend produces {want}. "
@@ -215,6 +224,23 @@ class VectorStore:
                 "JESTER_QDRANT_URL at a different server."
             )
         self._fix_indexing_threshold(info)
+
+    def recreate(self) -> None:
+        """Drop this collection and rebuild it for the embedder in hand (DD-M6).
+
+        The width guard above is right for every reader and is exactly what
+        made an embedding-model change incompletable: the one command that can
+        rewrite the vectors has to open the store first, and a store holding
+        32-wide vectors refuses to open under a 768-wide embedder. `reembed
+        --recreate` is the way through, and it opens with the guard off.
+
+        Rebuilding happens on the same client rather than by closing and
+        re-opening, because local-mode Qdrant locks its storage folder to the
+        process that has it - delete-then-reopen is the deadlock, not the
+        repair.
+        """
+        self.client.delete_collection(self.collection)
+        self._ensure()
 
     def _fix_indexing_threshold(self, info) -> None:
         """Bring an existing collection to INDEXING_THRESHOLD (DD-M5).

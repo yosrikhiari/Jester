@@ -109,17 +109,22 @@ def collection_for(db_path: str, base: str = "nuggets") -> str:
     return f"{base}__{slug}"
 
 
-def _vector_for(cfg, db_path):
+def _vector_for(cfg, db_path, check_dimension=True):
     """§37.17/§37.24: shared server via JESTER_QDRANT_URL, else per-DB path.
-    In-memory databases get an in-memory store (no :memory:.qdrant file)."""
+    In-memory databases get an in-memory store (no :memory:.qdrant file).
+
+    `check_dimension=False` is for `reembed --recreate` alone: it has to act on
+    a collection whose width it already knows is wrong, which is the one thing
+    the open refuses to do. See VectorStore.recreate."""
     qdrant_url = os.environ.get("JESTER_QDRANT_URL")
     embed = select_embedding(cfg.thresholds)
     if qdrant_url:
         return VectorStore.for_url(
-            qdrant_url, embed, collection=collection_for(db_path)
+            qdrant_url, embed, collection=collection_for(db_path),
+            check_dimension=check_dimension
         )
     if db_path == ":memory:":
-        return VectorStore.in_memory(embed)
+        return VectorStore.in_memory(embed, check_dimension=check_dimension)
     db_path = os.path.abspath(db_path)
     return VectorStore.open(
         os.path.join(
@@ -127,6 +132,7 @@ def _vector_for(cfg, db_path):
             os.path.splitext(os.path.basename(db_path))[0] + ".qdrant",
         ),
         embed,
+        check_dimension=check_dimension,
     )
 
 
@@ -2007,8 +2013,37 @@ def _print_sweep_table(result, skipped, cfg, category):
                       "and re-run this sweep to confirm")
 
 
+def _recreate_vector_store(cfg, db_path):
+    """The vector store, emptied and rebuilt for the embedder the config names.
+
+    The width guard on an open is right for every reader and made an
+    embedding-model change impossible to finish: `reembed --all` could not open
+    the store whose vectors it existed to rewrite. This opens with the guard
+    off, for this one caller, and rebuilds the collection on the same client —
+    local-mode Qdrant locks its storage folder to whoever holds it, so closing
+    and re-opening is a deadlock rather than a repair.
+    """
+    store = _vector_for(cfg, db_path, check_dimension=False)
+    try:
+        held = store.count()
+    except Exception:  # noqa: BLE001 - the count is said for the operator, not gated on
+        held = None
+    store.recreate()
+    print(f"dropped vector collection {store.collection!r}"
+          + (f" ({held} vectors)" if held is not None else "")
+          + ", rebuilt for the configured embedder")
+    return store
+
+
 def cmd_reembed(args):
-    """§3.2 v3.5 #4 recovery: re-attempt vector persistence for flagged nuggets."""
+    """§3.2 v3.5 #4 recovery: re-attempt vector persistence for flagged nuggets.
+
+    `--all` after an embedding-model change is three steps, not one: drop the
+    collection that holds the old width, re-embed every nugget into the new
+    one, and record which model the archive now holds. Stopping after the
+    second left the archivist raising ModelMismatch over a corpus it had just
+    been asked to accept (DD-M6).
+    """
     db = open_db(args.db)
     # §33 #1 spirit: repair must not race an active run. Refuse, don't reap.
     running = db.execute("SELECT COUNT(*) FROM runs WHERE status='running'").fetchone()[
@@ -2018,12 +2053,25 @@ def cmd_reembed(args):
         print(f"refusing reembed: {running} run(s) still active")
         sys.exit(1)
 
+    cfg = load_config(args.config)
+    whole_archive = bool(getattr(args, "all", False))
+    recreate = bool(getattr(args, "recreate", False))
+    if recreate and not whole_archive:
+        print("refusing --recreate without --all: the collection is about to be "
+              "emptied, and draining only the failure backlog would leave every "
+              "other nugget with no vector at all")
+        sys.exit(1)
+
+    vector = None
+    if recreate:
+        vector = _recreate_vector_store(cfg, args.db)
+
     # --all re-embeds the WHOLE archive, not just the failure backlog. Needed
     # whenever the embedding backend changes: vectors written by a different
     # model are not comparable with new ones, and a backlog drain would leave
     # the archive half in one space and half in another — which reads as a
     # working store and returns nonsense neighbours.
-    if getattr(args, "all", False):
+    if whole_archive:
         db.row_factory = sqlite3.Row
         rows = db.execute(
             "SELECT unique_key, raw_text FROM nuggets ORDER BY id"
@@ -2035,8 +2083,8 @@ def cmd_reembed(args):
         print("reembed OK: backlog empty")
         return
 
-    cfg = load_config(args.config)
-    vector = _vector_for(cfg, args.db)
+    if vector is None:
+        vector = _vector_for(cfg, args.db)
     # Which backend is about to write, said out loud: re-embedding with the
     # wrong one is silent and only shows up later as nonsense neighbours.
     # getattr throughout — a test double is a vector store without an embedder.
@@ -2077,6 +2125,21 @@ def cmd_reembed(args):
     print(f"reembedded {ok} nugget(s); {failed} still failing")
     if failed:
         sys.exit(1)
+    if whole_archive:
+        # The corpus-model guard reads this tag on every run and refuses to
+        # archive against a corpus it cannot prove was embedded the same way.
+        # It used to be written only by the archivist, when the archive was
+        # still empty - so after a complete re-embed it still named the model
+        # the archive no longer holds, and the command that fixed the corpus
+        # was refused by the guard protecting it. Say it only when the whole
+        # archive was written and nothing is still failing: a partial re-embed
+        # is exactly the mixed space the guard exists to refuse.
+        from jester.roles import embedding_model_of
+        from jester.store import meta_set
+
+        model = embedding_model_of(cfg.thresholds)
+        meta_set(db, "corpus_embedding_model", model)
+        print(f"corpus recorded as embedded with {model!r}")
 
 
 def cmd_rescore(args):
@@ -3903,6 +3966,13 @@ def main(argv=None):
         help="re-embed EVERY nugget, not just the failure backlog — use after "
              "changing embedding_provider, since vectors from two models are "
              "not comparable",
+    )
+    re_.add_argument(
+        "--recreate",
+        action="store_true",
+        help="with --all: drop the vector collection first, for the case where "
+             "the new embedding model outputs a different vector width and the "
+             "old collection refuses to open at all",
     )
     re_.set_defaults(func=cmd_reembed)
 
