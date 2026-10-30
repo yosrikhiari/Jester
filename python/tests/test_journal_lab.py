@@ -489,6 +489,31 @@ def test_every_image_link_must_be_a_registered_figure(db, jid, tmp_path, target)
     assert "journal figure" in out.findings[0]["message"]
 
 
+def test_a_figure_that_cannot_be_read_costs_one_link_not_the_check(db, jid, tmp_path):
+    """F6's rule travels with F11: one unreadable artefact fails the one link
+    that asked about it. A registered figure whose bytes the machine will not
+    hand over - locked by another process, replaced by a folder, the ordinary
+    consequence of a sync running while a check runs - raised straight out of
+    `check_numbers`, so the verdict for the whole article was lost over a
+    single picture, and `check_saved` records nothing until the check returns."""
+    a, b = _two_runs(db, jid)
+    one = L.figure(db, tmp_path, "lab", [a, b], "f1", "f1 by method!",
+                   caption="F1 by method", label_key="name", unit="")
+    two = L.figure(db, tmp_path, "lab", [a, b], "n", "n by method!",
+                   caption="N by method", label_key="name", unit="")
+    md = ("# Results\n\n" + one["markdown"] + "\n\n" + two["markdown"] + "\n")
+
+    broken = one["path"]
+    broken.unlink()
+    broken.mkdir()
+
+    out = C.check_numbers(db, tmp_path, jid, md)
+
+    assert out.stats["figures"] == 2, "both images were looked at"
+    assert len(out.findings) == 1, out.findings
+    assert "could not be read" in out.findings[0]["message"]
+
+
 def test_figure_refuses_bad_input(db, jid, tmp_path):
     a, _ = _two_runs(db, jid)
     with pytest.raises(J.JournalError, match="no number at 'name'"):

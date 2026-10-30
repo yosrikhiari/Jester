@@ -552,6 +552,15 @@ def artifact_problem(db: sqlite3.Connection, root: Path, journal_id: int, target
     path = Path(root) / (Path(article_dir) / target).as_posix()
     if not path.exists():
         return f"{target} is missing"
-    if hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+    try:
+        shipped = path.read_bytes()
+    except OSError as exc:
+        # The file is there and its bytes will not come: locked by another
+        # process, replaced by a folder, unreadable. That is one image this
+        # check cannot prove, and it fails as one image - letting the OSError
+        # travel would lose the numbers verdict for the whole article over one
+        # picture, and `check_saved` records nothing until the check returns.
+        return f"{target} could not be read ({exc.__class__.__name__})"
+    if hashlib.sha256(shipped).hexdigest() != row["sha256"]:
         return f"{target} was edited after it was made; draw it again from the runs"
     return None
