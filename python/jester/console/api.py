@@ -83,6 +83,7 @@ from jester.store import (
     delete_cluster_idea,
     get_cluster,
     insert_cluster_idea,
+    insert_cluster_idea_for_theme,
     list_cluster_ideas,
     list_clusters,
     promote_cluster_idea,
@@ -1245,7 +1246,11 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
                 f"{why}. Nothing was saved; try again later.")}
 
         say("saving the draft")
-        draft_id = insert_cluster_idea(self.db, cluster_id, idea)
+        # Insert-time home resolution: the theme existed when this request
+        # started, but a concurrent re-cluster can delete it while the
+        # synthesizer and the critic keep this request busy. Never write a
+        # dead id into cluster_ideas.
+        draft_id = insert_cluster_idea_for_theme(self.db, cluster_id, idea)
         return {
             "ok": True,
             "draft_id": draft_id,

@@ -159,6 +159,65 @@ def test_drafting_an_unknown_theme_is_refused_before_any_job(env):
     assert "no cluster" in res["error"]
 
 
+class _RacingSynth:
+    """Stands in for the synthesizer — and for what a background
+    re-clustering does to the archive WHILE a draft is being drafted:
+    `cluster_run_async` works on its own connection, so its committed pass
+    deletes the theme and mints fresh ids right inside this window."""
+
+    fallbacks = 0
+    last_error = None
+
+    def __init__(self, path, payload):
+        self._path, self._payload = path, payload
+
+    def synthesize(self, nuggets):
+        wdb = open_db(self._path)
+        try:
+            replace_clusters(wdb, "r2", self._payload)
+        finally:
+            wdb.close()
+        return Idea(title="Backup Sentinel", problem_statement="p",
+                    proposed_solution="s", supporting_nuggets=["n1", "n2"],
+                    scores=IdeaScores(demand_signal=8, feasibility=6,
+                                      competition=None, overall=7.0),
+                    synthesis_model="racing-synth")
+
+
+def _still_cites_n1_n2():
+    return {
+        "label": "re-clustered · n1 n2", "problem_statement": "ps",
+        "size": 2, "n_nuggets": 2, "n_authors": 2, "authors_unknown": 0,
+        "n_threads": 1, "platforms": '["reddit"]',
+        "nugget_keys": json.dumps(["n1", "n2"]),
+        "coherence": 0.9, "embedding_model": "nomic-embed-text",
+        "single_author": False, "single_thread": True,
+        "members": [{"nugget_key": "n1", "chunk_index": 0, "text": "x", "similarity": 0.9},
+                    {"nugget_key": "n2", "chunk_index": 0, "text": "y", "similarity": 0.9}],
+    }
+
+
+def test_a_recluster_during_drafting_never_inserts_under_a_dead_theme(env, monkeypatch):
+    """F14: the theme existence check happens before ~30 s of model work;
+    the insert must decide the home at insert time, in the same
+    transaction — follow the comments or detach, never a dead id."""
+    path, db, cid = env
+    monkeypatch.setattr("jester.llm.select_synthesizer_llm",
+                        lambda th: _RacingSynth(path, [_still_cites_n1_n2()]))
+    monkeypatch.setattr("jester.agents.critic.apply_scores",
+                        lambda *a, **k: True)
+    api = ConsoleAPI(path, str(REPO_CONFIG))
+
+    res = api.cluster_generate_idea(cid)
+    assert res["ok"] is True, res
+
+    home = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                      (res["draft_id"],)).fetchone()[0]
+    live = {c[0] for c in db.execute("SELECT id FROM clusters")}
+    assert home != cid, "cid was deleted mid-flight; a dead id must never be written"
+    assert home == DETACHED_CLUSTER_ID or home in live
+
+
 def test_the_detached_group_is_refused_server_side_not_just_in_the_ui(env):
     """The page hides the draft button; that is not the enforcement. The API
     itself must refuse id 0 on the request path AND as a job, with a message

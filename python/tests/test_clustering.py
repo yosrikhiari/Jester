@@ -32,6 +32,7 @@ from jester.models import Nugget
 from jester.store import (
     DETACHED_CLUSTER_ID,
     insert_cluster_idea,
+    insert_cluster_idea_for_theme,
     insert_nugget,
     list_cluster_ideas,
     list_clusters,
@@ -474,6 +475,52 @@ def test_zero_is_never_minted_as_a_real_cluster_id(db):
         replace_clusters(db, run, [_cluster_payload(f"p-{run}", ["n1"])])
     ids = [r[0] for r in db.execute("SELECT id FROM clusters ORDER BY id")]
     assert ids and 0 not in ids and min(ids) >= 1
+
+
+def test_a_draft_saved_after_its_theme_died_never_gets_a_dead_id(db):
+    """The console checks the theme exists, then spends tens of seconds in
+    the synthesizer and the critic. A re-cluster that commits in that
+    window deletes the theme and mints fresh ids — the exact orphan
+    replace_clusters was built to stop. Resolution must therefore happen
+    at INSERT time: a missing id is re-decided by overlap, never written."""
+    old = _seed_cluster(db)
+    replace_clusters(db, "r2", [_cluster_payload("n3 only", ["n3"])])
+    live = {c[0] for c in db.execute("SELECT id FROM clusters")}
+    draft_id = insert_cluster_idea_for_theme(db, old, _draft(old))
+    home = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                      (draft_id,)).fetchone()[0]
+    assert home != old, "the theme the draft started from no longer exists"
+    assert home == DETACHED_CLUSTER_ID or home in live
+    if home == DETACHED_CLUSTER_ID:
+        assert len(list_cluster_ideas(db, DETACHED_CLUSTER_ID)) == 1
+
+
+def test_an_insert_after_a_pass_rehomes_to_the_theme_still_citing_the_draft(db):
+    old = _seed_cluster(db)
+    replace_clusters(db, "r2", [_cluster_payload("n1 n2 again", ["n1", "n2"])])
+    draft_id = insert_cluster_idea_for_theme(db, old, _draft(old, ("n1", "n2")))
+    by_label = {c["label"]: c["id"] for c in list_clusters(db)}
+    home = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                      (draft_id,)).fetchone()[0]
+    assert home == by_label["n1 n2 again"]
+
+
+def test_an_insert_after_a_pass_detaches_when_no_theme_cites_the_draft(db):
+    old = _seed_cluster(db)
+    replace_clusters(db, "r2", [_cluster_payload("elsewhere", ["x9"])])
+    draft_id = insert_cluster_idea_for_theme(
+        db, old, _draft(old, ("q1", "q2")))
+    home = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                      (draft_id,)).fetchone()[0]
+    assert home == DETACHED_CLUSTER_ID
+
+
+def test_an_insert_for_a_live_theme_still_land_under_it(db):
+    old = _seed_cluster(db)
+    draft_id = insert_cluster_idea_for_theme(db, old, _draft(old))
+    home = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                      (draft_id,)).fetchone()[0]
+    assert home == old
 
 
 # ---- qdrant wiring --------------------------------------------------------

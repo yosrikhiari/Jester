@@ -939,18 +939,39 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
             keys = set(json.loads(draft["supporting_nuggets"] or "[]"))
         except (TypeError, ValueError):
             keys = set()
-        best_id, best_overlap = DETACHED_CLUSTER_ID, 0
-        # sorted() pins the walk to ascending ids, so with strict `>` a tie
-        # keeps the LOWEST cluster id — a property of the ids, not of the
-        # order `placed` happens to be in.
-        for cid, cluster_keys in sorted(placed):
-            overlap = len(keys & cluster_keys)
-            if overlap > best_overlap:
-                best_id, best_overlap = cid, overlap
+        home = _best_overlap_home(db, keys)
         db.execute("UPDATE cluster_ideas SET cluster_id=? WHERE id=?",
-                   (best_id, draft["id"]))
+                   (home, draft["id"]))
     db.commit()
     return n
+
+
+def _best_overlap_home(db: sqlite3.Connection, keys: set) -> int:
+    """The live cluster sharing the most nugget keys with `keys`, else the
+    detached sentinel. Ties go to the LOWEST cluster id.
+
+    Both placements go through here — the draft re-homing after a pass and
+    the insert-time resolution for a draft whose theme vanished mid-work —
+    so the two paths cannot drift apart.
+    """
+    cur = db.cursor()
+    cur.row_factory = sqlite3.Row
+    placed = []
+    for c in cur.execute("SELECT id, nugget_keys FROM clusters").fetchall():
+        try:
+            cluster_keys = set(json.loads(c["nugget_keys"] or "[]"))
+        except (TypeError, ValueError):
+            cluster_keys = set()
+        placed.append((c["id"], cluster_keys))
+    best_id, best_overlap = DETACHED_CLUSTER_ID, 0
+    # sorted() pins the walk to ascending ids, so with strict `>` a tie
+    # keeps the LOWEST cluster id — a property of the ids, not of the
+    # order the rows happen to come back in.
+    for cid, cluster_keys in sorted(placed):
+        overlap = len(keys & cluster_keys)
+        if overlap > best_overlap:
+            best_id, best_overlap = cid, overlap
+    return best_id
 
 
 def list_clusters(db: sqlite3.Connection) -> List[sqlite3.Row]:
@@ -989,6 +1010,11 @@ def cluster_members(db: sqlite3.Connection, cluster_id: int) -> List[sqlite3.Row
 
 
 def insert_cluster_idea(db: sqlite3.Connection, cluster_id: int, idea) -> int:
+    return _insert_cluster_idea_row(db, cluster_id, idea, commit=True)
+
+
+def _insert_cluster_idea_row(db: sqlite3.Connection, cluster_id: int, idea,
+                             commit: bool = True) -> int:
     cur = db.execute(
         """
         INSERT INTO cluster_ideas
@@ -1010,8 +1036,43 @@ def insert_cluster_idea(db: sqlite3.Connection, cluster_id: int, idea) -> int:
             idea.synthesis_model or "",
         ),
     )
-    db.commit()
-    return int(cur.lastrowid)
+    draft_id = int(cur.lastrowid)
+    if commit:
+        db.commit()
+    return draft_id
+
+
+def insert_cluster_idea_for_theme(db: sqlite3.Connection, cluster_id: int,
+                                  idea) -> int:
+    """Save a draft, deciding its theme at INSERT time.
+
+    The console checks the theme exists, then spends tens of seconds inside
+    the synthesizer and the critic. A re-clustering pass can commit in that
+    window — it deletes every cluster row and mints fresh ids — so the id
+    in hand may name nothing by the time the draft is written, the exact
+    orphan replace_clusters exists to stop. Placement is therefore resolved
+    inside the same transaction as the insert: a theme still there keeps
+    the draft; a dissolved theme hands it to the live theme sharing the
+    most supporting_nuggets; one that shares none goes to
+    DETACHED_CLUSTER_ID. A dead id is never written.
+    """
+    try:
+        keys = set(idea.supporting_nuggets or [])
+    except TypeError:
+        keys = set()
+    cur = db.cursor()
+    cur.row_factory = sqlite3.Row
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        row = cur.execute("SELECT id FROM clusters WHERE id=?",
+                          (cluster_id,)).fetchone()
+        home = cluster_id if row is not None else _best_overlap_home(db, keys)
+        draft_id = _insert_cluster_idea_row(db, home, idea, commit=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return draft_id
 
 
 def list_cluster_ideas(db: sqlite3.Connection, cluster_id: Optional[int] = None):
