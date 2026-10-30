@@ -233,3 +233,35 @@ The documented-command idempotence check and the Go contract test need a fresh t
 - CI mirrors: `python -m jester.cli eval` **20 cases (gate=7.0)**; `python -m jester.cli signals check` **21/21**.
 
 **Disclosures.** Verification is orchestrator-run; the free-subagent quota did not allow an independent critic, so no second-party sign-off or new critic score is claimed (the last independent score remains 8.9/10 from the 2026-10-29 cycle). One existing assertion changed by design: `test_attach_a_ledger_run` now dates its plan before the ledger run, because N6 deliberately refuses a pre-plan run as proof; the refusal has its own regression test. Deferred items are unchanged from roadmap §5.1 (batch cap, model digest, UI smoke, per-role LLM counters, DD-M1/M2/M4/M5/M6, remaining PR findings, source-scope decision). The two targeted high findings (P-H1, P-H3) are closed; **EX-G3 remains open** — rated high in the extraction review and carried as a warning in §7 — and is deferred, not silently cleared.
+
+---
+
+## 12. Third post-merge batch addendum (2026-10-30) — journal provenance and the dedup ops step
+
+**Base:** `main` at `609edbd`. **Range:** thirteen commits, `8a098c0..a72482a`, one per finding group, every group written test-first. Full scope, decisions and per-finding evidence are roadmap §5.3; the property-dedup disposition is the post-merge table in `docs/reviews/2026-10-29-dedup-clustering-classification.md`.
+
+| Group | Status | What it changed |
+|---|---|---|
+| F14 draft home (`8a098c0`) | **DONE** | cluster existence re-checked inside the transaction of the insert; a vanished home is re-found by `supporting_nuggets` overlap or the draft detaches — a draft never points at a dead theme id |
+| F1/F2/F3 before-plan timestamps (`d9d40ff`) | **DONE** | missing, unparseable, `Z`-suffixed and foreign-naive stamps all fail closed as "cannot prove it was after the plan"; the `Z` normalisation is explicit, so 3.10 and 3.11+ behave the same |
+| F8/F9 export (`0284097`) | **DONE** | the shipped bytes are hashed after `copyfile` and compared with the registry (article text too), aborting and restoring the worktree on mismatch; `published_on` is stamped once and never rewritten |
+| F11 figures (`6fb2671`) | **DONE** | every image link must be a registered figure — hotlinked and hand-drawn images fail closed; a figure is written and read where the article lives, not where its slug guesses |
+| F16/F17 console (`07db363`) | **DONE** | the sync draft route says "no cluster id given"; `promote_cluster_idea` degrades like the other readers instead of failing a save |
+| F5/F6 numbers (`e7691ac`) | **DONE** | a bare `run:` link must match a value the run recorded — the gate no longer proves only that a run exists; one unreadable proof costs one link, not the verdict |
+| F10 index/feed (`648a3cf`) | **DONE** | another journal's index entry or feed item may quote only a revision a human approved, that passed every required check, whose commit still holds those bytes |
+| DD-M5 (`b1f420e`) | **DONE** | `_fix_indexing_threshold` on open — an existing collection is brought to the threshold instead of the constant applying only at create |
+| DD-M4 (`d8037b3`) | **DONE** | the semantic layer scores the cosine of the two stored vectors; "never embedded" is `None` with a reason and routes to the stricter structured-only bar, never a phantom 0.0; `sync_property_vectors` + `--sync-vectors` is the writer the index never had; the target embeds once per check |
+| DD-M6 (`8250e8d`) | **DONE** | `reembed --recreate` gets past the width guard that blocked the only repair route for a changed embedding model; a complete, failure-free `--all` records `corpus_embedding_model` so the archivist stops refusing the archive it just fixed |
+
+**Independent review of the landed diff.** A second-party reviewer (`fbatch-reviewer`, read-only) widened the range it was asked to `0284097^..HEAD` and returned **1 HIGH, 1 MEDIUM, 2 LOW**; three are fixed as their own commits and one is logged.
+
+| Finding | Status | Evidence |
+|---|---|---|
+| HIGH — one unreadable figure destroyed the whole numbers verdict (`2489653`) | **DONE** | `lab.artifact_problem` catches the read, so a locked or folder-replaced image is one finding; the test registers two figures, replaces one path with a directory, and requires `stats["figures"] == 2` with exactly one finding |
+| MEDIUM — the export abort claimed a restore that had not happened (`a1911c8`) | **DONE** | `_abandon_export` returns the reason and the message says so; no existing test had looked at that wording, and the new one requires the mess to still be in `git status` |
+| LOW — a block backed by a non-run proved every number in it (`a72482a`) | **DONE** | `backed-by` is run ids only; the same commit fixes the capture regex, which never recognised `run:3, run:4` at all and so refused a hand-typed list as "has no proof" |
+| LOW — `_holds_those_bytes` admits three line-ending variants | **LOGGED, NOT FIXED** | `core.autocrlf` produces exactly those three; normalising before the hash would let any line-ending set pass and weaken the proof the check exists to hold |
+
+**Gate results (2026-10-30).** Full Python at the batch head: **1848 passed, 3 skipped, 13 deselected** (423.61 s). Per-group targeted runs are in roadmap §7 rows 36–43. Go and frontend gates were not re-run: the batch touches `python/` and the README only. `data/jester.db` was not opened for write and no live archive was migrated or vector-synced — running `jester property-dedup --sync-vectors` is the operator's step that turns DD-M4's semantic layer on for real data.
+
+**Disclosures.** The F1–F17 findings and the DD scoping are orchestrator-produced; the HIGH, MEDIUM and two LOWs are second-party. All verification commands were run by the orchestrator; no new critic score is claimed and none is implied by this addendum (the last independent score remains **8.9/10**). Five findings the user decided to **log rather than fix (F4, F7, F12, F13, F15)** are recorded by id only: their descriptions lived inside an earlier session's context, are not in any file, commit message or transcript on this machine (checked), and nothing was invented for them — the user must restate them to complete the known-issue register.
