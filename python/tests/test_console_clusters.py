@@ -159,6 +159,27 @@ def test_drafting_an_unknown_theme_is_refused_before_any_job(env):
     assert "no cluster" in res["error"]
 
 
+def test_the_detached_group_is_refused_server_side_not_just_in_the_ui(env):
+    """The page hides the draft button; that is not the enforcement. The API
+    itself must refuse id 0 on the request path AND as a job, with a message
+    that names why - 0 is a sentinel for "no theme cited this draft", not an
+    unknown id."""
+    path, db, cid = env
+    insert_cluster_idea(db, cid, _draft())
+    _n3_only(db)  # the draft moves to DETACHED_CLUSTER_ID
+    api = ConsoleAPI(path, str(REPO_CONFIG))
+
+    res = api.cluster_generate_idea(0)
+    assert res["ok"] is False
+    assert "detached" in res["error"]
+
+    res = api.cluster_generate_idea_async(0)
+    assert res["ok"] is False
+    assert "detached" in res["error"]
+    assert res.get("job_id") is None and res.get("job") is None, \
+        "the refusal must not have started a job"
+
+
 def test_an_incoherent_theme_reaches_the_list_and_detail(tmp_path):
     """The labeller can say the members share no subject. That verdict must
     survive the store round-trip so the page can mark it."""

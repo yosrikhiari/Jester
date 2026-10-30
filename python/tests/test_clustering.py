@@ -410,6 +410,72 @@ def test_a_draft_with_no_surviving_comments_is_detached_not_deleted(db):
     assert len(list_cluster_ideas(db, DETACHED_CLUSTER_ID)) == 1
 
 
+def test_a_tied_draft_rehomes_to_the_lowest_cluster_id(db):
+    """Equal overlap must not go to whichever candidate the loop happens to
+    reach first. Largest overlap wins; on a tie the LOWEST cluster id wins,
+    in every payload order."""
+    old = _seed_cluster(db)
+    draft_id = insert_cluster_idea(db, old, _draft(old, ["n1", "n2"]))
+    first = _cluster_payload("first", ["n1", "n3"])
+    second = _cluster_payload("second", ["n2", "n3"])
+
+    def draft_home():
+        return db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                          (draft_id,)).fetchone()[0]
+
+    replace_clusters(db, "r2", [first, second])
+    ids = {c["label"]: c["id"] for c in list_clusters(db)}
+    assert ids["first"] < ids["second"], "ids are minted in payload order"
+    assert draft_home() == min(ids.values()), "a tie follows the lowest id"
+
+    # Same tie, payloads delivered in the other order: the ids re-mint in
+    # the new order, so the LOWEST id now belongs to the other label, and
+    # the draft must follow it. The outcome is a property of the ids, not
+    # of the order the caller happened to use.
+    replace_clusters(db, "r3", [second, first])
+    ids = {c["label"]: c["id"] for c in list_clusters(db)}
+    assert ids["second"] < ids["first"], "ids are minted in payload order"
+    assert draft_home() == min(ids.values()), "a tie follows the lowest id"
+
+
+def test_rehoming_is_idempotent(db):
+    """Running the same pass twice must not shuffle a draft between themes
+    or duplicate it — re-clustering is a read-model update, not a shuffle.
+
+    Ids are re-minted every pass, so 'same result' is the assigned theme's
+    label, not the numeric id."""
+    old = _seed_cluster(db)
+    draft_id = insert_cluster_idea(db, old, _draft(old))
+    payload = [
+        _cluster_payload("only n3", ["n3"]),
+        _cluster_payload("n1 n2", ["n1", "n2"]),
+    ]
+
+    def draft_home():
+        cid = db.execute("SELECT cluster_id FROM cluster_ideas WHERE id=?",
+                         (draft_id,)).fetchone()[0]
+        row = db.execute("SELECT label FROM clusters WHERE id=?", (cid,)).fetchone()
+        return row[0] if row else None
+
+    replace_clusters(db, "r2", payload)
+    assignment = draft_home()
+    assert assignment == "n1 n2"
+    for run in ("r3", "r4"):
+        replace_clusters(db, run, payload)
+        assert draft_home() == assignment, f"run {run} moved the draft"
+    assert db.execute("SELECT COUNT(*) FROM cluster_ideas").fetchone()[0] == 1
+
+
+def test_zero_is_never_minted_as_a_real_cluster_id(db):
+    """DETACHED_CLUSTER_ID = 0 must stay collision-free across passes: the
+    AUTOINCREMENT sequence cannot hand a theme the sentinel's id."""
+    _seed_cluster(db)
+    for run in ("r2", "r3"):
+        replace_clusters(db, run, [_cluster_payload(f"p-{run}", ["n1"])])
+    ids = [r[0] for r in db.execute("SELECT id FROM clusters ORDER BY id")]
+    assert ids and 0 not in ids and min(ids) >= 1
+
+
 # ---- qdrant wiring --------------------------------------------------------
 
 

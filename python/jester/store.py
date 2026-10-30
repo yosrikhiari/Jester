@@ -880,8 +880,9 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
     group that no longer exists — and on an archive whose `clusters` table
     predates AUTOINCREMENT, an id another theme now reuses. Either way the
     draft silently vanishes from every theme's list. Each draft is re-homed to
-    the new cluster sharing the most comments with it; one that shares none
-    moves to `DETACHED_CLUSTER_ID` instead of being deleted or left orphaned.
+    the new cluster sharing the most comments with it — a tie goes to the
+    LOWEST cluster id; one that shares none moves to `DETACHED_CLUSTER_ID`
+    instead of being deleted or left orphaned.
     """
     cur = db.cursor()
     cur.row_factory = sqlite3.Row
@@ -939,7 +940,10 @@ def replace_clusters(db: sqlite3.Connection, run_id: str, payloads: list) -> int
         except (TypeError, ValueError):
             keys = set()
         best_id, best_overlap = DETACHED_CLUSTER_ID, 0
-        for cid, cluster_keys in placed:
+        # sorted() pins the walk to ascending ids, so with strict `>` a tie
+        # keeps the LOWEST cluster id — a property of the ids, not of the
+        # order `placed` happens to be in.
+        for cid, cluster_keys in sorted(placed):
             overlap = len(keys & cluster_keys)
             if overlap > best_overlap:
                 best_id, best_overlap = cid, overlap

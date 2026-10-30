@@ -104,6 +104,12 @@ _LIVE_CONFIG_DIR = "config-live"
 from jester.console.api_signals import ApiSignalsMixin, CLI
 _PLATFORMS = tuple(PLATFORM_KINDS)
 
+# The sentinel group holds drafts no theme cited; it is not a theme, so
+# nothing can be drafted FROM it. The UI hides the button; the API is the
+# enforcement, and both draft paths return this exact refusal for id 0.
+DETACHED_REFUSAL = ("cluster 0 is the detached drafts group: no theme cited "
+                    "these drafts, so nothing can be drafted from it")
+
 
 #: Knobs whose value is a closed vocabulary rather than a number. The console
 #: draws these as a <select>, so a new provider shows up in the UI the moment
@@ -1142,7 +1148,14 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         """
         from jester.jobs import start_job
 
-        cid = int(cluster_id or 0)
+        # int() without `or`: a missing/empty id must refuse, not coerce into
+        # the sentinel by truthiness.
+        try:
+            cid = int(cluster_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "no cluster id given"}
+        if cid == DETACHED_CLUSTER_ID:
+            return {"ok": False, "error": DETACHED_REFUSAL}
         if get_cluster(self.db, cid) is None:
             return {"ok": False, "error": f"no cluster {cid}"}
 
@@ -1177,6 +1190,8 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         )
         from jester.models import Idea, IdeaScores
 
+        if cluster_id == DETACHED_CLUSTER_ID:
+            return {"ok": False, "error": DETACHED_REFUSAL}
         row = get_cluster(self.db, cluster_id)
         if row is None:
             return {"ok": False, "error": f"no cluster {cluster_id}"}
