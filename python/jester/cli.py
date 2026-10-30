@@ -156,6 +156,31 @@ def _idea_vector_for(cfg, db_path):
         return None
 
 
+def _property_vector_for(cfg, db_path):
+    """The property index, in its own collection, the same way ideas and chunks
+    keep theirs: a listing vector in the nugget space would make real-estate
+    ads the nearest neighbours of insights, in both directions.
+
+    Unlike the idea store this does not degrade to None. `property-dedup` is a
+    command about vectors, so an unreachable one makes the operation
+    meaningless rather than merely deferred - the same call `reembed` makes.
+    """
+    from jester.vector import VectorStore
+
+    embed = select_embedding(cfg.thresholds)
+    qdrant_url = os.environ.get("JESTER_QDRANT_URL")
+    if qdrant_url:
+        return VectorStore.for_url(qdrant_url, embed, collection="properties__jester")
+    if db_path == ":memory:":
+        return VectorStore.in_memory(embed, collection="properties__jester")
+    base = os.path.abspath(db_path)
+    path = os.path.join(
+        os.path.dirname(base),
+        os.path.splitext(os.path.basename(base))[0] + ".properties.qdrant",
+    )
+    return VectorStore.open(path, embed, collection="properties__jester")
+
+
 def _platform_counts(meta):
     """M3.2: kept comments per platform, from the post-prefilter metadata."""
     counts = {}
@@ -1708,28 +1733,32 @@ def cmd_property_analytics(args):
 
 
 def cmd_property_dedup(args):
-    """Check cross-portal duplicates for a specific listing."""
-    from jester.agents.property_dedup import check_duplicate
-    from jester.vector import VectorStore
-    from jester.embed import select_embedding
-    from jester.config import load_config
-    import os
+    """Check cross-portal duplicates for one listing, or fill the index."""
+    from jester.agents.property_dedup import check_duplicate, sync_property_vectors
 
     cfg = load_config(args.config)
-    embed = select_embedding(cfg.thresholds)
-
-    qdrant_url = os.environ.get("JESTER_QDRANT_URL")
-    if qdrant_url:
-        vec_store = VectorStore.for_url(
-            qdrant_url, embed, collection="properties__jester"
-        )
-    else:
-        vec_store = VectorStore.open(
-            os.path.join(os.path.dirname(args.db), "jester.properties.qdrant"),
-            embed,
-        )
-
     db = open_db(args.db)
+
+    if getattr(args, "sync_vectors", False):
+        # The check reads a Qdrant collection that nothing used to write, so
+        # every pair it scored had never been compared. This is the writer.
+        vec_store = _property_vector_for(cfg, args.db)
+        out = sync_property_vectors(db, vec_store, portal=args.portal,
+                                    listing_id=args.listing_id)
+        print(f"property vectors: synced {out['synced']} of {out['scanned']} "
+              f"listing(s), {out['skipped']} with nothing to embed, "
+              f"{out['failed']} failing")
+        for err in out["errors"]:
+            print(f"  FAIL {err}")
+        if out["failed"]:
+            sys.exit(1)
+        return
+
+    if not args.portal or not args.listing_id:
+        print("property-dedup needs --portal and --listing-id, or --sync-vectors")
+        sys.exit(1)
+
+    vec_store = _property_vector_for(cfg, args.db)
     result = check_duplicate(db, vec_store, args.portal, args.listing_id)
 
     print(json.dumps(vars(result), indent=2, default=str))
@@ -4037,12 +4066,20 @@ def main(argv=None):
 
     pd = sub.add_parser(
         "property-dedup",
-        help="check cross-portal duplicates for a specific listing",
+        help="check cross-portal duplicates for a specific listing, or fill the "
+             "property vector index",
     )
     pd.add_argument("--db", default="data/jester.db")
     pd.add_argument("--config", default=DEFAULT_CONFIG_DIR)
-    pd.add_argument("--portal", required=True, help="portal name (e.g., tayara)")
-    pd.add_argument("--listing-id", required=True, help="listing ID to check")
+    pd.add_argument("--portal", default=None, help="portal name (e.g., tayara)")
+    pd.add_argument("--listing-id", default=None, help="listing ID to check")
+    pd.add_argument(
+        "--sync-vectors",
+        action="store_true",
+        help="embed every listing into the property index the check reads; "
+             "without this the semantic half of the rule has nothing to answer "
+             "from and every pair is judged on structure alone",
+    )
     pd.set_defaults(func=cmd_property_dedup)
 
     mg = sub.add_parser("migrate")

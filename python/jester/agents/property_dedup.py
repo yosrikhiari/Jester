@@ -4,9 +4,11 @@ Implements the 4-layer dedup strategy:
 1. Go-side exact (content hash + GalleryHash) - same portal
 2. Cross-portal image (MatchByPhash, dHash band-indexed, Hamming ≤12)
 3. Structured-field (price ±2%, surface ±5%, location, rooms, seller)
-4. Semantic embedding (Qdrant, threshold 0.92)
+4. Semantic embedding (Qdrant collection `properties__jester`, threshold 0.92),
+   which has to be filled by sync_property_vectors before it can answer
 
-Combined score: 0.6 * structured + 0.4 * semantic >= 0.85 → duplicate
+Combined score: 0.6 * structured + 0.4 * semantic >= 0.85 → duplicate, or the
+stricter structured-only bar when the semantic layer has no answer at all.
 """
 
 import json
@@ -14,6 +16,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
+from jester.dedup_sweep import cosine
 from jester.store import open_db
 from jester.vector import VectorStore, UnavailableVectorStore
 
@@ -47,7 +50,10 @@ class DedupResult:
     """Result of a duplicate detection check."""
     is_duplicate: bool
     structured_score: float
-    semantic_score: float
+    #: None when the semantic layer had no answer. That is a different fact
+    #: from 0.0 and is recorded differently: 0.0 means two descriptions were
+    #: compared and did not match, None means they never were.
+    semantic_score: Optional[float]
     combined_score: float
     matched_portal: Optional[str]
     matched_listing_id: Optional[str]
@@ -66,8 +72,10 @@ SURFACE_TOLERANCE_PCT = 0.05  # ±5%
 # them as zero made a duplicate unreportable twice over: the third clause of
 # is_dup can never be satisfied, and 0.6 * 1.0 = 0.6 never reaches the 0.85
 # combined threshold either. A validation run over 1000 real listings returned
-# zero duplicates for that reason alone. Rather than pretend, the check falls
-# back to a deliberately stricter structured-only bar and SAYS that it did.
+# zero duplicates for that reason alone - and the store was not down, it had
+# simply never been written, so "cannot answer" was the ordinary state of the
+# world here. Rather than pretend, the check falls back to a deliberately
+# stricter structured-only bar and SAYS that it did.
 STRUCTURED_ONLY_THRESHOLD = 0.95
 
 # ...and it must stand on more than one field. Price is the only field every
@@ -496,52 +504,77 @@ def phash_bands(phash: str) -> list[str]:
     return bands
 
 
+def listing_key(portal: str, listing_id: str) -> str:
+    """The index key one listing's vector is stored under.
+
+    The writer (sync_property_vectors) and the reader (semantic_similarity)
+    are separate functions called on separate days, and this string is the only
+    thing connecting them: if they ever disagree, the reader finds nothing,
+    every pair becomes unknown, and the index stops being used while still
+    holding every vector in it.
+    """
+    return f"{portal}/{listing_id}"
+
+
+def listing_text(rec: ListingRecord) -> str:
+    """The words a listing is embedded from.
+
+    Module level rather than the closure it was, because a caller that wants
+    the target's vector BEFORE looping over candidates could not get one.
+    """
+    parts = []
+    title = rec.payload.get("title")
+    if title:
+        parts.append(str(title))
+    desc = rec.payload.get("description")
+    if desc:
+        parts.append(str(desc)[:500])
+    if rec.city:
+        parts.append(rec.city)
+    if rec.governorate:
+        parts.append(rec.governorate)
+    prop_type = rec.payload.get("property_type")
+    if prop_type:
+        parts.append(str(prop_type))
+    return " ".join(filter(None, parts))
+
+
 def semantic_similarity(
     vec_store: VectorStore,
     a: ListingRecord,
     b: ListingRecord,
-) -> tuple[float, Optional[str]]:
-    """Compute semantic similarity using Qdrant embeddings."""
-    # Build text representation for embedding
-    def listing_text(rec: ListingRecord) -> str:
-        parts = []
-        title = rec.payload.get("title")
-        if title:
-            parts.append(str(title))
-        desc = rec.payload.get("description")
-        if desc:
-            parts.append(str(desc)[:500])
-        if rec.city:
-            parts.append(rec.city)
-        if rec.governorate:
-            parts.append(rec.governorate)
-        prop_type = rec.payload.get("property_type")
-        if prop_type:
-            parts.append(str(prop_type))
-        return " ".join(filter(None, parts))
+    a_vector=None,
+) -> tuple[Optional[float], Optional[str]]:
+    """How similar two listings read, or why that cannot be said.
 
+    Returns (score, None) with a real cosine, or (None, why) when the semantic
+    layer has no answer. Those are different facts and the caller has to be
+    able to tell them apart, because it applies a different rule to each: a
+    measured score goes into the combined formula, an unknown one goes to the
+    stricter structured-only bar and is named in the reasons.
+
+    Two things used to make this function report zero where it knew nothing.
+    It asked `search` for the five nearest points and looked for listing b
+    among them, so b was invisible when it was simply not in the index AND when
+    it was the sixth-nearest in an index of thousands - and nothing ever wrote
+    a property vector, so the first case was the only case there ever was. The
+    score now comes from the two vectors themselves, which is the comparison
+    the layer always claimed to make, and an absent vector is reported as
+    absent.
+    """
+    text = listing_text(a)
+    if not text:
+        return None, f"{listing_key(a.portal, a.listing_id)} has no text to embed"
     try:
-        # Two things were wrong here, and the `except` below hid both: the
-        # call was `search(text, top_k=10)`, but VectorStore.search takes
-        # (text, threshold) and has no top_k, so every call raised TypeError
-        # and this function returned 0.0 with the message tucked into its
-        # second return value that nobody reads. And the results are Qdrant
-        # ScoredPoint objects, so `.get("payload")` would have failed next.
-        #
-        # Threshold 0.0 rather than a cut: the caller wants the score for one
-        # specific listing, and discarding the neighbours that scored low is
-        # exactly how a genuine "these are not duplicates" answer becomes an
-        # indistinguishable 0.0.
-        results = vec_store.search(listing_text(a), 0.0)
-        for point in results:
-            # Check if this result corresponds to listing b
-            payload = getattr(point, "payload", None) or {}
-            if (payload.get("portal") == b.portal and
-                    payload.get("listing_id") == b.listing_id):
-                return float(getattr(point, "score", 0.0) or 0.0), None
-        return 0.0, None
-    except Exception as e:
-        return 0.0, str(e)
+        if a_vector is None:
+            a_vector = vec_store.embed_text(text)
+        b_vector = vec_store.vector_for(listing_key(b.portal, b.listing_id))
+        if b_vector is None:
+            return None, (f"{listing_key(b.portal, b.listing_id)} has no vector in the "
+                          "index; run `jester property-dedup --sync-vectors`")
+        return cosine(a_vector, b_vector), None
+    except Exception as exc:  # noqa: BLE001 - a store that cannot answer says why
+        return None, str(exc)
 
 
 def check_duplicate(
@@ -583,6 +616,15 @@ def check_duplicate(
         reasons=["no candidates found"],
     )
 
+    # The target's vector, made once for the whole check. Every candidate is
+    # compared against this same listing, so embedding it per candidate sent
+    # the identical text to the backend once per candidate.
+    target_text = listing_text(target)
+    try:
+        target_vector = vec_store.embed_text(target_text) if target_text else None
+    except Exception:  # noqa: BLE001 - semantic_similarity reports the failure per pair
+        target_vector = None
+
     for cand_portal, cand_listing_id in candidates:
         candidate = load_listing_from_obs(db, cand_portal, cand_listing_id)
         if not candidate:
@@ -592,15 +634,17 @@ def check_duplicate(
         struct_score, struct_reasons, struct_evidence = structured_similarity_detailed(target, candidate)
 
         # Semantic similarity
-        sem_score, sem_error = semantic_similarity(vec_store, target, candidate)
-        if sem_error:
-            sem_score = 0.0
+        sem_score, sem_why = semantic_similarity(vec_store, target, candidate,
+                                                 a_vector=target_vector)
+        sem_known = sem_score is not None
 
-        # Combined score
-        combined = STRUCTURED_WEIGHT * struct_score + SEMANTIC_WEIGHT * sem_score
+        # Combined score. An unknown semantic half contributes nothing rather
+        # than a zero, and the rule applied below is not the combined one.
+        combined = STRUCTURED_WEIGHT * struct_score + (
+            SEMANTIC_WEIGHT * sem_score if sem_known else 0.0)
 
         reasons = struct_reasons[:]
-        if sem_error:
+        if not sem_known:
             # Semantics are UNKNOWN here, not zero, and the combined rule
             # cannot be applied to a score that was never measured. The
             # structured-only bar is deliberately higher than the combined one
@@ -610,7 +654,7 @@ def check_duplicate(
                 and struct_evidence >= STRUCTURED_ONLY_MIN_EVIDENCE
             )
             reasons.append(
-                "semantic unavailable; structured-only rule, score "
+                f"semantic unknown ({sem_why}); structured-only rule, score "
                 f"{struct_score:.3f} vs {STRUCTURED_ONLY_THRESHOLD}, evidence "
                 f"{struct_evidence:.1f} vs {STRUCTURED_ONLY_MIN_EVIDENCE}"
             )
@@ -620,8 +664,11 @@ def check_duplicate(
                 and struct_score > 0
                 and sem_score >= SEMANTIC_THRESHOLD
             )
-            if sem_score > 0:
-                reasons.append(f"semantic score: {sem_score:.3f}")
+            # Always said when the layer answered, including when it answered
+            # zero. The `> 0` that used to gate this line existed to hide the
+            # phantom zero of a store that had never been asked; a measured
+            # disagreement is a finding and printing it is the point.
+            reasons.append(f"semantic score: {sem_score:.3f}")
             reasons.append(f"combined: {combined:.3f} (threshold {COMBINED_THRESHOLD})")
 
         if is_dup and combined > best_result.combined_score:
@@ -646,6 +693,104 @@ def check_duplicate(
             )
 
     return best_result
+
+
+#: Listings per batch write. Same size `reembed` uses: one embed call and one
+#: round trip per chunk, small enough that a chunk which has to be retried row
+#: by row loses little.
+SYNC_CHUNK = 64
+
+#: How many failure messages a sync carries back. The counts are the fact; the
+#: messages are for whoever has to explain one of them.
+SYNC_ERROR_SAMPLES = 5
+
+
+def _listing_rows(db, portal=None, listing_id=None):
+    """Every listing the archive holds, or the one named.
+
+    DISTINCT rather than every observation: a listing is re-observed on each
+    pass, so the raw table would write thirty points for a listing seen thirty
+    times and the reader would answer with the same property over and over.
+    """
+    has_table = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='listing_observation'"
+    ).fetchone()
+    if not has_table:
+        # The listing tables belong to the Go collector. A database that never
+        # ran it has nothing to sync, which is a reportable count and not a
+        # crash in the middle of a treat.
+        return []
+    sql = "SELECT DISTINCT portal, listing_id FROM listing_observation"
+    where, args = [], []
+    if portal:
+        where.append("portal = ?")
+        args.append(portal)
+    if listing_id:
+        where.append("listing_id = ?")
+        args.append(listing_id)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return db.execute(sql + " ORDER BY portal, listing_id", args).fetchall()
+
+
+def _write_chunk(vec_store, items, out) -> None:
+    """One batch write, with the per-item fallback `reembed` established.
+
+    `upsert_many` raises for the whole chunk on ANY failure, which would lose
+    every listing in it to one bad row; the retry sends them singly so the
+    failure that survives is the one that is real.
+    """
+    try:
+        vec_store.upsert_many(items)
+        out["synced"] += len(items)
+        return
+    except Exception:  # noqa: BLE001 - the chunk is retried row by row below
+        pass
+    for key, text, payload in items:
+        try:
+            vec_store.upsert(key, text, payload)
+            out["synced"] += 1
+        except Exception as exc:  # noqa: BLE001 - counted; the rest still syncs
+            out["failed"] += 1
+            if len(out["errors"]) < SYNC_ERROR_SAMPLES:
+                out["errors"].append(f"{key}: {exc}")
+
+
+def sync_property_vectors(db, vec_store, portal=None, listing_id=None) -> dict:
+    """Write one vector per listing into the property index (DD-M4).
+
+    `semantic_similarity` has always read this collection and nothing in the
+    codebase ever wrote it. The archivist embeds nuggets, the clustering pass
+    embeds chunks, and `properties__jester` stayed empty in every deployment,
+    which the reader reported back as 0.0 - "these two listings are not
+    similar" - for every pair ever checked.
+
+    Returns counts rather than raising, because a Qdrant that will not take a
+    write is a fact the caller reports and works around, not a traceback in the
+    middle of a run. A listing with nothing to embed is skipped: an empty text
+    carries no meaning to compare, and a point made of it sits near every other
+    point made of nothing.
+    """
+    out = {"scanned": 0, "synced": 0, "skipped": 0, "failed": 0, "errors": []}
+    items = []
+    for row in _listing_rows(db, portal, listing_id):
+        rec = load_listing_from_obs(db, row[0], row[1])
+        if rec is None:
+            continue
+        out["scanned"] += 1
+        text = listing_text(rec)
+        if not text:
+            out["skipped"] += 1
+            continue
+        items.append((listing_key(rec.portal, rec.listing_id), text, {
+            "portal": rec.portal, "listing_id": rec.listing_id,
+            "price": rec.price, "currency": rec.currency, "city": rec.city}))
+        if len(items) >= SYNC_CHUNK:
+            _write_chunk(vec_store, items, out)
+            items = []
+    if items:
+        _write_chunk(vec_store, items, out)
+    return out
 
 
 def validate_dedup_on_overlap(db: sqlite3.Connection, vec_store: VectorStore) -> dict:
@@ -675,7 +820,8 @@ def validate_dedup_on_overlap(db: sqlite3.Connection, vec_store: VectorStore) ->
                 "source": f"{portal}/{listing_id}",
                 "match": f"{result.matched_portal}/{result.matched_listing_id}",
                 "structured_score": round(result.structured_score, 3),
-                "semantic_score": round(result.semantic_score, 3),
+                "semantic_score": (round(result.semantic_score, 3)
+                                   if result.semantic_score is not None else None),
                 "combined_score": round(result.combined_score, 3),
                 "reasons": result.reasons,
             })
@@ -704,9 +850,13 @@ if __name__ == "__main__":
             qdrant_url, embed, collection="properties__jester"
         )
     else:
+        # The same collection the command reads. This path used to open the
+        # default `nuggets` store, so the validation harness compared property
+        # texts against a nugget space and called the result a semantic score.
         vec_store = VectorStore.open(
             os.path.join(os.path.dirname(db_path), "jester.properties.qdrant"),
             embed,
+            collection="properties__jester",
         )
 
     print("Running dedup validation...")

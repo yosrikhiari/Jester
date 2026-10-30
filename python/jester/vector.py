@@ -128,6 +128,12 @@ class UnavailableVectorStore:
     def search_scored_many(self, texts, limit: int = 5):
         raise self._exc
 
+    def embed_text(self, text: str):
+        raise self._exc
+
+    def vector_for(self, unique_key: str):
+        raise self._exc
+
     def count(self) -> int:
         raise self._exc
 
@@ -286,11 +292,43 @@ class VectorStore:
         return len(items)
 
     def search(self, text: str, threshold: float):
-        vec = self.embed.embed([text])[0]
+        vec = self.embed_text(text)
         resp = self.client.query_points(
             self.collection, query=vec, limit=5, score_threshold=threshold
         )
         return resp.points
+
+    def embed_text(self, text: str):
+        """The vector one text becomes under this store's embedder.
+
+        Exposed so a caller comparing many texts against ONE of them can embed
+        it once. Property dedup compared a target listing against every
+        candidate and re-embedded the target on each pass: n candidates, n
+        calls to the embedding backend, all returning the same numbers.
+        """
+        return self.embed.embed([text])[0]
+
+    def vector_for(self, unique_key: str):
+        """The vector a keyed document was stored with, or None if it holds
+        none (DD-M4).
+
+        This is the question a neighbour search cannot answer. `search` returns
+        the points that exist and are near; a listing that was never embedded
+        simply does not appear, which is indistinguishable from a listing that
+        is in the index and far away. Property dedup read that silence as a
+        measured score of 0.0 - "these two listings are not similar" - while
+        the index was empty, which is every index until something writes it.
+        """
+        points = _with_retry(
+            lambda: self.client.retrieve(
+                self.collection, ids=[point_id_for(unique_key)], with_vectors=True)
+        )
+        if not points:
+            return None
+        vector = points[0].vector
+        if isinstance(vector, dict):  # a named-vectors collection
+            return None
+        return list(vector) if vector is not None else None
 
     def search_scored(self, text: str, limit: int = 5):
         """Scored neighbors WITHOUT a threshold cut (§37.13): callers classify
