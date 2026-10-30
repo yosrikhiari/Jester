@@ -449,6 +449,46 @@ def test_figure_is_registered_and_checked(db, jid, tmp_path):
     assert "not made from runs" in other.findings[0]["message"]
 
 
+def test_a_figure_lives_where_the_article_lives(db, tmp_path):
+    """F11: `figures/x.svg` is relative to the article, so the file journal
+    figure draws has to be written and registered there — not in a folder
+    named after the slug. The two are the same for `<slug>/index.md`, and
+    silently stop being the same the moment an article lives elsewhere."""
+    jid = J.create_journal(db, "Field notes", slug="notes",
+                           path="2026/notes/index.md")["id"]
+    e = L.plan(db, jid)
+    r = J.add_run(db, e, raw_path="r", result={"v": 1.5})
+    made = L.figure(db, tmp_path, "notes", [r], "v", "spread")
+    assert made["path"] == tmp_path / "2026" / "notes" / "figures" / "spread.svg"
+    out = C.check_numbers(db, tmp_path, jid, "# R\n\n![spread](figures/spread.svg)\n")
+    assert out.ok, out.findings
+
+
+def test_a_figure_with_no_recorded_path_falls_back_to_the_slug(db, tmp_path):
+    """An article never saved to a file still cites its own figures: the
+    fallback is the journal's own folder, which is where the slug puts them."""
+    jid = J.create_journal(db, "No file yet", slug="bare")["id"]
+    e = L.plan(db, jid)
+    r = J.add_run(db, e, raw_path="r", result={"v": 1.5})
+    made = L.figure(db, tmp_path, "bare", [r], "v", "spread")
+    assert made["path"] == tmp_path / "bare" / "figures" / "spread.svg"
+    assert C.check_numbers(db, tmp_path, jid, "# R\n\n![spread](figures/spread.svg)\n").ok
+
+
+@pytest.mark.parametrize("target", [
+    "https://elsewhere.example/chart.png",
+    "../shared/chart.svg",
+    "img/chart.png",
+])
+def test_every_image_link_must_be_a_registered_figure(db, jid, tmp_path, target):
+    """F11: the check only ever looked at links under `figures/`, so a
+    hotlinked chart or a hand-drawn one anywhere else reached the page with
+    no proof at all. Anything shown must be a figure Jester drew from runs."""
+    out = C.check_numbers(db, tmp_path, jid, f"# R\n\n![chart]({target})\n")
+    assert not out.ok, f"{target} passed as a figure"
+    assert "journal figure" in out.findings[0]["message"]
+
+
 def test_figure_refuses_bad_input(db, jid, tmp_path):
     a, _ = _two_runs(db, jid)
     with pytest.raises(J.JournalError, match="no number at 'name'"):

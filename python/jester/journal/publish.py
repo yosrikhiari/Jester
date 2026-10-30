@@ -359,6 +359,7 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
            base_url: str = DEFAULT_BASE_URL, at: Optional[str] = None) -> Dict:
     """Write the article into a site worktree and commit it there."""
     from jester.journal import files as F
+    from jester.journal import lab as L
 
     j = J.get(db, slug)
     problems = ready_to_export(db, root, j)
@@ -369,8 +370,10 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
         J.update_brief(db, slug, canonical_url=url)
         j = J.get(db, slug)
     md = (Path(root) / j["path"]).read_text(encoding="utf-8")
-    article_dir = Path(root) / Path(j["path"]).parent
-    article_rel = Path(j["path"]).parent.as_posix()
+    # Where this journal's own files live: the same answer the figure check
+    # and `journal figure` give, so the three cannot disagree about a path.
+    article_rel = L.article_dir_of(db, j["id"])
+    article_dir = Path(root) / article_rel
     rev = J.latest_revision(db, j["id"])
     # The approved hash was checked a few statements ago (inside
     # ready_to_export); this read is a different one. A file that changed in
@@ -383,14 +386,12 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
     # check accepted at `journal check` time can be edited afterwards, and the
     # export is the moment it would leave the machine. A missing or
     # unregistered image fails the same way as one edited by hand.
-    from jester.journal import lab as L
-
     figures = []
     for b in T.prose_blocks(md):
         for ln in T.links(b.text):
-            if ln.image and ln.target.startswith("figures/") and ln.target not in figures:
+            if ln.image and ln.target not in figures:
                 figures.append(ln.target)
-    figure_problems = [p for p in (L.artifact_problem(db, root, j["id"], article_rel, t)
+    figure_problems = [p for p in (L.artifact_problem(db, root, j["id"], t, article_rel)
                                    for t in figures) if p]
     if figure_problems:
         raise J.JournalError("cannot export: " + "; ".join(figure_problems))
@@ -430,7 +431,7 @@ def export(db: sqlite3.Connection, root: Path, slug: str, site_repo: Path,
                                     "verified for export; the page kept the "
                                     "approved text")
         for target in copied:
-            reg = L.artifact_sha(db, j["id"], article_rel, target)
+            reg = L.artifact_sha(db, j["id"], target, article_rel)
             if reg is None:
                 shipped_problems.append(f"{target}: no registered figure to verify against")
             elif F.content_sha256(out_dir / target) != reg:

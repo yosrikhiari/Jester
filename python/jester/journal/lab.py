@@ -478,7 +478,9 @@ def figure(db: sqlite3.Connection, root: Path, slug: str, run_ids: Sequence[int]
     safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name).strip("-")
     if not safe:
         raise J.JournalError("give the figure a name (letters, digits, - or _)")
-    rel = f"{slug}/figures/{safe}.svg"
+    # Written where the article can reach it with a relative link, which is
+    # the article's own folder — not a folder named after the slug.
+    rel = (Path(article_dir_of(db, j["id"])) / "figures" / f"{safe}.svg").as_posix()
     path = Path(root) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     svg = _svg_bars(labels, values, caption or key, unit).encode("utf-8")
@@ -497,6 +499,24 @@ def artifacts(db: sqlite3.Connection, journal_id: int) -> List[sqlite3.Row]:
     return db.execute("SELECT * FROM artifact WHERE journal_id = ? ORDER BY id", (journal_id,)).fetchall()
 
 
+def article_dir_of(db: sqlite3.Connection, journal_id: int) -> str:
+    """The folder this journal's files live in, relative to the root.
+
+    It is the article's own folder because a figure link is relative to the
+    article: `figures/x.svg` next to `2026/notes/index.md` means
+    `2026/notes/figures/x.svg`. An article never saved to a file falls back
+    to the slug folder, which is where `journal new` puts it. Drawing,
+    checking and exporting all ask here, so they cannot disagree about where
+    a journal's own figures are.
+    """
+    row = db.execute("SELECT path, slug FROM journal WHERE id = ?", (journal_id,)).fetchone()
+    if row is None:
+        return ""
+    if not (row["path"] or "").strip():
+        return row["slug"]
+    return Path(row["path"]).parent.as_posix()
+
+
 def _artifact_row(db: sqlite3.Connection, journal_id: int, article_dir: str,
                   target: str) -> Optional[sqlite3.Row]:
     rel = (Path(article_dir) / target).as_posix()
@@ -504,16 +524,28 @@ def _artifact_row(db: sqlite3.Connection, journal_id: int, article_dir: str,
                       (journal_id, rel)).fetchone()
 
 
-def artifact_sha(db: sqlite3.Connection, journal_id: int, article_dir: str,
-                 target: str) -> Optional[str]:
+def artifact_sha(db: sqlite3.Connection, journal_id: int, target: str,
+                 article_dir: Optional[str] = None) -> Optional[str]:
     """The registered sha256 of a figure, or None when nothing is registered."""
+    if article_dir is None:
+        article_dir = article_dir_of(db, journal_id)
     row = _artifact_row(db, journal_id, article_dir, target)
     return row["sha256"] if row is not None else None
 
 
-def artifact_problem(db: sqlite3.Connection, root: Path, journal_id: int, article_dir: str,
-                     target: str) -> Optional[str]:
-    """None if a figure the article shows is one Jester made from runs, as made."""
+def artifact_problem(db: sqlite3.Connection, root: Path, journal_id: int, target: str,
+                     article_dir: Optional[str] = None) -> Optional[str]:
+    """None if a figure the article shows is one Jester made from runs, as made.
+
+    Every image is asked this, wherever its link points: a chart hotlinked
+    from someone else's server, or hand-drawn into another folder, is not
+    evidence of anything the author ran.
+    """
+    if target.startswith(("http://", "https://", "//")):
+        return (f"{target} is hotlinked from someone else's server; show a "
+                "journal figure drew from your runs instead")
+    if article_dir is None:
+        article_dir = article_dir_of(db, journal_id)
     row = _artifact_row(db, journal_id, article_dir, target)
     if row is None:
         return f"{target} was not made from runs (journal figure)"

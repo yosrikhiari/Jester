@@ -10,10 +10,11 @@
                  [4 hours](obs:labelling)  your own observation
                or sits in a block marked `<!-- backed-by: run:12,run:13 -->`,
                where every number must be a value those runs recorded (what
-               `journal table` writes). A figure under `figures/` must be
-               one `journal figure` drew, unedited.
-               A name or version (`RTX 4060`, `Python 3.12`) goes in
-               backticks, which says "this is not a measurement"
+               `journal table` writes). A name or version (`RTX 4060`,
+               `Python 3.12`) goes in backticks, which says "this is not a
+               measurement". And every image in the article, wherever its
+               link points, must be a figure `journal figure` drew from runs
+               and nobody edited afterwards.
     lint       the article does not read like generated text, and its
                title is not clickbait
     origin     no paragraph a tool wrote speaks in the first person, gives
@@ -293,14 +294,13 @@ def _shown_matches(token: str, values: List[float]) -> bool:
 def _check_figures(db, root, journal_id: int, block: T.Block, out: Outcome) -> None:
     from jester.journal import lab as X
 
-    row = db.execute("SELECT path FROM journal WHERE id = ?", (journal_id,)).fetchone()
-    article_dir = Path(row["path"]).parent.as_posix() if row and row["path"] else ""
     for ln in T.links(block.text):
-        if ln.image and ln.target.startswith("figures/"):
-            out.stats["figures"] += 1
-            problem = X.artifact_problem(db, root, journal_id, article_dir, ln.target)
-            if problem:
-                out.fail(block.line_at(ln.start), problem)
+        if not ln.image:
+            continue
+        out.stats["figures"] += 1
+        problem = X.artifact_problem(db, root, journal_id, ln.target)
+        if problem:
+            out.fail(block.line_at(ln.start), problem)
 
 
 def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) -> Outcome:
