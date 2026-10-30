@@ -489,8 +489,12 @@ class Handler(BaseHTTPRequestHandler):
                 run_id=body.get("run_id") or "console-cluster",
             ),
             # Draft an idea from one theme. Lands in cluster_ideas, NOT ideas.
+            # The raw body value goes to the API: `or 0` here would turn a
+            # request that named no theme into a request for the detached
+            # group, and the operator would be told about a group they never
+            # mentioned.
             "/api/cluster/idea": lambda: api.cluster_generate_idea(
-                int(body.get("cluster_id") or 0)
+                body.get("cluster_id")
             ),
             # The same draft as a background job, so the page can show its
             # stages instead of a dead button for half a minute.

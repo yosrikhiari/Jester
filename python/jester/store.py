@@ -1104,7 +1104,16 @@ def promote_cluster_idea(db: sqlite3.Connection, draft_id: int) -> dict:
             "error": f"already saved as idea #{row['promoted_idea_id']}",
             "idea_id": row["promoted_idea_id"],
         }
-    keys = json.loads(row["supporting_nuggets"] or "[]")
+    # A draft whose supporting_nuggets cell is not readable JSON degrades to
+    # "no provenance on record" — the way every other reader of this column
+    # does. The draft is somebody's work; a corrupt string must not cost them
+    # the save, and the draft row keeps its own bytes so nothing is lost.
+    try:
+        keys = json.loads(row["supporting_nuggets"] or "[]")
+    except (TypeError, ValueError):
+        keys = []
+    if not isinstance(keys, list):
+        keys = []
     platforms = sorted({
         (r["platform"] or "")
         for r in db.execute(
@@ -1128,7 +1137,7 @@ def promote_cluster_idea(db: sqlite3.Connection, draft_id: int) -> dict:
         """,
         (
             row["title"], row["problem_statement"], row["proposed_solution"],
-            row["supporting_nuggets"], int(threads or 0), json.dumps(platforms),
+            json.dumps(keys), int(threads or 0), json.dumps(platforms),
             row["demand_signal"], row["feasibility"], row["competition"],
             row["overall"], row["synthesis_model"] or "",
             f"cluster-{row['cluster_id']}", _now(),

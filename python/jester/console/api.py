@@ -1191,11 +1191,18 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         )
         from jester.models import Idea, IdeaScores
 
-        if cluster_id == DETACHED_CLUSTER_ID:
+        # Same refusal as the job route: an id that is not a number is a
+        # request that named no theme, and `int(x) or 0` would answer it
+        # with a message about the detached group instead.
+        try:
+            cid = int(cluster_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "no cluster id given"}
+        if cid == DETACHED_CLUSTER_ID:
             return {"ok": False, "error": DETACHED_REFUSAL}
-        row = get_cluster(self.db, cluster_id)
+        row = get_cluster(self.db, cid)
         if row is None:
-            return {"ok": False, "error": f"no cluster {cluster_id}"}
+            return {"ok": False, "error": f"no cluster {cid}"}
         try:
             keys = json.loads(row["nugget_keys"] or "[]")
         except (TypeError, ValueError):
@@ -1250,7 +1257,7 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         # started, but a concurrent re-cluster can delete it while the
         # synthesizer and the critic keep this request busy. Never write a
         # dead id into cluster_ideas.
-        draft_id = insert_cluster_idea_for_theme(self.db, cluster_id, idea)
+        draft_id = insert_cluster_idea_for_theme(self.db, cid, idea)
         return {
             "ok": True,
             "draft_id": draft_id,

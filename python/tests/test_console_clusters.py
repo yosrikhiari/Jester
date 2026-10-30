@@ -239,6 +239,39 @@ def test_the_detached_group_is_refused_server_side_not_just_in_the_ui(env):
         "the refusal must not have started a job"
 
 
+def test_the_sync_draft_route_refuses_a_missing_id_the_same_way(env):
+    """F16: the job route says "no cluster id given" when the id is absent or
+    not a number; the synchronous one took `int(body.get(...) or 0)` and so
+    answered with the detached-group refusal — a message about a group the
+    operator never mentioned, for a request that mentioned nothing."""
+    path, db, cid = env
+    api = ConsoleAPI(path, str(REPO_CONFIG))
+
+    for missing in (None, "", "  ", "abc", {}):
+        res = api.cluster_generate_idea(missing)
+        assert res["ok"] is False, missing
+        assert res["error"] == "no cluster id given", missing
+        assert api.cluster_generate_idea_async(missing)["error"] == "no cluster id given"
+
+
+def test_promoting_a_draft_with_an_unreadable_nugget_list_still_saves_it(env):
+    """F17: every other reader degrades a corrupt supporting_nuggets to an
+    empty list; this one raised, so the save button answered with a crash
+    instead of the idea. The draft keeps its own bytes — nothing is lost by
+    reading the provenance as unknown."""
+    path, db, cid = env
+    draft = insert_cluster_idea(db, cid, _draft())
+    db.execute("UPDATE cluster_ideas SET supporting_nuggets='not json' WHERE id=?",
+               (draft,))
+    db.commit()
+
+    out = ConsoleAPI(path, str(REPO_CONFIG)).cluster_save_idea(draft)
+    assert out["ok"] is True, out
+    saved = db.execute("SELECT * FROM ideas WHERE id=?", (out["idea_id"],)).fetchone()
+    assert json.loads(saved["supporting_nuggets"]) == []
+    assert saved["source_threads"] == 0 and json.loads(saved["source_platforms"]) == []
+
+
 def test_an_incoherent_theme_reaches_the_list_and_detail(tmp_path):
     """The labeller can say the members share no subject. That verdict must
     survive the store round-trip so the page can mark it."""
