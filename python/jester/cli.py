@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -1663,7 +1664,22 @@ def cmd_notify(args):
 
 def evaluate_smoke(db):
     """M1.6 gates over an open connection: completed run summary WITH duration,
-    and at least one non-trivial pain-point nugget (§7.2 bar via R37 tags)."""
+    at least one non-trivial nugget (§7.2 bar via R37 tags), and at least one
+    SCORED idea whose citations all resolve.
+
+    The nugget gate is category-blind on purpose. M1.6 asks for "≥1
+    non-trivial nugget per the §7.2 bar"; an earlier version also required
+    `category='pain_point'`, which made the verdict depend on the extractor's
+    judgment rather than on the bar: the canned smoke fixture is a pain point
+    under the deterministic stand-in and a `complaint` under a real model, so
+    the same command passed or failed depending on whether Ollama happened to
+    be running. The triviality tag is the bar; the category is an opinion.
+
+    The third gate is what makes the smoke end-to-end rather than
+    end-of-extraction. A run that archives nuggets and stops has not shown the
+    pipeline's output; and an idea naming a nugget that is not in the table is
+    a broken citation whether or not anyone has noticed yet.
+    """
     failures = []
     runs = get_runs(db, limit=1)
     if not runs or runs[0]["status"] != "completed":
@@ -1671,11 +1687,85 @@ def evaluate_smoke(db):
     elif runs[0]["duration_actual_s"] is None:
         failures.append("run summary lacks expected-vs-actual duration fields")
     nontrivial = db.execute(
-        "SELECT COUNT(*) FROM nuggets WHERE trivial=0 AND category='pain_point'"
+        "SELECT COUNT(*) FROM nuggets WHERE trivial=0"
     ).fetchone()[0]
     if nontrivial < 1:
         failures.append("fewer than 1 non-trivial nugget (§7.2 bar)")
+    failures.extend(_idea_linkage_failures(db))
     return failures
+
+
+def _idea_linkage_failures(db):
+    """Every scored idea cites at least one nugget, and every cited key exists.
+
+    Scoped to `needs_score=0` and a non-NULL `overall`: an idea flagged for
+    re-scoring is the honest "the critic was asked and did not answer" row,
+    and it is not claiming to be finished.
+    """
+    rows = db.execute(
+        "SELECT id, supporting_nuggets FROM ideas"
+        " WHERE needs_score=0 AND overall IS NOT NULL ORDER BY id"
+    ).fetchall()
+    if not rows:
+        return ["no scored idea recorded (needs_score=0 with an overall score)"]
+    failures = []
+    for idea_id, raw in rows:
+        try:
+            keys = json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            failures.append(f"idea #{idea_id} has unreadable supporting_nuggets")
+            continue
+        if not isinstance(keys, list) or not keys:
+            failures.append(f"idea #{idea_id} cites no nugget")
+            continue
+        missing = [
+            key
+            for key in keys
+            if db.execute(
+                "SELECT 1 FROM nuggets WHERE unique_key=?", (key,)
+            ).fetchone() is None
+        ]
+        if missing:
+            failures.append(
+                f"idea #{idea_id} cites nugget(s) not in the archive: "
+                + ", ".join(str(k) for k in missing)
+            )
+    return failures
+
+
+#: Roles the smoke pins to the deterministic stand-ins. The pipeline run calls
+#: the first four; the embedding role decides the vector width, so it is pinned
+#: too and the store the smoke writes cannot disagree with the one it opens.
+_SMOKE_ROLES = ("extractor", "synthesizer", "critic", "labeller", "embedding")
+
+
+def _smoke_store_paths(db_path: str):
+    """The disposable files that belong to one smoke database.
+
+    The vector stores are per-database and land beside it (see `_vector_for`
+    and `_idea_vector_for`), so "the database" is really three paths.
+    """
+    base = os.path.abspath(db_path)
+    stem = os.path.splitext(base)[0]
+    return [base, stem + ".qdrant", stem + ".ideas.qdrant"]
+
+
+def _reset_smoke_store(db_path: str) -> None:
+    """Remove a previous smoke archive before reusing its fixed path.
+
+    Deleting the .db alone left the two derived stores behind, and synthesis
+    then merged into an idea the fresh database did not have: the run printed
+    "merged into idea #1" and the gates failed with "no scored idea". Best
+    effort on purpose — a locked store must not turn the check into a crash.
+    """
+    for path in _smoke_store_paths(db_path):
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
 
 
 def cmd_smoke(args):
@@ -1685,16 +1775,39 @@ def cmd_smoke(args):
             "smoke --live requires the external stack (CloakBrowser/Qdrant/Ollama, §4); deferred"
         )
         sys.exit(1)
-    db_path = args.db or os.path.join(tempfile.gettempdir(), "jester-smoke.db")
+    if args.db:
+        db_path = args.db
+    else:
+        db_path = os.path.join(tempfile.gettempdir(), "jester-smoke.db")
+        _reset_smoke_store(db_path)
     run_id = f"smoke-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+    # The smoke answers one question: does the pipeline work? It must not also
+    # be a connectivity probe. Left to the ambient environment, the verdict
+    # moved with it — the same fixture is a `complaint` under qwen3 and a
+    # pain_point under the stand-in, and a stale JESTER_QDRANT_URL deferred
+    # every nugget and ended as "no scored idea". So every role and the vector
+    # backend are pinned for the duration of the run, and restored after.
+    # `--live` remains the form that reaches the real stack.
+    pinned = {f"JESTER_ROLE_{role.upper()}": "fake" for role in _SMOKE_ROLES}
+    pinned["JESTER_QDRANT_URL"] = ""
+    saved = {key: os.environ.get(key) for key in pinned}
     print(f"[smoke] mock pipeline -> {db_path}")
-    cmd_run(argparse.Namespace(config=args.config, db=db_path, run=run_id))
-    failures = evaluate_smoke(open_db(db_path))
+    os.environ.update(pinned)
+    try:
+        cmd_run(argparse.Namespace(config=args.config, db=db_path, run=run_id))
+        failures = evaluate_smoke(open_db(db_path))
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     if failures:
         for f in failures:
             print(f"SMOKE FAIL: {f}")
         sys.exit(1)
-    print("SMOKE PASS: run summary recorded with duration; >=1 non-trivial nugget")
+    print("SMOKE PASS: run summary with duration; >=1 non-trivial nugget; "
+          "scored idea(s) cite nuggets that exist")
 
 
 def cmd_property_alerts(args):

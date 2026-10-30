@@ -179,6 +179,8 @@ Then open the operator console at **http://localhost:8619**.
 
 The default stack runs in **mock mode** (`JESTER_MOCK=1`): the whole pipeline works offline against fixture data.
 
+The longer version — the native install, the deterministic signal export, and the `jester smoke` gates: **[docs/quickstart.md](docs/quickstart.md)**.
+
 ### Profiles
 
 ```bash
@@ -200,7 +202,7 @@ Set provider keys in `.env` (documented in `.env.example`).
 | `clickhouse` | 8123 | *(signals profile)* Problem-signal archive, HTTP interface only |
 | `frontend` | 5173 | *(scaffold)* React/Vite shell — see the note below |
 
-> **On the React frontend.** `frontend/` is a Vite + React 19 scaffold, not the product's UI. The console that ships and is screenshotted above is served by Python at `:8619` and written in vanilla JS with no build step, so the UI travels with the package. The scaffold is kept for a future port and is not where the work is.
+> **On the React frontend.** `frontend/` is a Vite + React 19 scaffold, not the product's UI. The console that ships and is screenshotted above is served by Python at `:8619` and written in vanilla JS with no build step, so the UI travels with the package. The scaffold is kept for a future port and is not where the work is. The decision and its alternatives: [docs/adr/0001-frontend-strategy.md](docs/adr/0001-frontend-strategy.md).
 
 ## Configuration
 
@@ -210,6 +212,8 @@ All tuning lives in `config/`:
 - **`thresholds.yaml`** — the model jobs (`roles:` and `providers:`, see [Model jobs](#model-jobs)), scraping depth per platform, dedup cosine threshold, prefilter rules
 - **`scraper.yaml`** — browser stealth settings, request delays, proxy configuration
 - **`signal_rules.yaml`** — the problem-signal rule set: scope, search phrases, scoring families and thresholds
+
+Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — how a model change moves between `config/` and `config-live/`, and how to prove it did only what you meant; **[docs/data-retention.md](docs/data-retention.md)** — what the TTL sweep removes, what it leaves, and how it pairs with `jester backup`.
 
 ## Project Structure
 

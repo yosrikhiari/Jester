@@ -107,6 +107,17 @@ jobs:
       - name: eval gate
         run: python -m jester.cli eval
 
+      # The quickstart's one command, as docs/quickstart.md writes it, on a
+      # machine with no keys, no Ollama and no Qdrant. It is not redundant with
+      # the suite: the tests construct their own fixtures, while this runs the
+      # shipped entry point over the shipped config and asserts the pipeline's
+      # three gates (run summary with duration, a non-trivial nugget, a scored
+      # idea whose citations exist). `smoke` pins the deterministic stand-ins
+      # and the local vector store itself, so a green result here is about the
+      # code rather than about the runner.
+      - name: Smoke run, as the quickstart writes it
+        run: bash scripts/smoke.sh
+
       # --cov-report=xml because that is what the scanner reads. Without a
       # report the gate does not read "coverage unknown", it reads 0% and
       # fails the 80% condition, which looks like a coverage collapse rather
