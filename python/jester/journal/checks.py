@@ -5,7 +5,9 @@
                link whose saved copy really contains those words
     numbers    every number in the prose is linked to its proof:
                  [91.2%](run:12#accuracy)  a run of this journal's experiment
-                                           (with #key, the value must match)
+                                           (the value must match what the run
+                                           recorded; without #key, against
+                                           every value it recorded)
                  [3.5%](https://...)       a source whose saved copy has it
                  [4 hours](obs:labelling)  your own observation
                or sits in a block marked `<!-- backed-by: run:12,run:13 -->`,
@@ -77,6 +79,24 @@ def _found(quote: str, source_text: str) -> bool:
     return True
 
 
+def _copy_text(root: Path, snap):
+    """The words of a saved copy, or why they cannot be read (F6).
+
+    The copy lives on disk and a check reads it on every run, so a file
+    re-saved in another encoding used to raise: one damaged copy took the
+    whole verdict, and every other quote in the article, down with it.
+    """
+    if not S.is_ok(snap):
+        return None, S.describe(snap)
+    try:
+        body = S.read_text(root, snap)
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, f"the saved copy on disk could not be read ({exc.__class__.__name__})"
+    if body is None:
+        return None, S.describe(snap)
+    return body, None
+
+
 def _check_quote(out: Outcome, root: Path, db, line: int, quote: str, sources: List[T.Link]) -> None:
     out.stats["quotes"] += 1
     if not sources:
@@ -84,10 +104,9 @@ def _check_quote(out: Outcome, root: Path, db, line: int, quote: str, sources: L
         return
     reasons = []
     for ln in sources:
-        snap = S.latest(db, ln.target)
-        body = S.read_text(root, snap) if S.is_ok(snap) else None
-        if body is None:
-            reasons.append(f"{ln.target}: {S.describe(snap)}")
+        body, why = _copy_text(root, S.latest(db, ln.target))
+        if why:
+            reasons.append(f"{ln.target}: {why}")
         elif _found(quote, body):
             out.stats["quotes_found"] += 1
             return
@@ -205,6 +224,19 @@ def _dig(result: Dict, path: str):
     return cur
 
 
+def _run_result(row):
+    """What a run recorded, or why the row cannot be read (F6).
+
+    `result` is a text column and nothing here wrote it defensively, so a
+    torn or hand-edited row used to raise inside the check -- one broken run
+    took the whole numbers verdict with it.
+    """
+    try:
+        return json.loads(row["result"] or "{}"), None
+    except ValueError as exc:
+        return None, f"the run's recorded result could not be read ({exc.__class__.__name__})"
+
+
 def _verify_run(db, journal_id: int, target: str, token: str) -> Optional[str]:
     """None if `run:N[#key]` backs `token`; otherwise why not."""
     ref = target[len("run:"):]
@@ -216,9 +248,16 @@ def _verify_run(db, journal_id: int, target: str, token: str) -> Optional[str]:
         return f"{target}: that run did not finish ok ({row['status']})"
     if _before_plan(row):
         return f"{target}: that run was made before the plan was written, so it cannot back a number"
-    if not path or token is None:
+    if token is None:
         return None
-    got = _dig(json.loads(row["result"] or "{}"), path)
+    result, why = _run_result(row)
+    if why:
+        return f"{target}: {why}"
+    if not path:
+        if _shown_matches(token, _leaves(result)):
+            return None
+        return f"{target}: the text says {token} but the run recorded no number like it"
+    got = _dig(result, path)
     if isinstance(got, bool) or not isinstance(got, (int, float)):
         return f"{target}: the run's result has no number at {path!r}"
     shown, decimals, pct = _value(token)
@@ -242,10 +281,9 @@ def _verify_link(db, root: Path, journal_id: int, target: str, token: Optional[s
     if target.startswith("obs:"):
         return "observation", None
     if target.startswith(("http://", "https://")):
-        snap = S.latest(db, target)
-        body = S.read_text(root, snap) if S.is_ok(snap) else None
-        if body is None:
-            return "source", f"{target}: {S.describe(snap)}"
+        body, why = _copy_text(root, S.latest(db, target))
+        if why:
+            return "source", f"{target}: {why}"
         if token is not None and not _number_in(token, body):
             return "source", f"{token} does not appear in the saved copy of {target}"
         return "source", None
@@ -280,7 +318,10 @@ def _block_runs(db, journal_id: int, backing: str) -> Tuple[Optional[List[float]
             return None, f"{t}: that run did not finish ok ({row['status']})"
         if _before_plan(row):
             return None, f"{t}: that run was made before the plan was written, so it cannot back a block"
-        values += _leaves(json.loads(row["result"] or "{}"))
+        result, why = _run_result(row)
+        if why:
+            return None, f"{t}: {why}"
+        values += _leaves(result)
     return values, None
 
 

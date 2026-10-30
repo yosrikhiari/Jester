@@ -127,7 +127,7 @@ Slice J1 adds the proof checks a saved version must pass before review. Each one
 | Check | Passes when |
 |---|---|
 | `citations` | every external link has a saved copy that answered 2xx, and every quote of 5+ words is attributed to a link whose saved copy contains those words |
-| `numbers` | every number in the prose links to its proof — `[91.2%](run:12#accuracy)` (value checked against the run), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes)` — or names go in backticks |
+| `numbers` | every number in the prose links to its proof — `[91.2%](run:12#accuracy)` (checked against that value; without `#accuracy`, against every number the run recorded), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes)` — or names go in backticks |
 | `lint` | the prose does not read as generated (Wikipedia's "signs of AI writing" list plus structure signals) and the title is not clickbait |
 | `origin` | no paragraph a tool wrote speaks in the first person, gives an opinion or claims an observation |
 

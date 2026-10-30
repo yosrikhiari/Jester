@@ -374,8 +374,34 @@
     ]
   },
   {
-    "id": "run-without-key-only-needs-to-exist",
+    "id": "run-without-key-matches-a-recorded-value",
     "want": "pass",
+    "article": "We labelled [500](run:1) posts.",
+    "runs": [
+      {
+        "result": {
+          "labelled": 500
+        }
+      }
+    ]
+  },
+  {
+    "id": "run-without-key-invents-a-number",
+    "want": "fail",
+    "reason": "the run recorded no number like it",
+    "article": "We labelled [500](run:1) posts.",
+    "runs": [
+      {
+        "result": {
+          "labelled": 480
+        }
+      }
+    ]
+  },
+  {
+    "id": "run-without-key-empty-result",
+    "want": "fail",
+    "reason": "the run recorded no number like it",
     "article": "We labelled [500](run:1) posts.",
     "runs": [
       {

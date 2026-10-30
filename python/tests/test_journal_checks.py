@@ -236,6 +236,61 @@ def test_numbers_in_run_results_can_be_nested_lists(db, tmp_path):
     assert not C.check_numbers(db, tmp_path, jid, "It scored [0.7](run:abc).").ok
 
 
+def test_a_run_link_without_a_key_still_has_to_match_a_value(db, tmp_path):
+    """F5: `[0.9](run:12)` proved a run exists, finished ok and postdates the
+    plan -- never that the run recorded 0.9. The number in the text is now
+    compared with every value the run left behind."""
+    jid = J.create_journal(db, "Bare")["id"]
+    run = J.add_run(db, J.add_experiment(db, jid), result={"folds": [{"f1": 0.9}], "labelled": 500})
+
+    assert C.check_numbers(db, tmp_path, jid, f"Scored [0.9](run:{run}).").ok
+    assert C.check_numbers(db, tmp_path, jid, f"We labelled [500](run:{run}) posts.").ok
+
+    bad = C.check_numbers(db, tmp_path, jid, f"Scored [0.5](run:{run}).")
+    assert not bad.ok
+    assert "the run recorded no number like it" in bad.findings[0]["message"]
+
+    mixed = C.check_numbers(db, tmp_path, jid, f"Scored [0.9](run:{run}) and claimed [0.5](run:{run}).")
+    assert not mixed.ok and len(mixed.findings) == 1 and mixed.stats["run"] == 1
+
+
+def test_a_run_result_that_is_not_json_fails_one_link(db, tmp_path):
+    """F6: `result` is a text column read with json.loads inside the check, so
+    one torn row raised and the whole numbers verdict was lost. A link whose
+    proof cannot be read is a failed link, not a crashed check."""
+    jid = J.create_journal(db, "Corrupt")["id"]
+    run = J.add_run(db, J.add_experiment(db, jid), result={"f1": 0.9})
+    db.execute("UPDATE experiment_run SET result = 'not json' WHERE id = ?", (run,))
+    db.commit()
+
+    linked = C.check_numbers(db, tmp_path, jid, f"Scored [0.9](run:{run}).")
+    assert not linked.ok and len(linked.findings) == 1
+    assert "could not be read" in linked.findings[0]["message"]
+
+    block = C.check_numbers(db, tmp_path, jid,
+                            f"<!-- backed-by: run:{run} -->\n| metric | value |\n|---|---|\n| f1 | 0.9 |")
+    assert not block.ok
+    assert "could not be read" in block.findings[0]["message"]
+
+
+def test_an_unreadable_saved_copy_fails_one_link_not_the_check(db, tmp_path):
+    """F6 again, on the copy side: the saved text is read from disk on every
+    check, and a file re-saved in some other encoding raised -- taking the
+    citations verdict, and every other quote in the article, down with it."""
+    row = S.take(db, tmp_path, URL, opener=F.FakeWeb({URL: _page("readers trust numbers they can reproduce")}))
+    (tmp_path / row["text_path"]).write_bytes(b"\xff\xfe not the text we stored")
+
+    cites = C.check_citations(db, tmp_path, f'The [post]({URL}) says "readers trust numbers they can reproduce".')
+    assert not cites.ok and len(cites.findings) == 1
+    assert "could not be read" in cites.findings[0]["message"]
+    assert cites.stats["links"] == 1 and cites.stats["links_ok"] == 1
+
+    jid = J.create_journal(db, "Copies")["id"]
+    nums = C.check_numbers(db, tmp_path, jid, f"[3.5%]({URL}) of links did not open.")
+    assert not nums.ok and len(nums.findings) == 1
+    assert "could not be read" in nums.findings[0]["message"]
+
+
 def test_a_before_plan_run_cannot_back_a_number(db, tmp_path):
     jid = J.create_journal(db, "Before plan")["id"]
     rid = J.add_run(db, J.add_experiment(db, jid), result={"f1": 0.9})
