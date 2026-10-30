@@ -18,6 +18,11 @@ worktree of the site repository (`<journal root>/_site/<slug>`), on a branch
 there. Pushing it and opening the pull request is a separate, explicit step
 (`--push`); merging that pull request is the act of publishing.
 
+The two listing pages quote a version, not a file: an article's summary comes
+from the newest revision a human approved for publishing, that passed every
+check, and whose recorded bytes the journal's own git repository still holds.
+The working file can be mid-draft; the site cannot show it.
+
 Refused unless the article is `ready` (or already published, for a fix), the
 latest version passed every check, and you approved publishing exactly that
 version.
@@ -26,6 +31,7 @@ version.
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -266,9 +272,50 @@ def _listed(db: sqlite3.Connection, also: Optional[int]) -> List[sqlite3.Row]:
     return rows
 
 
-def _summary(root: Path, j: sqlite3.Row) -> str:
-    path = Path(root) / j["path"]
-    return R.first_paragraph(path.read_text(encoding="utf-8"))[:220] if j["path"] and path.exists() else ""
+def _holds_those_bytes(blob: bytes, recorded: str) -> bool:
+    """Does a commit's copy hash to the version the record names?
+
+    The hash was taken from the file on disk, and git keeps text with the
+    line endings it was told to use -- with `core.autocrlf` on, LF where the
+    file had CRLF. Line endings are the one difference that is not a
+    different article.
+    """
+    for variant in (blob, blob.replace(b"\r\n", b"\n"), blob.replace(b"\n", b"\r\n")):
+        if hashlib.sha256(variant).hexdigest() == recorded:
+            return True
+    return False
+
+
+def _approved_text(db: sqlite3.Connection, root: Path, j: sqlite3.Row) -> Optional[str]:
+    """The newest version of this article that may be quoted, or None.
+
+    A listing page is shipped, so it has to carry a version rather than
+    whatever the working file happens to say today. A version counts when a
+    human approved publishing exactly that revision, every check passed on
+    exactly it, and the commit that saved it still holds those bytes (F10).
+    """
+    from jester.journal import files as F
+
+    approved = {a["revision_id"] for a in J.human_approvals(db, j["id"], "publish")}
+    for rev in reversed(J.revisions(db, j["id"])):
+        if rev["id"] not in approved:
+            continue
+        results = J.latest_checks(db, rev["id"])
+        if not all(results.get(kind) for kind in J.REQUIRED_CHECKS):
+            continue
+        blob = F.blob(root, rev["git_sha"], rev["path"])
+        if blob is None or not _holds_those_bytes(blob, rev["content_sha256"]):
+            continue
+        try:
+            return blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return None
+
+
+def _summary(db: sqlite3.Connection, root: Path, j: sqlite3.Row) -> str:
+    text = _approved_text(db, root, j)
+    return R.first_paragraph(text)[:220] if text else ""
 
 
 def index_page(db, root: Path, base_url: str, also: Optional[int] = None) -> str:
@@ -276,7 +323,7 @@ def index_page(db, root: Path, base_url: str, also: Optional[int] = None) -> str
     for j in _listed(db, also):
         date = (j["published_at"] or j["updated_at"])[:10]
         items.append(f'<li><a href="/journal/{_esc(j["slug"])}/">{_esc(j["title"])}</a>'
-                     f'<p class="meta">{_esc(date)} · {_esc(j["kind"])}</p><p>{_esc(_summary(root, j))}</p></li>')
+                     f'<p class="meta">{_esc(date)} · {_esc(j["kind"])}</p><p>{_esc(_summary(db, root, j))}</p></li>')
     body = ("<h1>Journal</h1><p>Experiments, measurements and what they taught me. Every number links "
             "to the run or source behind it.</p>" f"<ul class=\"list\">{''.join(items)}</ul>")
     return _page("Journal — Yosri Khiari", "Engineering experiments with the evidence attached.",
@@ -294,7 +341,7 @@ def feed_xml(db, root: Path, base_url: str, also: Optional[int] = None) -> str:
         updated = j["published_at"] or j["updated_at"]
         stamps.append(updated)
         entries.append(f"<entry><title>{_esc(j['title'])}</title><link href=\"{url}\"/><id>{url}</id>"
-                       f"<updated>{_esc(updated)}</updated><summary>{_esc(_summary(root, j))}</summary></entry>")
+                       f"<updated>{_esc(updated)}</updated><summary>{_esc(_summary(db, root, j))}</summary></entry>")
     newest = max(stamps) if stamps else "1970-01-01T00:00:00+00:00"
     return ('<?xml version="1.0" encoding="utf-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">'
             f"<title>Yosri Khiari — Journal</title><link href=\"{base}/journal/\"/>"

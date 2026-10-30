@@ -189,6 +189,62 @@ def test_export_writes_the_site_branch_and_leaves_the_checkout_alone(setup):
     assert not again["changed"] and again["commit"] == made["commit"]
 
 
+def _listed_journal(setup, slug, body, approve=True):
+    """A second article on the shelf, saved as its own version, in the state
+    the index lists it in."""
+    db, root = setup["db"], setup["root"]
+    j = J.create_journal(db, f"The {slug} post", kind="article", slug=slug, path=f"{slug}/index.md")
+    path = root / slug / "index.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    sha = F.commit(F.ensure_repo(root), path, f"{slug}: v1")
+    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"])
+    for kind in J.REQUIRED_CHECKS:
+        J.record_check(db, rev["id"], kind, True)
+    if approve:
+        J.approve(db, j["id"], "publish", revision_id=rev["id"])
+    db.execute("UPDATE journal SET state='published', published_at=? WHERE id=?",
+               ("2026-10-01T00:00:00+00:00", j["id"]))
+    db.commit()
+    return j, path
+
+
+def test_the_index_quotes_the_approved_version_not_the_working_file(setup):
+    """F10: `index.html` and `feed.xml` took each article's summary out of the
+    working file, so whatever the writer had open next -- an unreviewed draft,
+    a half-deleted paragraph -- shipped under a published article's name. The
+    listing now carries the version that passed the checks and was approved,
+    read back from the commit that saved it."""
+    db, root = setup["db"], setup["root"]
+    _listed_journal(setup, "yesterday", "# Yesterday\n\nWhat we published, and what it cost.\n")
+    (root / "yesterday" / "index.md").write_text(
+        "# Yesterday\n\nA line I have not finished and would not show anyone.\n", encoding="utf-8")
+
+    idx = P.index_page(db, root, BASE, also=setup["jid"])
+    feed = P.feed_xml(db, root, BASE, also=setup["jid"])
+    for page in (idx, feed):
+        assert "What we published" in page
+        assert "would not show anyone" not in page
+
+
+def test_an_entry_with_no_approved_version_ships_no_words_from_the_file(setup):
+    """Fail closed: an article whose approved version cannot be reproduced --
+    no publish approval, or a commit that no longer holds those bytes -- keeps
+    its place in the listing, but its words are not quoted from the file."""
+    db, root = setup["db"], setup["root"]
+    _listed_journal(setup, "unapproved", "# Unapproved\n\nText nobody approved.\n", approve=False)
+    _listed_journal(setup, "drifted", "# Drifted\n\nWords whose hash no longer matches.\n")
+    db.execute("UPDATE revision SET content_sha256 = ? WHERE path = 'drifted/index.md'",
+               ("0" * 64,))
+    db.commit()
+
+    idx = P.index_page(db, root, BASE, also=setup["jid"])
+    assert "The unapproved post" in idx and "Text nobody approved" not in idx
+    assert "The drifted post" in idx and "no longer matches" not in idx
+    feed = P.feed_xml(db, root, BASE, also=setup["jid"])
+    assert "Text nobody approved" not in feed and "no longer matches" not in feed
+
+
 def test_export_refuses_a_figure_edited_after_it_was_made(setup):
     figure = setup["root"] / "rules" / "figures" / "buyers.svg"
     figure.write_text(figure.read_text(encoding="utf-8") + "<!-- edited -->\n", encoding="utf-8")

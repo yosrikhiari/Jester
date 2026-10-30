@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 DEFAULT_ROOT = "data/journal"
 
@@ -122,3 +122,20 @@ def commit(root: Path, path: Path, message: str) -> str:
     if _git(root, "status", "--porcelain", "--", rel):
         _git(root, *_identity_args(root), "commit", "-q", "-m", message, "--", rel)
     return _git(root, "rev-parse", "HEAD")
+
+
+def blob(root: Path, sha: str, path: str) -> Optional[bytes]:
+    """The bytes one commit holds for one file, or None if it holds none.
+
+    A saved version's text lives in the commit `commit` made for it, so a
+    page can quote exactly that version instead of the working file. Bytes,
+    not text: the caller hashes them against what the version recorded.
+    """
+    if not sha or not path:
+        return None
+    try:
+        out = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{path}"],
+                             capture_output=True, check=False)
+    except FileNotFoundError:
+        return None
+    return out.stdout if out.returncode == 0 else None
