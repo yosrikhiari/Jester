@@ -155,11 +155,6 @@ jobs:
     env:
       PYTHONPATH: python
       JESTER_MOCK: "1"
-      # The suite writes scratch databases next to itself unless TMP says
-      # otherwise; on Windows a repo-relative temp dir can be locked by AV or
-      # the indexer between tests.
-      TMP: ${{ runner.temp }}
-      TEMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
 
@@ -180,9 +175,18 @@ jobs:
       # interpreter selection is what gets tested.
       - name: Smoke run, through bash
         shell: bash
+        # The suite writes scratch databases next to itself unless TMP says
+        # otherwise; on Windows a repo-relative temp dir can be locked by AV or
+        # the indexer between tests. `runner` is only in scope at step level.
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: bash scripts/smoke.sh
 
       - name: Platform-sensitive subset
+        env:
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: >
           python -m pytest
           python/tests/test_store_schema.py
