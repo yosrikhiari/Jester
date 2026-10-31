@@ -18,8 +18,10 @@ These tests drive a real ThreadingHTTPServer over a real socket, because a
 test that calls the handler's methods directly would not have caught either.
 """
 import json
+import socket
 import sqlite3
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -163,6 +165,35 @@ def test_a_cross_origin_post_is_refused(console):
         headers={"Origin": "http://evil.test"})
     assert status == 403
     assert "cross-origin" in json.loads(body)["error"]
+
+
+def test_a_refused_post_with_a_body_still_delivers_its_403(console):
+    """The refusal is decided before the body is parsed. If the handler then
+    closes the connection with unread bytes in the socket, Windows resets it
+    and the client loses the 403 that was sent — measured at roughly one in
+    thirty with a two-byte body, and routinely with a larger one.
+
+    The wait before reading is the point: it lets the close land first, so the
+    reset wins the race deterministically instead of depending on timing."""
+    body = b" " * (768 * 1024)
+    host, port = console.removeprefix("http://").rsplit(":", 1)
+    with socket.create_connection((host, int(port)), timeout=10) as sock:
+        sock.sendall(
+            b"POST /api/migrate HTTP/1.0\r\n"
+            b"Host: " + host.encode() + b"\r\n"
+            b"Origin: http://evil.test\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n"
+            + body)
+        time.sleep(0.1)
+        raw = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            raw += chunk
+    assert raw.startswith(b"HTTP/1.0 403"), raw[:80]
+    assert b"cross-origin" in raw
 
 
 def test_a_same_origin_post_is_not_refused_for_its_origin(console):

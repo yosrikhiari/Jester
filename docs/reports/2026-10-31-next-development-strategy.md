@@ -595,7 +595,7 @@ This section records what happened after the plan above was executed test-first,
 | S-20 | Implemented | `config/schedule.yaml` (8 tasks, `enabled:false` as pause); `schedule apply` idempotent and reinstalls on scope/launcher drift; Doctor reports drift; fake `schtasks` tests in `test_schedule_apply.py` | — |
 | S-21–S-24 | Not attempted | — | P3 work, as the register says |
 
-**Not done anywhere in this session:** any write to `data/jester.db`; committing or pushing; running the live lane or the Windows GitHub job; owner decisions (S-05, S-07, S-14, S-15, S-19).
+**Not done anywhere in this session until §15.2:** any write to `data/jester.db`; committing or pushing; running the live lane or the Windows GitHub job; owner decisions (S-05, S-07, S-14, S-15, S-19).
 
 ### 15.1 Verification of this session's work (orchestrator-run)
 
@@ -614,6 +614,14 @@ This section records what happened after the plan above was executed test-first,
 Two environmental facts from these runs. First, the initial full-suite attempt ran alongside an unrelated `go build ./...`; the linker died with `runtime: cannot allocate memory`, the suite slowed from ~473 s to 601 s, and one e2e test (`test_pipeline_seed_treat_list_console_agree`) failed without its traceback being captured. That test passed alone in 5.86 s and in the clean rerun above, so the failure is attributed to host memory pressure, not to a code change — but it is recorded here rather than hidden. Second, `go test -count=1 ./...` (parallel package linking) reproduced the memory failure; `-p 1` completed every package. Neither run is evidence about the code's correctness beyond what the serial green run shows.
 
 **Review status:** the implementation was checked by one independent read-only review (general-purpose subagent; the specialized reviewer agent could not start on this host). Its findings led to four fixes, each with a test: the WAL live-archive guard resolves paths from the repository root, not the working directory; `evidence` opens the archive read-only and reports an absent `llm_calls` table as a note instead of creating it; schedule apply and Doctor notice a launcher whose scrape scope was edited by hand; and a malformed `JESTER_LLM_CALLS_KEEP_DAYS` falls back to the default instead of failing the run. Everything else in §15 is orchestrator-run.
+
+### 15.2 Merge to `main`, and the failure the merged tip caught
+
+The seven commits were fast-forwarded onto `main`; `fix/sonar-js-promises` was merged for its Appendix E record; the merged tip was re-run instead of trusting the branch run. That rerun failed one test: `test_console_server.py::test_a_cross_origin_post_is_refused` (1 failed, 1921 passed). The server logged the 403 and meant it, but on Windows the client read `ConnectionAbortedError`. A refused POST is answered before its body is parsed, so the handler closed the socket with unread bytes in it — Winsock sends a reset instead of a FIN, and the reset discards the response already on the wire. Measured at 1 failure in 30 runs with the shipped two-byte body.
+
+Fixed in `console/server.py`: every refusal path (cross-origin, read-only, unauthorized, schema) sends its answer, then drains the declared body, bounded to 1 MiB and 0.5 s, so the close is graceful. A regression test sends a 768 KiB body over a raw socket, waits for the close to land, then reads the response; it failed 5 of 5 runs before the fix and passed 10 of 10 after. The original test passed 30 of 30. Full suite at the fixed tip: **1923 passed, 3 skipped, 13 deselected, exit 0**; `bash scripts/smoke.sh` **SMOKE PASS**; `scripts/counts.py --no-archive` **1926 Python tests, 299 Go test functions**.
+
+The merge also leaves remote branches that were not part of "every local branch": `feat/yu-01-reddit-signals` has no pull request and its content is already on `main` (the collector, digest, ClickHouse queries and their tests all exist there), and the Dependabot branches are dependency proposals rather than merged work. Neither set was deleted.
 
 ---
 

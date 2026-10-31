@@ -54,6 +54,15 @@ _THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 #: without holding a secret; writes are what need the guard. Compared with
 #: hmac.compare_digest so the check itself does not leak the token bytewise.
 TOKEN_ENV = "JESTER_CONSOLE_TOKEN"
+#: A refused POST is answered before its body is parsed. Closing the connection
+#: with unread bytes makes Winsock send a reset instead of a FIN, and the
+#: client then loses the 403 that was already written. Drain up to this much
+#: of the declared body (after the response is on the wire) so the close is
+#: clean; a body larger than this is abusive and may still be reset.
+_BODY_DRAIN_LIMIT = 1 << 20
+#: How long a drain will wait for a body the client declared but is slow to
+#: send. The console is a loopback dashboard, so a short bound is enough.
+_BODY_DRAIN_TIMEOUT = 0.5
 #: Opt-in read-side auth (S-10). With a token set, GETs under /api/* and
 #: /metrics require the same bearer token. Off by default so the browser
 #: console still loads on a machine where the token protects writes; turn it
@@ -266,6 +275,44 @@ class Handler(BaseHTTPRequestHandler):
         # stale console, which is worse than an extra request.
         self._send(body, "application/json", code, extra=[("Cache-Control", "no-store")])
 
+    def _discard_body(self):
+        """Read what is left of a declared body before the socket closes.
+
+        A refusal is sent before the body is parsed, so those bytes are still
+        unread in the socket when the handler returns. On Windows that turns
+        the close into a reset, and a client can lose the response that was
+        already written. The drain is bounded and timed: a body that large or
+        that slow is not something the operator's own console sends."""
+        try:
+            remaining = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return
+        remaining = min(remaining, _BODY_DRAIN_LIMIT)
+        if remaining <= 0:
+            return
+        previous = self.connection.gettimeout()
+        self.connection.settimeout(_BODY_DRAIN_TIMEOUT)
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read1(min(remaining, 65536))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            # Timed out or reset mid-body: the response is already written,
+            # and the remaining bytes belong to a client that is not ours.
+            self.close_connection = True
+        finally:
+            try:
+                self.connection.settimeout(previous)
+            except OSError:
+                self.close_connection = True
+
+    def _refuse(self, payload, code):
+        """Answer a POST refused before its body was read, then drain."""
+        self._json(payload, code)
+        self._discard_body()
+
     def _static(self, url_path: str) -> bool:
         path = _static_path(url_path)
         if path is None:
@@ -309,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
         extra = len(problem["missing"]) - 6
         if extra > 0:
             missing += f" (+{extra} more)"
-        self._json({
+        self._refuse({
             "ok": False,
             "error": (f"this archive is missing schema this build needs: {missing}; "
                       f"run: python -m jester.cli migrate --db {self.args.db}"),
@@ -492,13 +539,13 @@ class Handler(BaseHTTPRequestHandler):
         # methods predate the --read-only flag, so the layer that owns the
         # socket enforces it for every POST rather than trusting each route.
         if _cross_origin(self):
-            self._json({"ok": False, "error": "cross-origin request refused"}, 403)
+            self._refuse({"ok": False, "error": "cross-origin request refused"}, 403)
             return
         if bool(getattr(self.args, "read_only", False)):
-            self._json({"ok": False, "error": "this console is read-only"}, 403)
+            self._refuse({"ok": False, "error": "this console is read-only"}, 403)
             return
         if not _is_authorized(self):
-            self._json({"ok": False, "error": "missing or invalid console token"}, 401)
+            self._refuse({"ok": False, "error": "missing or invalid console token"}, 401)
             return
 
         api = _api(self.args)

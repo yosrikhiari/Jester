@@ -254,7 +254,7 @@ Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — ho
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-10-31: 1,925 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the thirteen `live_*` tests against real Ollama and Qdrant. They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-10-31: 1,926 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the thirteen `live_*` tests against real Ollama and Qdrant. They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 
