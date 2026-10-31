@@ -142,6 +142,65 @@ jobs:
           path: coverage.xml
           retention-days: 1
 
+  windows:
+    # S-16: the operator develops on Windows, and ubuntu-only CI is how
+    # Windows-only defects (ACLs, temp paths, schtasks, path separators)
+    # reached main. This job is deliberately a subset rather than a second
+    # full suite: it covers the code that actually branches on the platform —
+    # the store and its pragmas, the journal's git/shell paths, the console
+    # server, scheduling through schtasks, and the provenance/evidence
+    # writers, which touch the filesystem.
+    name: Windows — store, journal, console, schedule, provenance
+    runs-on: windows-latest
+    env:
+      PYTHONPATH: python
+      JESTER_MOCK: "1"
+      # The suite writes scratch databases next to itself unless TMP says
+      # otherwise; on Windows a repo-relative temp dir can be locked by AV or
+      # the indexer between tests.
+      TMP: ${{ runner.temp }}
+      TEMP: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from the lock, exactly
+        run: |
+          python -m pip install --quiet --only-binary :all: "pip==26.2.1"
+          python -m pip install --only-binary :all: -r python/pylock.toml
+
+      - name: Imports resolve from a bare checkout
+        run: python -c "import yaml, qdrant_client, ollama, pytest, tzdata; print('imports ok')"
+
+      # Same posix/interpreter trap as S-17: `python` exists on the runner, but
+      # the smoke script is exercised here through bash so the script's own
+      # interpreter selection is what gets tested.
+      - name: Smoke run, through bash
+        shell: bash
+        run: bash scripts/smoke.sh
+
+      - name: Platform-sensitive subset
+        run: >
+          python -m pytest
+          python/tests/test_store_schema.py
+          python/tests/test_store_parity.py
+          python/tests/test_store_pragmas.py
+          python/tests/test_store_indexes.py
+          python/tests/test_journal.py
+          python/tests/test_journal_lab.py
+          python/tests/test_journal_cli.py
+          python/tests/test_console_server.py
+          python/tests/test_console_auth.py
+          python/tests/test_schedule.py
+          python/tests/test_schedule_apply.py
+          python/tests/test_llm_calls.py
+          python/tests/test_evidence.py
+          python/tests/test_wal_bench.py
+          -q
+
   go:
     name: Go — build and test
     runs-on: ubuntu-latest

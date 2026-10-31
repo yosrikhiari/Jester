@@ -1,6 +1,7 @@
 """Live Ollama verification (§37.16) — probe-gated; skips without daemon/models."""
 import json
 import math
+import os
 import urllib.request
 from pathlib import Path
 
@@ -10,7 +11,11 @@ from jester.config import Thresholds
 from jester.models import Nugget
 
 OLLAMA_HOST = "http://localhost:11434"
-REQUIRED_MODELS = {"qwen3:8b", "nomic-embed-text"}
+#: The CI lane pulls a small model and sets this; a local operator gets the
+#: documented default. Both exercise the same code path — the point is the
+#: daemon, not the parameter count.
+LIVE_MODEL = os.environ.get("JESTER_LIVE_MODEL", "qwen3:8b")
+REQUIRED_MODELS = {LIVE_MODEL, "nomic-embed-text"}
 
 
 def _server_models():
@@ -39,9 +44,9 @@ def _thr():
     return Thresholds(
         llm_provider="ollama",
         embedding_provider="ollama",
-        extractor_model="qwen3:8b",
-        synthesizer_model="qwen3:8b",
-        critic_model="qwen3:8b",
+        extractor_model=LIVE_MODEL,
+        synthesizer_model=LIVE_MODEL,
+        critic_model=LIVE_MODEL,
         embedding_model="nomic-embed-text",
     )
 

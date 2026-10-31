@@ -1,0 +1,100 @@
+# Live services lane (S-12).
+#
+# Thirteen tests are marked `live_ollama`/`live_qdrant` and skipped by the
+# default suite because they need a daemon. Nothing ran them in CI, so the
+# difference between the mocked shape and the real one was invisible until an
+# operator hit it.
+#
+# This lane runs the subset nightly and on demand against a real Ollama and a
+# real Qdrant. It uses `qwen3:0.6b` (a few hundred MB) rather than the
+# documented 8B default: the tests assert the contract (a draft, a framed idea,
+# a rubric score, a 768-d vector, a searchable point), not answer quality, and
+# pulling 5 GB every night would make the lane too slow to keep.
+#
+# A deliberate drift — changing the collection name, the embedding width, the
+# daemon URL — fails here rather than in the operator's console.
+
+name: Live services
+
+on:
+  schedule:
+    # 04:17 UTC, after the nightly scrapers and before a working day.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    name: Live — Ollama and Qdrant
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: python
+      JESTER_LIVE_MODEL: qwen3:0.6b
+      JESTER_QDRANT_URL: http://localhost:6333
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports:
+          - 6333:6333
+        options: >-
+          --health-cmd "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from the lock
+        run: |
+          python -m pip install --quiet --only-binary :all: "pip==26.2.1"
+          python -m pip install --only-binary :all: -r python/pylock.toml
+
+      - name: Start Ollama and pull the models the lane needs
+        run: |
+          set -euo pipefail
+          docker run -d --name ollama -p 11434:11434 ollama/ollama:latest
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:11434/api/tags >/dev/null || {
+            echo "::error::Ollama did not become reachable"; docker logs ollama; exit 1; }
+          docker exec ollama ollama pull "qwen3:0.6b"
+          docker exec ollama ollama pull nomic-embed-text
+
+      - name: Wait for Qdrant
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:6333/healthz >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::Qdrant did not become reachable"; exit 1
+
+      - name: The live subset, with the daemons actually up
+        run: |
+          python -m pytest python/tests -q -m "live_ollama or live_qdrant" -p no:cacheprovider
+
+      - name: Fail if every live test was skipped
+        run: |
+          # Probe-gated tests skip rather than fail without a daemon. A green
+          # run in which nothing ran would be the same "never runs in CI"
+          # failure this lane exists to end, so a skip is treated as a hole.
+          python -m pytest python/tests -q -m "live_ollama or live_qdrant" \
+            -p no:cacheprovider --no-header -rs \
+            | tee live.txt
+          if grep -q "no tests ran" live.txt; then
+            echo "::error::the live lane collected no runnable tests"; exit 1
+          fi
+          if grep -E "^SKIPPED" live.txt | grep -qv "no tests ran"; then
+            echo "::error::a live test was skipped with its daemon up"
+            grep -E "^SKIPPED" live.txt
+            exit 1
+          fi
