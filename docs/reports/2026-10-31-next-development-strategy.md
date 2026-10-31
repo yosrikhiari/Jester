@@ -623,6 +623,8 @@ Fixed in `console/server.py`: every refusal path (cross-origin, read-only, unaut
 
 The merge also leaves remote branches that were not part of "every local branch": `feat/yu-01-reddit-signals` has no pull request and its content is already on `main` (the collector, digest, ClickHouse queries and their tests all exist there), and the Dependabot branches are dependency proposals rather than merged work. Neither set was deleted.
 
+The first CI run on the pushed commit was green on Linux, Go and the frontend, and failed the Windows job before it ran a test: the job installed `python/pylock.toml`, whose own header says it is Linux-only and that Windows should install `requirements.txt`. pip stopped at `packages[3]` — `coverage` — with "No wheel found matching the provided tags". The Windows job now installs `python/requirements.txt`; a local `pip install --dry-run --only-binary :all: -r python/requirements.txt` resolves to Windows wheels. The green Windows run is the remaining evidence, not a local claim.
+
 ---
 
 ## Appendix A — Commands run and outputs (2026-10-31, HEAD `14bb5ba`)

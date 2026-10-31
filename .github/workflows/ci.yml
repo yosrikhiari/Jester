@@ -162,10 +162,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install from the lock, exactly
+      # Not the lock. pylock.toml says in its own header that it is Linux-only
+      # and that Windows should install requirements.txt; the first run of this
+      # job ignored that and died at packages[3] with "No wheel found matching
+      # the provided tags for package 'coverage'". requirements.txt states the
+      # constraints, so pip resolves them against Windows wheels.
+      - name: Install from requirements, the way the lock's header says
         run: |
           python -m pip install --quiet --only-binary :all: "pip==26.2.1"
-          python -m pip install --only-binary :all: -r python/pylock.toml
+          python -m pip install --only-binary :all: -r python/requirements.txt
 
       - name: Imports resolve from a bare checkout
         run: python -c "import yaml, qdrant_client, ollama, pytest, tzdata; print('imports ok')"
