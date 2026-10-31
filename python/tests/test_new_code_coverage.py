@@ -148,7 +148,7 @@ def test_cmd_treat_batch_path_archives_like_legacy(tmp_path, offline_config,
     _queue(batched_db)
     cmd_treat(Namespace(config=str(offline_config), db=str(legacy_db),
                         run="gap-legacy", force=False))
-    _set_knob(offline_config, "extractor_batch_size", 10)
+    _set_knob(offline_config, "extractor_batch_size", 5)
     cmd_treat(Namespace(config=str(offline_config), db=str(batched_db),
                         run="gap-batched", force=False))
 
@@ -212,7 +212,7 @@ def test_cmd_treat_batch_mismatch_falls_back_per_comment(
     from jester.cli import cmd_treat
 
     monkeypatch.delenv("JESTER_QDRANT_URL", raising=False)
-    _set_knob(offline_config, "extractor_batch_size", 10)
+    _set_knob(offline_config, "extractor_batch_size", 5)
     db_path = tmp_path / "j.db"
     _queue(db_path)
     # The agents level never returns short (it falls back internally), so

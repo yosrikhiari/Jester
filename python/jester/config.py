@@ -244,7 +244,7 @@ class Thresholds:
         "export_rows_per_file": (100, 1000000),
         "ingest_timeout_seconds": (0, 86400),
         "rescore_per_run": (0, 1000),
-        "extractor_batch_size": (1, 50),
+        "extractor_batch_size": (1, 5),
         "chat_max_rounds": (1, 12),
         "chat_proposal_ttl_hours": (0.25, 720.0),
         "scheduler_window_batches": (1, 500),

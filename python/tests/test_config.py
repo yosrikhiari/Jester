@@ -34,6 +34,18 @@ def test_thresholds_load_and_validate(tmp_path):
     t.validate()
 
 
+def test_extractor_batch_is_capped_at_five():
+    from jester.config import ConfigError, coerce_thresholds_patch
+
+    assert coerce_thresholds_patch({"extractor_batch_size": 5}) == {
+        "extractor_batch_size": 5}
+    try:
+        coerce_thresholds_patch({"extractor_batch_size": 6})
+    except ConfigError:
+        return
+    raise AssertionError("expected ConfigError for a batch above 5")
+
+
 def test_schema_version_mismatch_refuses(tmp_path):
     db = tmp_path / "jester.db"
     conn = sqlite3.connect(db)

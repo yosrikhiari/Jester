@@ -21,6 +21,8 @@ from jester.config import ConfigError, Thresholds, load_thresholds, unused_setti
 from jester.embed import FakeEmbedding, OllamaEmbedding, select_embedding
 from jester.llm import (
     FakeCriticLLM,
+    FakeLLM,
+    FakeSynthesizerLLM,
     GroqCriticLLM,
     GroqLLM,
     OllamaLLM,
@@ -91,12 +93,32 @@ def test_the_offline_profile_resolves_everything_to_the_stand_ins():
     assert {r.kind for r in resolve_all(_profile("docker/config")).values()} == {"fake"}
 
 
-def test_jester_models_prints_the_table_and_the_unused_key(capsys):
+# ---- S-18: a model name is not an identity --------------------------------------
+
+def test_a_role_digest_is_stable_and_moves_with_its_settings():
+    from dataclasses import replace
+
+    first = resolve_role(_profile("config"), "critic")
+    second = resolve_role(_profile("config"), "critic")
+    assert first.digest() == second.digest()
+    assert len(first.digest()) == 16
+    assert first.as_record()["digest"] == first.digest()
+    assert replace(first, temperature=0.9).digest() != first.digest(), (
+        "two runs at different temperatures must not share an identity")
+
+
+def test_the_stand_ins_carry_a_fake_digest():
+    assert FakeLLM().digest == "fake"
+    assert FakeSynthesizerLLM().digest == "fake"
+    assert FakeCriticLLM().digest == "fake"
+
+
+def test_jester_models_prints_the_table_with_no_dead_key(capsys):
     cli_main(["models", "--config", str(ROOT / "config")])
     out = capsys.readouterr().out
     assert "critic       groq (openai)  openai/gpt-oss-120b" in out
     assert "temperature = 0.2  (built-in)" in out
-    assert "unused: models.archivist" in out
+    assert "unused:" not in out, "S-13: the shipped profiles carry no dead key"
 
 
 def test_jester_models_diff_of_a_profile_with_itself_is_empty(capsys):
@@ -337,6 +359,8 @@ def test_no_claude_names_are_left_as_defaults():
 
 def test_unused_settings_are_reported_and_go_keys_are_not():
     data = yaml.safe_load((ROOT / "config" / "thresholds.yaml").read_text(encoding="utf-8"))
+    assert unused_settings(data) == [], "no shipped key may be dead (S-13)"
+    data["models"]["archivist"] = "phi4-mini"
     assert unused_settings(data) == ["models.archivist: no code reads this model"]
     data["temprature"] = 0.2
     assert "temprature: no code reads this key" in unused_settings(data)

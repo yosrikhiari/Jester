@@ -156,7 +156,7 @@ def extract_batch(
     thread_id: str,
     source_url: str,
     run_id: str,
-    batch_size: int = 10,
+    batch_size: int = 5,
 ) -> List[Nugget]:
     """Batched extraction (F-05): one model call per `batch_size` comments.
 

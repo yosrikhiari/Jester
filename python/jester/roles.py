@@ -26,6 +26,8 @@ A new key, not a reshaped `models:` block, because the Go worker parses the
 same file and expects strings under `models:`. A nested block there would
 stop the scraper (verified); `roles:` is a key Go simply ignores.
 """
+import hashlib
+import json
 import os
 from dataclasses import dataclass, field, fields
 from typing import Optional, Tuple
@@ -186,10 +188,28 @@ class RoleSettings:
     max_retries: Optional[int] = None
     source: dict = field(default_factory=dict, compare=False, hash=False)
 
-    def as_record(self) -> dict:
+    def as_record(self, *, include_digest: bool = True) -> dict:
         """The resolved values, for `runs.models_used` and `jester models`."""
-        return {f.name: getattr(self, f.name) for f in fields(self)
-                if f.name != "source" and getattr(self, f.name) not in (None, ())}
+        out = {f.name: getattr(self, f.name) for f in fields(self)
+               if f.name != "source" and getattr(self, f.name) not in (None, ())}
+        if include_digest:
+            out["digest"] = self.digest()
+        return out
+
+    def digest(self) -> str:
+        """A short, stable hash of what this job was actually asked to run.
+
+        S-18: a model name is not an identity. Two runs can both say
+        `qwen3:8b` while one used a different temperature, seed or host; the
+        digest makes that difference visible in the run record without
+        storing prompts or settings again. Settings left at the server default
+        are absent from the payload, so an unset knob and a re-stated default
+        are deliberately the same identity.
+        """
+        payload = self.as_record(include_digest=False)
+        raw = json.dumps(payload, sort_keys=True, default=str,
+                         separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 # ---- parsing and validation ---------------------------------------------------

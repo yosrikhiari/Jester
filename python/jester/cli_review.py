@@ -74,6 +74,49 @@ def cmd_eval(args):
     print(f"eval OK: {checks} cases passed (gate={gate})")
 
 
+_LABEL_EXAMPLE = (
+    '{"unique_key": "reddit:sub:comment", "platform": "reddit", '
+    '"rater": "owner", "keep": true, "gold": ["the complaint in the comment"], '
+    '"predicted": [{"insight": "what the extractor said", '
+    '"verdict": "supported|fabricated|unchecked"}]}'
+)
+
+
+def cmd_eval_extract(args):
+    """S-06: extraction quality over committed JSONL labels.
+
+    No labels is not a failure — it is the pause before the owner labels. The
+    command says what to write and exits 0. Once labels exist, every aggregate
+    is printed with its denominator and the published floors gate the exit.
+    """
+    from jester.extraction_eval import (evaluate, format_report, gate_failures,
+                                        load_labels)
+
+    path = Path(args.labels)
+    if not path.exists():
+        print(f"no labels yet at {path}")
+        print(f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}")
+        return {"ok": True, "labels": 0}
+    labels = load_labels(path)
+    if not labels:
+        print(f"no labels yet at {path} (the file is empty)")
+        print(f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}")
+        return {"ok": True, "labels": 0}
+
+    report = evaluate(labels)
+    print(format_report(report, seed=args.seed, labels_path=path))
+    failures = gate_failures(report, min_f1=args.floor,
+                             max_fabrication=args.fabrication_ceiling,
+                             max_nuggets_per_comment=args.max_nuggets_per_comment)
+    for failure in failures:
+        print(f"GATE: {failure}")
+    if failures:
+        print("extraction eval FAILED")
+        sys.exit(1)
+    print("extraction eval OK: every published floor holds")
+    return {"ok": True, "report": report}
+
+
 def cmd_mark(args):
     db = open_db(args.db)
     row = get_idea(db, args.id)
