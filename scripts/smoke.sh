@@ -11,7 +11,7 @@
 
 set -u
 cd "$(dirname "$0")/.."
-export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+. scripts/_pythonpath.sh
 # S-17: pick an interpreter that actually runs. `command -v python3` succeeds
 # on Windows even when the name belongs to the Microsoft Store stub, which
 # exits with "Python was not found" — so existence is not the test, execution

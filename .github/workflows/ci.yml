@@ -153,7 +153,11 @@ jobs:
     name: Windows — store, journal, console, schedule, provenance
     runs-on: windows-latest
     env:
-      PYTHONPATH: python
+      # Absolute, not `python`: a relative PYTHONPATH entry is resolved
+      # against the process's working directory, and the smoke script and
+      # pytest do not both run from the same place. Forward slashes are fine
+      # for a native Windows Python.
+      PYTHONPATH: ${{ github.workspace }}/python
       JESTER_MOCK: "1"
     steps:
       - uses: actions/checkout@v4

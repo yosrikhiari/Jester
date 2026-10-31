@@ -7,7 +7,7 @@
 
 set -u
 cd "$(dirname "$0")/.."
-export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+. scripts/_pythonpath.sh
 # S-17: `python3` may be the Microsoft Store stub — it exists but does not run.
 PY="${PYTHON:-}"
 if [ -z "$PY" ]; then
