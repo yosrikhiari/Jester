@@ -218,7 +218,6 @@ maintenance_stale_days: 90
 
 models:
   extractor: qwen3:8b
-  archivist: phi4-mini:3.8b
   synthesizer: openai/gpt-oss-120b
   critic: openai/gpt-oss-120b
 

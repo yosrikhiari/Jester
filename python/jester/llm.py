@@ -140,6 +140,7 @@ class FakeLLM:
     """Deterministic stand-in. Classifies by simple keyword heuristics."""
 
     name = "fake-llm"
+    digest = "fake"
 
     def extract(self, comment_body: str) -> NuggetDraft:
         body = (comment_body or "").lower()
@@ -180,6 +181,7 @@ class FakeSynthesizerLLM:
     """Deterministic stand-in: frames an idea from the clustered nuggets."""
 
     name = "fake-synth"
+    digest = "fake"
 
     def synthesize(self, nuggets: List[Nugget]) -> IdeaDraft:
         insights = [n.extracted_insight for n in nuggets if n.extracted_insight]
@@ -230,6 +232,7 @@ class FakeCriticLLM:
     critic, which never fabricates competition."""
 
     name = "fake-critic"
+    digest = "fake"
 
     def score(self, idea: Idea) -> CriticDraft:
         support = idea.supporting_nuggets
@@ -274,6 +277,10 @@ class _Agent:
     #: Seconds before one call is abandoned. Subclasses set their own.
     TIMEOUT_S = 180.0
 
+    #: Which role this agent fills. `provenance` records it on every call so a
+    #: run's calls can be listed by role without guessing from the model name.
+    ROLE = "unknown"
+
     def __init__(self, model, client=None, timeout=None, settings=None):
         self._model = model
         self._client = client
@@ -281,6 +288,11 @@ class _Agent:
         #: by hand (tests, the journal's scripts): then nothing beyond the
         #: model and the messages is sent, exactly as before roles existed.
         self.settings = settings
+        #: S-18: a model name is not an identity. The digest of the resolved
+        #: settings travels with every agent so a run can say whether two
+        #: nights that both used `qwen3:8b` actually asked the same thing.
+        #: None for a hand-built agent: no settings, no claim.
+        self.digest = settings.digest() if settings is not None else None
         if timeout is None and settings is not None and settings.timeout_s:
             timeout = settings.timeout_s
         self._timeout = self.TIMEOUT_S if timeout is None else timeout
@@ -302,6 +314,9 @@ class _Agent:
         #: Calls attempted. With `fallbacks`, tells "the model answered at
         #: least once" (clear its quota block) from "it was never asked".
         self.calls = 0
+        #: Set by `provenance.attach`. None means this agent was built by hand
+        #: (tests, a one-off script) and has no run to file calls under.
+        self._recorder = None
 
     @property
     def name(self):
@@ -322,6 +337,8 @@ class _Agent:
         """
         self.last_error = None
         self.calls += 1
+        prompt = f"{system or ''}\n\n{user or ''}"
+        started = time.monotonic()
         try:
             raw = self._complete(system, user, temperature)
         except GroqRateLimited as exc:
@@ -331,14 +348,40 @@ class _Agent:
             if exc.retry_after is not None:
                 self.retry_after = max(self.retry_after or 0.0, float(exc.retry_after))
             self._note_fallback(str(exc))
+            self._record_call(prompt, None, started, str(exc))
             return None
         except Exception as exc:  # noqa: BLE001 - see docstring
-            self._note_fallback(_describe(exc))
+            reason = _describe(exc)
+            self._note_fallback(reason)
+            self._record_call(prompt, None, started, reason)
             return None
         obj = _parse_json_object(raw)
         if obj is None:
             self._note_fallback("malformed reply (not a JSON object)")
+        # The bytes are recorded even when they failed the role's check: the
+        # question and the answer are the evidence, and a parse failure is a
+        # fact about the answer rather than a missing call.
+        self._record_call(prompt, raw, started)
         return obj
+
+    def _record_call(self, prompt, response, started, error=None):
+        """File this call under the attached run, if there is one."""
+        if self._recorder is None:
+            return
+        try:
+            self._recorder(
+                role=self.ROLE,
+                model=self._model,
+                digest=self.digest,
+                prompt=prompt,
+                response=response,
+                latency_ms=(time.monotonic() - started) * 1000.0,
+                error=error,
+            )
+        except Exception:  # noqa: BLE001
+            # Provenance is a record, not a participant: a broken recorder
+            # must not turn an answered call into a failed run.
+            pass
 
     def _reject(self, reason):
         """A reply that parsed but failed the role's output check."""
@@ -404,6 +447,7 @@ class _OllamaAgent(_Agent):
 
 
 class _ExtractorRole:
+    ROLE = "extractor"
     EXTRACT_SYSTEM = (
         "You classify developer-pain comments. Reply with ONLY a JSON object: "
         '{"category": <one of pain_point|feature_request|workaround|complaint|question>, '
@@ -513,6 +557,7 @@ _STANDIN_SOLUTION = "build a focused tool that addresses"
 
 
 class _SynthesizerRole:
+    ROLE = "synthesizer"
     SYNTH_SYSTEM = ""  # set per provider class
 
     def synthesize(self, nuggets: List[Nugget]) -> IdeaDraft:
@@ -545,6 +590,7 @@ class _SynthesizerRole:
 
 
 class _CriticRole:
+    ROLE = "critic"
     CRITIC_SYSTEM = (
         "You score product ideas. Reply with ONLY a JSON object: "
         '{"demand_signal": <1-10>, "feasibility": <1-10>'
@@ -980,6 +1026,7 @@ class QuotaPausedCritic:
     def __init__(self, critic, key=""):
         self.name = model_name(critic)
         self.settings = getattr(critic, "settings", None)
+        self.digest = getattr(critic, "digest", None)
         self.calls = 0
         self.fallbacks = 0
         self.rate_limited = 0

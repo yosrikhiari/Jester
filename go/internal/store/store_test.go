@@ -1,11 +1,40 @@
 package store
 
 import (
+	"errors"
 	"jester/internal/mediahash"
 	"testing"
 
 	"jester/internal/config"
 )
+
+func TestRetryBusyRetriesALockedDatabase(t *testing.T) {
+	calls := 0
+	err := retryBusy(func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("database is locked (5) (SQLITE_BUSY)")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryBusy: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("attempts=%d want 3", calls)
+	}
+}
+
+func TestRetryBusyLeavesOtherErrorsAlone(t *testing.T) {
+	calls := 0
+	err := retryBusy(func() error {
+		calls++
+		return errors.New("no such table: ingested_comments")
+	})
+	if err == nil || calls != 1 {
+		t.Fatalf("calls=%d err=%v; a non-lock error must not be retried", calls, err)
+	}
+}
 
 func TestSchemaVersion(t *testing.T) {
 	st, err := Open(":memory:")

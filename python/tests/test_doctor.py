@@ -53,6 +53,34 @@ def test_seeded_healthy_db_has_no_findings(tmp_path):
     assert evaluate_doctor(db) == []
 
 
+def test_disabled_generative_tasks_are_reported_without_failing(
+        tmp_path, monkeypatch, capsys):
+    """The loop is paused by configuration, not broken. Doctor must say so
+    plainly and stay exit-0: a deliberate pause is not a health failure."""
+    import jester.cli as cli
+
+    states = {
+        "JesterNightly": {"installed": True, "enabled": False,
+                          "last_run": "2026-10-02 16:35:00"},
+        "JesterNightlyScrape": {"installed": True, "enabled": False,
+                                "last_run": "2026-10-02 16:35:00"},
+        "JesterNightlyTreat": {"installed": True, "enabled": False,
+                               "last_run": "2026-10-02 16:35:00"},
+    }
+    monkeypatch.setattr(
+        cli._schedule, "status",
+        lambda task_name="JesterNightly": states.get(task_name, {"installed": False}))
+
+    notes = cli.pipeline_paused_notes()
+    assert len(notes) == 3
+    assert all("paused" in n and "disabled" in n for n in notes)
+
+    cli.cmd_doctor(_ns(db=str(tmp_path / "j.db")))
+    out = capsys.readouterr().out
+    assert "doctor OK" in out
+    assert "paused" in out
+
+
 # --- Task 2: each finding fires independently ------------------------------------
 
 def test_stale_running_row_detected(tmp_path):

@@ -406,8 +406,45 @@ func (s *Store) EnqueueBatch(b Batch) (int64, error) {
 }
 
 // MarkIngested records a comment fingerprint in the skip-list.
+//
+// S-03: a write that loses the lock race must not lose the comment. The
+// connection already sets busy_timeout=15000, which absorbs ordinary
+// contention; this retry covers the cases the driver reports immediately
+// (BUSY under an exclusive lock, a lock held longer than one wait). Without
+// it the 55 SQLITE_BUSY failures in the live schedule logs each abandoned a
+// fetched comment.
 func (s *Store) MarkIngested(fp string) error {
-	_, err := s.db.Exec("INSERT OR IGNORE INTO ingested_comments(fingerprint) VALUES(?)", fp)
+	return retryBusy(func() error {
+		_, err := s.db.Exec("INSERT OR IGNORE INTO ingested_comments(fingerprint) VALUES(?)", fp)
+		return err
+	})
+}
+
+const busyRetryAttempts = 4
+
+func isBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database is busy") ||
+		strings.Contains(msg, "sqlite_busy")
+}
+
+func retryBusy(fn func() error) error {
+	var err error
+	delay := 100 * time.Millisecond
+	for attempt := 1; attempt <= busyRetryAttempts; attempt++ {
+		err = fn()
+		if err == nil || !isBusy(err) {
+			return err
+		}
+		if attempt < busyRetryAttempts {
+			time.Sleep(delay)
+			delay *= 2
+		}
+	}
 	return err
 }
 

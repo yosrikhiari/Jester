@@ -32,6 +32,12 @@ BUSY_TIMEOUT_MS = 15000
 #: or the isolated Docker volume — readers stop blocking writers there, which
 #: is the contention the overview page feels most. Anything else falls back
 #: to DELETE rather than failing the open.
+#:
+#: This is a measured decision, not a preference: on local disk WAL completed
+#: 3.2-3.6x the commits and 40-70x the reads in the same window, and delete-
+#: mode reader p95 was the writer's lock hold (90-115 ms). See
+#: docs/reports/2026-10-31-wal-benchmark.md for the numbers, the method and the
+#: two conditions under which the default should flip.
 JOURNAL_MODE_ENV = "JESTER_SQLITE_JOURNAL_MODE"
 
 
@@ -266,6 +272,28 @@ CREATE TABLE IF NOT EXISTS signal_rule_proposals (
     decided_utc   TEXT,
     models_used   TEXT
 );
+-- S-08: what a run actually ASKED, not just which model it was configured
+-- with. Hashes are always written; the text itself only when
+-- JESTER_LLM_CALL_TEXT is set, because a prompt carries a scraped comment and
+-- the archive should not hold every body twice by default.
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          TEXT,
+    created_utc     TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    model           TEXT,
+    digest          TEXT,
+    prompt_sha256   TEXT NOT NULL,
+    response_sha256 TEXT,
+    prompt_chars    INTEGER,
+    response_chars  INTEGER,
+    latency_ms      INTEGER,
+    ok              INTEGER NOT NULL DEFAULT 1,
+    error           TEXT,
+    prompt_text     TEXT,
+    response_text   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_run ON llm_calls(run_id);
 """
 
 _ADD_COLUMNS = [
@@ -1434,17 +1462,32 @@ def start_run(
     run's environment be back-dated, and the row exists precisely so a score
     can be traced to the machine and code that produced it. A caller that
     passes none records '{}' — an empty environment is a fact, same as the
-    DEFAULT the column carries."""
-    row = db.execute("SELECT id FROM runs WHERE status='running' LIMIT 1").fetchone()
-    if row is not None:
-        raise ConcurrentRunError(f"run already in progress (id={row[0]})")
-    cur = db.execute(
-        "INSERT INTO runs(run_id, status, started_at, models_used, origin, env) "
-        "VALUES(?, 'running', datetime('now'), ?, ?, ?)",
-        (run_id, json.dumps(models_used) if models_used else None, origin,
-         json.dumps(env) if env is not None else "{}"),
-    )
-    db.commit()
+    DEFAULT the column carries.
+
+    S-03: the check-and-insert is one IMMEDIATE transaction. A plain SELECT
+    followed by INSERT lets two processes both read "no running row" before
+    either writes; SQLite serialises the writes but not the decision. The
+    lock makes the run row an actual cross-process single-flight token, not
+    a convention two schedulers can lose a race against."""
+    own_txn = False
+    if not db.in_transaction:
+        db.execute("BEGIN IMMEDIATE")
+        own_txn = True
+    try:
+        row = db.execute("SELECT id FROM runs WHERE status='running' LIMIT 1").fetchone()
+        if row is not None:
+            raise ConcurrentRunError(f"run already in progress (id={row[0]})")
+        cur = db.execute(
+            "INSERT INTO runs(run_id, status, started_at, models_used, origin, env) "
+            "VALUES(?, 'running', datetime('now'), ?, ?, ?)",
+            (run_id, json.dumps(models_used) if models_used else None, origin,
+             json.dumps(env) if env is not None else "{}"),
+        )
+        db.commit()
+    except BaseException:
+        if own_txn:
+            db.rollback()
+        raise
     return cur.lastrowid
 
 

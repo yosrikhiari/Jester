@@ -29,6 +29,7 @@ def compute_floor_flags(
     failed_batches: int,
     dedup_deferred: int = 0,
     pending_scores: int = 0,
+    quota_stopped: bool = False,
 ) -> List[str]:
     """Derive the flag set for one run.
 
@@ -45,6 +46,9 @@ def compute_floor_flags(
       sit at `needs_score` when the run finished. The critic that was asked did not
       answer, and `rescore_pending`'s per-run budget spent what it had; when
       re-scoring is off entirely this is the ONLY line the run says about it.
+    - QUOTA_STOPPED (S-02) : the provider cut this run off. The run row's
+      status already says so; the flag puts it beside the quality flags a
+      nightly glance reads.
     """
     flags: List[str] = []
     if kept == 0:
@@ -61,4 +65,6 @@ def compute_floor_flags(
         flags.append("DEDUP_UNAVAILABLE")
     if pending_scores > SCORE_BACKLOG_THRESHOLD:  # T-A4
         flags.append("SCORE_BACKLOG")
+    if quota_stopped:  # S-02
+        flags.append("QUOTA_STOPPED")
     return flags

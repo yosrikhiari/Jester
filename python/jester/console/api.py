@@ -1382,8 +1382,11 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         }
 
     def doctor(self):
+        from jester.cli import pipeline_paused_notes
+
         findings = evaluate_doctor(self.db)
-        return {"ok": len(findings) == 0, "findings": findings}
+        return {"ok": len(findings) == 0, "findings": findings,
+                "notes": pipeline_paused_notes()}
 
     def eval_gate(self):
         """Run the M2.2 calibration gate over known_good/bad sets."""

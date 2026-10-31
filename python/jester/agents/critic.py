@@ -173,7 +173,8 @@ def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -
     Stops at the first rate-limit exhaustion, for the reason the synthesizer
     does: every call after it would be another stand-in. An idea whose critic
     still does not answer stays waiting; nothing about it changes except its
-    attempt count.
+    attempt count. At SCORE_STALL_ATTEMPTS it leaves the queue: a permanently
+    refused idea must not spend every run's budget forever.
     """
     out = {"scored": 0, "still_waiting": 0, "stopped_on_quota": False,
            "stalled": 0}
@@ -183,8 +184,9 @@ def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -
         return out
     db.row_factory = sqlite3.Row
     rows = db.execute(
-        "SELECT * FROM ideas WHERE needs_score=1 "
-        "ORDER BY rescore_attempts, id LIMIT ?", (int(limit),)
+        "SELECT * FROM ideas WHERE needs_score=1 AND rescore_attempts < ? "
+        "ORDER BY rescore_attempts, id LIMIT ?",
+        (SCORE_STALL_ATTEMPTS, int(limit)),
     ).fetchall()
     critic = Critic(db, config)
     for row in rows:

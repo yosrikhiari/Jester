@@ -55,8 +55,8 @@ python -m jester.cli models --diff config-live
 `--diff` prints only the keys that resolve differently between the two
 directories, one line each, then `the two profiles resolve every role
 identically` if there are none. It also prints `unused:` lines for config keys
-no code reads — for example `models.archivist`, which both profiles still
-carry although the archivist calls no model.
+no code reads. The shipped profiles carry none (S-13); a key added by hand is
+reported the moment `jester models` loads the file.
 
 `--diff` compares **role records only**. Thresholds, prefilter rules and
 source lists are outside it; compare those with:

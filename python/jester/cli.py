@@ -83,11 +83,19 @@ from jester.cli_review import (
     _parse_eval_line,
     _score,
     cmd_eval,
+    cmd_eval_extract,
     cmd_list,
     cmd_mark,
     cmd_runs,
     cmd_show,
 )
+
+
+def _cmd_eval(args):
+    """`jester eval` keeps its scoring default; `jester eval extract` is S-06."""
+    if getattr(args, "mode", "score") == "extract":
+        return cmd_eval_extract(args)
+    return cmd_eval(args)
 
 
 def collection_for(db_path: str, base: str = "nuggets") -> str:
@@ -366,6 +374,14 @@ def cmd_run(args):
     except ConcurrentRunError as exc:
         print(f"refusing to start run '{args.run}': {exc}")
         sys.exit(1)
+
+    # S-08: every model call from here on is filed under this run, with a hash
+    # of the exact prompt and reply. Attached after the row exists so no call
+    # can point at a run that was refused, and before any agent is used.
+    from jester import provenance
+
+    provenance.prune_calls(db)
+    provenance.attach(db, args.run, llm, synth_llm, critic_llm)
 
     checkpoints = []
 
@@ -801,20 +817,27 @@ def cmd_run(args):
             "because the critic did not answer — marked needs_score, scored by "
             "a later run"
         )
-    # Ideas waiting for a score get one, a few per run (D1/D2). Skipped when
-    # this run already ran out of quota: the next call would be refused too.
-    if not getattr(synthesizer, "stopped_on_quota", False) and "critic" not in paused:
-        rescored = rescore_pending(
+    # Ideas waiting for a score get one, a few per run (D1/D2).
+    #
+    # Deliberately NOT skipped when synthesis hit the quota. Quotas are filed
+    # per model (D9), so a synthesis refusal says nothing about the critic:
+    # skipping here was what let a 607-idea backlog sit still for weeks while
+    # every night's line said the run had "completed". The critic's own block
+    # is still honoured above, and `rescore_pending` stops at its first
+    # refusal rather than spending the rest of the budget on stand-ins.
+    rescore_result = None
+    if "critic" not in paused:
+        rescore_result = rescore_pending(
             db, cfg.thresholds, critic_llm, int(cfg.thresholds.rescore_per_run or 0))
-        if rescored["scored"] or rescored["still_waiting"]:
+        if rescore_result["scored"] or rescore_result["still_waiting"]:
             line = (
-                f"re-scored {rescored['scored']} waiting idea(s); "
-                f"{rescored['still_waiting']} still waiting for the critic"
+                f"re-scored {rescore_result['scored']} waiting idea(s); "
+                f"{rescore_result['still_waiting']} still waiting for the critic"
                 + (" (stopped: the critic's quota ran out)"
-                   if rescored["stopped_on_quota"] else "")
+                   if rescore_result["stopped_on_quota"] else "")
             )
-            if rescored["stalled"]:
-                line += (f"; {rescored['stalled']} stalled after "
+            if rescore_result["stalled"]:
+                line += (f"; {rescore_result['stalled']} stalled after "
                          f"{SCORE_STALL_ATTEMPTS} attempt(s)")
             print(line)
     print(f"synthesized {len(ideas)} idea(s)")
@@ -824,6 +847,32 @@ def cmd_run(args):
     # out, clear it for each that answered. `treat` and the next run read it.
     agents = {"extractor": llm, "synthesizer": synth_llm, "critic": critic_llm}
     limited = llm_quota.settle(db, agents, args.run)
+    # S-02: a run the provider cut off is not a completed run. The durable
+    # record used to say "completed" for every one of them (106 of 241 treat
+    # runs in the live logs), so no metric or query could see the stalls.
+    quota_stopped = (
+        bool(limited)
+        or bool(getattr(synthesizer, "stopped_on_quota", False))
+        or bool(rescore_result and rescore_result["stopped_on_quota"])
+    )
+    if quota_stopped:
+        models = dict(limited)
+        if getattr(synthesizer, "stopped_on_quota", False):
+            key = llm_quota.quota_key(getattr(synth_llm, "settings", None))
+            if key and "synthesizer" not in models:
+                models["synthesizer"] = key
+        # The model and the reset time are part of the fact, not a log line
+        # that disappears with the terminal.
+        stop = {"stopped": True, "models": {}}
+        for role, key in models.items():
+            st = llm_quota.status(db, key)
+            stop["models"][role] = {
+                "key": key,
+                "blocked_until": st["blocked_until"],
+                "seconds_remaining": st["seconds_remaining"],
+                "reason": st["reason"],
+            }
+        add_to_models_used(db, args.run, {"quota_stop": stop})
     # What happened, beside what was asked for (G7): per job, how many calls,
     # how many fell back, how many hit the rate limit.
     add_to_models_used(db, args.run, {"outcome": {
@@ -853,12 +902,14 @@ def cmd_run(args):
         failed_batches=failed,
         dedup_deferred=len(archivist.deferred),
         pending_scores=pending,  # T-A4
+        quota_stopped=quota_stopped,  # S-02
     )
     durations = _duration_fields(db, args.run, origin)
+    status = "quota_stopped" if quota_stopped else "completed"
     finish_run(
         db,
         args.run,
-        status="completed",
+        status=status,
         floor_flags=flags,
         phase_checkpoints=checkpoints,
         **durations,
@@ -902,6 +953,7 @@ def cmd_run(args):
         # {role: quota key}: which jobs ran out this run, and which sat it out.
         "limited": limited,
         "paused": {role: key for role, (key, _w) in paused.items()},
+        "status": status,
     }
 
 
@@ -1467,6 +1519,20 @@ def cmd_treat(args):
 
     db = open_db(args.db)
 
+    # S-03: the same stand-down `cycle` performs, before any work is claimed.
+    # `treat` used to discover the clash inside `start_run`, after it had
+    # already counted the queue and loaded config, and it turned the refusal
+    # into exit 1 — so an overlapping tick looked like a failure. Here it is
+    # the guard working: exit 0, no run row.
+    stale = getattr(args, "stale_after", 60) or 60
+    reaped = reap_running(db, older_than_minutes=stale)
+    if reaped:
+        print(f"reaped {reaped} run(s) stuck 'running' for over {stale}m")
+    busy = active_run(db)
+    if busy:
+        print(f"skipping this tick — run '{busy}' is still in progress")
+        return {"ok": True, "skipped": True, "active_run": busy}
+
     pending = len(pending_batches(db))
     if not pending:
         print("nothing to treat: the queue is empty")
@@ -1533,6 +1599,35 @@ def cmd_schedule(args):
     # cheerfully started the nightly pipeline instead.
     _cmd = getattr(args, "command", None) or "cycle"
     _task = _schedule.TASK_FOR_COMMAND.get(_cmd, _schedule.TASK_NAME)
+    if args.action == "apply":
+        # One file makes the machine match config/schedule.yaml, and applying
+        # twice changes nothing. Without it the declared tasks were a document
+        # nobody executed: a paused task lived only in Task Scheduler.
+        try:
+            res = _schedule.apply_desired(
+                getattr(args, "file", None),
+                db=args.db,
+                config=args.config,
+                dry_run=getattr(args, "dry_run", False),
+            )
+        except _schedule.ScheduleError as exc:
+            print(f"schedule: {exc}")
+            sys.exit(2)
+        for r in res["results"]:
+            line = f"  {r['task']:<32} {r['action']}"
+            if r.get("detail"):
+                line += f" — {r['detail']}"
+            print(line)
+        if res.get("detail"):
+            print(res["detail"])
+        if not res["ok"]:
+            sys.exit(1)
+        changed = [r for r in res["results"] if r["action"] != "unchanged"]
+        if getattr(args, "dry_run", False):
+            print(f"dry run: {len(changed)} task(s) would change")
+        else:
+            print(f"schedule matches config/schedule.yaml ({len(changed)} changed)")
+        return
     if args.action == "status":
         st = _schedule.status(_task)
         if st["installed"]:
@@ -2019,10 +2114,52 @@ def launcher_findings() -> list:
             for d in _schedule.stale_launchers()]
 
 
+#: The three tasks that together are the generative loop. Signals has its own
+#: set and keeps running; these are the ones an operator pauses as a unit.
+GENERATIVE_TASKS = ("JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat")
+
+
+def pipeline_paused_notes() -> list:
+    """Tasks that are registered but switched off (S-01).
+
+    A deliberate pause is not a health failure, so this is a note and not a
+    finding: `doctor` keeps its exit code. Without it, the only place the
+    paused state existed was the Task Scheduler UI, and every reader of the
+    repository assumed the engine was running.
+    """
+    notes = []
+    for task in GENERATIVE_TASKS:
+        st = _schedule.status(task)
+        if st.get("installed") and st.get("enabled") is False:
+            last = st.get("last_run") or "unknown"
+            notes.append(
+                f"{task} is registered but disabled (last run {last}) — "
+                "the generative pipeline is paused")
+    return notes
+
+
+def schedule_drift_notes() -> list:
+    """Tasks whose live registration disagrees with config/schedule.yaml (S-20).
+
+    A note rather than a finding: Doctor's findings are about the archive, and
+    the declaration is this repo's intent for one machine. A task that is not
+    installed at all is the one case the declaration cannot see -- the disabled
+    generative tasks are absent on a box that never installed them, and that is
+    still paused, not drifted.
+    """
+    try:
+        drift = _schedule.desired_drift()
+    except _schedule.ScheduleError as exc:
+        return [f"config/schedule.yaml: {exc}"]
+    return [f"{d['task']}: " + "; ".join(d["problems"]) for d in drift]
+
+
 def cmd_doctor(args):
     db = open_db(args.db)  # SchemaVersionError propagates loud — that is a finding
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
+    for note in pipeline_paused_notes() + schedule_drift_notes():
+        print(f"doctor note: {note}")
     if findings:
         for f in findings:
             print(f"doctor FAIL: {f}")
@@ -3738,6 +3875,9 @@ def main(argv=None):
     l.set_defaults(func=cmd_list)
 
     e = sub.add_parser("eval")
+    e.add_argument("mode", nargs="?", choices=("score", "extract"), default="score",
+                   help="score (default) checks scoring arithmetic; extract runs "
+                        "the S-06 extraction-quality harness over labels")
     e.add_argument(
         "--good",
         default=str(Path(__file__).resolve().parents[2] / "eval" / "known_good.md"),
@@ -3747,7 +3887,18 @@ def main(argv=None):
         default=str(Path(__file__).resolve().parents[2] / "eval" / "known_bad.md"),
     )
     e.add_argument("--config", default=DEFAULT_CONFIG_DIR)
-    e.set_defaults(func=cmd_eval)
+    e.add_argument(
+        "--labels",
+        default=str(Path(__file__).resolve().parents[2] / "eval" / "extraction"
+                    / "labels.jsonl"),
+        help="JSONL labels for `eval extract`",
+    )
+    e.add_argument("--seed", type=int, default=20261031,
+                   help="sample seed recorded in the report")
+    e.add_argument("--floor", type=float, default=0.70, help="minimum F1")
+    e.add_argument("--fabrication-ceiling", type=float, default=0.05)
+    e.add_argument("--max-nuggets-per-comment", type=float, default=1.2)
+    e.set_defaults(func=_cmd_eval)
 
     m = sub.add_parser("mark")
     m.add_argument("--db", default="data/jester.db")
@@ -3958,9 +4109,20 @@ def main(argv=None):
     )
     sc.add_argument(
         "action",
-        choices=["status", "install", "remove", "run", "refresh", "plan"],
+        choices=["status", "install", "remove", "run", "refresh", "plan", "apply"],
         nargs="?",
         default="status",
+    )
+    sc.add_argument(
+        "--file",
+        default=None,
+        metavar="PATH",
+        help="with `apply`: the declaration to apply (default config/schedule.yaml)",
+    )
+    sc.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="with `apply`: print what would change, change nothing",
     )
     sc.add_argument(
         "--at",
@@ -4028,6 +4190,11 @@ def main(argv=None):
     from jester.maintenance import maintenance_cli
 
     maintenance_cli(sub)
+
+    # S-09: the idea pipeline's evidence pack, same pattern.
+    from jester.evidence import evidence_cli
+
+    evidence_cli(sub)
 
     ex = sub.add_parser(
         "export", help="write the archive as CSV by content type + origin"

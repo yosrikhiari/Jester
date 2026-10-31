@@ -60,7 +60,7 @@ def test_every_job_comes_back_resolved_with_its_sources(api):
     assert res["resolved"]["labeller"]["source"]["model"].startswith("the synthesizer")
     assert {"name": "groq", "kind": "openai"} in res["providers"]
     assert "temperature" in res["settings"]
-    assert res["unused"] == ["models.archivist: no code reads this model"]
+    assert res["unused"] == [], "S-13: a shipped profile has no dead key"
 
 
 def test_a_declared_provider_is_offered(api, config_dir):
