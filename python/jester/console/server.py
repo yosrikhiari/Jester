@@ -16,7 +16,7 @@ import traceback
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from jester.console.api import ConsoleAPI
 from jester.env import load_env_once
@@ -54,6 +54,24 @@ _THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 #: without holding a secret; writes are what need the guard. Compared with
 #: hmac.compare_digest so the check itself does not leak the token bytewise.
 TOKEN_ENV = "JESTER_CONSOLE_TOKEN"
+#: Opt-in read-side auth (S-10). With a token set, GETs under /api/* and
+#: /metrics require the same bearer token. Off by default so the browser
+#: console still loads on a machine where the token protects writes; turn it
+#: on whenever another device can reach the port.
+READ_AUTH_ENV = "JESTER_READ_AUTH"
+
+#: On every response, not only JSON: a browser that guesses the type of a
+#: static file is exactly the mistake nosniff prevents. The CSP keeps the
+#: console same-origin; inline `style=` attributes need the style exception.
+SECURITY_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Content-Security-Policy",
+     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+     "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
+     "base-uri 'none'; form-action 'self'"),
+)
 
 
 def _console_token() -> str:
@@ -71,6 +89,29 @@ def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
     if scheme.lower() != "bearer" or not credential:
         return False
     return hmac.compare_digest(credential.strip(), want)
+
+
+def _read_auth_enabled(handler) -> bool:
+    flag = getattr(getattr(handler, "args", None), "read_auth", False)
+    return bool(flag) or os.environ.get(READ_AUTH_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _cross_origin(handler) -> bool:
+    """A POST carrying an Origin for another site is refused (S-10).
+
+    With no token, a cross-origin page could otherwise POST a simple request.
+    curl and same-origin fetches send no Origin or the console's own; both are
+    allowed. A mismatch is refused before the body is read.
+    """
+    origin = (handler.headers.get("Origin") or "").strip()
+    if not origin:
+        return False
+    if origin == "null":
+        return True
+    host = (handler.headers.get("Host") or "").strip().lower()
+    netloc = urlsplit(origin).netloc.lower()
+    return not host or netloc != host
 
 
 def _api(args):
@@ -171,6 +212,17 @@ def _metrics_text(api) -> str:
                 "AND rescore_attempts >= ?", (SCORE_STALL_ATTEMPTS,)
             ).fetchone()[0]
             lines.append(f"jester_rescore_stalled {stalled}")
+            # S-02: how many runs the provider cut off, historically. A
+            # monotonically growing series is the only way an alert can see a
+            # pipeline that keeps being truncated but keeps exiting 0.
+            quota_stopped = api.db.execute(
+                "SELECT COUNT(*) FROM runs WHERE status='quota_stopped'"
+            ).fetchone()[0]
+            lines.append(
+                "# HELP jester_runs_quota_stopped_total Runs cut off by a "
+                "provider quota (terminal status quota_stopped).")
+            lines.append("# TYPE jester_runs_quota_stopped_total counter")
+            lines.append(f"jester_runs_quota_stopped_total {quota_stopped}")
         except Exception:  # noqa: BLE001 - a count must never take /metrics down
             pass
     return "\n".join(lines) + "\n"
@@ -200,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for key, value in SECURITY_HEADERS:
+            self.send_header(key, value)
         for key, value in extra:
             self.send_header(key, value)
         self.end_headers()
@@ -264,6 +318,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _route_get(self):
         path, _, query = self.path.partition("?")
+        # S-10: when read auth is on, the archive is not readable without the
+        # token. Static UI files stay open so the page can load and ask for it.
+        if (path == "/metrics" or path.startswith("/api/")):
+            if _read_auth_enabled(self) and not _is_authorized(self):
+                self._json({"ok": False,
+                            "error": "missing or invalid console token"}, 401)
+                return
         if path in ("/", "/index.html"):
             if not self._static("index.html"):
                 self._json({"ok": False, "error": "console UI missing from static/"}, 500)
@@ -430,6 +491,9 @@ class Handler(BaseHTTPRequestHandler):
         # must not depend on the body being well-formed, and some ConsoleAPI
         # methods predate the --read-only flag, so the layer that owns the
         # socket enforces it for every POST rather than trusting each route.
+        if _cross_origin(self):
+            self._json({"ok": False, "error": "cross-origin request refused"}, 403)
+            return
         if bool(getattr(self.args, "read_only", False)):
             self._json({"ok": False, "error": "this console is read-only"}, 403)
             return
@@ -637,6 +701,9 @@ def main(argv=None):
     p.add_argument("--read-only", action="store_true",
                    help="open the archive for viewing: never migrate it, "
                         "never write to it")
+    p.add_argument("--read-auth", action="store_true",
+                   help="also require the console token on GETs under /api/* "
+                        "and /metrics (set when another device can reach the port)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8619)
     args = p.parse_args(argv)

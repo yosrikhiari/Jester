@@ -85,11 +85,13 @@ def console(tmp_path, offline_config):
         srv.Handler.args = previous
 
 
-def _get(base, path, method="GET", body=None):
+def _get(base, path, method="GET", body=None, headers=None):
     req = urllib.request.Request(base + path, method=method)
     if body is not None:
         req.data = body
         req.add_header("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status, resp.headers, resp.read()
@@ -102,6 +104,72 @@ def test_the_console_page_is_served(console):
     assert status == 200
     assert headers["Content-Type"].startswith("text/html")
     assert b"<title>" in body.lower() or b"<!doctype" in body.lower()
+
+
+# ---- S-10: headers, read auth, cross-origin POST ----------------------------
+
+def test_every_response_carries_the_security_headers(console):
+    for path in ("/", "/api/config", "/no-such-route"):
+        _status, headers, _body = _get(console, path)
+        assert headers["X-Content-Type-Options"] == "nosniff"
+        assert headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+
+
+@pytest.fixture()
+def read_auth_console(tmp_path, offline_config, monkeypatch):
+    """A token-protected console that also guards reads."""
+    import argparse
+
+    monkeypatch.setenv(srv.TOKEN_ENV, "s3cret")
+    args = argparse.Namespace(db=str(tmp_path / "j.db"), config=str(offline_config),
+                              signals_db=str(tmp_path / "s.db"),
+                              host="127.0.0.1", port=0, read_auth=True)
+    previous = srv.Handler.args
+    srv.Handler.args = args
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        srv.Handler.args = previous
+
+
+def test_read_auth_refuses_a_get_without_the_token(read_auth_console):
+    for path in ("/api/config", "/metrics"):
+        status, headers, _body = _get(read_auth_console, path)
+        assert status == 401, path
+        assert headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_read_auth_accepts_the_token_and_still_serves_the_page(read_auth_console):
+    status, _headers, body = _get(
+        read_auth_console, "/api/config",
+        headers={"Authorization": "Bearer s3cret"})
+    assert status == 200
+    assert json.loads(body)["ok"] is not False
+
+    status, _headers, _body = _get(read_auth_console, "/")
+    assert status == 200, "the page must load so it can ask for a token"
+
+
+def test_a_cross_origin_post_is_refused(console):
+    status, _headers, body = _get(
+        console, "/api/migrate", method="POST", body=b"{}",
+        headers={"Origin": "http://evil.test"})
+    assert status == 403
+    assert "cross-origin" in json.loads(body)["error"]
+
+
+def test_a_same_origin_post_is_not_refused_for_its_origin(console):
+    status, _headers, _body = _get(
+        console, "/api/migrate", method="POST", body=b"{}",
+        headers={"Origin": console})
+    assert status != 403
 
 
 def test_an_asset_is_served_with_its_own_type(console):
@@ -275,6 +343,20 @@ def test_metrics_reports_stalled_rescores_not_just_the_backlog(console, tmp_path
     text = _get(console, "/metrics")[2].decode("utf-8")
     assert "jester_rescore_backlog 2" in text
     assert "jester_rescore_stalled 1" in text
+
+
+def test_metrics_counts_quota_stopped_runs(console, tmp_path):
+    """A truncated run is a terminal state; the exporter must be able to
+    count it, or no alert can see a pipeline that keeps being cut off."""
+    from jester.store import finish_run, open_db, start_run
+
+    db = open_db(str(tmp_path / "j.db"))
+    start_run(db, "q1")
+    finish_run(db, "q1", status="quota_stopped")
+    db.close()
+
+    text = _get(console, "/metrics")[2].decode("utf-8")
+    assert "jester_runs_quota_stopped_total 1" in text
 
 
 @pytest.fixture()

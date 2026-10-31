@@ -195,14 +195,28 @@ const BROWSER_PLATFORMS = new Set(['reddit', 'youtube', 'tiktok', 'realestate'])
 let INFRA = null;
 
 // ── transport ───────────────────────────────────────────────────────────
+const TOKEN_KEY = 'jester.token';
+function consoleToken() { return sessionStorage.getItem(TOKEN_KEY) || ''; }
 async function api(path, body) {
-  const opts = body === undefined ? undefined : {
+  const opts = body === undefined ? {} : {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   };
+  const token = consoleToken();
+  if (token) opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${token}` };
   try {
-    const r = await fetch(path, opts);
+    let r = await fetch(path, opts);
+    // --read-auth answers 401 until the page has a token. Ask once, keep it
+    // for this tab only: a write token must not become persistent storage.
+    if (r.status === 401) {
+      const entered = window.prompt('Console token (JESTER_CONSOLE_TOKEN)');
+      if (entered) {
+        sessionStorage.setItem(TOKEN_KEY, entered);
+        opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${entered}` };
+        r = await fetch(path, opts);
+      }
+    }
     const payload = await r.json();
     if (!r.ok && payload.ok === undefined) payload.ok = false;
     return payload;
