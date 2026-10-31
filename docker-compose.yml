@@ -43,8 +43,11 @@ services:
     # stays as the tag because Dependabot updates only references that carry
     # a runnable tag; the digest is what actually runs.
     image: qdrant/qdrant:latest@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
+    # Loopback-only, like ClickHouse: Qdrant ships without authentication, so
+    # publishing it on every interface puts the vectors on the LAN. In-network
+    # callers (console, Go worker) still reach it as qdrant:6333.
     ports:
-      - "6333:6333"
+      - "127.0.0.1:6333:6333"
     volumes:
       - qdrant_storage:/qdrant/storage
     # The qdrant image ships no curl/wget, so a HTTP healthcheck isn't
@@ -96,8 +99,10 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
+    # The container still listens on 0.0.0.0 (Dockerfile CMD), but the host
+    # side is loopback: the token guards POSTs, this keeps GETs off the LAN.
     ports:
-      - "8619:8619"
+      - "127.0.0.1:8619:8619"
     depends_on:
       qdrant:
         condition: service_started
@@ -161,7 +166,7 @@ services:
       CHOKIDAR_USEPOLLING: "true"
       WATCHPACK_POLLING: "true"
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     networks: [jester_net]
 
   # ---- profile-gated: need external resources -----------------------------
@@ -251,8 +256,10 @@ services:
     # F-07: pinned 2026-10-29 through the registry manifest API (`latest`
     # pushed 2026-10-29 itself). Tag kept for Dependabot; digest decides.
     image: ollama/ollama:latest@sha256:b2f0122c476bc9fe7ce679d8bb4bd555351e25e2554eefb156f61cb0a89cf429
+    # No authentication and no host-side consumer beyond this machine; a
+    # published Ollama is an open model server.
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     profiles: ["live"]

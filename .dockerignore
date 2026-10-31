@@ -1,0 +1,7 @@
+# Cache directories are never build inputs. `go/.pytest_cache` in particular
+# can carry an ACL that denies even the owner on Windows, which aborts BuildKit
+# at context load ("open go/.pytest_cache: Access is denied") before any
+# Dockerfile step runs. Excluding it keeps local builds working without
+# changing permissions on the directory itself.
+.pytest_cache
+**/.pytest_cache

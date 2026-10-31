@@ -75,6 +75,10 @@ def _child_env(**overrides):
         "PYTHONPATH": str(REPO_ROOT / "python"),
         "JESTER_MOCK": "1",
         "JESTER_QDRANT_URL": "",
+        # Empty, not absent: load_env treats presence as a deliberate choice,
+        # so an empty value stops a developer's .env token from turning auth
+        # on under these tests. Auth itself is covered in test_console_auth.
+        "JESTER_CONSOLE_TOKEN": "",
         "NO_COLOR": "1",
     }
     env.update({k: v for k, v in overrides.items() if v is not None})
