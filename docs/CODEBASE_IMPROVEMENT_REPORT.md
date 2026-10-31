@@ -397,7 +397,7 @@ go version; Get-Item go/*.exe | Select-Object Name, Length
 
 ## Appendix C — Implementation status (merged to `main` as PR #54, 2026-10-14; page synced 2026-10-15)
 
-All 12 findings were implemented in roadmap order on `impl/report-fixes` and merged to `main` as PR #54 (commit `96935ff`, now an ancestor of `fix/sonar-js-promises-2` at `9c93954`). Appendix D records the end-to-end verification.
+All 12 findings were implemented in roadmap order on `impl/report-fixes` and merged to `main` as PR #54 (commit `96935ff`, now an ancestor of `fix/sonar-js-promises-2` at `9c93954`). Appendix D records the end-to-end verification; Appendix E records what happened next (review, merges, and gate fixes).
 
 | ID | What landed | Validation (actually run) |
 |---|---|---|
@@ -446,3 +446,35 @@ offline treat defer. `load_env` now uses presence (`key not in os.environ`),
 matching its documented "existing env wins" rule; pinned by
 `test_explicitly_emptied_key_is_not_backfilled`. Without this fix the journeys
 above cannot archive a single nugget on any machine whose `.env` sets the URL.
+
+---
+
+## Appendix E — What was done and what is left (2026-10-14, living section)
+
+### Done since the audit
+
+| When (UTC) | What | Evidence |
+|---|---|---|
+| 11:01 | 12 sliced commits pushed as `impl/report-fixes` (F-01…F-12 in roadmap order, minimal diffs); PR #54 opened, CI + gate green except below | PR #54 |
+| 11:32 | PR #54 **merged** to `main` | merge commit `96935ff` |
+| 11:3x | Gate failed on #54: coverage 79.8% (< 80) + S2068 hardcoded dev password in `clickhouse.py` | SonarCloud PR check |
+| 11:3x–12:18 | Fixed in code (not excluded): guard now refuses *unconfigured* passwords on remote hosts instead of comparing against a literal; ~30 behavioral tests closed the coverage gap (review commands, batch paths, reembed fallbacks, signals views, batch edge cases, Go WAL test) | PR #65, new coverage 100%, security A |
+| 12:18 | PR #65 **merged** | merge commit `ad47043` |
+| 12:33–12:42 | All 10 open Dependabot PRs merged (#55–#64: ollama 0.6.3, qdrant-client 1.19.1, pyyaml 6.0.3, pytest-cov 7.1.0, tzdata 2026.5, react 19.3.0, node-26 types, oxlint 1.87.0, plugin-react 6.1.2); 3 needed hand-resolved lock/pin merges, each validated (`npm ci` + lint + build) before merging | main history |
+| 12:42 | Full suite re-run in an isolated venv with the merged pins: **1,555 passed, 0 failed** (CI installs from the unchanged lockfile, so it never exercises the new pins — the venv closed that gap) | local run |
+| 12:4x | Main-branch gate failed on **reliability** (C): 17 `S9383` floating promises in shipped `app.js`, all inside the 21-day new-code window | SonarCloud main gate |
+| 13:02 | Fixed with a `pin()` helper (logs rejections, no toast storms) applied at exactly the 17 sites; `node --check` clean | PR #66 (this branch) |
+
+Corrections to earlier sections: F-09's `.exe` files were never tracked (gitignored locals, §8 overstated it); the `rescore_per_run` registry gap pre-dated this work (registered alongside the new knob in `jester-setup.md` §4.3.1).
+
+### What is left (prioritized)
+
+1. **Merge PR #66** — clears the main-branch reliability gate. Nothing else blocks it (CI + Sonar green).
+2. **Measure before promoting.** `extractor_batch_size: 4` on a config copy + a real treat: compare token use and trivial-share against the legacy path (the eval gate in §8). The code is ready; only measurement promotes it from hypothesis to default.
+3. **Label ~200 dedup pairs** from the real archive and run `jester dedup-sweep`. That decides whether 0.87 survives — the whole F-06 payoff.
+4. **Regenerate `pylock.toml` on Linux.** The merged pip bumps (ollama, qdrant-client, …) only changed `requirements.txt`; Docker and CI still install the old lock, so the bumps are documentation until the lock regenerates.
+5. **Pre-existing JS debt (outside every gate window):** ~33 more S9383 in `app.js`, the S2871 sort-without-compare, unlabeled inputs in the console HTML. The `pin()` pattern from #66 is the template; a JS test runner (F-10/F-12) is the real fix.
+6. **Slow-burn items from §8:** image-digest pinning (Dependabot now tracks), non-root Python/Go images (`gosu` design), `/metrics` + OTel spans, per-category dedup thresholds.
+7. **Unchanged open questions from §11:** TikTok adapter scoping, Reddit commercial-access decision, ToS counsel review before any scrape scale-up.
+
+Net position: every finding has landed behind a green gate; what remains is measurement, one merge, and previously known debt.
