@@ -1,0 +1,61 @@
+# The schedule this machine is supposed to keep. `jester schedule apply`
+# makes Task Scheduler match it; `jester doctor` reports the difference.
+#
+# Why a file: `install` registers one task at a time, so before this a paused
+# task (disabled in Task Scheduler, as the generative loop has been since the
+# 2026-10-02 quota pause) was indistinguishable from a deleted one. The pause
+# lived only on one machine. It is a decision, so it belongs in the repo where
+# it can be reviewed and undone.
+#
+# `enabled: false` is a PAUSE, not a deletion: the task stays registered with
+# its cadence and launcher, so setting it back to true and re-applying restores
+# exactly what was chosen.
+#
+# `command` is one of the schedulable commands in jester/schedule.py
+# (TASK_FOR_COMMAND). `cadence` is exactly one of:
+#   every: 30          -- every N minutes
+#   at: "09:00"        -- daily at HH:MM local time
+#   weekly: SUN        -- weekly on that day (add `at:` for the time)
+# `options` are the scrape ceilings (`only`, `max_posts`, `max_comments`,
+# `max_ideas`) passed to the command; ignored for `treat`, which takes none.
+
+tasks:
+  # ── the generative pipeline: paused on 2026-10-02 for quota ────────────
+  # Re-enable with `enabled: true` and `jester schedule apply` when the quota
+  # decision is reversed. Nothing else needs to change.
+  - task: JesterNightly
+    command: cycle
+    cadence: {every: 30}
+    enabled: false
+  - task: JesterNightlyScrape
+    command: ingest
+    cadence: {every: 60}
+    enabled: false
+  - task: JesterNightlyTreat
+    command: treat
+    cadence: {every: 30}
+    enabled: false
+
+  # ── the signals collector: still running ───────────────────────────────
+  # Times are staggered on purpose; the sweep reads Himalayas to the end of
+  # its results and must not race the hiring run against the same budget.
+  - task: JesterNightlySignals
+    command: signals
+    cadence: {at: "09:00"}
+    enabled: true
+  - task: JesterNightlySignalsBrief
+    command: signals-brief
+    cadence: {at: "10:00"}
+    enabled: true
+  - task: JesterNightlySignalsHiring
+    command: signals-hiring
+    cadence: {at: "09:30"}
+    enabled: true
+  - task: JesterNightlySignalsSweep
+    command: signals-sweep
+    cadence: {at: "08:00"}
+    enabled: true
+  - task: JesterNightlyLeadsReddit
+    command: leads-reddit
+    cadence: {at: "09:45"}
+    enabled: true

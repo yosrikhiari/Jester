@@ -18,7 +18,10 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+
+import yaml
 
 TASK_NAME = "JesterNightly"
 DEFAULT_TIME = "03:00"
@@ -613,6 +616,7 @@ def status(task_name: str = TASK_NAME) -> dict:
             "last_run": fields.get("last run time", ""),
             "last_result": fields.get("last result", ""),
             "cadence": _cadence_from(fields),
+            "start_time": fields.get("start time", ""),
             "interval_minutes": interval_minutes(fields),
             "detail": detail,
         }
@@ -1011,3 +1015,258 @@ def run_now(task_name: str = TASK_NAME) -> dict:
     p = _run(["schtasks", "/run", "/tn", task_name])
     ok = p.returncode == 0
     return {"ok": ok, "action": "run", "detail": (p.stdout or p.stderr).strip()}
+
+
+# ---- S-20: the schedule is a checked-in declaration ---------------------------
+#
+# `install` can register one task, but nothing recorded WHICH tasks should
+# exist, at what cadence, enabled or not. A disabled task was therefore
+# indistinguishable from a deleted one, and "the pipeline is paused" lived only
+# in this machine's Task Scheduler. `config/schedule.yaml` is that record;
+# `apply` makes the machine match it; Doctor reports when it does not.
+
+SCHEDULE_FILE = repo_root() / "config" / "schedule.yaml"
+
+
+class ScheduleError(ValueError):
+    """A declaration that cannot be applied."""
+
+
+def _same_time(registered: str, at: str) -> bool:
+    """Is a schtasks Start Time the HH:MM the declaration asked for?"""
+    text = (registered or "").strip()
+    for fmt in ("%I:%M:%S %p", "%H:%M:%S", "%I:%M %p", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%H:%M") == at
+        except ValueError:
+            continue
+    return False
+
+
+def load_desired(path=None) -> list:
+    """Read and validate `config/schedule.yaml`."""
+    path = Path(path or SCHEDULE_FILE)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        raise ScheduleError(f"no schedule file at {path}") from None
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise ScheduleError(f"{path}: `tasks` must be a non-empty list")
+
+    out, seen = [], set()
+    for raw in tasks:
+        if not isinstance(raw, dict):
+            raise ScheduleError(f"{path}: each task must be a mapping")
+        task = str(raw.get("task") or "").strip()
+        command = str(raw.get("command") or "").strip()
+        if not task:
+            raise ScheduleError(f"{path}: a task entry has no `task` name")
+        if task in seen:
+            raise ScheduleError(f"{path}: task {task!r} is declared twice")
+        seen.add(task)
+        if command not in TASK_FOR_COMMAND:
+            raise ScheduleError(
+                f"{path}: task {task!r} has unknown command {command!r}; "
+                f"valid: {', '.join(TASK_FOR_COMMAND)}")
+        cadence = raw.get("cadence")
+        if not isinstance(cadence, dict):
+            raise ScheduleError(f"{path}: task {task!r} needs a `cadence` mapping")
+        unknown = set(cadence) - {"every", "at", "weekly"}
+        if unknown:
+            raise ScheduleError(
+                f"{path}: task {task!r}: unknown cadence key(s): "
+                f"{', '.join(sorted(unknown))}")
+        if "weekly" not in cadence and len(
+                [k for k in ("every", "at") if k in cadence]) != 1:
+            raise ScheduleError(
+                f"{path}: task {task!r} needs exactly one of every/at/weekly")
+        if "weekly" in cadence:
+            try:
+                cadence = {"weekly": weekday(cadence["weekly"]),
+                           "at": str(cadence.get("at") or DEFAULT_TIME)}
+                datetime.strptime(cadence["at"], "%H:%M")
+            except (ValueError, TypeError) as exc:
+                raise ScheduleError(f"{path}: task {task!r}: {exc}") from None
+        elif "every" in cadence:
+            try:
+                every = int(cadence["every"])
+                interval_schedule(every)
+            except (TypeError, ValueError) as exc:
+                raise ScheduleError(f"{path}: task {task!r}: {exc}") from None
+            cadence = {"every": every}
+        else:
+            at = str(cadence["at"])
+            try:
+                datetime.strptime(at, "%H:%M")
+            except ValueError:
+                raise ScheduleError(
+                    f"{path}: task {task!r}: at must be HH:MM, got {at!r}") from None
+            cadence = {"at": at}
+        options = raw.get("options") or {}
+        if not isinstance(options, dict):
+            raise ScheduleError(f"{path}: task {task!r}: options must be a mapping")
+        unknown = set(options) - {k for k, _ in SCRAPE_OPTION_FLAGS}
+        if unknown:
+            raise ScheduleError(
+                f"{path}: task {task!r}: unknown option(s): {', '.join(sorted(unknown))}")
+        out.append({
+            "task": task,
+            "command": command,
+            "cadence": cadence,
+            "enabled": bool(raw.get("enabled", True)),
+            "options": options,
+        })
+    return out
+
+
+def describe_cadence(spec: dict) -> str:
+    cadence = spec["cadence"]
+    if "every" in cadence:
+        n = int(cadence["every"])
+        if n % 60 == 0:
+            hours = n // 60
+            return f"every {hours} hour" + ("s" if hours != 1 else "")
+        return f"every {n} minute" + ("s" if n != 1 else "")
+    if "weekly" in cadence:
+        return f"weekly on {cadence['weekly']} at {cadence['at']}"
+    return f"daily at {cadence['at']}"
+
+
+def cadence_matches(st: dict, spec: dict) -> bool:
+    """Does the registered trigger equal the declaration?"""
+    cadence = spec["cadence"]
+    if "every" in cadence:
+        return st.get("interval_minutes") == int(cadence["every"])
+    registered = (st.get("cadence") or "").lower()
+    if "weekly" in cadence:
+        return (registered.startswith("weekly")
+                and cadence["weekly"].lower() in registered
+                and _same_time(st.get("start_time") or "", cadence["at"]))
+    return registered.startswith("daily") and _same_time(
+        st.get("start_time") or "", cadence["at"])
+
+
+def _launcher_problems(spec: dict) -> list:
+    """What the generated launcher says versus what the declaration asks.
+
+    The declaration carries a scope (`options`), and `apply` used to compare
+    only cadence and enabled state: changing `only`/`max_posts` and re-running
+    apply printed "unchanged" while the task kept scraping the old scope. The
+    launcher is the file the scheduler runs, so it is the honest thing to
+    compare. `treat` takes no scrape scope, so its options are not a fact.
+    """
+    launcher = read_launcher(spec["command"])
+    if launcher is None:
+        return [f"launcher missing; apply would rewrite "
+                f"{launcher_path(spec['command']).name}"]
+    if spec["command"] == "treat":
+        return []
+    # Where the scope sits depends on the command: with a --config it is in
+    # `argv` (before --db), without one it follows --db into `extra`. Reading
+    # either field alone compared nothing for one of the two shapes.
+    tokens = (shlex.split(launcher.get("argv") or "", posix=False)
+              + list(launcher.get("extra") or []))
+    have = parse_scrape_flags(tokens)
+    if scrape_flags(have) != scrape_flags(spec["options"]):
+        return [f"scrape options are {have or 'none'}; "
+                f"should be {spec['options'] or 'none'}"]
+    return []
+
+
+def _drift_of(st: dict, spec: dict) -> list:
+    problems = []
+    if not st.get("installed"):
+        # A task declared off and absent is still off. Only a task that should
+        # RUN is missed; reporting the paused ones as drift would make a fresh
+        # machine look broken for agreeing with the declaration.
+        if spec["enabled"]:
+            problems.append(f"not installed; should run {describe_cadence(spec)}")
+        return problems
+    if not cadence_matches(st, spec):
+        problems.append(
+            f"cadence is {st.get('cadence') or 'unknown'}; "
+            f"should be {describe_cadence(spec)}")
+    enabled = st.get("enabled", True)
+    if bool(enabled) != spec["enabled"]:
+        problems.append("should be enabled" if spec["enabled"] else "should be disabled")
+    problems.extend(_launcher_problems(spec))
+    return problems
+
+
+def desired_drift(path=None) -> list:
+    """Declared tasks whose live registration disagrees with the file.
+
+    Windows-only: cron has one line per user and no per-task enabled state, so
+    there is no drift to compare there.
+    """
+    if not is_windows():
+        return []
+    out = []
+    for spec in load_desired(path):
+        st = status(spec["task"])
+        problems = _drift_of(st, spec)
+        if problems:
+            out.append({"task": spec["task"], "problems": problems})
+    return out
+
+
+def apply_desired(path=None, *, db="data/jester.db", config="config",
+                  python=None, dry_run=False) -> dict:
+    """Make the host match `config/schedule.yaml`. Applying twice changes nothing.
+
+    One task at a time, in file order. A declared `enabled: false` is a pause:
+    the task stays registered with its cadence and launcher, so re-enabling it
+    later restores what was chosen rather than a default.
+    """
+    if not is_windows():
+        return {"ok": False, "results": [],
+                "detail": "schedule apply needs Windows Task Scheduler; cron "
+                          "has no per-task enabled state"}
+    results = []
+    for spec in load_desired(path):
+        task = spec["task"]
+        st = status(task)
+        needs_create = (
+            not st.get("installed")
+            or not cadence_matches(st, spec)
+            or bool(_launcher_problems(spec))
+        )
+        needs_state = st.get("installed") and bool(st.get("enabled", True)) != spec["enabled"]
+        if not needs_create and not needs_state:
+            results.append({"task": task, "action": "unchanged"})
+            continue
+        if dry_run:
+            what = []
+            if needs_create:
+                verb = "install" if not st.get("installed") else "reinstall"
+                what.append(f"{verb} ({describe_cadence(spec)})")
+            if needs_state:
+                what.append("enable" if spec["enabled"] else "disable")
+            results.append({"task": task, "action": "would " + ", ".join(what)})
+            continue
+
+        if needs_create:
+            cadence = spec["cadence"]
+            res = install(
+                at=cadence.get("at", DEFAULT_TIME),
+                db=db, config=config, task_name=task, python=python,
+                every=cadence.get("every"),
+                extra=scrape_flags({} if spec["command"] == "treat" else spec["options"]),
+                command=spec["command"], weekly=cadence.get("weekly"),
+            )
+            if not res.get("ok"):
+                results.append({"task": task, "action": "failed",
+                                "detail": res.get("detail", "")})
+                continue
+        current = status(task)
+        if bool(current.get("enabled", True)) != spec["enabled"]:
+            res = set_enabled(task, spec["enabled"])
+            if not res.get("ok"):
+                results.append({"task": task, "action": "failed",
+                                "detail": res.get("detail", "")})
+                continue
+        results.append({"task": task,
+                        "action": "installed" if needs_create else
+                                  ("enabled" if spec["enabled"] else "disabled")})
+    return {"ok": all(r["action"] != "failed" for r in results), "results": results}
