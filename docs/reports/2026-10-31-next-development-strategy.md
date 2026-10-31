@@ -588,7 +588,7 @@ This section records what happened after the plan above was executed test-first,
 | S-13 | Implemented | Dead `models:` block removed; `test_shipped_thresholds_have_no_unread_keys` | — |
 | S-14 | Not attempted | — | Human ratings: 30 blinded pairs, 3 raters, Spearman report |
 | S-15 | Not attempted | — | 100-record recall sample, human review, 95% CI |
-| S-16 | Authored, locally verified | `windows-latest` job in `ci.yml` running the platform-sensitive subset; that subset passes locally on Windows | First green run on GitHub; make it a required check |
+| S-16 | Implemented, green on GitHub | `windows-latest` job in `ci.yml` running the platform-sensitive subset; first green run on 2026-10-31 (CI run 41199031390, all five jobs) | Make it a required check |
 | S-17 | Implemented | `scripts/counts.py`; README counts dated with the command that produces them; `smoke.sh` and the other scripts probe for a working interpreter; this section aligns roadmap statuses | — |
 | S-18 | Implemented | `extractor_batch_size` capped at 5 (6 rejected); role and agent digests; `test_config.py`, `test_roles.py` | — |
 | S-19 | Owner-gated | — | Tag `v0.1`, CHANGELOG, Dependabot triage |
@@ -625,7 +625,7 @@ The merge also leaves remote branches that were not part of "every local branch"
 
 The first CI run on the pushed commit was green on Linux, Go and the frontend, and failed the Windows job before it ran a test: the job installed `python/pylock.toml`, whose own header says it is Linux-only and that Windows should install `requirements.txt`. pip stopped at `packages[3]` — `coverage` — with "No wheel found matching the provided tags". The Windows job now installs `python/requirements.txt`; a local `pip install --dry-run --only-binary :all: -r python/requirements.txt` resolves to Windows wheels.
 
-The second run got past install and failed the smoke step with `No module named 'jester'`. The four shell entry points built `PYTHONPATH` from `$PWD/python` with a `:` separator; Git Bash passes that variable through untranslated to a native Windows Python, which splits it on `;`, so the whole value was one unusable entry. It had passed locally only because this machine has the project installed. They now source `scripts/_pythonpath.sh`, which converts the path with `cygpath -w` and uses the platform's separator, and the Windows job carries an absolute `PYTHONPATH` rather than a relative one. `bash scripts/smoke.sh` passes locally with no ambient `PYTHONPATH`; the green Windows run is the evidence that still has to come from the runner.
+The second run got past install and failed the smoke step with `No module named 'jester'`. The four shell entry points built `PYTHONPATH` from `$PWD/python` with a `:` separator; Git Bash passes that variable through untranslated to a native Windows Python, which splits it on `;`, so the whole value was one unusable entry. It had passed locally only because this machine has the project installed. They now source `scripts/_pythonpath.sh`, which converts the path with `cygpath -w` and uses the platform's separator, and the Windows job carries an absolute `PYTHONPATH` rather than a relative one. The third run was green on all five jobs — Linux, Windows, Go, frontend and the Sonar scanner (CI run 41199031390). Before that, the Windows job had never run a test on the runner; both failures were in the job's own setup, not in the code it was meant to check.
 
 ---
 
