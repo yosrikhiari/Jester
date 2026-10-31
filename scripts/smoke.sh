@@ -12,5 +12,24 @@
 set -u
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
-PY="${PYTHON:-python3}"
+# S-17: pick an interpreter that actually runs. `command -v python3` succeeds
+# on Windows even when the name belongs to the Microsoft Store stub, which
+# exits with "Python was not found" — so existence is not the test, execution
+# is. PYTHON still wins; otherwise the first of python/python3 that answers.
+if [ -n "${PYTHON:-}" ]; then
+    PY="$PYTHON"
+else
+    PY=""
+    for candidate in python python3; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+                && "$candidate" -c "" >/dev/null 2>&1; then
+            PY="$candidate"
+            break
+        fi
+    done
+fi
+if [ -z "$PY" ]; then
+    echo "smoke: no working python interpreter found; set PYTHON" >&2
+    exit 127
+fi
 exec "$PY" -m jester.cli smoke "$@"

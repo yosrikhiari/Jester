@@ -7,7 +7,7 @@
 
 ## 1. Executive summary
 
-Jester is a working, evidence-obsessed multi-agent pipeline: Go scrapes forums → SQLite handoff queue → Python LLM chain (extractor → synthesizer → critic) → Qdrant dedup + ClickHouse archive → stdlib operator console. The real archive (35,118 batches, 98,890 nuggets, 1,468 ideas) proves the design works.
+Jester is a working, evidence-obsessed multi-agent pipeline: Go scrapes forums → SQLite handoff queue → Python LLM chain (extractor → synthesizer → critic) → Qdrant dedup + ClickHouse archive → stdlib operator console. The real archive (as of September 2026: 35,118 batches, 98,890 nuggets, 1,468 ideas) proves the design works.
 
 The audit found **no data-integrity emergency**, but 12 actionable findings. The top 5 by value/effort:
 

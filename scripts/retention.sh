@@ -8,5 +8,15 @@
 set -u
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
-PY="${PYTHON:-python3}"
+# S-17: `python3` may be the Microsoft Store stub — it exists but does not run.
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+    for candidate in python python3; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+                && "$candidate" -c "" >/dev/null 2>&1; then
+            PY="$candidate"; break
+        fi
+    done
+fi
+[ -n "$PY" ] || { echo "retention: no working python interpreter found; set PYTHON" >&2; exit 127; }
 exec "$PY" -m jester.cli retention "$@"

@@ -15,7 +15,7 @@
 <p align="center">
   <img src="docs/img/jester-ideas.png" alt="Jester operator console — Ideas: 1,468 scored ideas, each with its nugget and thread evidence" width="900">
 </p>
-<p align="center"><sub>The operator console on the real archive (2026-09-22): <b>98,890 nuggets → 1,468 scored ideas</b> from 130 sources. Each row carries demand / feasibility / competition from the critic agent and the evidence count behind it; open one to read the citations. <a href="docs/img/jester-overview.png">Overview</a> · <a href="docs/img/jester-signals.png">Problem signals</a>.</sub></p>
+<p align="center"><sub>The operator console on the real archive, September 2026: <b>98,890 nuggets → 1,468 scored ideas</b> from 130 sources. The archive has grown since (see the dated counts below); the live Overview page shows the current numbers. Each row carries demand / feasibility / competition from the critic agent and the evidence count behind it; open one to read the citations. <a href="docs/img/jester-overview.png">Overview</a> · <a href="docs/img/jester-signals.png">Problem signals</a>.</sub></p>
 
 ---
 
@@ -33,7 +33,15 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
                    ClickHouse + CSV            Qdrant (vectors + dedup)
 ```
 
-**Numbers from the working archive**, not a demo: 35,118 ingest batches, 98,890 nuggets, 1,468 scored ideas, 205 recorded runs.
+**Numbers from the working archive** (measured read-only on 2026-10-31): 133,402 comments, 115,185 nuggets, 2,627 ideas. Counts move; the console and [`docs/reports/2026-10-31-next-development-strategy.md`](docs/reports/2026-10-31-next-development-strategy.md) carry the dated detail.
+
+## Operating state
+
+**The generative pipeline is paused since 2026-10-02.** All three scheduled tasks (`JesterNightly`, `JesterNightlyScrape`, `JesterNightlyTreat`) are registered but disabled; their last run exited 0 because they were switched off, not because the work succeeded. `jester doctor` prints them as notes.
+
+**The problem-signal collector is running daily** (five separate tasks), and its fixture gate was last green on 2026-10-31.
+
+Resume the generative loop only after the B1 gate in the [2026-10-31 strategy report](docs/reports/2026-10-31-next-development-strategy.md): one unattended day must end with an honest `quota_stopped` status, no overlapping ticks, and a score backlog that falls.
 
 ## Architecture
 
@@ -177,6 +185,10 @@ docker compose up
 
 Then open the operator console at **http://localhost:8619**.
 
+The console binds to loopback. If another device can reach it, set
+`JESTER_CONSOLE_TOKEN` and run with `--read-auth` so reads need the token too:
+[docs/console-security.md](docs/console-security.md).
+
 The default stack runs in **mock mode** (`JESTER_MOCK=1`): the whole pipeline works offline against fixture data.
 
 The longer version — the native install, the deterministic signal export, and the `jester smoke` gates: **[docs/quickstart.md](docs/quickstart.md)**.
@@ -242,7 +254,7 @@ Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — ho
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-940 Python tests and 285 Go test functions (counted 2026-09-24; CI runs both on every push). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-10-31: 1,925 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the thirteen `live_*` tests against real Ollama and Qdrant. They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 

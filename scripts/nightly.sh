@@ -7,7 +7,7 @@
 # exits 0 so cron stays quiet; the morning's `jester runs` still shows flags.
 #
 # Env:
-#   PYTHON            interpreter override   (default: python3)
+#   PYTHON            interpreter override   (default: python, else python3)
 #   JESTER_DB         passed as --db to jester run
 #   JESTER_NOTIFY_CMD optional failure hook; argv template word-split by the
 #                     shell; tokens may use {exit_code} {run_id} {reason}.
@@ -16,7 +16,17 @@
 set -u
 cd "$(dirname "$0")/.."
 export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
-PY="${PYTHON:-python3}"
+# S-17: `python3` may be the Microsoft Store stub — it exists but does not run.
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+    for candidate in python python3; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+                && "$candidate" -c "" >/dev/null 2>&1; then
+            PY="$candidate"; break
+        fi
+    done
+fi
+[ -n "$PY" ] || { echo "nightly: no working python interpreter found; set PYTHON" >&2; exit 127; }
 
 RUN_ARGS=()
 [ -n "${JESTER_DB:-}" ] && RUN_ARGS+=(--db "$JESTER_DB")
