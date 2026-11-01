@@ -62,7 +62,9 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
   the test probed the bare `nuggets` collection while the pipeline writes
   `nuggets__<db stem>`. The test now pins the five model roles to the
   deterministic stand-ins (the set `jester smoke` pins) and asks Doctor about
-  this database's collection.
+  this database's collection. The dispatch on `0697e1d` is green
+  (`41302659108`: 11 passed, 0 skipped), and the README and the workflow now
+  say eleven live tests, which is what the lane collects.
 - `docs/model-providers.md`: what leaves the machine, to which provider,
   under which variable, and what Jester keeps.
 - `docs/STATUS.md`: one index across the S-, F- and ND- registers.

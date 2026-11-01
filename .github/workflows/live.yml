@@ -1,6 +1,6 @@
 # Live services lane (S-12).
 #
-# Thirteen tests are marked `live_ollama`/`live_qdrant` and skipped by the
+# Eleven tests are marked `live_ollama`/`live_qdrant` and skipped by the
 # default suite because they need a daemon. Nothing ran them in CI, so the
 # difference between the mocked shape and the real one was invisible until an
 # operator hit it.

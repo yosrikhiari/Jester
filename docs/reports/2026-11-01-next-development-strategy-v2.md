@@ -476,7 +476,7 @@ Selective by design: fourteen items, each with an identified problem and an obje
 | **ND-05** | Retention policy never scheduled or run; 98.7% of nuggets past TTL | No task; `retention_sweep` manual only [Observed] | Add a retention entry to `config/schedule.yaml` **after** ND-04; apply; record the first sweep's counts | Makes the documented privacy policy true | S | **High if ordered wrong** — destroys the S-06 substrate | ND-04 | **P1** | Doctor shows the task; first run reports N nuggets wiped; count matches the pre-run age query |
 | **ND-06** | No scheduled, verified backup; newest predates last write | `data/backups/` newest 2026-10-02T13:40Z [Observed] | `jester backup` + `--verify` on a schedule (keep 14); verify the newest snapshot | Removes the largest single point of loss | S | Low | Disk space for one 225 MB snapshot | **P1** | Scheduled task exists; `--verify` prints OK; restore drill on a copy |
 | **ND-07** | `jester doctor` migrates the archive it diagnoses | `cli.py:2157` + `store.py:580-588` [Observed] | Add `--no-migrate` (read-only) and make the CLI default explicit; print which mode was used | A diagnostic that only reads; "has this been migrated?" becomes answerable | S | Medium: some checks need new tables, so they must degrade to a note | None | **P1** | Live DB mtime unchanged after `doctor --no-migrate`; missing-table checks print notes, not crashes |
-| **ND-08** | `live.yml` has never run; 13 live tests unexecuted | `gh run list -w live.yml` → `[]` [Observed] | One dispatch, fix what breaks, then a weekly cron | Integration drift becomes visible before the operator hits it | M | Medium: may surface real stack drift | Qdrant/Ollama available in CI | **P1** | One green run linked from README; a deliberate drift fails it |
+| **ND-08** | `live.yml` had never run; its 11 live tests were unexecuted (this row said 13; the lane collects 11) | `gh run list -w live.yml` → `[]` [Observed] | One dispatch, fix what breaks, then a weekly cron — **done 2026-11-01**: the cron fired, broke one test, C.7 fixed it, dispatch `41302659108` green | Integration drift becomes visible before the operator hits it | M | Medium: may surface real stack drift | Qdrant/Ollama available in CI | **P1** | One green run linked from README; a deliberate drift fails it |
 | **ND-09** | `main` is unprotected; coverage and audit gates are advisory | 404 on protection; no `fail-under`; `continue-on-error` [Observed] | Protect `main` with required checks; record a coverage baseline then add a floor; triage the 7 Dependabot PRs (start with `pytest` → dev-only) | A red run blocks a merge; dependency drift stops accumulating | S | Low | ND-08 for a meaningful required set | **P1** | Protection returns JSON; a red PR cannot merge; open PR count falls |
 | **ND-10** | Five overlapping registers; "is it done?" has four answers | roadmap §1.5/§4, strategy §9/§15, this §2.2 | Create `docs/STATUS.md` as the single index; each register links to it; archive superseded sections | Reviewers and future sessions stop re-deriving state | S | Low | — | **P1** | One row per item with evidence link; no two documents disagree on a status |
 | **ND-11** | No release anchor; archive numbers drift under dated docs | 0 tags, no CHANGELOG; README 115,185 vs live 115,199 [Observed] | Tag `v0.1.0` at HEAD; CHANGELOG with the three products' state; make archive counts generated or explicitly dated | A resume point and an auditable history | S | Low | ND-01 preferred first | **P2** | Tag exists; CHANGELOG matches code; counts carry a date |
@@ -851,7 +851,7 @@ The reviewer also noted that `pylock.toml` still pins `pytest`/`pytest-cov` alth
 
 ### C.4 What was deliberately not done
 
-Resuming the generative loop; scheduling retention (still `enabled: false`) before the sample is labelled; `schedule apply` on the host; any write to `data/jester.db` (migrate, rescore, retention); the React port or deletion; splitting god modules; flipping WAL to the default; new scrapers or model changes; bulk dependency upgrades; branch protection, Dependabot triage, the `live.yml` dispatch, and the `v0.1.0` tag — those need the owner's account or judgement.
+Resuming the generative loop; scheduling retention (still `enabled: false`) before the sample is labelled; `schedule apply` on the host; any write to `data/jester.db` (migrate, rescore, retention); the React port or deletion; splitting god modules; flipping WAL to the default; new scrapers or model changes; bulk dependency upgrades; branch protection, Dependabot triage, and the `v0.1.0` tag — those need the owner's account or judgement. The `live.yml` dispatch listed here was done afterwards; C.7 records it.
 
 ### C.5 Owner-gated steps, in order
 
@@ -859,7 +859,7 @@ Resuming the generative loop; scheduling retention (still `enabled: false`) befo
 2. `python -m jester.cli schedule apply` on the host — four changes, none of them the live sweep.
 3. Label `eval/extraction/sample.jsonl` (150 rows, 50 doubled) and run `eval extract` to publish κ/P/R/F1/fabrication; only then flip retention to `enabled: true`.
 4. Back up, then `jester migrate` and drain `jester rescore --pending` on the live archive (ND-01).
-5. Branch protection + required checks, Dependabot triage (ND-09); one `live.yml` dispatch to confirm the test fixed in C.7 — the weekly cron is already live (ND-08); tag `v0.1.0` after the push is green (ND-11).
+5. Branch protection + required checks, Dependabot triage (ND-09); tag `v0.1.0` after the push is green (ND-11). ND-08 is **done**: the weekly cron is live, and the dispatched lane `41302659108` is green (C.7).
 
 ### C.6 The SonarCloud security rating (added after C.1–C.5)
 
@@ -993,13 +993,25 @@ is what its docstring always claimed.
 After row 21 the server held `nuggets__j` with 2 points and no bare `nuggets`
 collection — the two names the old assertion conflated.
 
-**Verification boundary.** Row 20 ran on this host, where Ollama happens to
-serve `qwen3:8b`; that is why the first root cause did not reproduce here and
-the second one did. The lane's fix is confirmed only by a run *in the lane*,
-which needs one `live.yml` dispatch after the push. Until that run is green,
-ND-08 is not done regardless of the local result. These four rows were run by
-the orchestrating agent; no independent reviewer has seen the diff.
+**Verification boundary, before the dispatch.** Row 20 ran on this host, where
+Ollama happens to serve `qwen3:8b`; that is why the first root cause did not
+reproduce here and the second one did. A local run cannot confirm the lane.
+
+**Result on `0697e1d`.** The fix was pushed as `0697e1d`. Push run
+`41302624812` passed all seven checks — the six CI jobs plus
+`SonarCloud Code Analysis` — and the dispatched lane `41302659108` passed in
+all nine steps: step 8 ran `11 passed, 1955 deselected in 21.72s`, and step 9's
+re-run found the same 11 and `0 skipped` (`12.95s`). The previous run had been
+`1 failed, 10 passed`. The SonarCloud gate still returns `GATE: OK` with all
+three new-code ratings at 1.
+
+**Who ran what.** Rows 20–23 and the two CI queries above were run by the
+orchestrating agent on this machine and from this account; no independent
+reviewer has seen the diff. `data/jester.db` was never opened.
 
 **Environment.** The reproduction used a throwaway `qdrant/qdrant:latest`
-container on port 6333, removed afterwards. `data/jester.db` was not touched.
+container on port 6333, removed afterwards. The same change corrects the live
+test count written in [README.md](../../README.md#tests) and at the top of
+[`live.yml`](../../.github/workflows/live.yml): both said thirteen, the lane
+collects eleven.
 
