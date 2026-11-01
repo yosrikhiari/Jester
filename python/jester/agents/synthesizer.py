@@ -15,7 +15,7 @@ from jester.idea_dedup import (
     apply_verdict,
     find_duplicate,
     index_idea,
-    merge_supporting,
+    merge_supporting_nocommit,
     rescore_after_merge,
 )
 from jester.llm import CriticLLM, SynthesizerLLM, model_name
@@ -25,11 +25,9 @@ from jester.store import (
     _now,
     claim_nuggets,
     count_claimed_nuggets,
-    find_idea_by_support_key,
-    idea_support_key,
+    find_idea_containing_support,
     insert_idea_nocommit,
     mark_needs_score,
-    set_synthesized,
     set_synthesized_nocommit,
     unprocessed_nuggets,
 )
@@ -333,10 +331,12 @@ class Synthesizer:
             # V3-01: claim the evidence and write the row as ONE unit.
             outcome, existing_id = self._claim_and_insert(idea, supporting, now)
             if outcome == "duplicate":
-                # The archive already rests on exactly this evidence: some
-                # other writer got there first, or this run is a re-run over
-                # a stale pool. Merge, exactly as the R44 path does. Score 1.0
-                # because the evidence is identical, not merely similar.
+                # An idea already rests on this evidence — exactly it, or a
+                # superset of it (a merge grew that idea over this group).
+                # Some other writer got there first, or this run is a re-run
+                # over a stale pool. Merge, exactly as the R44 path does.
+                # Score 1.0 because the evidence is already inside that idea,
+                # not merely similar to it.
                 self._absorb(existing_id, 1.0, supporting, now,
                              critic_llm, checker, critic_hit_the_limit)
                 if critic_hit_the_limit:
@@ -370,8 +370,8 @@ class Synthesizer:
 
         Returns ``("inserted", None)`` when the row was written (``idea.id`` is
         set), ``("duplicate", existing_id)`` when the archive already rests on
-        exactly this evidence, or ``("partial", None)`` when part of the
-        evidence belongs to somebody else.
+        this evidence, or ``("partial", None)`` when part of the evidence
+        belongs to somebody else.
 
         A BEGIN IMMEDIATE write lock, not a plain SELECT-then-INSERT: SQLite
         serialises writes but not decisions, and the decision here is "nobody
@@ -379,6 +379,11 @@ class Synthesizer:
         check, the claim and the insert is what makes that decision true, and
         means a crash anywhere inside it leaves neither an idea nor a claim —
         so the re-run archives exactly one idea instead of two.
+
+        The check is CONTAINMENT, not equality (V3-01): an idea grown by a
+        merge contains the union of its old evidence and the absorbed group,
+        so the group that produced the absorbed half matches nothing exactly.
+        Equality is the special case, and it is `duplicate` too.
         """
         manual = self.reuse_claimed_evidence
         own_txn = not self.db.in_transaction
@@ -386,8 +391,7 @@ class Synthesizer:
             self.db.execute("BEGIN IMMEDIATE")
         try:
             if not manual:
-                existing = find_idea_by_support_key(
-                    self.db, idea_support_key(supporting))
+                existing = find_idea_containing_support(self.db, supporting)
                 if existing is not None:
                     if own_txn:
                         self.db.rollback()
@@ -415,8 +419,32 @@ class Synthesizer:
 
     def _absorb(self, existing_id, score, supporting, now, critic_llm, checker,
                 critic_hit_the_limit) -> None:
-        """Merge this group's evidence into `existing_id`, then re-score it."""
-        grew, added = merge_supporting(self.db, existing_id, supporting)
+        """Merge this group's evidence into `existing_id` and claim it, as ONE
+        write, then re-score outside that write.
+
+        V3-01: the merge and the claim used to be two commits, in that order.
+        A crash between them left the idea already grown with the newly
+        absorbed nuggets still unclaimed; the next run then archived a second
+        idea over evidence the first one was resting on. One BEGIN IMMEDIATE
+        unit makes the two facts atomic — either the idea holds the evidence
+        and the evidence is claimed, or neither happened. The re-score calls a
+        model, so it stays outside the lock.
+        """
+        own_txn = not self.db.in_transaction
+        if own_txn:
+            self.db.execute("BEGIN IMMEDIATE")
+        try:
+            grew, added = merge_supporting_nocommit(self.db, existing_id, supporting)
+            # R50: stamp synthesized_at ONLY on the nuggets that joined — in
+            # the same unit as the merge that took them, so the row and its
+            # evidence can never disagree about what this idea rests on.
+            set_synthesized_nocommit(self.db, supporting, now)
+            if own_txn:
+                self.db.commit()
+        except BaseException:
+            if own_txn:
+                self.db.rollback()
+            raise
         self.merged.append(MergeResult(existing_id, grew, score, added))
         if grew and critic_hit_the_limit:
             # The critic just refused on quota; asking it again for
@@ -427,8 +455,6 @@ class Synthesizer:
             # R49: re-score against the evidence it now actually rests on.
             rescore_after_merge(self.db, existing_id, Critic(self.db, self.config),
                                 critic_llm, checker)
-        # R50: stamp synthesized_at ONLY on the nuggets that joined.
-        set_synthesized(self.db, supporting, now)
 
     def _stop_on_quota(self):
         self.stopped_early = True

@@ -11,6 +11,7 @@ Now the claim, the DB-level duplicate check and the insert are one
 `BEGIN IMMEDIATE` unit: a fault rolls all three back, and a second writer
 finds the supported set already archived and merges into it.
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,129 @@ def test_manual_resynth_may_reuse_claimed_evidence(tmp_path):
                          reuse_claimed_evidence=True)
     assert len(again) == 1
     assert len(list_ideas(db)) == 2
+
+
+class _OneMatchVector:
+    """A vector index that calls every idea a near-duplicate of one row."""
+
+    def __init__(self, idea_id, score=0.95):
+        self.idea_id = idea_id
+        self.score = score
+        self.upserts = []
+
+    def search_scored(self, text, limit=5):
+        return [(self.score, f"idea:{self.idea_id}")]
+
+    def upsert(self, key, text, payload=None):
+        self.upserts.append(key)
+
+
+def _crashed_merge_idea(db, keys):
+    """The residue the old two-commit merge path left: an idea already grown,
+    its newly absorbed nuggets still unclaimed."""
+    insert_idea(db, Idea(
+        title="the idea the crashed merge grew",
+        problem_statement="it grew, then the process died",
+        proposed_solution="claim it on the next run",
+        supporting_nuggets=keys,
+        scores=IdeaScores(demand_signal=8, feasibility=7, overall=7.0)))
+
+
+def test_a_group_already_inside_an_idea_is_absorbed_not_rearchived(tmp_path):
+    """The merge path's crash residue, constructed directly.
+
+    `_absorb` used to commit the merge and then commit the claim. A process
+    that died between them left exactly this shape: an idea whose support
+    already contains the group's keys, with those nuggets still unclaimed.
+    The guard then compared supported sets for EQUALITY, so the group — a
+    SUBSET of the union the idea now rests on — matched nothing and a second
+    idea was archived over evidence the first one already held (measured:
+    one idea in, three out). Containment closes it: an idea that contains
+    every key of the group is the idea this group is about.
+    """
+    db = _db(tmp_path)
+    _crashed_merge_idea(db, ["t0-n0", "t0-n1", "t9-n0"])
+    assert len(list_ideas(db)) == 1, "the merge commit happened"
+    assert len(unprocessed_nuggets(db)) == 2, "the claim commit never did"
+
+    syn = _syn(db)
+    new = syn.run(FakeSynthesizerLLM(), FakeCriticLLM(), run_id="retry")
+
+    assert new == [], "zero new ideas: the group is inside that idea"
+    assert len(list_ideas(db)) == 1, "no second idea over the same evidence"
+    assert unprocessed_nuggets(db) == [], "the merge repairs the missing claim"
+    assert syn.merged and syn.merged[0].duplicate_of == 1
+    assert syn.merged[0].grew is False, "the evidence was already there"
+    assert syn.claimed_elsewhere == 0, "absorbed, not skipped"
+
+
+def test_the_tightest_superset_is_the_one_absorbed(tmp_path):
+    """Containment must not pick arbitrarily: the idea whose evidence the group
+    is most specifically about wins, and the tie-break is stable (lowest id),
+    so two runs over the same archive make the same decision."""
+    db = _db(tmp_path)
+    _crashed_merge_idea(db, ["t0-n0", "t0-n1", "t9-n0"])
+    _crashed_merge_idea(db, ["t0-n0", "t0-n1", "t8-n0", "t8-n1"])
+
+    syn = _syn(db)
+    syn.run(FakeSynthesizerLLM(), FakeCriticLLM(), run_id="retry")
+
+    assert syn.merged[0].duplicate_of == 1, "the smaller superset, not the broader one"
+    assert len(list_ideas(db)) == 2, "the two archived ideas are untouched"
+
+
+def test_a_fault_between_the_merge_and_its_claim_rolls_both_back(tmp_path, monkeypatch):
+    """Merge and claim are one write now.
+
+    They were two commits, in that order. A crash between them left the idea
+    grown (its support_key covering the union) with the absorbed nuggets
+    unclaimed — the residue the containment guard above has to recognise.
+    With both writes inside one BEGIN IMMEDIATE, a crash leaves neither.
+    """
+    db = _db(tmp_path)
+    _crashed_merge_idea(db, ["t0-n0"])
+    vector = _OneMatchVector(idea_id=1)
+
+    def die(*args, **kwargs):
+        raise RuntimeError("process died between the merge and its claim")
+
+    with monkeypatch.context() as m:
+        # Both names: the synthesizer calls its own imported reference, and
+        # `store.set_synthesized` calls `store`'s. Patching both is what makes
+        # the fault land wherever the write actually happens.
+        m.setattr("jester.agents.synthesizer.set_synthesized_nocommit", die)
+        m.setattr("jester.store.set_synthesized_nocommit", die)
+        with pytest.raises(RuntimeError):
+            _syn(db).run(FakeSynthesizerLLM(), FakeCriticLLM(),
+                         run_id="crashed", idea_vector=vector)
+
+    row = get_idea(db, 1)
+    assert json.loads(row["supporting_nuggets"]) == ["t0-n0"], "the merge rolled back"
+    assert db.in_transaction is False, "no transaction left open"
+    assert len(list_ideas(db)) == 1, "no idea was archived either"
+    assert len(unprocessed_nuggets(db)) == 2, "the claim rolled back with the merge"
+
+    retry = _syn(db).run(FakeSynthesizerLLM(), FakeCriticLLM(),
+                         run_id="retry", idea_vector=vector)
+    assert retry == [], "the retry is still a merge"
+    assert json.loads(get_idea(db, 1)["supporting_nuggets"]) == ["t0-n0", "t0-n1"]
+    assert unprocessed_nuggets(db) == [], "and this time the claim stuck"
+
+
+def test_manual_resynth_still_creates_its_second_idea(tmp_path):
+    """D-16/R56: the escape hatch asks for the evidence again on purpose.
+    Containment must not swallow it — the guard is off for this path."""
+    db = _db(tmp_path)
+    _crashed_merge_idea(db, ["t0-n0", "t0-n1", "t9-n0"])
+    rows = unprocessed_nuggets(db)
+
+    new = _syn(db).run(FakeSynthesizerLLM(), FakeCriticLLM(),
+                       run_id="resynth-1", rows=rows,
+                       reuse_claimed_evidence=True)
+
+    assert len(new) == 1, "the operator asked for a second idea"
+    assert len(list_ideas(db)) == 2
+    assert unprocessed_nuggets(db) == [], "the reused evidence is stamped"
 
 
 def test_insert_idea_still_commits_on_its_own(tmp_path):

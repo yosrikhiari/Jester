@@ -64,6 +64,22 @@ def merge_supporting(db, existing_id: int, new_keys: List[str]) -> tuple:
 
     Returns (grew, added_keys). Order is preserved and existing keys keep their
     position, so a merge never reshuffles the citation list a reviewer read.
+    Commits when it wrote anything, which is what every caller but the
+    synthesizer relies on (it owns the transaction — see the nocommit half).
+    """
+    grew, added = merge_supporting_nocommit(db, existing_id, new_keys)
+    if grew:
+        db.commit()
+    return grew, added
+
+
+def merge_supporting_nocommit(db, existing_id: int, new_keys: List[str]) -> tuple:
+    """The merge UPDATE, leaving the transaction to the caller.
+
+    V3-01: the synthesizer merges AND claims the merged nuggets inside one
+    BEGIN IMMEDIATE unit. This half therefore must not commit — a commit here
+    would end that unit halfway and reopen the crash window where the idea is
+    grown but its new evidence is still unclaimed.
     """
     row = get_idea(db, existing_id)
     if row is None:
@@ -80,7 +96,6 @@ def merge_supporting(db, existing_id: int, new_keys: List[str]) -> tuple:
         (json.dumps(merged), max(row["source_threads"] or 0, len(merged)),
          idea_support_key(merged), existing_id),
     )
-    db.commit()
     return True, tuple(added)
 
 

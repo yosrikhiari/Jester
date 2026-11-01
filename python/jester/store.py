@@ -1299,6 +1299,50 @@ def find_idea_by_support_key(db: sqlite3.Connection, key: str) -> Optional[int]:
     return int(row[0]) if row is not None else None
 
 
+def find_idea_containing_support(db: sqlite3.Connection, keys) -> Optional[int]:
+    """The id of an idea whose evidence already covers every key in `keys`.
+
+    V3-01 containment. An idea grown by a merge rests on the UNION of its old
+    evidence and what it absorbed, so the group that produced the absorbed
+    half is a SUBSET of that idea's support. Equality alone missed it: a crash
+    after the merge and before the claim made the next run archive a second
+    idea over evidence the first one already held. Exact equality is the
+    special case and is tried first, because the index answers it.
+
+    The tightest superset wins (fewest keys, then lowest id): the idea whose
+    evidence this group is specifically about, not the broadest row that
+    happens to contain it. A stable tie-break matters — two runs over the same
+    archive must make the same decision.
+
+    Read-only. The synthesizer runs it inside its BEGIN IMMEDIATE unit.
+    """
+    wanted = {str(k) for k in (keys or []) if k}
+    if not wanted:
+        return None
+    exact = db.execute(
+        "SELECT id FROM ideas WHERE support_key=? ORDER BY id LIMIT 1",
+        (idea_support_key(wanted),),
+    ).fetchone()
+    if exact is not None:
+        return int(exact[0])
+    rows = db.execute(
+        "SELECT id, support_key FROM ideas "
+        "WHERE support_key IS NOT NULL AND support_key <> ''"
+    ).fetchall()
+    best: Optional[int] = None
+    best_size: Optional[int] = None
+    for idea_id, support_key in rows:
+        have = {k for k in (support_key or "").split(SUPPORT_KEY_SEP) if k}
+        if not wanted <= have:
+            continue
+        size = len(have)
+        tighter = best_size is None or size < best_size
+        same_tier_earlier = size == best_size and int(idea_id) < best
+        if best is None or tighter or same_tier_earlier:
+            best, best_size = int(idea_id), size
+    return best
+
+
 def _backfill_support_keys(db: sqlite3.Connection) -> int:
     """Fill `support_key` for ideas written before the column existed.
 
