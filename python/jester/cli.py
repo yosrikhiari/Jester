@@ -2843,6 +2843,7 @@ def cmd_signals(args):
         load      copy SQLite -> ClickHouse and reconcile the counts (M2)
         queries   run the saved SQL and print each answer
         evidence  load, reconcile, run every query, write the review pack
+        retention delete records last seen more than --days days ago
 
     There is no live action. Live collection needs approved commercial Reddit
     API access, which is somebody else's decision, and a path that cannot
@@ -3122,6 +3123,23 @@ def cmd_signals(args):
         finally:
             db.close()
 
+    if action == "retention":
+        # The archive's own window, separate from `jester retention` (which
+        # is the idea pipeline's sweep). Off by default: the schedule entry
+        # ships paused, and a command that deletes archived signals is not
+        # something an install should turn on. The count is the report.
+        db = sig.open_signals(args.db)
+        try:
+            deleted = sig.retention(db, args.days)
+        except ValueError as exc:
+            print(f"retention: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
+        print(f"deleted {deleted} record(s) last seen more than "
+              f"{args.days} day(s) ago")
+        return
+
     if action in ("digest", "reclassify"):
         from jester.signals import digest as sigdigest
         from jester.signals import run as sigrun
@@ -3290,6 +3308,14 @@ def cmd_signals(args):
                 rec = ch.reconcile(db, client, mode=args.only_mode)
                 print(f"loaded {res['rows_sent']} row(s) in {res['requests']} request(s) "
                       f"into {res['database']} at {res['url']}")
+                # Said out loud because this used to require a manual DROP:
+                # a field added to the field map now reaches ClickHouse on the
+                # next load, and the log is where someone sees that happen.
+                sch = res.get("schema") or {}
+                added = sch.get("columns_added") or []
+                print(f"schema: v{sch.get('schema_version', '?')} · "
+                      f"{sch.get('columns_present', '?')} column(s) described · "
+                      + (f"added {', '.join(added)}" if added else "nothing to add"))
                 print(f"sqlite {rec['sqlite_rows']} · clickhouse {rec['clickhouse_rows_final']} "
                       f"(final) · distinct ids {rec['clickhouse_unique_ids']}")
                 # The M2 check in one line. Duplicates are the failure the
@@ -4135,13 +4161,14 @@ def main(argv=None):
     )
     sg.add_argument("action", nargs="?", default="export",
                     choices=["export", "check", "scope", "rules", "field-map",
-                             "load", "queries", "evidence",
+                             "load", "queries", "evidence", "retention",
                              "run", "recover", "runs", "sources",
                              "digest", "reclassify", "leads", "outcome",
                              "from-archive", "brief"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
+                         "delete records past the retention window | "
                          "run a live collection | recover failed queries | "
                          "list runs | list sources | write the weekly digest | "
                          "re-score the archive against the rules | "
@@ -4215,6 +4242,12 @@ def main(argv=None):
     # rows out of an archive is how a count stops reconciling.
     sg.add_argument("--only-mode", default="", choices=["", "live", "synthetic"],
                     help="load/export only rows of this mode (default: all)")
+    # Separately defaulted well above the nugget TTL on purpose: this deletes
+    # archived signals outright, and a year is long enough that anyone running
+    # it has asked for it rather than inherited it.
+    sg.add_argument("--days", type=int, default=365,
+                    help="retention: delete records last seen more than this many "
+                         "days ago (default 365; 0 is refused)")
     sg.set_defaults(func=cmd_signals)
 
     _add_journal_parser(sub)

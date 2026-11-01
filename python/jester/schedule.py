@@ -407,6 +407,13 @@ TASK_FOR_COMMAND = {
     # evaluation sample exists.
     "backup": TASK_NAME + "Backup",
     "retention": TASK_NAME + "Retention",
+    # The signals archive's own window. A different sweep from `retention`
+    # above, on a different database: that one minimises text in the idea
+    # pipeline, this one deletes signal records past their last sighting.
+    # Declared PAUSED in config/schedule.yaml until the owner picks a TTL.
+    # The name the task card specifies, verbatim — it does not carry the
+    # `JesterNightly` prefix the other entries share.
+    "signals-retention": "JesterSignalsRetention",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -515,6 +522,13 @@ COMMAND_SPEC = {
     "backup": {"argv": ("backup",), "config": False},
     # `retention` takes no --config; its TTL is the documented 30 days.
     "retention": {"argv": ("retention",), "config": False},
+    # `signals retention` is a sub-command and takes no --config, and its
+    # window is fixed here rather than in `options`: `options` are the scrape
+    # ceilings (`SCRAPE_OPTION_FLAGS`) and nothing else. 365 days, not the
+    # nugget pipeline's 30: a record is a 600-character excerpt, but the row
+    # is still the only evidence that a post said what it said.
+    "signals-retention": {"argv": ("signals", "retention", "--days", "365"),
+                          "config": False},
 }
 
 

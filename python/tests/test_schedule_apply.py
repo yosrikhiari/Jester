@@ -27,6 +27,7 @@ DECLARED = [
     "JesterNightlyLeadsReddit",
     "JesterNightlyBackup",
     "JesterNightlyRetention",
+    "JesterSignalsRetention",
 ]
 
 
@@ -125,7 +126,7 @@ def test_the_shipped_declaration_names_every_task():
     assert [s["task"] for s in specs] == DECLARED
     assert {s["task"] for s in specs if not s["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     assert cadence["JesterNightly"] == "every 30 minutes"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
@@ -138,16 +139,16 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
     assert installed == set(DECLARED)
-    assert len(host.created()) == 11
+    assert len(host.created()) == 12
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 11
-    assert len(host.created()) == 11, "a second apply must not re-register anything"
-    assert len(host.changes()) == 4, "nor flip the four paused tasks again"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 12
+    assert len(host.created()) == 12, "a second apply must not re-register anything"
+    assert len(host.changes()) == 5, "nor flip the five paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -162,7 +163,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "11 task(s) would change" in out
+    assert "12 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):

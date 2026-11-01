@@ -89,3 +89,13 @@ tasks:
     command: retention
     cadence: {weekly: SUN, at: "03:30"}
     enabled: false
+  # A DIFFERENT sweep, on a different database: `signals-retention` DELETES
+  # signal records whose last sighting is older than the window (365 days,
+  # passed in argv by COMMAND_SPEC). The excerpts are the only copy of what
+  # those posts said, and the record is what the buyer counts are computed
+  # from, so it stays PAUSED until the owner chooses a TTL. Flipping
+  # `enabled: true` is that decision, not an install side effect.
+  - task: JesterSignalsRetention
+    command: signals-retention
+    cadence: {weekly: SUN, at: "04:00"}
+    enabled: false
