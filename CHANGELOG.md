@@ -12,9 +12,26 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
 | **Problem signals** — a deterministic collector that archives buyer-intent records | **Live**, five scheduled tasks, fixture gate green on 2026-10-31. | `go/`, `python/jester/signals/`, `data/signals-*.db`, ClickHouse |
 | **Journal** — plan → run → check → publish with evidence | **Built through slice J3; nothing published yet** (0 articles). | `python/jester/journal/`, `data/journal.db`, site worktree |
 
-## [Unreleased] — 2026-11-01 (NB1/NB2/NB4 code)
+## [0.1.0] — 2026-11-01
+
+First release. The anchor was the 2026-10-31 state at commit `36d357b`, with
+all five CI jobs green at `41199031390` (Linux, Windows, Go, frontend, Sonar
+scanner); this entry adds the cycle that followed and is what `v0.1.0` tags.
 
 ### Idea pipeline
+- Seven model jobs resolved in one place (`roles.py`); every role has a
+  provider, model and generation settings that a run records as a digest.
+- Extraction, synthesis, scoring, labelling, dedup and archiving, with an
+  archivist that refuses to mix embedding models.
+- Batch extraction capped at five comments; a reply whose item indexes do not
+  echo its positions is rejected, so insights are never attributed to the
+  wrong comment.
+- `quota_stopped` is a terminal run status, not a success; one tick owns a
+  day; a rescore pass has its own budget and drains the backlog.
+- `llm_calls` provenance: role, model, prompt/response hashes, latency;
+  full text only with `JESTER_LLM_CALL_TEXT=1`; pruned after 30 days.
+- `jester evidence --run ID` writes a self-contained evidence pack.
+- `jester eval` gates the scoring formula on committed known-good/bad pairs.
 - `jester schedule status` prints a disabled task as `PAUSED` / `state :
   DISABLED`, and an enabled one as `RUNNING`/`idle`. It previously printed a
   disabled task as `INSTALLED just now`.
@@ -82,26 +99,6 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
   re-drawn when the ranking changed to `sha256(seed, unique_key)`, with two
   runs producing identical bytes (`sha256 adbb909d…`).
 
-## [0.1.0] — 2026-10-31
-
-First anchor. State at commit `36d357b`; all five CI jobs green at
-`41199031390` (Linux, Windows, Go, frontend, Sonar scanner).
-
-### Idea pipeline
-- Seven model jobs resolved in one place (`roles.py`); every role has a
-  provider, model and generation settings that a run records as a digest.
-- Extraction, synthesis, scoring, labelling, dedup and archiving, with an
-  archivist that refuses to mix embedding models.
-- Batch extraction capped at five comments; a reply whose item indexes do not
-  echo its positions is rejected, so insights are never attributed to the
-  wrong comment.
-- `quota_stopped` is a terminal run status, not a success; one tick owns a
-  day; a rescore pass has its own budget and drains the backlog.
-- `llm_calls` provenance: role, model, prompt/response hashes, latency;
-  full text only with `JESTER_LLM_CALL_TEXT=1`; pruned after 30 days.
-- `jester evidence --run ID` writes a self-contained evidence pack.
-- `jester eval` gates the scoring formula on committed known-good/bad pairs.
-
 ### Problem signals
 - Go collector and ClickHouse store with `FINAL` counting; Python digest,
   export (CSV + reconciling manifest) and fixture gate (21 cases).
@@ -121,8 +118,9 @@ First anchor. State at commit `36d357b`; all five CI jobs green at
   delivers the 403 instead of a reset.
 
 ### Operations
-- `config/schedule.yaml` + `jester schedule apply` (8 tasks at this version),
-  with launcher-drift detection and a fake-`schtasks` test harness.
+- `config/schedule.yaml` + `jester schedule apply` (10 tasks at this version,
+  8 at the 2026-10-31 anchor), with launcher-drift detection and a
+  fake-`schtasks` test harness.
 - `jester doctor` reports disabled tasks, unread config keys, missing tables
   and schedule drift.
 - `jester backup --verify` (SQLite online backup, integrity check, keep 14)
