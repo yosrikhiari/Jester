@@ -1,4 +1,5 @@
 """TDD tests for the M1.5 archivist agent: dedup, R32 model-refuse, needs_reembed."""
+import logging
 import tempfile
 
 import pytest
@@ -65,6 +66,30 @@ def test_needs_reembed_on_upsert_failure():
     ).fetchone()
     assert row is not None
     assert row[0] == 1
+
+
+def test_a_failed_upsert_is_counted_and_the_nugget_is_kept(caplog):
+    """V3-07: the upsert failure was swallowed with no count and no log, so a
+    corpus with no vectors for a night of nuggets looked like a clean run."""
+    db = _db()
+    arch = Archivist(db, _vector(force_fail=True),
+                     Thresholds(embedding_model="nomic-embed-text"))
+    nuggets = _nuggets()
+
+    with caplog.at_level(logging.WARNING, logger="jester.archivist"):
+        kept = arch.run([nuggets[0]])
+
+    assert len(kept) == 1, "the degradation stays: the nugget is archived"
+    assert arch.reembed_failed == 1
+    assert len(caplog.records) == 1, "one warning for the run, not a flood"
+    assert "RuntimeError" in caplog.text, "the exception type is the diagnosis"
+
+
+def test_a_clean_run_reports_no_reembed_failures():
+    db = _db()
+    arch = Archivist(db, _vector(), Thresholds(embedding_model="nomic-embed-text"))
+    arch.run(_nuggets())
+    assert arch.reembed_failed == 0
 
 
 def test_idempotent_unique_key_skip():

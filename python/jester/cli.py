@@ -296,6 +296,7 @@ def stopped_early_line(synthesizer, max_ideas):
 
 
 def cmd_run(args):
+    global _OWNED_RUN_ID
     cfg = load_config(args.config)
     db = open_db(args.db)
 
@@ -379,6 +380,10 @@ def cmd_run(args):
     except ConcurrentRunError as exc:
         print(f"refusing to start run '{args.run}': {exc}")
         sys.exit(1)
+
+    # V3-17: this row is OURS. The catch-all in `main` may close exactly this
+    # run and no other, however many rows are still 'running'.
+    _OWNED_RUN_ID = args.run
 
     # S-08: every model call from here on is filed under this run, with a hash
     # of the exact prompt and reply. Attached after the row exists so no call
@@ -931,6 +936,9 @@ def cmd_run(args):
         phase_checkpoints=checkpoints,
         **durations,
     )
+    # V3-17: the run is closed, so this process no longer owns a row. Anything
+    # that fails from here on (an export, say) must not re-open the epitaph.
+    _OWNED_RUN_ID = None
     if flags:
         print("floor flags: " + ", ".join(flags))
 
@@ -1009,22 +1017,35 @@ def cmd_retention(args):
     )
 
 
+#: The run row THIS process opened, or None (V3-17). Set by `cmd_run` once
+#: `start_run` succeeds, cleared when the run is closed. Crash attribution
+#: reads it: a command that never opened a run has nothing to close.
+_OWNED_RUN_ID = None
+
+
 def _record_run_crash(args, exc) -> None:
-    """Best-effort: write `exc` onto whichever run row is still 'running'.
+    """Best-effort: write `exc` onto the run row THIS process opened.
+
+    V3-17: this used to write to `active_run(db)` — the one row still marked
+    'running', whoever opened it — so a failing `export` while a live run
+    existed stamped that run `error` with a traceback it never raised, and the
+    run that actually crashed was not the one corrected. Ownership is the only
+    thing that makes the epitaph truthful: no owned run, nothing written.
 
     Every failure here is swallowed. This runs while the process is already
     dying, and an error-reporting path that raises would replace the real
     traceback with its own — the exact failure it exists to prevent.
     """
+    global _OWNED_RUN_ID
+    run_id, _OWNED_RUN_ID = _OWNED_RUN_ID, None
+    if not run_id:
+        return
     db_path = getattr(args, "db", None)
     if not db_path:
         return
     try:
         db = open_db(db_path)
         try:
-            run_id = active_run(db)
-            if run_id is None:
-                return
             finish_run(
                 db,
                 run_id,
@@ -2559,12 +2580,19 @@ def _rescore_standin(args):
 
 
 def _rescore_pending_now(args):
-    from jester import llm_quota
+    from jester import llm_quota, provenance
     from jester.agents.critic import rescore_pending
 
     cfg = load_config(args.config)
     db = open_db(args.db)
     critic_llm = select_critic_llm(cfg.thresholds)
+    # V3-07: these are model calls like any other, and they used to leave no
+    # llm_calls row at all, so a score written here could not be traced to the
+    # question that produced it. Filed under the run in flight, if there is
+    # one; with no run there is nothing to file under.
+    live_run = active_run(db)
+    if live_run:
+        provenance.attach(db, live_run, critic_llm)
     # The same per-model block treat honours: a quota known to be gone costs
     # one read. None for a critic with no quota (Ollama, fake).
     key = llm_quota.quota_key(getattr(critic_llm, "settings", None))

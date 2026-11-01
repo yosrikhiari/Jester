@@ -6,6 +6,8 @@ JSON shape changed is a test nobody runs.
 """
 import io
 import json
+import socket
+import ssl
 import urllib.error
 
 import pytest
@@ -19,6 +21,7 @@ from jester.llm import (
     GroqCriticLLM,
     GroqError,
     GroqLLM,
+    GroqRateLimited,
     GroqSynthesizerLLM,
     model_name,
     provider_for,
@@ -147,6 +150,172 @@ def test_list_models_returns_empty_when_groq_is_unreachable():
     """This feeds the console's model picker; a dead network greys out a
     dropdown, it does not 500 the config page."""
     assert GroqClient(api_key="k", opener=opener_raising(OSError("no route"))).list_models() == []
+
+
+# ---- one retry policy and one deadline per call (V3-09) -------------------
+#
+# The transport used to retry 429/5xx only: a timeout, a DNS failure, a reset
+# connection or a TLS handshake error raised on the first attempt, so a blip
+# that a two-second retry would have ridden out became a stand-in answer. And
+# `timeout` bounded each ATTEMPT, so `max_retries=3` could hold a run open for
+# three minutes plus backoff when the role asked for sixty seconds.
+
+class _Clock:
+    """A monotonic clock the test moves by hand, so a deadline is provable."""
+
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def _answer():
+    return {"choices": [{"message": {"content": "{}"}}]}
+
+
+@pytest.mark.parametrize("failure", [
+    socket.timeout("read timed out"),
+    urllib.error.URLError("name resolution failed"),
+    ConnectionResetError(10054, "connection reset by peer"),
+    ssl.SSLError("handshake failed"),
+])
+def test_a_transient_transport_failure_is_retried_like_a_429(failure):
+    """A dead socket is the same kind of failure as a 503 and gets the same
+    treatment: `max_retries` attempts, 1s/2s/4s between them."""
+    clock = _Clock()
+    attempts, sleeps = [], []
+
+    def _open(req, timeout=None):
+        attempts.append(timeout)
+        if len(attempts) < 3:
+            raise failure
+        return _Resp(_answer())
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=lambda s: sleeps.append(s), max_retries=3)
+    assert client.chat("m", [])["message"]["content"] == "{}"
+    assert len(attempts) == 3, "two failures were retried, the third answered"
+    assert sleeps == [1.0, 2.0], "the same backoff a retryable 5xx gets"
+
+
+def test_a_transient_failure_that_never_heals_still_raises_as_a_groq_error():
+    clock = _Clock()
+
+    def _open(req, timeout=None):
+        raise socket.timeout("read timed out")
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=lambda s: None, max_retries=2)
+    with pytest.raises(GroqError) as e:
+        client.chat("m", [])
+    assert not isinstance(e.value, GroqRateLimited), "a timeout is not a quota"
+    assert "TimeoutError" in str(e.value)
+
+
+def test_the_timeout_bounds_the_whole_call_not_each_attempt():
+    """`timeout=60` means sixty seconds for the call, so the third attempt is
+    handed what the first two left of it, not a fresh sixty."""
+    clock = _Clock()
+    attempts = []
+
+    def _open(req, timeout=None):
+        attempts.append(timeout)
+        clock.advance(20)  # this attempt spent 20s of the 60s budget
+        if len(attempts) < 3:
+            raise socket.timeout("slow")
+        return _Resp(_answer())
+
+    GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+               sleep=lambda s: None, max_retries=3).chat("m", [])
+    assert attempts == [60.0, 40.0, 20.0]
+
+
+def test_a_spent_deadline_stops_the_retries():
+    """Once the budget is gone, the retry that the policy would allow is a new
+    attempt nobody paid for: it must not start."""
+    clock = _Clock()
+    attempts = []
+
+    def _open(req, timeout=None):
+        attempts.append(timeout)
+        clock.advance(61)  # the first attempt burned the whole 60s budget
+        raise socket.timeout("read timed out")
+
+    def _sleep(_seconds):
+        raise AssertionError("backed off with no budget left")
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=_sleep, max_retries=3)
+    with pytest.raises(GroqError) as e:
+        client.chat("m", [])
+    assert len(attempts) == 1, "zero further attempts once the budget is spent"
+    assert "TimeoutError" in str(e.value)
+
+
+def test_a_4xx_other_than_429_is_not_retried():
+    calls = []
+    err = urllib.error.HTTPError(
+        "u", 400, "Bad Request", {},
+        io.BytesIO(b'{"error": {"message": "model not found"}}'))
+
+    def _open(req, timeout=None):
+        calls.append(1)
+        raise err
+
+    client = GroqClient(api_key="k", opener=_open, sleep=lambda s: None,
+                        max_retries=3)
+    with pytest.raises(GroqError) as e:
+        client.chat("m", [])
+    assert len(calls) == 1, "a client error will not improve on a retry"
+    assert not isinstance(e.value, GroqRateLimited)
+    assert "400" in str(e.value) and "model not found" in str(e.value)
+
+
+def test_a_429_outlasting_the_budget_is_still_a_rate_limit():
+    """The quota brake keys on GroqRateLimited and reads `retry_after`. A
+    deadline that stops the retries must not turn an exhausted quota into an
+    unnamed transport error."""
+    clock = _Clock()
+    attempts = []
+    err = urllib.error.HTTPError(
+        "u", 429, "Too Many Requests", {"retry-after": "210"},
+        io.BytesIO(b'{"error": {"message": "tokens per day"}}'))
+
+    def _open(req, timeout=None):
+        attempts.append(1)
+        clock.advance(61)
+        raise err
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=lambda s: None, max_retries=3)
+    with pytest.raises(GroqRateLimited) as e:
+        client.chat("m", [])
+    assert len(attempts) == 1
+    assert e.value.retry_after == 210
+
+
+def test_a_429_still_retries_while_the_budget_lasts():
+    clock = _Clock()
+    err = urllib.error.HTTPError(
+        "u", 429, "Too Many Requests", {"retry-after": "1"},
+        io.BytesIO(b'{"error": {"message": "slow down"}}'))
+    attempts = []
+
+    def _open(req, timeout=None):
+        attempts.append(1)
+        if len(attempts) < 3:
+            clock.advance(1)
+            raise err
+        return _Resp(_answer())
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=lambda s: clock.advance(s), max_retries=3)
+    assert client.chat("m", [])["message"]["content"] == "{}"
+    assert len(attempts) == 3
 
 
 # ---- agents --------------------------------------------------------------
