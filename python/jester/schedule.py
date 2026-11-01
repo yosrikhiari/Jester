@@ -199,7 +199,7 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # and nothing reads it. The hook is best-effort by contract (notify
         # always exits 0), and `exit /b %RC%` keeps the run's own code even
         # when the hook ran.
-        f'if not "%RC%"=="0" "{py}" -m jester.cli notify --task {task} '
+        f'if not "%RC%"=="0" "{py}" -m jester.cli notify --task "{task}" '
         f'--exit "%RC%" >>"{log}" 2>&1\r\n'
         'exit /b %RC%\r\n'
     )
@@ -776,15 +776,40 @@ def _write_crontab(lines: list) -> "subprocess.CompletedProcess":
     )
 
 
-def _jester_cron_lines() -> tuple:
-    """(match-predicate substring, ) used to find our own entries.
+def _jester_cron_lines(command: str | None = None) -> tuple:
+    """Substrings that identify the crontab lines this generator owns.
 
-    `"jester.cli "` rather than one per verb: `signals` already registers as
-    `jester.cli signals run`, which the old pair never matched, so re-installing
-    it appended a second line instead of replacing the first. Every entry this
-    module writes names `jester.cli`.
+    Install replaces only the same command's own line. Broadening the needle
+    to `("jester.cli ",)` made `install --command health` delete a previously
+    installed `signals run` line, which is one scheduled job removing another.
+    The tail is the command's argv as `cron_line` writes it, followed by the
+    fixed `--db` every generated line carries: `signals` and `signals-hiring`
+    both start `jester.cli signals run`, so the argv alone would let installing
+    one replace the other.
+
+    `None` (removal) keeps the breadth: "remove the jester schedule" clears
+    every line naming this module, ours or hand-written. That is the one place
+    the breadth is the point, and it is a delete the operator asked for.
     """
-    return ("jester.cli ",)
+    if command is None:
+        return ("jester.cli",)
+    return (f"jester.cli {' '.join(command_argv(command))} --db ",)
+
+
+def _line_is_ours(line: str, needles: tuple) -> bool:
+    """True when a needle appears in `line` ending at a word boundary, so
+    `jester.cli signals run` does not claim the `... --source hackernews-hiring`
+    line that `signals-hiring` owns. A needle that already ends in a space is
+    its own boundary."""
+    for needle in needles:
+        start = line.find(needle)
+        while start != -1:
+            end = start + len(needle)
+            if (needle[-1] in " \t" or end == len(line)
+                    or line[end] in " \t"):
+                return True
+            start = line.find(needle, start + 1)
+    return False
 
 
 def installed_options(task_name: str = TASK_NAME, command: str = "cycle") -> dict:
@@ -879,7 +904,7 @@ def cron_line(
         f"--db {db}{cfg}{args} "
         f">> {log} 2>&1; rc=$?; "
         f'if [ "$rc" -ne 0 ]; then {env} {py} -m jester.cli notify '
-        f"--task {task} "
+        f'--task "{task}" '
         f'--exit "$rc" >> {log} 2>&1; fi; exit "$rc"'
     )
 
@@ -924,9 +949,11 @@ def install(
             return {"ok": False, "action": "manual", "detail": str(exc)}
         try:
             current = _read_crontab()
-            needle = _jester_cron_lines()
-            # Drop any prior jester entry so re-installing does not duplicate.
-            current = [ln for ln in current if not any(n in ln for n in needle)]
+            needle = _jester_cron_lines(command)
+            # Drop this command's prior entry so re-installing does not
+            # duplicate -- and only this command's, or installing one job
+            # would unschedule the others.
+            current = [ln for ln in current if not _line_is_ours(ln, needle)]
             current.append(line)
             p = _write_crontab(current)
         except FileNotFoundError:
@@ -995,7 +1022,7 @@ def remove(task_name: str = TASK_NAME) -> dict:
     if not is_windows():
         try:
             needle = _jester_cron_lines()
-            current = [ln for ln in _read_crontab() if not any(n in ln for n in needle)]
+            current = [ln for ln in _read_crontab() if not _line_is_ours(ln, needle)]
             # No jester lines left: clearing an already-absent crontab is fine.
             if not current:
                 _write_crontab([])

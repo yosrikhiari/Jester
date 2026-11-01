@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
@@ -207,7 +208,16 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
     # The ledger holds what this run did; the streak holds what the source has
     # been doing. Written beside the run, not instead of it: existing callers
     # read `status` exactly as before, and "collected 0" stays a valid run.
-    record_source_state(db, source.name, row)
+    #
+    # Best-effort, because `_save_run` has already committed: the run happened
+    # and is on record, and a bookkeeping failure in the streak must not turn
+    # a successful collection into a raised run. The warning is the log line,
+    # which the schedule launcher redirects into the run's log.
+    try:
+        record_source_state(db, source.name, row)
+    except sqlite3.Error as exc:
+        print(f"warning: streak not recorded for {source.name}: {exc}",
+              file=sys.stderr)
     # Not a column: the recovery pass needs to know WHICH queries failed on
     # this pass, and it cannot read that back off the table — the previous
     # failure's row is still there, marked error, which is exactly the point

@@ -13,7 +13,7 @@ turns the streaks and the run ledger into one verdict with an exit code:
   HEALTHY  the last read yielded rows
   QUIET    1-2 consecutive zero-row runs
   BARREN   3 or more consecutive zero-row runs
-  STALE    no read at all in the last 36 hours
+  STALE    no read at all inside the source's own expected interval
   ERROR    the last read raised
 
 Two rules shape the module:
@@ -27,6 +27,13 @@ Two rules shape the module:
   what quiet, barren and stale mean. `signals/limits.py` has no
   `PARK_AFTER_BARREN_VISITS` (the console has its own, unrelated visit-parking
   rule), so `BARREN_AFTER_ZERO_VISITS` is defined here and nowhere else.
+* **STALE is cadence-aware.** The brief scopes it to "a daily source", and the
+  ledger is the only honest witness of a source's cadence: `signals run` walks
+  a fallback chain and stops at the first board that answered, so `himalayas`,
+  `remotive` and `jobicy` only gain a row on days the primary found nothing,
+  and the sweep runs weekly. Judging every source against 36 h called a
+  5-day-old himalayas row a dead source and fired the morning notification on
+  a day with no outage at all.
 """
 from __future__ import annotations
 
@@ -51,10 +58,22 @@ FAILING = (BARREN, STALE, ERROR)
 #: Consecutive zero-row runs that mean the source is not quiet, it is barren.
 BARREN_AFTER_ZERO_VISITS = 3
 
-#: A daily source that has not been read in 36 hours has missed a day (and the
-#: grace). Longer than 24 so a late tick is not a finding; shorter than 48 so a
-#: whole missed day is.
+#: A source that has not been read in 36 hours has missed its day. The FLOOR
+#: of the stale threshold: longer than 24 so a late tick is not a finding;
+#: shorter than 48 so a whole missed day is. A source whose ledger shows a
+#: slower rhythm than daily gets its own, longer threshold -- see
+#: `_stale_after_hours`.
 STALE_AFTER_HOURS = 36
+
+#: Grace on top of a source's own observed interval: one period plus half a
+#: period. Applied to a daily source it reproduces `STALE_AFTER_HOURS` exactly
+#: (24 h x 1.5 = 36 h), so the brief's constant is still the daily answer.
+STALE_CADENCE_FACTOR = 1.5
+
+#: How many of a source's most recent intervals count as its current rhythm.
+#: Enough for a weekly sweep to have a handful of samples; small enough that an
+#: outage a year ago does not set the bar for good.
+CADENCE_SAMPLES = 12
 
 SOURCE_STATE_DDL = f"""
 CREATE TABLE IF NOT EXISTS {SOURCE_STATE_TABLE} (
@@ -80,8 +99,26 @@ def ensure_source_state_table(db: sqlite3.Connection) -> None:
     db.commit()
 
 
+def _have_state_table(db: sqlite3.Connection) -> bool:
+    """Is the streak table here? One indexed SELECT against the schema.
+
+    The DDL used to run at the top of every source run: `executescript` is an
+    implicit COMMIT, so a run put DDL and a commit in the middle of its write
+    phase for a table that almost always already existed. The lookup is
+    cheaper than the state read that follows it, and the DDL still lives on
+    the write path -- `report` never calls any of this. (A per-connection memo
+    is not available: `sqlite3.Connection` cannot hold attributes and cannot
+    be weakly referenced. One schema lookup per source run is the honest
+    price.)
+    """
+    return db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (SOURCE_STATE_TABLE,)).fetchone() is not None
+
+
 def _state(db: sqlite3.Connection, source: str) -> dict:
-    ensure_source_state_table(db)
+    if not _have_state_table(db):
+        ensure_source_state_table(db)
     row = db.execute(
         f"SELECT consecutive_zero, consecutive_error, last_ok_utc, last_rows, "
         f"last_error, updated_utc FROM {SOURCE_STATE_TABLE} WHERE source = ?",
@@ -103,9 +140,12 @@ def record_source_state(db: sqlite3.Connection, source: str, row: dict, *,
     * zero rows, no error       -- `consecutive_zero` grows (the quiet streak);
     * a query raised            -- `consecutive_error` grows, quiet resets.
 
-    A `limited` run moves neither streak: the source asked us to stop, which is
-    not a verdict on whether it has anything to say. It is still recorded as
-    the last thing that happened to the source.
+    A `limited` run is read by what it got: with zero rows it moves neither
+    streak (the source asked us to stop, which is not a verdict on whether it
+    has anything to say), and with rows it is a read like any other -- a
+    source that is permanently rate-limited but still returns rows before it
+    is cut off must not stay invisible. It is always recorded as the last
+    thing that happened to the source.
     """
     state = _state(db, source)
     status = str(row.get("status") or "")
@@ -114,7 +154,11 @@ def record_source_state(db: sqlite3.Connection, source: str, row: dict, *,
     stamp = at or row.get("finished_utc") or _iso(datetime.now(timezone.utc))
 
     if status == "limited":
-        pass
+        if collected > 0:
+            state["consecutive_zero"] = 0
+            state["consecutive_error"] = 0
+            state["last_error"] = ""
+            state["last_ok_utc"] = stamp
     elif errors:
         state["consecutive_error"] += 1
         state["consecutive_zero"] = 0
@@ -206,9 +250,57 @@ def _streak_from_runs(reads: list) -> tuple:
     return zero, error
 
 
-def _status(last_read_utc: str, zero: int, error: int, now: datetime) -> str:
+def _observed_interval_hours(reads: list) -> Optional[float]:
+    """The longest silence this source has recently been through, in hours.
+
+    STALE asks "has this source stopped doing what it normally does?", and the
+    ledger is the only honest witness of what a source's rhythm is: `signals
+    run` stops the fallback chain at the first board that answered, so a
+    fallback (himalayas, remotive, jobicy) gains a row only on the days the
+    primary found nothing, and the sweep runs weekly. Judging every source
+    against 36 h called a 5-day-old himalayas row a dead source and fired the
+    morning notification on a day with no outage at all.
+
+    The LONGEST of the recent gaps, not the mean or the median. A fallback's
+    cadence is bimodal -- asked daily in some weeks, weekly in others -- and
+    any average sits between the two and so alarms on the source's own normal
+    silence. The longest gap is the length of silence the source has already
+    been through without being dead, which is exactly the bar a silence has to
+    clear before it is news.
+
+    `None` when the ledger holds fewer than two reads: one run is not a
+    rhythm, and the only interval available then is the distance from that run
+    to now, which says nothing about the source's cadence.
+    """
+    stamps = sorted(s for s in (_parse(r.get("started_utc")) for r in reads)
+                    if s is not None)
+    if len(stamps) < 2:
+        return None
+    gaps = [(b - a).total_seconds() / 3600.0
+            for a, b in zip(stamps, stamps[1:])]
+    gaps = [g for g in gaps if g > 0][-CADENCE_SAMPLES:]
+    return max(gaps) if gaps else None
+
+
+def _stale_after_hours(interval: Optional[float]) -> Optional[float]:
+    """How long this source may stay silent, or `None` for "not judgeable".
+
+    One observed period plus half a period of grace, floored at the daily
+    answer so a source that runs several times a day does not get a sub-hour
+    threshold: daily -> max(36 h, 24 x 1.5) = 36 h, weekly -> 7 d x 1.5 = 10.5 d.
+    """
+    if interval is None:
+        return None
+    return max(STALE_AFTER_HOURS, interval * STALE_CADENCE_FACTOR)
+
+
+def _status(last_read_utc: str, zero: int, error: int, now: datetime,
+            stale_after: Optional[float] = STALE_AFTER_HOURS) -> str:
     when = _parse(last_read_utc)
-    if when is None or (now - when) > timedelta(hours=STALE_AFTER_HOURS):
+    if when is None:
+        # Never read at all: nothing has to be inferred to say so.
+        return STALE
+    if stale_after is not None and (now - when) > timedelta(hours=stale_after):
         return STALE
     if error > 0:
         return ERROR
@@ -219,12 +311,29 @@ def _status(last_read_utc: str, zero: int, error: int, now: datetime) -> str:
     return HEALTHY
 
 
-def _stored_counts(conn, tables: set, window_runs: list) -> dict:
+def _force_failure(out: dict, message: str) -> None:
+    """Record a read that could not be finished, and make it the verdict.
+
+    Whatever `_gather` assembled before the raise is a fragment: a `runs`
+    count with a default, empty `sources` list reads exactly like a healthy
+    archive. A verdict is a certification, so a read that did not finish may
+    not issue one -- it exits 1 whatever the fragment said.
+    """
+    out["error"] = message
+    out["warnings"].append(message)
+
+
+def _stored_counts(conn, tables: set, window_runs: list, out: dict) -> dict:
     """How many records each run wrote, keyed by source.
 
     `collected` is the collector's own count; this is what actually landed in
     `problem_signal`. Reading both is how a report cannot quote a figure the
     archive does not hold.
+
+    A `problem_signal` that predates the `run_id` column cannot answer, and
+    the answer is "unknown", not a crash and not a zero: the per-source
+    streaks above are still worth printing, and the verdict says the count
+    could not be read.
     """
     if SIGNAL_TABLE not in tables:
         return {}
@@ -233,9 +342,15 @@ def _stored_counts(conn, tables: set, window_runs: list) -> dict:
     for i in range(0, len(ids), 500):   # stay under SQLite's variable limit
         chunk = ids[i:i + 500]
         marks = ",".join("?" * len(chunk))
-        for run_id, n in conn.execute(
+        try:
+            rows = conn.execute(
                 f"SELECT run_id, COUNT(*) FROM {SIGNAL_TABLE} "
-                f"WHERE run_id IN ({marks}) GROUP BY run_id", chunk).fetchall():
+                f"WHERE run_id IN ({marks}) GROUP BY run_id", chunk).fetchall()
+        except sqlite3.Error as exc:
+            _force_failure(
+                out, f"cannot count records in {SIGNAL_TABLE} by run: {exc}")
+            return {}
+        for run_id, n in rows:
             counts[run_id] = n
     by_source = {}
     for run in window_runs:
@@ -268,7 +383,7 @@ def _gather(conn: sqlite3.Connection, out: dict, since: datetime,
     if have_state:
         states = {r["source"]: dict(r) for r in conn.execute(
             f"SELECT * FROM {SOURCE_STATE_TABLE}").fetchall()}
-    stored = _stored_counts(conn, tables, in_window)
+    stored = _stored_counts(conn, tables, in_window, out)
 
     for name in sorted({r["source"] for r in rows if r["source"]} | set(states)):
         mine = [r for r in rows if r["source"] == name]
@@ -285,6 +400,9 @@ def _gather(conn: sqlite3.Connection, out: dict, since: datetime,
             zero, error = _streak_from_runs(reads)
             last_ok, last_error = "", ""
         last_read = reads[0]["started_utc"] if reads else ""
+        # Judged against this source's own rhythm, not the primary's: a
+        # fallback that gains a row twice a week is not a dead daily source.
+        stale_after = _stale_after_hours(_observed_interval_hours(reads))
         out["sources"].append({
             "source": name,
             "last_run_utc": mine[0]["started_utc"] if mine else "",
@@ -297,11 +415,19 @@ def _gather(conn: sqlite3.Connection, out: dict, since: datetime,
             "last_ok_utc": last_ok,
             "last_error": last_error,
             "last_run_status": (mine[0].get("status") or "") if mine else "",
-            "status": _status(last_read, zero, error, now),
+            "stale_after_hours": stale_after,
+            "status": _status(last_read, zero, error, now,
+                              stale_after=stale_after),
         })
 
 
 def _decide(out: dict) -> None:
+    if out.get("error"):
+        # A read that did not finish cannot certify a healthy archive, however
+        # much of the fragment happened to look fine.
+        out["verdict"] = "degraded"
+        out["exit_code"] = 1
+        return
     statuses = [s["status"] for s in out["sources"]]
     failing = [s["source"] for s in out["sources"] if s["status"] in FAILING]
     if not out["runs"]:
@@ -335,6 +461,9 @@ def report(db_path, *, days: int = 7, now: Optional[datetime] = None) -> dict:
         "runs": 0,
         "sources": [],
         "warnings": [],
+        # Non-empty when the read itself failed: it forces the verdict to a
+        # failure, so a half-read archive can never print `healthy`.
+        "error": "",
         "verdict": "barren",
         "exit_code": 1,
     }
@@ -346,9 +475,11 @@ def report(db_path, *, days: int = 7, now: Optional[datetime] = None) -> dict:
     try:
         _gather(conn, out, now - timedelta(days=days), now)
     except sqlite3.Error as exc:
-        # A locked or truncated archive is a finding, not a traceback: the
-        # command's whole job is to say what is and is not readable.
-        out["warnings"].append(f"cannot read {db_path}: {exc}")
+        # A locked or truncated archive is a finding, not a traceback -- and
+        # not a green line either: whatever was gathered before the raise is a
+        # fragment (a run count beside a default, empty source list reads as
+        # `healthy`), so the failure is recorded and the verdict is forced.
+        _force_failure(out, f"cannot read {db_path}: {exc}")
     finally:
         conn.close()
     _decide(out)

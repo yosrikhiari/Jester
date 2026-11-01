@@ -1867,7 +1867,10 @@ def cmd_health(args):
     else:
         print(f"health: last {result['days']} day(s) to "
               f"{result['window']['to'][:19]} ({result['db']})")
-        if result["runs"]:
+        if result["sources"]:
+            # Gated on the sources, not the run count: an archive whose runs
+            # all predate the window still has per-source rows to show, and
+            # that is exactly the "which source went quiet" case.
             print(f"{'source':<24}{'last run':<21}{'rows':>6}{'zero':>6}"
                   f"{'error':>7}  status")
             for s in result["sources"]:

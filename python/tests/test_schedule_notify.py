@@ -56,7 +56,7 @@ def test_the_windows_launcher_notifies_before_it_exits():
                                       command="signals-hiring")
 
     assert "jester.cli notify" in script
-    assert "--task JesterNightlySignalsHiring" in script
+    assert '--task "JesterNightlySignalsHiring"' in script, "quote like every other value"
     notify_line = next(ln for ln in script.splitlines() if "jester.cli notify" in ln)
     # Runs only on a failure, and after the exit code was captured.
     assert notify_line.startswith('if not "%RC%"=="0"')
@@ -69,9 +69,77 @@ def test_the_posix_cron_line_notifies_before_it_exits():
                               command="health")
 
     assert "jester.cli health" in line
-    assert "jester.cli notify --task JesterNightlyHealth --exit" in line
+    assert 'jester.cli notify --task "JesterNightlyHealth" --exit' in line
     assert 'exit "$rc"' in line
     assert line.split()[:5] == ["15", "10", "*", "*", "*"]
+
+
+# --- what install may replace on the host's crontab -------------------------
+
+def _fake_crontab(monkeypatch):
+    """A crontab in memory, so install/remove can be driven on either platform."""
+    state = {"lines": []}
+
+    def write(lines):
+        state["lines"] = list(lines)
+        return subprocess.CompletedProcess(args=["crontab", "-"], returncode=0,
+                                           stdout="", stderr="")
+
+    monkeypatch.setattr(schedule, "is_windows", lambda: False)
+    monkeypatch.setattr(schedule, "_read_crontab", lambda: list(state["lines"]))
+    monkeypatch.setattr(schedule, "_write_crontab", write)
+    return state
+
+
+def test_installing_health_leaves_an_installed_signals_line_alone(monkeypatch):
+    """`jester.cli ` as the needle made installing one command delete another
+    command's entry, so the morning chain lost its collector."""
+    state = _fake_crontab(monkeypatch)
+
+    schedule.install(db="data/signals-live.db", command="signals-hiring")
+    schedule.install(db="data/signals-live.db", command="health")
+
+    lines = state["lines"]
+    assert len(lines) == 2, lines
+    assert any("jester.cli health" in ln for ln in lines)
+    assert any("hackernews-hiring" in ln for ln in lines)
+
+
+def test_reinstalling_a_command_replaces_only_its_own_line(monkeypatch):
+    state = _fake_crontab(monkeypatch)
+
+    for _ in range(2):
+        schedule.install(db="data/signals-live.db", command="health")
+
+    assert len(state["lines"]) == 1, state["lines"]
+
+
+def test_installing_plain_signals_leaves_the_hiring_collector_alone(monkeypatch):
+    """Both register as `jester.cli signals run ...`; the match has to stop at a
+    word boundary or one install overwrites the other."""
+    state = _fake_crontab(monkeypatch)
+
+    schedule.install(db="data/signals-live.db", command="signals-hiring")
+    schedule.install(db="data/signals-live.db", command="signals")
+
+    assert len(state["lines"]) == 2, state["lines"]
+
+
+def test_remove_clears_every_line_that_names_the_module(monkeypatch):
+    """Removal keeps the breadth on purpose: "remove the jester schedule" drops
+    every entry naming this module, including one an operator wrote by hand.
+    Installing must not -- see the tests above."""
+    state = _fake_crontab(monkeypatch)
+    state["lines"] = [
+        "0 1 * * * cd /srv/jester && python -m jester.cli cycle --db data/x.db",
+        "0 2 * * * cd /srv/jester && python -m jester.cli signals run --db data/x.db",
+        "0 3 * * * /usr/local/bin/backup.sh",
+    ]
+
+    result = schedule.remove()
+
+    assert result["ok"] is True
+    assert state["lines"] == ["0 3 * * * /usr/local/bin/backup.sh"]
 
 
 # --- `jester notify` --------------------------------------------------------
