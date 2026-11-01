@@ -52,6 +52,17 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
   the 88% baseline measured with the full suite on 2026-11-01.
 
 ### Repository
+- The nightly live lane's first scheduled run (2026-11-01, `41300973142`,
+  `acd424e`) found one test that had never executed.
+  `test_cmd_run_writes_points_to_shared_server` ran the pipeline on the
+  repository config, whose extractor is `qwen3:8b`, while the lane
+  deliberately pulls only `qwen3:0.6b`: extraction fell back to the stand-in,
+  the refusal in `_file_produced` archived nothing, and the failure had
+  nothing to do with Qdrant. Behind it sat a second defect the first one hid —
+  the test probed the bare `nuggets` collection while the pipeline writes
+  `nuggets__<db stem>`. The test now pins the five model roles to the
+  deterministic stand-ins (the set `jester smoke` pins) and asks Doctor about
+  this database's collection.
 - `docs/model-providers.md`: what leaves the machine, to which provider,
   under which variable, and what Jester keeps.
 - `docs/STATUS.md`: one index across the S-, F- and ND- registers.

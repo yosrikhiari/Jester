@@ -788,7 +788,7 @@ below are marked where the behaviour the report found has since been changed.
 
 ---
 
-## Appendix C — Implementation and end-to-end verification (2026-11-01, the tree pushed as `a8be9c0`)
+## Appendix C — Implementation and end-to-end verification (2026-11-01, the tree pushed as `a8be9c0`, plus the live-lane fix in C.7)
 
 **Provenance.** Every command in C.2 was run by the orchestrating agent on this machine (Windows 11, git bash) during implementation, and the outputs below are the verbatim tails. A separate read-only review agent inspected the diff (C.3); it did not run the suite. No human re-ran these commands. `data/jester.db` was never opened for writing: live-archive work used the verified snapshot `C:/Users/mano9/qoder-tmp/jester-backup/jester-20261101T071324Z.db` and the committed copy in `data/backups/`.
 
@@ -859,7 +859,7 @@ Resuming the generative loop; scheduling retention (still `enabled: false`) befo
 2. `python -m jester.cli schedule apply` on the host — four changes, none of them the live sweep.
 3. Label `eval/extraction/sample.jsonl` (150 rows, 50 doubled) and run `eval extract` to publish κ/P/R/F1/fabrication; only then flip retention to `enabled: true`.
 4. Back up, then `jester migrate` and drain `jester rescore --pending` on the live archive (ND-01).
-5. Branch protection + required checks, Dependabot triage (ND-09); one `live.yml` dispatch and its weekly cron (ND-08); tag `v0.1.0` after the push is green (ND-11).
+5. Branch protection + required checks, Dependabot triage (ND-09); one `live.yml` dispatch to confirm the test fixed in C.7 — the weekly cron is already live (ND-08); tag `v0.1.0` after the push is green (ND-11).
 
 ### C.6 The SonarCloud security rating (added after C.1–C.5)
 
@@ -936,3 +936,70 @@ own owner (ACL denial) after a stopped suite run on this host, which made
 every `tmp_path` fixture error before setup. Local runs used
 `TMP=D:\tmp\jester-pytest`; the directory was not deleted or repaired. CI's
 temp directory is unaffected.
+
+### C.7 The live lane's first run (added after the scheduled run, 2026-11-01)
+
+**Symptom.** The `Live — Ollama and Qdrant` workflow fired on its own schedule
+at 11:14 UTC against `acd424e` (run `41300973142`, event `schedule`). Steps 1–7
+passed; step 8, `python -m pytest python/tests -q -m "live_ollama or
+live_qdrant"`, ended `1 failed, 10 passed, 1955 deselected in 28.13s`. The
+failure was
+`test_qdrant_server.py::test_cmd_run_writes_points_to_shared_server` at
+`assert rows > 0` (`assert 0 > 0`), with this stdout:
+
+```
+no pending batches; fetching via FixtureFetcher
+NOT archived: 2 comment(s) whose extraction fell back to the deterministic stand-in; 1 batch(es) stay queued for a run with allowance left
+kept 0 nuggets from 2 pending comments
+degraded: qwen3:8b fell back to the deterministic stand-in 2 time(s): ResponseError: model 'qwen3:8b' not found (status code: 404)
+```
+
+**Root cause 1 — the model.** The test runs `cmd_run` on the repository config,
+whose extractor is `qwen3:8b` ([thresholds.yaml:220](../../config/thresholds.yaml#L220)),
+while the lane pulls only `qwen3:0.6b` ([live.yml:36](../../.github/workflows/live.yml#L36), [:70](../../.github/workflows/live.yml#L70)) —
+deliberately, because 5 GB every night buys nothing the contract tests need.
+`JESTER_LIVE_MODEL` is read by `test_live_ollama.py` alone
+([:17](../../python/tests/test_live_ollama.py#L17)); `cmd_run` never sees it.
+Extraction therefore 404'd, `_file_produced`
+([cli.py:578](../../python/jester/cli.py#L578)) refused to archive stand-in rows
+from a real provider, and the table stayed empty. The test depended on a model
+the lane never installs; because the lane had never run, nothing said so.
+
+**Root cause 2 — the collection, hidden behind the first.** Had a row been
+archived, the next assertion would still have failed: it counted the bare
+`nuggets` collection (`VectorStore.count_points_at` default,
+[vector.py:179](../../python/jester/vector.py#L179)) while the pipeline writes
+`nuggets__<db stem>` (`collection_for`,
+[cli.py:106](../../python/jester/cli.py#L106)). Doctor documents this exact
+mistake at [cli.py:2107](../../python/jester/cli.py#L2107): "probing the bare
+'nuggets' name reported 0 points against a healthy 1,771-point store".
+
+**What changed.** Only [test_qdrant_server.py](../../python/tests/test_qdrant_server.py).
+The test pins the five model roles to the deterministic stand-ins — the set
+`jester smoke` pins ([cli.py:1850](../../python/jester/cli.py#L1850)) — because
+its subject is the Qdrant write path, not a model; and it probes
+`collection_for(db_path)` and asserts Doctor reports no parity finding, which
+is what its docstring always claimed.
+
+**Evidence, local.**
+
+| # | Command | Output |
+|---|---|---|
+| 20 | the test as written at `acd424e`, against a real Qdrant (throwaway container), host Ollama serving `qwen3:8b` | `1 failed ... AssertionError: assert 0 == 2` — 2 rows archived, the bare collection held 0: root cause 2 proven without the lane |
+| 21 | the fixed test, same container, no model call | `1 passed in 2.69s` |
+| 22 | `pytest python/tests/test_qdrant_server.py -m "live_ollama or live_qdrant"` | `7 passed in 6.11s` |
+| 23 | `pytest python/tests -q` (full default suite, final tree) | `1950 passed, 3 skipped, 13 deselected, 41 warnings in 445.23s`; exit 0 |
+
+After row 21 the server held `nuggets__j` with 2 points and no bare `nuggets`
+collection — the two names the old assertion conflated.
+
+**Verification boundary.** Row 20 ran on this host, where Ollama happens to
+serve `qwen3:8b`; that is why the first root cause did not reproduce here and
+the second one did. The lane's fix is confirmed only by a run *in the lane*,
+which needs one `live.yml` dispatch after the push. Until that run is green,
+ND-08 is not done regardless of the local result. These four rows were run by
+the orchestrating agent; no independent reviewer has seen the diff.
+
+**Environment.** The reproduction used a throwaway `qdrant/qdrant:latest`
+container on port 6333, removed afterwards. `data/jester.db` was not touched.
+

@@ -106,22 +106,40 @@ def test_doctor_parity_ok_when_counts_match(tmp_path, monkeypatch):
 from jester.store import open_db  # noqa: E402
 
 
+#: The roles pinned to the deterministic stand-ins, the same five `jester smoke`
+#: pins. This test's subject is the Qdrant write path, not a model: the live
+#: lane pulls the one small model `test_live_ollama.py` declares, while the
+#: repository config names `qwen3:8b` for the extractor. Left unpinned, the run
+#: asked for a model the lane never pulls, extraction fell back, the refusal in
+#: `_file_produced` left nothing to archive, and the failure had nothing to do
+#: with Qdrant.
+_PINNED_ROLES = ("extractor", "synthesizer", "critic", "labeller", "embedding")
+
+
 def test_cmd_run_writes_points_to_shared_server(tmp_path, monkeypatch):
     """§37.17 Task 3: with JESTER_QDRANT_URL set, archived nuggets land on the
     server and doctor's parity check passes against them."""
-    from jester.cli import cmd_run
+    from jester.cli import collection_for, cmd_run, evaluate_doctor
 
+    db_path = str(tmp_path / "j.db")
     monkeypatch.setenv("JESTER_QDRANT_URL", "http://localhost:6333")
+    for role in _PINNED_ROLES:
+        monkeypatch.setenv(f"JESTER_ROLE_{role.upper()}", "fake")
     REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
     class NS:
         pass
 
     args = NS()
-    args.config, args.db, args.run = str(REPO_CONFIG), str(tmp_path / "j.db"), "qdrant-e2e"
+    args.config, args.db, args.run = str(REPO_CONFIG), db_path, "qdrant-e2e"
     cmd_run(args)
 
-    db = open_db(str(tmp_path / "j.db"))
+    db = open_db(db_path)
     rows = db.execute("SELECT COUNT(*) FROM nuggets").fetchone()[0]
     assert rows > 0
-    assert VectorStore.count_points_at("http://localhost:6333") == rows
+    # The collection is namespaced by the database's stem. Probing the bare
+    # "nuggets" name counts a different (usually absent) collection — the
+    # mismatch doctor's own parity comment describes.
+    assert VectorStore.count_points_at(
+        "http://localhost:6333", collection_for(db_path)) == rows
+    assert not [f for f in evaluate_doctor(db) if "parity" in f]

@@ -8,7 +8,10 @@ status, this page wins** — fix the other document in the same change.
 **As of 2026-11-01.** Code status is against `main` at `a8be9c0`, where this
 cycle's S-, F- and ND- work was committed and pushed; CI run `41300116727` is
 green in all six checks and the SonarCloud gate passes (security rating A on
-new code). The live archive was **not** modified by this cycle.
+new code). The scheduled `Live — Ollama and Qdrant` lane then ran on `acd424e`
+(run `41300973142`) and failed one live test that had never executed; its fix
+is in the working tree, green locally, not yet pushed (report C.7). The live
+archive was **not** modified by this cycle.
 
 Status words:
 
@@ -47,7 +50,7 @@ Status words:
 | ND-05 | **Owner-gated** | `JesterNightlyRetention` declared weekly SUN 03:30, **`enabled: false`** | Apply only after ND-04's sample is labelled; then flip `enabled: true` |
 | ND-06 | **Owner-gated** | `JesterNightlyBackup` declared daily 02:30, enabled; one backup taken and verified | `schedule apply`; restore drill on a copy |
 | ND-07 | **Shipped** | `doctor --no-migrate` is byte-identical and creates no tables; prints the mode used | — |
-| ND-08 | **Not started** | `.github/workflows/live.yml` authored, never dispatched | One dispatch, fix what breaks, weekly cron |
+| ND-08 | **Owner-gated** | The scheduled lane ran once (`41300973142` on `acd424e`); it failed on a test that had never executed — a model the lane never pulls, and a collection probe of the bare `nuggets` name. Both are fixed in the working tree and green against a real Qdrant (report C.7) | Commit/push the fix, then one dispatch to confirm; the weekly cron is already live |
 | ND-09 | **Partly done** | `pytest` out of runtime deps; CI `--cov-fail-under` at the measured baseline − 2 | Branch protection + required checks; Dependabot triage |
 | ND-10 | **Shipped** | This page | Keep it current |
 | ND-11 | **CHANGELOG written; tag owner-gated** | [CHANGELOG.md](../CHANGELOG.md) covers both versions | Tag `v0.1.0` after this branch is committed and verified |
@@ -65,7 +68,7 @@ Still open there:
 | S-05 | Owner-gated | Same action as ND-01: backup → migrate → drain rescore |
 | S-06 | Harness shipped; labels owner-gated | Same as ND-04 |
 | S-07 | Owner-gated | Signals scope sign-off (`status`, `decided_by`, `decided_on`) |
-| S-12 | Authored, not run | Same as ND-08 |
+| S-12 | Ran once; one test fixed in the working tree | Same as ND-08 |
 | S-14 | Not started | 30 blinded pairs, 3 raters, Spearman ≥ 0.7 |
 | S-15 | Not started | 100-record recall sample with a 95% CI |
 | S-16 | Shipped, green on GitHub | Make Windows a required check (ND-09) |
