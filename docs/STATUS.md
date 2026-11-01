@@ -5,13 +5,15 @@ ID to its evidence; this page says which of them is current and where the
 remaining work sits. **If this page and another document disagree about a
 status, this page wins** — fix the other document in the same change.
 
-**As of 2026-11-01.** Code status is against `main` at `0697e1d`. The cycle's
-`a8be9c0` is green in all six checks (`41300116727`) with the SonarCloud gate
-at A; the scheduled live lane's first run then failed one test at `acd424e`
-(`41300973142`), the fix was pushed, push run `41302624812` passed all seven
-checks on `0697e1d`, and the dispatched lane `41302659108` passed 11 live tests
-with none skipped (report C.7). The live archive was **not** modified by this
-cycle.
+**As of 2026-11-01.** Code status is against `main` at `d2da8de`, which is
+tagged `v0.1.0` (annotated tag object `45d755c`). Push CI `41305838637` is
+green in all six checks, `SonarCloud Code Analysis` reports success on the
+same commit, and `main` now requires the four PR-visible checks (C.8). Earlier
+in the day the Sonar gate cleared at `a8be9c0` (`41300116727`), the scheduled
+live lane's first run failed one test at `acd424e` (`41300973142`), and the
+dispatched lane `41302659108` passed 11 live tests with none skipped after the
+fix (C.7). Four frontend dependency PRs were merged; three are held with
+reasons (C.8). The live archive was **not** modified by this cycle.
 
 Status words:
 
@@ -51,9 +53,9 @@ Status words:
 | ND-06 | **Owner-gated** | `JesterNightlyBackup` declared daily 02:30, enabled; one backup taken and verified | `schedule apply`; restore drill on a copy |
 | ND-07 | **Shipped** | `doctor --no-migrate` is byte-identical and creates no tables; prints the mode used | — |
 | ND-08 | **Shipped** | The lane's first scheduled run (`41300973142`) found a test that had never passed; fixed in `0697e1d`, dispatched lane `41302659108` green (11 passed, 0 skipped), weekly cron live | — |
-| ND-09 | **Partly done** | `pytest` out of runtime deps; CI `--cov-fail-under` at the measured baseline − 2 | Branch protection + required checks; Dependabot triage |
+| ND-09 | **Shipped** | `pytest` out of runtime deps; `--cov-fail-under=86`; `main` requires Python, Go, Frontend and Sonar (CI scanner); 4 of 7 Dependabot PRs merged | Re-check the three held PRs (C.8); Windows and the live lane are not PR-visible, so they cannot be required |
 | ND-10 | **Shipped** | This page | Keep it current |
-| ND-11 | **CHANGELOG written; tag owner-gated** | [CHANGELOG.md](../CHANGELOG.md) covers both versions | Tag `v0.1.0` after this branch is committed and verified |
+| ND-11 | **Shipped** | [CHANGELOG.md](../CHANGELOG.md) is one `0.1.0` entry dated 2026-11-01; `v0.1.0` tags `d2da8de` | — |
 | ND-12 | **Not started** | — | Exercise chat and journal once on fixtures, or demote them in the README |
 | ND-13 | **Shipped** | [model-providers.md](model-providers.md) | Re-check whenever `roles:` changes |
 | ND-14 | **Not this cycle** | — | Split god modules when real work touches them |
@@ -71,8 +73,8 @@ Still open there:
 | S-12 | Shipped, green on GitHub | Same as ND-08 |
 | S-14 | Not started | 30 blinded pairs, 3 raters, Spearman ≥ 0.7 |
 | S-15 | Not started | 100-record recall sample with a 95% CI |
-| S-16 | Shipped, green on GitHub | Make Windows a required check (ND-09) |
-| S-19 | Owner-gated | Same as ND-11 |
+| S-16 | Shipped, green on GitHub | Windows is not a required check: it did not run on the PRs open when protection was enabled |
+| S-19 | Shipped | Same as ND-11: `v0.1.0` pushed at `d2da8de` |
 
 S-01…S-04, S-08…S-11, S-13, S-17, S-18 and S-20 are **shipped**; S-20 gains
 the sweep reconciliation, backup and retention declarations in this cycle.
@@ -81,7 +83,9 @@ the sweep reconciliation, backup and retention declarations in this cycle.
 
 What was actually run, and where the output lives, is recorded per cycle in
 the strategy report appendices. The current cycle's evidence is
-[Appendix C of the 2026-11-01 report](reports/2026-11-01-next-development-strategy-v2.md#appendix-c--implementation-and-end-to-end-verification-2026-11-01-working-tree-on-36d357b);
+[Appendix C of the 2026-11-01 report](reports/2026-11-01-next-development-strategy-v2.md#appendix-c--implementation-and-end-to-end-verification-2026-11-01-the-tree-pushed-as-a8be9c0-plus-the-live-lane-fix-in-c7),
+whose C.7 covers the live lane and whose C.8 covers the tag, the dependency
+triage and branch protection;
 the previous cycle's is [Appendix A of the 2026-10-31 report](reports/2026-10-31-next-development-strategy.md).
 
 A status is not "done" because the code exists. It is done when a named

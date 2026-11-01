@@ -859,7 +859,7 @@ Resuming the generative loop; scheduling retention (still `enabled: false`) befo
 2. `python -m jester.cli schedule apply` on the host — four changes, none of them the live sweep.
 3. Label `eval/extraction/sample.jsonl` (150 rows, 50 doubled) and run `eval extract` to publish κ/P/R/F1/fabrication; only then flip retention to `enabled: true`.
 4. Back up, then `jester migrate` and drain `jester rescore --pending` on the live archive (ND-01).
-5. Branch protection + required checks, Dependabot triage (ND-09); tag `v0.1.0` after the push is green (ND-11). ND-08 is **done**: the weekly cron is live, and the dispatched lane `41302659108` is green (C.7).
+5. Branch protection + required checks, Dependabot triage (ND-09); tag `v0.1.0` after the push is green (ND-11). ND-08 is **done**: the weekly cron is live, and the dispatched lane `41302659108` is green (C.7). ND-09 and ND-11 were then done too — see C.8.
 
 ### C.6 The SonarCloud security rating (added after C.1–C.5)
 
@@ -1014,4 +1014,74 @@ container on port 6333, removed afterwards. The same change corrects the live
 test count written in [README.md](../../README.md#tests) and at the top of
 [`live.yml`](../../.github/workflows/live.yml): both said thirteen, the lane
 collects eleven.
+
+### C.8 The release, the dependency triage and branch protection (added 2026-11-01)
+
+Three owner-gated steps from §C.5 were carried out after C.7, in this order.
+
+**Dependency triage (ND-09).** All seven open Dependabot PRs were inspected,
+and rebases were requested where they shared a lockfile. Four were merged,
+each only after its own head was green in all four PR-visible CI jobs:
+
+| PR | Bump | Merge commit | Checks on the PR head |
+|---|---|---|---|
+| #73 | react 19.3.0 → 19.3.1 | `36de2b0` | Python, Windows, Go, Frontend, Sonar — all `success` |
+| #71 | react-dom 19.3.0 → 19.3.1 | `5f37204` | same, on rebased head `0e706eb` |
+| #76 | vite 8.2.2 → 8.3.5 | `54f696b` | same, on rebased head `9173c4a` |
+| #77 | oxlint 1.87.0 → 1.90.0 | `7e955cd` | same, on rebased head `a735127` |
+
+The push runs for `5f37204` and `54f696b` show `cancelled`: each was superseded
+by the next push under the workflow's `concurrency` group, not by a failure.
+`36de2b0` ran complete and green, including `SonarCloud Code Analysis`.
+
+Three were left open, with reasons:
+
+- **#68**, typescript 6.0.3 → 7.0.2 — a major compiler change (the native-port
+  release), not a routine bump; it needs its own build/lint pass and possibly
+  code changes.
+- **#69**, pytest `>=8.0` → `>=9.1.1` — major; plugin and fixture
+  compatibility across ~1,950 tests is unverified, and `python/pylock.toml`
+  must be regenerated in the same change.
+- **#75**, qdrant-client `>=1.19.1` → `>=1.20.0` — edits only
+  [`python/requirements.txt`](../../python/requirements.txt#L8). The Linux job
+  installs [`python/pylock.toml`](../../python/pylock.toml), which pins
+  1.19.1, while the Windows job installs `requirements.txt`; merging the bump
+  alone would leave the two platforms on different client versions. It needs
+  the lock regenerated together with the bump.
+
+**The release (ND-11).** [CHANGELOG.md](../../CHANGELOG.md) had an `Unreleased`
+section for this cycle above a `0.1.0` section dated 2026-10-31. Both are now
+one `## [0.1.0] — 2026-11-01` entry: the 2026-10-31 anchor (`36d357b`, five
+jobs green at `41199031390`) is stated in its intro, that anchor's idea-pipeline
+bullets are folded under this cycle's, and the schedule count is corrected to
+ten declared tasks (eight at the anchor). Commit `d2da8de`; push run
+`41305838637` is green in all six checks including `SonarCloud Code Analysis`.
+Annotated tag `v0.1.0` (`45d755c`, 2026-11-01T13:25:28+01:00) was pushed and
+`git rev-parse v0.1.0^{commit}` equals both local and `origin/main` `d2da8de`.
+
+**Branch protection.** `main` now requires four check contexts — `Python —
+clean clone, lock install, suite`, `Go — build and test`, `Frontend — lint and
+build the scaffold`, `Sonar — CI scanner` — with `strict: false`,
+`enforce_admins: false`, force pushes and deletions blocked, and no PR-review
+requirement, so direct owner pushes still work. That is four checks rather
+than the seven originally discussed, because only four report on every PR:
+`Windows` post-dates the PRs that were open, `SonarCloud Code Analysis` posts
+only where the scanner can authenticate (Dependabot PRs have no secrets, so
+the scan step is skipped), and the live lane has no `pull_request` trigger.
+Requiring any of those three would have blocked every dependency PR.
+
+The first `PUT` landed with the four contexts double-encoded — `â€”` (the UTF-8
+bytes of `—` re-read as CP-1252) instead of `—` — because `gh api --input`
+decoded the UTF-8 payload file with the Windows ANSI code page. In that state
+no required check could ever match, so every PR merge would have been blocked
+while admin pushes still succeeded. The correction sent the same payload with
+`\u2014` escapes (pure ASCII); the stored contexts were then compared, code
+point by code point, against the check-run names on `d2da8de`, and all four
+match exactly.
+
+**Who ran what.** Every command in C.8 was run by the orchestrating agent on
+this machine and from this account; the SonarCloud gate responses and the
+check-run lists are GitHub's, not local claims. No independent reviewer has
+seen this cycle's diff. `data/jester.db` was not opened or modified; the
+dependency merges touch `frontend/package-lock.json` and one `package.json`.
 
