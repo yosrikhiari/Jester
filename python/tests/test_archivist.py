@@ -326,3 +326,42 @@ def test_one_real_duplicate_refusal_survives_the_ghost_guard():
     assert db.execute(
         "SELECT COUNT(*) FROM nuggets WHERE unique_key=?", (n2.unique_key,)
     ).fetchone()[0] == 0
+
+
+# ---- the count reaches the run summary (V3-07) -----------------------------
+
+def test_cmd_run_reports_nuggets_archived_without_a_vector(
+        tmp_path, offline_config, monkeypatch, capsys):
+    """The counter existed but nothing read it, so a night of failed upserts
+    still read as a clean run. The summary now names the count beside the
+    dedup-deferred line — and says nothing when the count is zero."""
+    import jester.cli as cli
+
+    def _ns(**kw):
+        class NS:
+            pass
+
+        ns = NS()
+        for k, v in kw.items():
+            setattr(ns, k, v)
+        return ns
+
+    cli.cmd_run(_ns(config=str(offline_config), db=str(tmp_path / "clean.db"),
+                    run="clean-run"))
+    assert "archived without a vector" not in capsys.readouterr().out
+
+    class _UpsertFails:
+        def search_scored(self, *_a, **_kw):
+            return []
+
+        def upsert(self, *_a, **_kw):
+            raise RuntimeError("qdrant refused the point")
+
+    monkeypatch.setattr(
+        cli, "_vector_for", lambda cfg, db, check_dimension=True: _UpsertFails())
+    cli.cmd_run(_ns(config=str(offline_config), db=str(tmp_path / "j.db"),
+                    run="rv-run"))
+
+    out = capsys.readouterr().out
+    assert "archived without a vector" in out
+    assert "RuntimeError: qdrant refused the point" in out

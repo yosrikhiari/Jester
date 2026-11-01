@@ -224,8 +224,8 @@ def test_a_rescore_is_filed_under_the_run_that_owns_the_archive(
             return {"message": {"content": json.dumps(
                 {"demand_signal": 8, "feasibility": 7, "competition": None})}}
 
-    monkeypatch.setattr(cli, "select_critic_llm",
-                        lambda cfg: GroqCriticLLM(client=_Client()))
+    critic = GroqCriticLLM(client=_Client())
+    monkeypatch.setattr(cli, "select_critic_llm", lambda cfg: critic)
     cli.main(["rescore", "--pending", "--limit", "1", "--db", path,
               "--config", str(offline_config)])
 
@@ -233,7 +233,7 @@ def test_a_rescore_is_filed_under_the_run_that_owns_the_archive(
     (row,) = provenance.calls_for(db, RUN)
     assert row["role"] == "critic"
     assert row["ok"] == 1
-    assert row["model"] == "openai/gpt-oss-120b"
+    assert row["model"] == critic.name, "the model that actually ran, not config/"
 
 
 def test_a_rescore_with_no_run_in_flight_records_nothing(tmp_path, offline_config,

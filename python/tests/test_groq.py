@@ -318,6 +318,102 @@ def test_a_429_still_retries_while_the_budget_lasts():
     assert len(attempts) == 3
 
 
+def test_a_429_retry_after_that_overruns_the_budget_sleeps_nothing():
+    """The steady state under quota pressure: a 429 late in the call whose
+    Retry-After is longer than what is left. Sleeping the full delay would take
+    the call past its deadline and still start no attempt — 75s of wall clock
+    for a 60s call. The rate limit surfaces at once instead."""
+    clock = _Clock()
+    start = clock.now
+    attempts, sleeps = [], []
+    err = urllib.error.HTTPError(
+        "u", 429, "Too Many Requests", {"retry-after": "30"},
+        io.BytesIO(b'{"error": {"message": "tokens per minute"}}'))
+
+    def _open(req, timeout=None):
+        attempts.append(1)
+        clock.advance(45)  # 15s of the 60s budget left; the retry needs 30
+        raise err
+
+    def _sleep(seconds):
+        sleeps.append(seconds)
+        clock.advance(seconds)  # a real sleep spends the same budget
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=_sleep, max_retries=3)
+    with pytest.raises(GroqRateLimited) as e:
+        client.chat("m", [])
+    assert len(attempts) == 1, "the overrunning retry is never started"
+    assert sleeps == [], "nothing is slept past the whole-call deadline"
+    assert clock.now - start == 45.0, "the call ends when the 429 arrives"
+    assert e.value.retry_after == 30, "identity intact: still a rate limit"
+
+
+def test_a_transient_backoff_that_would_overrun_the_budget_sleeps_nothing():
+    """The same rule on the transport path: a backoff that cannot fit inside
+    the call is not slept. Sleeping it would only push the failure past the
+    deadline while still buying no attempt."""
+    clock = _Clock()
+    attempts, sleeps = [], []
+
+    def _open(req, timeout=None):
+        attempts.append(1)
+        clock.advance(59.5)  # 0.5s left, less than the 1s backoff
+        raise socket.timeout("read timed out")
+
+    def _sleep(seconds):
+        sleeps.append(seconds)
+        clock.advance(seconds)
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=_sleep, max_retries=3)
+    with pytest.raises(GroqError) as e:
+        client.chat("m", [])
+    assert len(attempts) == 1
+    assert sleeps == []
+    assert not isinstance(e.value, GroqRateLimited)
+    assert "TimeoutError" in str(e.value)
+
+
+def test_a_sleep_that_overshoots_the_budget_starts_no_further_attempt():
+    """The pre-attempt guard, exercised: a sleep can return later than asked
+    (a real `sleep` may overshoot, and a budgeted one is not exact). When the
+    budget is gone by the time it returns, the retry it paid for must not
+    start — the pending failure is the answer the call has left."""
+    clock = _Clock()
+    attempts, sleeps = [], []
+
+    def _open(req, timeout=None):
+        attempts.append(1)
+        clock.advance(5)  # 55s left, so a 1s backoff is affordable
+        raise socket.timeout("read timed out")
+
+    def _sleep(seconds):
+        sleeps.append(seconds)
+        clock.advance(60)  # ... but the sleep itself overran the call
+
+    client = GroqClient(api_key="k", opener=_open, timeout=60.0, clock=clock,
+                        sleep=_sleep, max_retries=3)
+    with pytest.raises(GroqError) as e:
+        client.chat("m", [])
+    assert len(attempts) == 1, "no attempt starts on a spent budget"
+    assert sleeps == [1.0]
+    assert "TimeoutError" in str(e.value)
+
+
+def test_a_single_retry_is_described_in_the_singular():
+    """`after %d retries` read "after 1 retries" once the count became real."""
+    err = urllib.error.HTTPError(
+        "u", 429, "Too Many Requests", {"retry-after": "0"},
+        io.BytesIO(b'{"error": {"message": "slow down"}}'))
+    client = GroqClient(api_key="k", opener=opener_raising(err),
+                        sleep=lambda s: None, max_retries=1)
+    with pytest.raises(GroqRateLimited) as e:
+        client.chat("m", [])
+    assert "after 1 retry:" in str(e.value)
+    assert "1 retries" not in str(e.value)
+
+
 # ---- agents --------------------------------------------------------------
 
 def test_synthesizer_returns_the_models_three_fields():

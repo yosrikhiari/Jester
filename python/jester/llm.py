@@ -876,7 +876,8 @@ def _http_failure(exc, retries_used):
     detail = _http_error_detail(exc)
     if exc.code == 429:
         return GroqRateLimited(
-            "groq HTTP 429 after %d retries: %s" % (retries_used, detail),
+            "groq HTTP 429 after %d retr%s: %s"
+            % (retries_used, "y" if retries_used == 1 else "ies", detail),
             retry_after=_reset_seconds(exc),
         )
     return GroqError("groq HTTP %s: %s" % (exc.code, detail))
@@ -962,17 +963,29 @@ class GroqClient:
             left = budget_left()
             return left is not None and left <= 0
 
+        def affordable_delay(delay):
+            """How much of `delay` the call can still afford to sleep, or None
+            when it cannot afford to sleep at all.
+
+            Sleeping the full delay and checking afterwards is how `timeout=60`
+            became 75s: a 429 45s in with `retry-after: 30` slept 30s and only
+            then found the budget gone. The budget is re-read here because the
+            attempt that just failed spent some of it.
+            """
+            left = budget_left()
+            if left is not None and delay >= left:
+                return None
+            return delay if left is None else min(delay, left)
+
         last = None
         for attempt in range(self.max_retries + 1):
             left = budget_left()
             if attempt and left is not None and left <= 0:
-                # The budget ran out while backing off. This is the failure the
-                # scheduled retry would have repeated, so raise it instead of
-                # starting an attempt nobody has time for.
-                if last is not None:
-                    raise last
-                raise GroqError("groq request not retried: the budget for the "
-                                "whole call is spent")
+                # A sleep that returned late (a real one can) left no budget;
+                # the budgeted sleep below normally raises before this point. A
+                # retry is only ever scheduled after `last` is set, so this is
+                # the failure the skipped attempt would have repeated.
+                raise last
             try:
                 with self._opener(req, timeout=self.timeout if left is None else left) as resp:
                     return _as_chat_response(json.loads(resp.read().decode("utf-8")))
@@ -990,7 +1003,10 @@ class GroqClient:
                 # is what gets raised, and the quota brake needs it.
                 last = (GroqRateLimited("groq HTTP 429", retry_after=_reset_seconds(exc))
                         if exc.code == 429 else GroqError("groq HTTP %s" % exc.code))
-                self._sleep(_retry_delay(exc, attempt))
+                delay = affordable_delay(_retry_delay(exc, attempt))
+                if delay is None:
+                    raise last
+                self._sleep(delay)
             except GroqError:
                 raise
             except Exception as exc:  # noqa: BLE001 - network, DNS, TLS, bad JSON
@@ -1000,7 +1016,10 @@ class GroqClient:
                         or exhausted()):
                     raise failure from exc
                 last = failure
-                self._sleep(_retry_delay(exc, attempt))
+                delay = affordable_delay(_retry_delay(exc, attempt))
+                if delay is None:
+                    raise last
+                self._sleep(delay)
         raise last
 
     def list_models(self):

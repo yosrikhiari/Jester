@@ -52,8 +52,9 @@ class Archivist:
         #: than the point — but it used to be invisible: a corpus with no
         #: vectors for a whole night of nuggets read as a clean run.
         self.reembed_failed = 0
-        #: The first such failure, for the one warning `run` logs.
-        self._reembed_reason = None
+        #: The first such failure, for the one warning `run` logs and for the
+        #: run summary's line beside the dedup-deferred count.
+        self.reembed_reason = None
 
     def dedup_threshold_for(self, n: Nugget) -> float:
         """The cosine bar THIS nugget is judged against: its category's value
@@ -79,7 +80,7 @@ class Archivist:
         self.near_misses = []
         self.deferred = []
         self.reembed_failed = 0
-        self._reembed_reason = None
+        self.reembed_reason = None
         kept: List[Nugget] = []
         for n in nuggets:
             if exists_unique_key(self.db, n.unique_key):
@@ -146,8 +147,8 @@ class Archivist:
                 # is flagged for `reembed`. What it must not be is unmentioned —
                 # a night whose every upsert failed used to report a clean run.
                 self.reembed_failed += 1
-                if self._reembed_reason is None:
-                    self._reembed_reason = f"{type(exc).__name__}: {exc}"
+                if self.reembed_reason is None:
+                    self.reembed_reason = f"{type(exc).__name__}: {exc}"
                 n.embedding_id = None
                 n.needs_reembed = True
             insert_nugget(self.db, n)
@@ -158,5 +159,5 @@ class Archivist:
             # no more than the first, and the count is what the summary reads.
             log.warning(
                 "%d nugget(s) archived without a vector: re-embed failed (%s)",
-                self.reembed_failed, self._reembed_reason)
+                self.reembed_failed, self.reembed_reason)
         return kept

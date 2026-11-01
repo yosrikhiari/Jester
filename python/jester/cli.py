@@ -701,6 +701,15 @@ def cmd_run(args):
         )
         update_run_summary(db, args.run, n_dedup_deferred=len(archivist.deferred))
 
+    # Nuggets kept WITHOUT a vector because the upsert failed. The row is more
+    # valuable than the point, so the degradation stays — but a run that kept
+    # material with no vectors is not a clean run, and says so here.
+    if archivist.reembed_failed:
+        print(
+            f"{archivist.reembed_failed} nugget(s) archived without a vector: "
+            f"re-embed failed ({archivist.reembed_reason})"
+        )
+
     for r, payload in readable:
         if r["id"] in degraded_batches:
             # Leave it queued, and leave its comments OUT of the skip-list:
