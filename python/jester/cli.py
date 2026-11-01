@@ -775,8 +775,11 @@ def cmd_run(args):
     # R44 merges did real work but archived nothing new — say so, or the run
     # reads as "0 ideas" on a night that grew the evidence behind several.
     for m in synthesizer.merged:
+        # V3-01: a merge can come from the archive's supported set rather than
+        # from a vector compare (Qdrant down), so the parenthetical says which.
+        how = "same evidence" if m.score >= 1.0 else f"cosine {m.score:.2f}"
         print(
-            f"merged into idea #{m.duplicate_of} (cosine {m.score:.2f}): "
+            f"merged into idea #{m.duplicate_of} ({how}): "
             f"+{len(m.added)} nugget(s){' — re-scored' if m.grew else ''}"
         )
     # R40/R55: a provider that answered for some ideas and silently swapped in
@@ -784,6 +787,15 @@ def cmd_run(args):
     # rows nobody flagged.
     for line in fallback_report(llm, synth_llm, critic_llm):
         print("degraded: " + line)
+    if synthesizer.claimed_elsewhere:
+        # V3-01: a group whose evidence another writer had already claimed is
+        # left alone rather than archived twice. Its unclaimed remainder stays
+        # queued, and "0 ideas" must not read as "nothing qualified".
+        print(
+            f"skipped {synthesizer.claimed_elsewhere} group(s) whose evidence "
+            "another writer had already claimed; the rest of their nuggets "
+            "stay queued"
+        )
     if synthesizer.stopped_early:
         # No silent caps: without this line "synthesized 3 idea(s)" reads as
         # "the archive had only 3 to give" on a run that stopped at a goal.
@@ -2679,6 +2691,11 @@ def cmd_resynth(args):
         select_critic_llm(cfg.thresholds),
         run_id=f"resynth-{args.id}",
         rows=rows or [nugget_by_key(db, k) for k in keys],
+        # D-16/R56: this hatch exists to derive a SECOND idea from evidence
+        # one already rests on, which the automatic path must never do. Say so
+        # rather than let the V3-01 duplicate guard quietly turn it into a
+        # merge.
+        reuse_claimed_evidence=True,
     )
     if not created:
         print(

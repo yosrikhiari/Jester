@@ -23,9 +23,14 @@ from jester.models import Idea, Nugget
 from jester.scoring import SCORE_MAX, SCORE_MIN
 from jester.store import (
     _now,
-    insert_idea,
+    claim_nuggets,
+    count_claimed_nuggets,
+    find_idea_by_support_key,
+    idea_support_key,
+    insert_idea_nocommit,
     mark_needs_score,
     set_synthesized,
+    set_synthesized_nocommit,
     unprocessed_nuggets,
 )
 
@@ -125,6 +130,13 @@ class Synthesizer:
         #: Ideas archived without scores because the critic did not answer.
         #: Reported, and re-scored by a later run (`rescore_pending`).
         self.unscored: int = 0
+        #: Groups skipped because another worker had already claimed part of
+        #: their evidence (V3-01). Rare — it needs two writers holding the same
+        #: pool — and distinct from a merge: nothing was archived or grown
+        #: here, and the unclaimed remainder is still queued for the next run.
+        self.claimed_elsewhere: int = 0
+        #: Set by run(): the manual resynth path (see reuse_claimed_evidence).
+        self.reuse_claimed_evidence: bool = False
 
     def run(
         self,
@@ -136,6 +148,7 @@ class Synthesizer:
         checker=None,
         idea_vector=None,
         max_ideas: Optional[int] = None,
+        reuse_claimed_evidence: bool = False,
     ) -> List[Idea]:
         """M2.3: `checker` runs the competitor web step before final scoring;
         `idea_vector` enables R44 idea-level dedup. Both default to off, so a
@@ -145,11 +158,20 @@ class Synthesizer:
         is safe precisely because of R50: a group is only stamped synthesized
         once its idea is persisted, so the groups this run does not reach stay
         unclaimed and are the next run's first work. Merges (R44) do not count
-        against the ceiling — they archive no new idea."""
+        against the ceiling — they archive no new idea.
+
+        `reuse_claimed_evidence` is the D-16/R56 manual escape hatch
+        (`jester resynth`): re-derive a NEW idea from evidence an idea already
+        rests on. It is the one caller that may stamp already-claimed nuggets
+        and knowingly archive a second idea on the same supported set, so the
+        V3-01 duplicate guard does not apply — but the claim and the insert
+        are still one transaction.
+        """
         # §37.28 resynth: cluster an explicit subset (manual nugget selection)
         # instead of the NULL-pool. Lone-nugget R50 skip still applies.
         self.merged = []
         self.skipped_fallback = 0
+        self.reuse_claimed_evidence = bool(reuse_claimed_evidence)
         if rows is None:
             rows = unprocessed_nuggets(self.db)
         if not rows:
@@ -169,6 +191,7 @@ class Synthesizer:
         self.stopped_on_quota = False
         self.split_groups = 0
         self.unscored = 0
+        self.claimed_elsewhere = 0
         for (platform, thread_id), group_rows in _chunk_groups(
             groups, int(self.config.max_nuggets_per_idea or 0), self
         ):
@@ -293,33 +316,43 @@ class Synthesizer:
             golden_gate(idea, set(supporting))
 
             # R44: an idea the archive already holds gains evidence instead of
-            # gaining a duplicate row.
+            # gaining a duplicate row. The vector compare is one way to find
+            # that idea; it is skipped entirely when Qdrant is down, which is
+            # why the write below also asks the archive itself.
             match = find_duplicate(idea_vector, idea, self.config.dedup_threshold) \
                 if idea_vector is not None else None
             if match is not None:
                 existing_id, score = match
-                grew, added = merge_supporting(self.db, existing_id, supporting)
-                self.merged.append(MergeResult(existing_id, grew, score, added))
-                if grew and critic_hit_the_limit:
-                    # The critic just refused on quota; asking it again for
-                    # the re-score would only be refused again. Flag the idea
-                    # so a later run re-scores it against its new evidence.
-                    mark_needs_score(self.db, existing_id)
-                elif grew:
-                    # R49: re-score against the evidence it now actually rests on.
-                    rescore_after_merge(self.db, existing_id, Critic(self.db, self.config),
-                                        critic_llm, checker)
-                set_synthesized(self.db, supporting, now)
+                self._absorb(existing_id, score, supporting, now,
+                             critic_llm, checker, critic_hit_the_limit)
                 if critic_hit_the_limit:
                     self._stop_on_quota()
                     break
                 continue
 
-            idea.id = insert_idea(self.db, idea)
+            # V3-01: claim the evidence and write the row as ONE unit.
+            outcome, existing_id = self._claim_and_insert(idea, supporting, now)
+            if outcome == "duplicate":
+                # The archive already rests on exactly this evidence: some
+                # other writer got there first, or this run is a re-run over
+                # a stale pool. Merge, exactly as the R44 path does. Score 1.0
+                # because the evidence is identical, not merely similar.
+                self._absorb(existing_id, 1.0, supporting, now,
+                             critic_llm, checker, critic_hit_the_limit)
+                if critic_hit_the_limit:
+                    self._stop_on_quota()
+                    break
+                continue
+            if outcome == "partial":
+                # Another worker claimed part of this evidence between this
+                # run's read and its write. Two ideas sharing provenance is
+                # worse than leaving the group for the next run, which is
+                # where the nuggets it did not claim still are.
+                self.claimed_elsewhere += 1
+                continue
+
             if idea_vector is not None:
                 index_idea(idea_vector, idea)
-            # R50: stamp synthesized_at ONLY on the nuggets that joined.
-            set_synthesized(self.db, supporting, now)
             ideas.append(idea)
 
             if critic_hit_the_limit:
@@ -331,6 +364,71 @@ class Synthesizer:
                 break
 
         return ideas
+
+    def _claim_and_insert(self, idea: Idea, supporting, now: str):
+        """Claim the nuggets and insert the idea in one transaction.
+
+        Returns ``("inserted", None)`` when the row was written (``idea.id`` is
+        set), ``("duplicate", existing_id)`` when the archive already rests on
+        exactly this evidence, or ``("partial", None)`` when part of the
+        evidence belongs to somebody else.
+
+        A BEGIN IMMEDIATE write lock, not a plain SELECT-then-INSERT: SQLite
+        serialises writes but not decisions, and the decision here is "nobody
+        has archived this evidence yet". Holding the lock across the duplicate
+        check, the claim and the insert is what makes that decision true, and
+        means a crash anywhere inside it leaves neither an idea nor a claim —
+        so the re-run archives exactly one idea instead of two.
+        """
+        manual = self.reuse_claimed_evidence
+        own_txn = not self.db.in_transaction
+        if own_txn:
+            self.db.execute("BEGIN IMMEDIATE")
+        try:
+            if not manual:
+                existing = find_idea_by_support_key(
+                    self.db, idea_support_key(supporting))
+                if existing is not None:
+                    if own_txn:
+                        self.db.rollback()
+                    return "duplicate", existing
+            if manual:
+                # The operator asked for this evidence again: stamp it even
+                # though it is claimed, as resynth has always done.
+                set_synthesized_nocommit(self.db, supporting, now)
+            else:
+                if count_claimed_nuggets(self.db, supporting) > 0:
+                    # Some of this evidence already carries a claim: another
+                    # writer archived it between this run's read and its write.
+                    if own_txn:
+                        self.db.rollback()
+                    return "partial", None
+                claim_nuggets(self.db, supporting, now)
+            idea.id = insert_idea_nocommit(self.db, idea)
+            if own_txn:
+                self.db.commit()
+            return "inserted", None
+        except BaseException:
+            if own_txn:
+                self.db.rollback()
+            raise
+
+    def _absorb(self, existing_id, score, supporting, now, critic_llm, checker,
+                critic_hit_the_limit) -> None:
+        """Merge this group's evidence into `existing_id`, then re-score it."""
+        grew, added = merge_supporting(self.db, existing_id, supporting)
+        self.merged.append(MergeResult(existing_id, grew, score, added))
+        if grew and critic_hit_the_limit:
+            # The critic just refused on quota; asking it again for
+            # the re-score would only be refused again. Flag the idea
+            # so a later run re-scores it against its new evidence.
+            mark_needs_score(self.db, existing_id)
+        elif grew:
+            # R49: re-score against the evidence it now actually rests on.
+            rescore_after_merge(self.db, existing_id, Critic(self.db, self.config),
+                                critic_llm, checker)
+        # R50: stamp synthesized_at ONLY on the nuggets that joined.
+        set_synthesized(self.db, supporting, now)
 
     def _stop_on_quota(self):
         self.stopped_early = True

@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from typing import List, Optional
 
-from jester.store import _now, get_idea, update_idea
+from jester.store import _now, get_idea, idea_support_key, update_idea
 
 # The text an idea is embedded as. Title alone is too thin (two different ideas
 # often share a noun phrase); the problem statement carries the actual claim.
@@ -75,8 +75,10 @@ def merge_supporting(db, existing_id: int, new_keys: List[str]) -> tuple:
         return False, ()
     merged = current + added
     db.execute(
-        "UPDATE ideas SET supporting_nuggets=?, source_threads=? WHERE id=?",
-        (json.dumps(merged), max(row["source_threads"] or 0, len(merged)), existing_id),
+        "UPDATE ideas SET supporting_nuggets=?, source_threads=?, support_key=? "
+        "WHERE id=?",
+        (json.dumps(merged), max(row["source_threads"] or 0, len(merged)),
+         idea_support_key(merged), existing_id),
     )
     db.commit()
     return True, tuple(added)

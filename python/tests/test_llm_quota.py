@@ -62,13 +62,39 @@ def test_recording_twice_replaces_rather_than_duplicates(db):
     assert llm_quota.status(db, "groq")["reason"] == "second"
 
 
-def test_a_corrupt_timestamp_does_not_block_forever(db):
-    """Failing open is right here: a bad row must not make treatment
-    permanently refuse to run."""
+def test_a_corrupt_timestamp_blocks_and_says_why(db):
+    """V3-02: this used to fail OPEN.
+
+    An unreadable `blocked_until` returned 0.0 seconds — the same answer as
+    "no row" — so `blocked_for` said "not blocked" and treatment ran straight
+    into the quota it had already been refused by. A brake that reads a
+    damaged row as "go" is not a brake. It now blocks for a named window and
+    the reason on file says the value was corrupt, so `status()` can explain
+    it instead of hiding it.
+    """
     llm_quota.ensure_schema(db)
     db.execute(
         "INSERT INTO llm_quota(provider, blocked_until) VALUES('groq','not-a-date')"
     )
+    db.commit()
+
+    assert llm_quota.blocked_for(db, "groq") == pytest.approx(
+        llm_quota.CORRUPT_BLOCK_SECONDS)
+    st = llm_quota.status(db, "groq")
+    assert st["blocked"] is True
+    assert "corrupt" in st["reason"].lower()
+    assert "not-a-date" in st["reason"], "the offending value stays legible"
+
+    # Explaining it twice must not keep appending to the reason.
+    again = llm_quota.status(db, "groq")["reason"]
+    assert again == st["reason"]
+
+
+def test_an_empty_timestamp_is_not_a_block(db):
+    """Absent and unreadable are different facts: a cleared row (NULL) or an
+    empty cell means no block at all."""
+    llm_quota.ensure_schema(db)
+    db.execute("INSERT INTO llm_quota(provider, blocked_until) VALUES('groq','')")
     db.commit()
     assert llm_quota.blocked_for(db, "groq") == 0.0
 

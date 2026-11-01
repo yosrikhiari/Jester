@@ -36,6 +36,23 @@ CREATE TABLE IF NOT EXISTS llm_quota (
 #: in seconds; the daily one does not.
 LONG_BLOCK_SECONDS = 120
 
+#: How long a row with an unreadable `blocked_until` blocks for.
+#:
+#: The value cannot be trusted, so neither "it expires now" nor "it expires
+#: next year" can be derived from it. Before this, corruption read as 0.0
+#: seconds — the same answer as "no row" — so `blocked_for` said "not blocked"
+#: and treatment ran straight back into the quota it had already been refused
+#: by. A brake that reads a damaged row as "go" is not a brake. An hour is
+#: long enough that a broken row cannot burn a day's quota, short enough that
+#: an operator who fixes the row is not waiting forever; `clear_block` (a
+#: successful call) and `record_block` both replace it immediately.
+CORRUPT_BLOCK_SECONDS = 3600
+
+#: Stamped into `reason` when `blocked_until` could not be parsed. Kept as a
+#: constant so the rewrite below is idempotent: `status()` may be called many
+#: times, and the explanation must not accumulate copies of itself.
+CORRUPT_REASON_PREFIX = "blocked_until is corrupt"
+
 #: The key blocks used to be filed under, for every model at once.
 #:
 #: Groq's free tier counts each MODEL separately, so one model running out
@@ -168,28 +185,56 @@ def _remaining(db, provider: str) -> float:
     ensure_schema(db)
     db.row_factory = sqlite3.Row
     row = db.execute(
-        "SELECT blocked_until FROM llm_quota WHERE provider=?", (provider,)
+        "SELECT blocked_until, reason FROM llm_quota WHERE provider=?", (provider,)
     ).fetchone()
     if row is None or not row["blocked_until"]:
+        # No row, or a cleared one: nothing was ever recorded against this
+        # provider, which is not the same fact as a row we cannot read.
         return 0.0
     try:
         until = datetime.fromisoformat(row["blocked_until"])
     except (TypeError, ValueError):
-        return 0.0
+        # V3-02. The row exists and says "blocked"; only the instant is
+        # unreadable. Fail CLOSED for a fixed window and leave the reason on
+        # file saying why, so status() explains it instead of the operator
+        # finding "not blocked" next to an expired-looking stamp.
+        _note_corrupt(db, provider, row["blocked_until"], row["reason"])
+        return float(CORRUPT_BLOCK_SECONDS)
     if until.tzinfo is None:
         until = until.replace(tzinfo=timezone.utc)
     remaining = (until - _now()).total_seconds()
     return max(0.0, remaining)
 
 
+def _note_corrupt(db, provider: str, value, reason) -> None:
+    """Record, once, that `blocked_until` could not be read.
+
+    Idempotent by construction: a reason that already names the corruption is
+    left alone, so reading `status()` in a loop does not grow it.
+    """
+    note = (f"{CORRUPT_REASON_PREFIX} ({value!r}); treating as blocked for "
+            f"{CORRUPT_BLOCK_SECONDS}s")
+    existing = (reason or "").strip()
+    if CORRUPT_REASON_PREFIX in existing:
+        return
+    db.execute(
+        "UPDATE llm_quota SET reason=? WHERE provider=?",
+        ((note + (f"; was: {existing}" if existing else ""))[:400], provider),
+    )
+    db.commit()
+
+
 def status(db, provider: str) -> dict:
     """Everything the console needs to explain the current state."""
     ensure_schema(db)
     db.row_factory = sqlite3.Row
+    # Read AFTER `blocked_for`: an unreadable `blocked_until` is explained by
+    # rewriting the reason (see _note_corrupt), and reporting the pre-rewrite
+    # row would hide the very sentence this exists to surface.
+    remaining = blocked_for(db, provider)
     row = db.execute(
         "SELECT * FROM llm_quota WHERE provider=?", (provider,)
     ).fetchone()
-    remaining = blocked_for(db, provider)
     return {
         "provider": provider,
         "blocked": remaining > 0,

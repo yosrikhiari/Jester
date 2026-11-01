@@ -400,6 +400,22 @@ _ADD_COLUMNS = [
     # answered, or the check failed/skipped) — a different fact from a recent
     # check, and the shape needs_recheck already treats as "must check".
     "ALTER TABLE ideas ADD COLUMN competition_checked_at TEXT",
+    # ---- V3-01: the idea's evidence identity -------------------------------
+    # The sorted supporting-nugget keys, one per line. The synthesizer checks
+    # it inside the same BEGIN IMMEDIATE that claims the nuggets and inserts
+    # the row, so two writers cannot both archive an idea resting on exactly
+    # the same evidence. It is a deterministic key rather than the JSON cell:
+    # `["a","b"]` and `["b","a"]` describe the same evidence and different
+    # JSON text describes it differently. NULL on rows written before this
+    # column existed; open_db fills those in once (see _backfill_support_keys).
+    "ALTER TABLE ideas ADD COLUMN support_key TEXT",
+    # ---- V3-02: who is scoring this idea right now -------------------------
+    # A worker stamps this, COMMITS, and only then calls the model. Without
+    # it two `rescore_pending` runs select the same rows and both score them,
+    # because the row only stops looking pending when the first worker's
+    # answer is written. Older than RESCORE_CLAIM_STALE_SECONDS and the claim
+    # is treated as abandoned (a crash), so it can be reclaimed.
+    "ALTER TABLE ideas ADD COLUMN rescore_claimed_utc TEXT",
     # T-C2: the pipeline run environment (mirror of the journal's
     # lab.fingerprint for experiment runs) — os/python/machine/cpu_count plus
     # a code snapshot of the repo root, written ONCE at start_run and never
@@ -426,6 +442,11 @@ _ADD_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_nuggets_run ON nuggets(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_nuggets_thread ON nuggets(thread_id)",
     "CREATE INDEX IF NOT EXISTS idx_ideas_status_overall ON ideas(status, overall)",
+    # V3-01: the duplicate check the synthesizer runs inside its write
+    # transaction. Not UNIQUE: a legacy archive may already hold two ideas on
+    # the same evidence (that is the bug being fixed), and a failed migration
+    # must not be how an operator finds out.
+    "CREATE INDEX IF NOT EXISTS idx_ideas_support_key ON ideas(support_key)",
     "CREATE INDEX IF NOT EXISTS idx_runs_status_started ON runs(status, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_edit_proposals_status ON edit_proposals(status)",
     "CREATE INDEX IF NOT EXISTS idx_edit_log_target ON edit_log(target_table)",
@@ -649,6 +670,10 @@ def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
             db.execute(stmt)
         except sqlite3.OperationalError:
             pass  # legacy shape without the column: index comes with migration
+    # V3-01: one-time, at migration time only — a row written before
+    # `support_key` existed cannot take part in the duplicate check until its
+    # key is derived. Reads nothing on later opens, because nothing is NULL.
+    _backfill_support_keys(db)
     existing = db.execute(
         "SELECT value FROM meta WHERE key='schema_version'"
     ).fetchone()
@@ -1170,8 +1195,9 @@ def promote_cluster_idea(db: sqlite3.Connection, draft_id: int) -> dict:
         INSERT INTO ideas
             (title, problem_statement, proposed_solution, supporting_nuggets,
              source_threads, source_platforms, demand_signal, feasibility,
-             competition, overall, status, synthesis_model, run_id, last_scored_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,'new',?,?,?)
+             competition, overall, status, synthesis_model, run_id,
+             last_scored_at, support_key)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'new',?,?,?,?)
         """,
         (
             row["title"], row["problem_statement"], row["proposed_solution"],
@@ -1179,6 +1205,7 @@ def promote_cluster_idea(db: sqlite3.Connection, draft_id: int) -> dict:
             row["demand_signal"], row["feasibility"], row["competition"],
             row["overall"], row["synthesis_model"] or "",
             f"cluster-{row['cluster_id']}", _now(),
+            idea_support_key(keys),  # V3-01: same identity as the synthesizer
         ),
     )
     idea_id = int(cur.lastrowid)
@@ -1241,9 +1268,84 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+#: Separator for `ideas.support_key`. Nugget unique keys are
+#: `<platform>:<thread>:<id>`-shaped and contain no newline, so joining a
+#: sorted list with one is unambiguous (a separator that can appear inside a
+#: key would let two different sets produce the same key).
+SUPPORT_KEY_SEP = "\n"
+
+
+def idea_support_key(keys) -> str:
+    """The identity of an idea's evidence: its supporting keys, sorted.
+
+    Order-independent on purpose — the same nuggets in a different chunk order
+    describe the same evidence — and derived from the KEYS, not from the JSON
+    cell, so formatting differences cannot make two identical sets look new.
+    """
+    return SUPPORT_KEY_SEP.join(sorted({str(k) for k in (keys or []) if k}))
+
+
+def find_idea_by_support_key(db: sqlite3.Connection, key: str) -> Optional[int]:
+    """The id of an idea already resting on exactly this evidence, or None.
+
+    Read-only. The caller that must not race another writer runs it inside a
+    BEGIN IMMEDIATE transaction (see agents/synthesizer.py).
+    """
+    if not key:
+        return None
+    row = db.execute(
+        "SELECT id FROM ideas WHERE support_key=? ORDER BY id LIMIT 1", (key,)
+    ).fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def _backfill_support_keys(db: sqlite3.Connection) -> int:
+    """Fill `support_key` for ideas written before the column existed.
+
+    One UPDATE per legacy row, at migration time only: after this runs every
+    row has a key and the query finds nothing. A cell that is not readable
+    JSON gets the key of an empty set, the same "no provenance on record"
+    reading every other reader of that column uses.
+    """
+    try:
+        rows = db.execute(
+            "SELECT id, supporting_nuggets FROM ideas WHERE support_key IS NULL"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return 0  # legacy table without the column: the ALTER comes first
+    if not rows:
+        return 0
+    for idea_id, raw in rows:
+        try:
+            keys = json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            keys = []
+        if not isinstance(keys, list):
+            keys = []
+        db.execute(
+            "UPDATE ideas SET support_key=? WHERE id=?",
+            (idea_support_key(keys), idea_id),
+        )
+    db.commit()
+    return len(rows)
+
+
 def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
     """Persist a synthesized + scored idea. ``competition`` None is stored as
     NULL (R29/R41: never fabricated). Returns the new row id."""
+    idea_id = insert_idea_nocommit(db, idea)
+    db.commit()
+    return idea_id
+
+
+def insert_idea_nocommit(db: sqlite3.Connection, idea: Idea) -> int:
+    """The INSERT itself, leaving the transaction to the caller.
+
+    V3-01: the synthesizer claims the evidence and writes the row inside one
+    BEGIN IMMEDIATE unit, so this half must not commit — a commit here would
+    end that unit halfway and reopen exactly the crash window it closes.
+    Everything else keeps using `insert_idea`, which commits.
+    """
     # T-A2 R53: the web-check stamp round-trips. getattr (not an attribute
     # access) because Idea pins no field for it — a hand- or model-built idea
     # with no verdict behind it simply stores NULL, which is the truth.
@@ -1255,8 +1357,8 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
              source_threads, source_platforms, demand_signal, feasibility,
              competition, overall, competitor_notes, competition_checked,
              status, last_scored_at, critic_model, synthesis_model, run_id,
-             needs_score, competition_checked_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             needs_score, competition_checked_at, support_key)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             idea.title,
@@ -1278,9 +1380,9 @@ def insert_idea(db: sqlite3.Connection, idea: Idea) -> int:
             idea.run_id,
             1 if idea.needs_score else 0,
             stamp,  # T-A2 R53
+            idea_support_key(idea.supporting_nuggets),  # V3-01
         ),
     )
-    db.commit()
     return cur.lastrowid
 
 
@@ -1294,7 +1396,7 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             competitor_notes=?, competition_checked=?, status=?,
             last_scored_at=?, critic_model=?, synthesis_model=?,
             supporting_nuggets=?, source_threads=?, source_platforms=?,
-            needs_score=?, competition_checked_at=?
+            needs_score=?, competition_checked_at=?, support_key=?
         WHERE id=?
         """,
         (
@@ -1315,6 +1417,7 @@ def update_idea(db: sqlite3.Connection, idea: Idea) -> None:
             stamp,  # T-A2 R53: a re-score must not erase a check stamp it did
             # not renew (apply_scores' preserve path leaves the attr untouched;
             # apply_verdict stamps when a verdict really checked).
+            idea_support_key(idea.supporting_nuggets),  # V3-01: kept current
             idea.id,
         ),
     )
@@ -1326,10 +1429,13 @@ def mark_needs_score(db: sqlite3.Connection, idea_id: int) -> None:
 
     Entering the queue is a fresh reason to ask, so a counter left over from
     attempts for the PREVIOUS reason starts at zero. Without this, growth
-    would put an idea behind every row that merely failed more recently.
+    would put an idea behind every row that merely failed more recently. The
+    claim goes with it: the row is re-entering the queue, so whoever held it
+    is no longer the only worker allowed to ask.
     """
     db.execute(
-        "UPDATE ideas SET needs_score=1, rescore_attempts=0 WHERE id=?",
+        "UPDATE ideas SET needs_score=1, rescore_attempts=0, "
+        "rescore_claimed_utc=NULL WHERE id=?",
         (idea_id,),
     )
     db.commit()
@@ -1363,13 +1469,61 @@ def unprocessed_nuggets(db: sqlite3.Connection) -> List[sqlite3.Row]:
 
 def set_synthesized(db: sqlite3.Connection, unique_keys: List[str], when: str) -> None:
     """R50: stamp synthesized_at ONLY on the nuggets that joined an idea."""
+    set_synthesized_nocommit(db, unique_keys, when)
+    db.commit()
+
+
+def set_synthesized_nocommit(
+    db: sqlite3.Connection, unique_keys: List[str], when: str
+) -> None:
+    """The stamp without the commit: the synthesizer writes it inside the same
+    transaction as the idea it belongs to (V3-01)."""
     if not unique_keys:
         return
     db.executemany(
         "UPDATE nuggets SET synthesized_at=? WHERE unique_key=?",
         [(when, k) for k in unique_keys],
     )
-    db.commit()
+
+
+def count_claimed_nuggets(db: sqlite3.Connection, unique_keys: List[str]) -> int:
+    """How many of `unique_keys` the archive already shows as claimed.
+
+    Read-only. The synthesizer asks this inside its BEGIN IMMEDIATE
+    transaction, before claiming: a non-zero answer means another writer beat
+    it to part of the evidence (V3-01). Keys that are absent from the archive
+    are not counted -- nobody can hold a row that does not exist, and the
+    explicit `rows=` path legitimately clusters caller-supplied rows.
+    """
+    keys = sorted({k for k in (unique_keys or []) if k})
+    if not keys:
+        return 0
+    marks = ",".join("?" for _ in keys)
+    row = db.execute(
+        "SELECT COUNT(*) FROM nuggets WHERE unique_key IN (" + marks + ") "
+        "AND synthesized_at IS NOT NULL",
+        keys,
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def claim_nuggets(db: sqlite3.Connection, unique_keys: List[str], when: str) -> int:
+    """Stamp only the nuggets nobody has claimed yet; return how many.
+
+    Written inside the caller's transaction, so a crash later in the same unit
+    releases the claim with it. Contention is decided by
+    `count_claimed_nuggets` before this runs; the count returned here is how
+    much evidence the writer actually took.
+    """
+    keys = [k for k in (unique_keys or []) if k]
+    if not keys:
+        return 0
+    cur = db.executemany(
+        "UPDATE nuggets SET synthesized_at=? WHERE unique_key=? "
+        "AND synthesized_at IS NULL",
+        [(when, k) for k in keys],
+    )
+    return cur.rowcount
 
 
 def nugget_by_key(db: sqlite3.Connection, unique_key: str) -> Optional[sqlite3.Row]:

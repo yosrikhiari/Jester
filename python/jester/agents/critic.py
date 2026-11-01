@@ -160,6 +160,52 @@ def stalled_scores(db) -> int:
     ).fetchone()[0]
 
 
+#: How long one worker's claim on an idea keeps another worker off it. Long
+#: enough for a slow model answer plus a retry; short enough that a worker
+#: killed mid-answer does not hold the idea out of the queue for a night.
+#: V3-02: two workers scoring the same idea was a double-paid model call and a
+#: score written by whichever finished last.
+RESCORE_CLAIM_STALE_SECONDS = 30 * 60
+
+
+def _stale_claim_cutoff() -> str:
+    """The timestamp before which a claim counts as abandoned."""
+    import datetime
+
+    return (datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=RESCORE_CLAIM_STALE_SECONDS)
+            ).isoformat()
+
+
+def _claim_for_rescore(db, idea_id: int) -> bool:
+    """Take the idea's re-score claim, or say that somebody else holds it.
+
+    One conditional UPDATE, committed *before* the model is called: SQLite
+    serialises the two writers, so exactly one of them can move
+    `rescore_claimed_utc` off NULL (or off an abandoned claim), and only that
+    one asks the model. The conditions repeat the queue's own predicates, so a
+    row scored or stalled between the SELECT and here is not claimed.
+    """
+    cur = db.execute(
+        "UPDATE ideas SET rescore_claimed_utc=? "
+        "WHERE id=? AND needs_score=1 AND rescore_attempts < ? "
+        "AND (rescore_claimed_utc IS NULL OR rescore_claimed_utc < ?)",
+        (_now(), int(idea_id), SCORE_STALL_ATTEMPTS, _stale_claim_cutoff()),
+    )
+    db.commit()
+    return cur.rowcount == 1
+
+
+def _release_rescore_claim(db, idea_id: int, *, failed_attempt: bool) -> None:
+    """Hand the idea back to the queue once this worker is done with it."""
+    attempts = "rescore_attempts+1" if failed_attempt else "0"
+    db.execute(
+        "UPDATE ideas SET rescore_claimed_utc=NULL, rescore_attempts="
+        + attempts + " WHERE id=?",
+        (int(idea_id),),
+    )
+
+
 def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -> dict:
     """Give up to `limit` waiting ideas a real score, least-tried first.
 
@@ -169,6 +215,13 @@ def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -
     increments the counter, so the next run starts with somebody else; a
     successful one clears it. `mark_needs_score` also clears it, because a new
     reason to ask deserves a fresh place in the queue.
+
+    Each idea is claimed (V3-02) before its model call: a claim is committed
+    first, so a second worker running at the same time skips the idea instead
+    of paying for the same answer, and the claim is released on success, on
+    failure, and on a crash inside this loop. A claim older than
+    `RESCORE_CLAIM_STALE_SECONDS` belongs to a worker that is not coming back
+    and is reclaimed.
 
     Stops at the first rate-limit exhaustion, for the reason the synthesizer
     does: every call after it would be another stand-in. An idea whose critic
@@ -190,19 +243,30 @@ def rescore_pending(db, config: Thresholds, critic_llm: CriticLLM, limit: int) -
     ).fetchall()
     critic = Critic(db, config)
     for row in rows:
-        before = int(getattr(critic_llm, "rate_limited", 0) or 0)
-        idea = critic.score(row_to_idea(row), critic_llm)
+        if not _claim_for_rescore(db, row["id"]):
+            # Another worker got here first, or the row left the queue after
+            # the SELECT. Either way this one is not ours to pay for.
+            continue
+        try:
+            before = int(getattr(critic_llm, "rate_limited", 0) or 0)
+            idea = critic.score(row_to_idea(row), critic_llm)
+        except BaseException:
+            # A crash we survived: hand the idea back now rather than making
+            # the next worker wait out the stale window.
+            try:
+                db.rollback()
+                _release_rescore_claim(db, row["id"], failed_attempt=True)
+                db.commit()
+            except sqlite3.Error:
+                pass
+            raise
         if not idea.needs_score:
             out["scored"] += 1
             # A success earns a clean slate: if growth later re-queues it, it
             # starts level with everybody else.
-            db.execute("UPDATE ideas SET rescore_attempts=0 WHERE id=?",
-                       (row["id"],))
+            _release_rescore_claim(db, row["id"], failed_attempt=False)
         else:
-            db.execute(
-                "UPDATE ideas SET rescore_attempts=rescore_attempts+1 "
-                "WHERE id=?", (row["id"],),
-            )
+            _release_rescore_claim(db, row["id"], failed_attempt=True)
         if int(getattr(critic_llm, "rate_limited", 0) or 0) > before:
             out["stopped_on_quota"] = True
             break

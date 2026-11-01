@@ -81,6 +81,78 @@ def test_over_budget_raises_and_spends_nothing():
     assert quota_used(db, "youtube", "2026-08-23") == 0
 
 
+# --- V3-02: the ledger cannot double-spend ------------------------------------
+
+def test_spending_exactly_the_budget_is_allowed():
+    from jester.quota import day_key, spend
+
+    db = open_db(":memory:")
+    assert spend(db, "youtube", 50, daily_budget=50) == 0
+    assert quota_used(db, "youtube", day_key()) == 50
+
+
+def test_two_concurrent_spends_with_budget_for_one_charge_once(tmp_path, monkeypatch):
+    """`spend` used to read the total, compare, then write: two processes could
+    both read "0 used" and both pass the check.
+
+    The race is injected at the write, because that is the seam it lived in:
+    the first writer now decides inside a single conditional statement, so the
+    second one's statement matches no row and it has to report the refusal.
+    """
+    import threading
+
+    import jester.quota as quota
+
+    path = str(tmp_path / "spend.db")
+    open_db(path).close()
+
+    barrier = threading.Barrier(2)
+    real_add = quota_add
+
+    def rendezvous(db_, platform, key, units):
+        # Only the old read-then-write shape reaches this at all; the atomic
+        # statement never calls quota_add. `raising=False` because quota no
+        # longer imports it — that absence is the point.
+        try:
+            barrier.wait(timeout=10)
+        except threading.BrokenBarrierError:
+            pass
+        return real_add(db_, platform, key, units)
+
+    monkeypatch.setattr(quota, "quota_add", rendezvous, raising=False)
+
+    outcomes = []
+    lock = threading.Lock()
+
+    def worker():
+        conn = open_db(path, migrate=False)
+        try:
+            try:
+                value = quota.spend(conn, "reddit", 1, daily_budget=1)
+            except quota.QuotaExceeded as exc:
+                value = exc
+        finally:
+            conn.close()
+        with lock:
+            outcomes.append(value)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    spent = [o for o in outcomes if isinstance(o, int)]
+    refused = [o for o in outcomes if isinstance(o, quota.QuotaExceeded)]
+    assert len(spent) == 1 and len(refused) == 1, outcomes
+    assert spent[0] == 0
+    check = open_db(path, migrate=False)
+    try:
+        assert quota_used(check, "reddit", quota.day_key()) == 1
+    finally:
+        check.close()
+
+
 # --- Task 3: near-miss capture ------------------------------------------------------
 
 class FixedEmbedding:
