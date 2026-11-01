@@ -596,9 +596,12 @@ def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
     exactly how that would have shipped.
 
     So the connection is ordinary and the restraint is in the caller: it takes
-    read locks like any reader, and simply never writes.
+    read locks like any reader, and simply never writes. `migrate=False` also
+    creates no directory and never sets the journal mode. A missing archive
+    file is still created empty by SQLite on connect, so the callers that must
+    not do that (Doctor, `eval sample`) refuse before connecting.
     """
-    if path != ":memory:":
+    if path != ":memory:" and migrate:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -617,10 +620,17 @@ def open_db(path: str, *, migrate: bool = True) -> sqlite3.Connection:
     # docker-compose.yml: the throwaway archive already avoids the bind
     # mount). WAL mode is persistent — once set it survives reopen — so both
     # the Python and Go sides read the same variable and default identically.
-    try:
-        db.execute(f"PRAGMA journal_mode={_journal_mode()}")
-    except sqlite3.OperationalError:
-        pass
+    #
+    # Only a migrating open sets it. `PRAGMA journal_mode` WRITES the file
+    # when it asks for a mode the file is not already in, so a `migrate=False`
+    # open that ran it converted a WAL archive back to DELETE and rewrote the
+    # header — the one thing a viewing open must never do. A reader inherits
+    # whatever mode the file already has; it needs no setting of its own.
+    if migrate:
+        try:
+            db.execute(f"PRAGMA journal_mode={_journal_mode()}")
+        except sqlite3.OperationalError:
+            pass
     db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     if not migrate:
         db.row_factory = sqlite3.Row

@@ -15,7 +15,7 @@ import pytest
 
 from jester import cli, schedule
 
-EIGHT = [
+DECLARED = [
     "JesterNightly",
     "JesterNightlyScrape",
     "JesterNightlyTreat",
@@ -24,6 +24,8 @@ EIGHT = [
     "JesterNightlySignalsHiring",
     "JesterNightlySignalsSweep",
     "JesterNightlyLeadsReddit",
+    "JesterNightlyBackup",
+    "JesterNightlyRetention",
 ]
 
 
@@ -117,15 +119,16 @@ def host(tmp_path, monkeypatch):
     return fake
 
 
-def test_the_shipped_declaration_names_the_eight_tasks():
+def test_the_shipped_declaration_names_every_task():
     specs = schedule.load_desired()
-    assert [s["task"] for s in specs] == EIGHT
+    assert [s["task"] for s in specs] == DECLARED
     assert {s["task"] for s in specs if not s["enabled"]} == {
-        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat"}
+        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
+        "JesterNightlyRetention"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     assert cadence["JesterNightly"] == "every 30 minutes"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
-    assert cadence["JesterNightlySignalsSweep"] == "daily at 08:00"
+    assert cadence["JesterNightlySignalsSweep"] == "weekly on SUN at 08:00"
     assert cadence["JesterNightlySignalsHiring"] == "daily at 09:30"
 
 
@@ -133,16 +136,17 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     first = schedule.apply_desired()
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
-    assert installed == set(EIGHT)
-    assert len(host.created()) == 8
+    assert installed == set(DECLARED)
+    assert len(host.created()) == 10
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
-        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat"}
+        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
+        "JesterNightlyRetention"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 8
-    assert len(host.created()) == 8, "a second apply must not re-register anything"
-    assert len(host.changes()) == 3, "nor flip the three paused tasks again"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 10
+    assert len(host.created()) == 10, "a second apply must not re-register anything"
+    assert len(host.changes()) == 4, "nor flip the four paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -157,7 +161,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "8 task(s) would change" in out
+    assert "10 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
@@ -286,7 +290,7 @@ def test_doctor_names_the_tasks_that_no_longer_match(host):
 
     assert len(notes) == 2
     assert any(n.startswith("JesterNightlySignalsSweep: not installed")
-               and "daily at 08:00" in n for n in notes)
+               and "weekly on SUN at 08:00" in n for n in notes)
     assert any(n.startswith("JesterNightlySignalsHiring:")
                and "11:30:00 AM" in n and "daily at 09:30" in n for n in notes)
 
@@ -299,3 +303,134 @@ def test_a_paused_task_absent_from_the_machine_is_still_paused(host):
         host.tasks.pop(task)
     assert schedule.desired_drift() == []
     assert cli.schedule_drift_notes() == []
+
+
+# ---- status must not call a paused task INSTALLED (ND-02) -------------------
+
+def test_status_renders_a_disabled_task_as_paused(host, capsys):
+    """`status()` computes `enabled`; the CLI dropped it, so a task switched
+    off in Task Scheduler printed the same INSTALLED line as a working one."""
+    assert schedule.apply_desired()["ok"] is True
+    host.tasks["JesterNightly"]["enabled"] = False
+
+    cli.main(["schedule", "status", "--command", "cycle"])
+
+    out = capsys.readouterr().out
+    assert "PAUSED" in out
+    assert "INSTALLED" not in out
+    assert "DISABLED" in out
+
+
+def test_status_shows_whether_an_installed_task_is_running(host, capsys):
+    assert schedule.apply_desired()["ok"] is True
+
+    cli.main(["schedule", "status", "--command", "signals"])
+
+    out = capsys.readouterr().out
+    assert "PAUSED" not in out
+    assert "state  : idle" in out
+
+
+# ---- a cadence change to a live task needs --force (ND-03) ------------------
+
+def _one_task(path, at, enabled=True):
+    path.write_text(
+        "tasks:\n"
+        "  - task: JesterNightlySignals\n"
+        "    command: signals\n"
+        f"    cadence: {{at: '{at}'}}\n"
+        f"    enabled: {str(enabled).lower()}\n", encoding="utf-8")
+    return path
+
+
+def test_apply_refuses_a_cadence_change_on_an_enabled_task_without_force(host, tmp_path):
+    base = _one_task(tmp_path / "base.yaml", "09:00")
+    moved = _one_task(tmp_path / "moved.yaml", "10:00")
+    assert schedule.apply_desired(base)["ok"] is True
+    assert len(host.created()) == 1
+
+    refused = schedule.apply_desired(moved)
+
+    assert refused["ok"] is False
+    assert [r["action"] for r in refused["results"]] == ["refused"]
+    assert "--force" in refused["results"][0]["detail"]
+    assert len(host.created()) == 1, "a refusal must not touch the registration"
+
+    forced = schedule.apply_desired(moved, force=True)
+    assert forced["ok"] is True
+    assert [r["action"] for r in forced["results"]] == ["installed"]
+    assert len(host.created()) == 2
+
+
+def test_apply_refuses_before_a_dry_run_reports_it(host, tmp_path):
+    base = _one_task(tmp_path / "base.yaml", "09:00")
+    moved = _one_task(tmp_path / "moved.yaml", "10:00")
+    assert schedule.apply_desired(base)["ok"] is True
+
+    dry = schedule.apply_desired(moved, dry_run=True)
+
+    assert dry["ok"] is False
+    assert [r["action"] for r in dry["results"]] == ["refused"]
+    assert host.created() and len(host.created()) == 1
+
+
+def test_a_paused_task_moves_without_force(host, tmp_path):
+    """A disabled task runs nothing, so moving its cadence changes no live
+    request volume; the guard exists for the enabled ones."""
+    base = _one_task(tmp_path / "base.yaml", "09:00", enabled=False)
+    moved = _one_task(tmp_path / "moved.yaml", "10:00", enabled=False)
+    assert schedule.apply_desired(base)["ok"] is True
+
+    res = schedule.apply_desired(moved)
+
+    assert res["ok"] is True
+    assert [r["action"] for r in res["results"]] == ["installed"]
+
+
+def test_the_cli_exits_1_and_names_force(host, tmp_path, capsys):
+    base = _one_task(tmp_path / "base.yaml", "09:00")
+    moved = _one_task(tmp_path / "moved.yaml", "10:00")
+    assert schedule.apply_desired(base)["ok"] is True
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["schedule", "apply", "--file", str(moved)])
+
+    assert exc.value.code == 1
+    assert "--force" in capsys.readouterr().out
+
+
+# ---- the declaration and the code's own rationale cannot diverge ------------
+
+def test_the_declaration_schedules_a_verified_backup_and_a_paused_retention():
+    """A privacy policy and a backup policy that are not scheduled are both
+    documents. Backup verifies the snapshot it writes; retention stays paused
+    until the evaluation sample exists, because it cannot be undone."""
+    specs = {s["command"]: s for s in schedule.load_desired()}
+
+    assert schedule.TASK_FOR_COMMAND["backup"] == "JesterNightlyBackup"
+    assert schedule.TASK_FOR_COMMAND["retention"] == "JesterNightlyRetention"
+    assert specs["backup"]["enabled"] is True
+    assert schedule.describe_cadence(specs["backup"]) == "daily at 02:30"
+    assert specs["retention"]["enabled"] is False
+    assert schedule.describe_cadence(specs["retention"]) == "weekly on SUN at 03:30"
+
+
+def test_each_operational_launcher_runs_its_own_command(host):
+    assert schedule.apply_desired()["ok"] is True
+
+    backup = schedule.launcher_path("backup").read_text(encoding="utf-8")
+    retention = schedule.launcher_path("retention").read_text(encoding="utf-8")
+
+    assert "-m jester.cli backup" in backup
+    assert "-m jester.cli retention" in retention
+    assert "--config" not in backup, "backup takes no --config"
+
+
+def test_the_declared_sweep_cadence_matches_the_code_rationale():
+    """The sweep reads ~300 requests against a board that refreshes daily, so
+    the code documents weekly. The YAML said daily and `apply` would have
+    quietly made it so: one fact, compared rather than remembered."""
+    sweep = next(s for s in schedule.load_desired()
+                 if s["command"] == "signals-sweep")
+    assert sweep["cadence"] == schedule.SWEEP_CADENCE
+    assert sweep["cadence"] == {"weekly": "SUN", "at": "08:00"}

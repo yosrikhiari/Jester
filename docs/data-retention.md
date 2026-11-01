@@ -55,6 +55,16 @@ actually changed.
   `<name>.qdrant/` (nuggets) and `<name>.ideas.qdrant/` (idea dedup): deleting
   a database without them leaves phantom vectors behind, which is why a
   throwaway database needs all three removed.
+- **The extraction-evaluation sample.** `eval/extraction/sample.jsonl` holds
+  150 comments drawn deterministically from the archive, and it is the one
+  place raw text is meant to outlive the TTL. It is the substrate for the
+  extraction-quality report (κ, precision, recall, fabrication), so wiping it
+  would destroy the measurement too. It is bounded (150 rows, about 100 KB),
+  versioned in git with the code that grades it, and re-drawn only by
+  re-running `eval sample` against the same archive contents — the design
+  file records the pool (115,199 comments, 89 strata) and the seed, because a
+  new comment changes the pool and can change the ids. The sweep does not
+  touch it; deleting it is a deliberate act.
 - **Backups.** `jester backup` snapshots are ordinary files under
   `data/backups/` (beside the database unless `--out` says otherwise). The
   sweep does not delete them; a backup that quietly ages out with the data it
@@ -67,7 +77,7 @@ actually changed.
 - **The journal.** `data/journal.db`, the article files and the site worktree
   are outside this sweep; they have their own versioning and approval gates.
 
-## Backups are a separate command, not a schedule
+## Backups and retention are declared, not remembered
 
 `jester backup` uses SQLite's online backup API (a consistent snapshot while
 the archive is being written — a filesystem copy taken mid-write opens fine
@@ -75,13 +85,28 @@ and is corrupt), then **opens the snapshot** and runs `PRAGMA
 integrity_check` plus row counts before reporting success. Only after that
 does it prune old backups, keeping the newest **14** (`--keep`).
 
-Nothing ships a backup schedule. `scripts/nightly.sh` runs the pipeline; it
-does not call `jester backup`. If you want nightly backups, schedule this
-yourself:
+`config/schedule.yaml` declares both jobs:
+
+| Task | Command | Cadence | Enabled |
+|---|---|---|---|
+| `JesterNightlyBackup` | `backup` | daily 02:30 | **yes** |
+| `JesterNightlyRetention` | `retention` | weekly SUN 03:30 | **no** |
+
+Backup is enabled because it only adds a copy. Retention is declared but
+disabled until the extraction sample in `eval/extraction/` is drawn and
+labelled: a sweep NULLs `raw_text`, and the sample depends on that text.
+`jester schedule apply` installs what the file says; `jester schedule status`
+prints the disabled task as PAUSED. It refuses, and exits non-zero, when the
+file moves the cadence of a task that is enabled right now — that is a change
+to live request volume, so it takes `--force` to say so deliberately. Paused
+tasks and scope changes move freely.
+
+Either command still runs by hand:
 
 ```bash
 python -m jester.cli backup
 python -m jester.cli backup --verify data/backups/jester-20261030T030000Z.db.gz
+python -m jester.cli retention            # the sweep has no dry run
 ```
 
 The sweep removes data that only exists in the database; the backup is the

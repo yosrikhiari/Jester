@@ -43,6 +43,8 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 
 Resume the generative loop only after the B1 gate in the [2026-10-31 strategy report](docs/reports/2026-10-31-next-development-strategy.md): one unattended day must end with an honest `quota_stopped` status, no overlapping ticks, and a score backlog that falls.
 
+**One index of what is done and what is left: [docs/STATUS.md](docs/STATUS.md).** Version history: [CHANGELOG.md](CHANGELOG.md).
+
 ## Architecture
 
 | Layer | Stack | Role |
@@ -225,7 +227,7 @@ All tuning lives in `config/`:
 - **`scraper.yaml`** — browser stealth settings, request delays, proxy configuration
 - **`signal_rules.yaml`** — the problem-signal rule set: scope, search phrases, scoring families and thresholds
 
-Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — how a model change moves between `config/` and `config-live/`, and how to prove it did only what you meant; **[docs/data-retention.md](docs/data-retention.md)** — what the TTL sweep removes, what it leaves, and how it pairs with `jester backup`.
+Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — how a model change moves between `config/` and `config-live/`, and how to prove it did only what you meant; **[docs/data-retention.md](docs/data-retention.md)** — what the TTL sweep removes, what it leaves, and how it pairs with `jester backup`; **[docs/model-providers.md](docs/model-providers.md)** — what leaves the machine, to which provider, under which key, and what is kept.
 
 ## Project Structure
 

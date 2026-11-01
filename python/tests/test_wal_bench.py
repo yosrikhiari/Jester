@@ -34,6 +34,11 @@ def test_the_live_archive_is_refused_from_any_working_directory(tmp_path, monkey
     # seed() DELETE the real archive's nuggets. The guard must be anchored to
     # the repository, not the shell.
     monkeypatch.chdir(tmp_path)
+    if os.path.splitdrive(str(tmp_path))[0] != os.path.splitdrive(str(wal_bench.LIVE_ARCHIVE))[0]:
+        # A relative path cannot cross Windows drives, so the premise (a
+        # relative --db that resolves to the archive) is not expressible here.
+        # It is exercised on Linux and whenever TMP lives on the repo's drive.
+        pytest.skip("tmp_path and the repository are on different Windows drives")
     relative = os.path.relpath(wal_bench.LIVE_ARCHIVE, tmp_path)
     with pytest.raises(SystemExit):
         wal_bench.check_not_live(relative)

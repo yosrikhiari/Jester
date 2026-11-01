@@ -16,6 +16,9 @@ from jester.extraction_eval import (
     evaluate,
     gate_failures,
     format_report,
+    proportional_sizes,
+    sample_from_db,
+    strata_counts,
     stratified_sample,
 )
 from jester.llm import FakeLLM
@@ -58,6 +61,200 @@ def test_sample_is_deterministic_and_stratified():
     assert Counter(r["stratum"] for r in first) == sizes
     assert [r["unique_key"] for r in first] != [r["unique_key"] for r in other]
     assert len({r["unique_key"] for r in first}) == 10 + 5 + 8
+
+
+def test_the_draw_does_not_depend_on_the_order_rows_arrive_in():
+    rows = ([_row(f"reddit:short:{i}") for i in range(30)]
+            + [_row(f"reddit:long:{i}", chars=2000) for i in range(30)])
+    sizes = {"reddit|pain_point|short": 10, "reddit|pain_point|long": 5}
+    # A fixed permutation, so the test itself is deterministic.
+    reordered = rows[::2][::-1] + rows[1::2]
+
+    in_order = stratified_sample(rows, sizes, seed=7)
+    shuffled = stratified_sample(reordered, sizes, seed=7)
+
+    assert ([r["unique_key"] for r in in_order]
+            == [r["unique_key"] for r in shuffled])
+
+
+def test_one_added_row_displaces_at_most_one_drawn_row():
+    # The documented consequence of ranking by (seed, key): the pool growing
+    # cannot reshuffle a draw that was already made.
+    rows = [_row(f"reddit:short:{i}") for i in range(40)]
+    sizes = {"reddit|pain_point|short": 10}
+
+    before = {r["unique_key"] for r in stratified_sample(rows, sizes, seed=7)}
+    after = {r["unique_key"] for r in stratified_sample(
+        rows + [_row("reddit:short:new")], sizes, seed=7)}
+
+    assert len(before - after) <= 1
+
+
+# ---- the sample design: 150 rows, allocated in proportion ---------------------
+
+def test_proportional_sizes_sum_to_the_total_and_never_exceed_a_pool():
+    counts = {"a": 100, "b": 50, "c": 2}
+
+    sizes = proportional_sizes(counts, 20)
+
+    assert sum(sizes.values()) == 20
+    assert set(sizes) == {"a", "b", "c"}
+    assert all(sizes[k] <= counts[k] for k in sizes)
+    assert sizes["c"] == 1, "a small stratum still contributes a row"
+
+
+def test_proportional_sizes_track_the_pool():
+    assert proportional_sizes({"a": 90, "b": 10}, 10) == {"a": 9, "b": 1}
+
+
+def test_proportional_sizes_with_fewer_rows_than_strata_takes_the_largest():
+    sizes = proportional_sizes({"a": 5, "b": 3, "c": 2}, 2)
+
+    assert sum(sizes.values()) == 2
+    assert set(sizes) == {"a", "b"}
+    assert sizes == {"a": 1, "b": 1}
+
+
+def test_proportional_sizes_is_empty_for_an_empty_pool():
+    assert proportional_sizes({}, 150) == {}
+    assert proportional_sizes({"a": 0}, 150) == {}
+
+
+# ---- the archive draw: same ids as the pure draw, text fetched only for them --
+
+def test_sample_from_db_matches_the_pure_draw_and_carries_text():
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db = open_db(":memory:")
+    rows = ([_row(f"reddit:short:{i}") for i in range(30)]
+            + [_row(f"reddit:long:{i}", chars=2000) for i in range(30)]
+            + [_row(f"hn:short:{i}", platform="hackernews") for i in range(30)])
+    texts = {}
+    for row in rows:
+        texts[row["unique_key"]] = row["text"]
+        insert_nugget(db, Nugget(
+            unique_key=row["unique_key"], platform=row["platform"],
+            category=row["category"], extracted_insight="x",
+            raw_text=row["text"], needs_reembed=False))
+    sizes = {"reddit|pain_point|short": 10,
+             "reddit|pain_point|long": 5,
+             "hackernews|pain_point|short": 8}
+
+    streamed = sample_from_db(db, sizes, seed=7)
+    pure = stratified_sample(rows, sizes, seed=7)
+
+    assert [r["unique_key"] for r in streamed] == [r["unique_key"] for r in pure]
+    assert all(r["text"] == texts[r["unique_key"]] for r in streamed)
+    assert Counter(r["stratum"] for r in streamed) == sizes
+
+
+def test_eval_sample_writes_the_jsonl_and_design_and_leaves_the_archive_alone(
+        tmp_path):
+    from jester.cli import cmd_eval_sample
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db_path = tmp_path / "j.db"
+    db = open_db(str(db_path))
+    for i in range(10):
+        insert_nugget(db, Nugget(
+            unique_key=f"reddit:a:{i}", platform="reddit", category="pain_point",
+            extracted_insight="x", raw_text="z" * (10 + i), needs_reembed=False))
+    db.close()
+    before = db_path.read_bytes()
+    out = tmp_path / "sample.jsonl"
+
+    class NS:
+        pass
+
+    ns = NS()
+    ns.db, ns.out, ns.size, ns.seed = str(db_path), str(out), 5, 7
+    res = cmd_eval_sample(ns)
+
+    assert res["ok"] is True and res["drawn"] == 5
+    assert db_path.read_bytes() == before, "the draw must not reshape the archive"
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 5 and all(r["text"] for r in rows)
+    design = json.loads(out.with_suffix(".design.json").read_text(encoding="utf-8"))
+    assert design["drawn"] == 5 and design["seed"] == 7
+    assert design["archive"] == "j.db", "the design file is committed; no local paths"
+    assert design["allocated"] == {"reddit|pain_point|short": 5}
+
+
+def test_eval_sample_refuses_a_missing_archive_and_creates_nothing(tmp_path, capsys):
+    """`open_db` makes the file and its parent on connect. A draw pointed at a
+    typo would otherwise leave a fresh empty archive behind and then die on
+    the first SELECT, which reads as 'the archive is broken'."""
+    from jester.cli import cmd_eval_sample
+
+    missing = tmp_path / "never" / "there.db"
+
+    class NS:
+        pass
+
+    ns = NS()
+    ns.db, ns.out, ns.size, ns.seed = str(missing), str(tmp_path / "s.jsonl"), 5, 7
+    with pytest.raises(SystemExit) as exc:
+        cmd_eval_sample(ns)
+
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().out
+    assert not missing.exists() and not missing.parent.exists()
+    assert not (tmp_path / "s.jsonl").exists()
+
+
+def test_eval_sample_exits_nonzero_when_there_is_nothing_to_draw(
+        tmp_path, capsys):
+    """The sample gates the retention sweep. A zero exit with no file would
+    let the sweep proceed believing the substrate had been preserved."""
+    from jester.cli import cmd_eval_sample
+    from jester.store import open_db
+
+    db_path = tmp_path / "empty.db"
+    open_db(str(db_path)).close()
+
+    class NS:
+        pass
+
+    ns = NS()
+    ns.db, ns.out, ns.size, ns.seed = str(db_path), str(tmp_path / "s.jsonl"), 5, 7
+    with pytest.raises(SystemExit) as exc:
+        cmd_eval_sample(ns)
+
+    assert exc.value.code == 1
+    assert "nothing to draw" in capsys.readouterr().out
+    assert not (tmp_path / "s.jsonl").exists()
+
+
+def test_padding_does_not_move_a_comment_between_strata():
+    """The archive draw buckets on SQL `length(raw_text)`; a pure draw used to
+    bucket on the stripped text, so padding could disagree across the two
+    paths that are documented to produce the same ids."""
+    from jester.extraction_eval import stratum_of
+
+    padded = "   " + "z" * 278          # 281 raw, 278 stripped: short/medium
+    assert stratum_of({"raw_text": padded}).endswith("|medium")
+    assert stratum_of({"chars": 281}).endswith("|medium")
+    assert stratum_of({"raw_text": "z" * 278}).endswith("|short")
+
+
+def test_strata_counts_reads_the_same_strata_the_draw_uses():
+    from jester.models import Nugget
+    from jester.store import insert_nugget, open_db
+
+    db = open_db(":memory:")
+    for key, platform, chars in (
+            ("a", "reddit", 10), ("b", "reddit", 500), ("c", "hackernews", 2000)):
+        insert_nugget(db, Nugget(
+            unique_key=key, platform=platform, category="pain_point",
+            extracted_insight="x", raw_text="z" * chars, needs_reembed=False))
+
+    assert strata_counts(db) == {
+        "reddit|pain_point|short": 1,
+        "reddit|pain_point|medium": 1,
+        "hackernews|pain_point|long": 1,
+    }
 
 
 # ---- κ: perfect agreement and chance agreement, hand-computed ------------------

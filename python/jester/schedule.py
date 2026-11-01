@@ -386,6 +386,12 @@ TASK_FOR_COMMAND = {
     "leads-reddit": TASK_NAME + "LeadsReddit",
     "signals-brief": TASK_NAME + "SignalsBrief",
     "signals-sweep": TASK_NAME + "SignalsSweep",
+    # Operational jobs are schedulable for the same reason as the scrapers:
+    # a policy nobody runs is a policy that is not in force. Both are declared
+    # in config/schedule.yaml; retention is declared PAUSED until the
+    # evaluation sample exists.
+    "backup": TASK_NAME + "Backup",
+    "retention": TASK_NAME + "Retention",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -398,6 +404,13 @@ TASK_FOR_COMMAND = {
 #: the next command does not fit the mould either.
 #: The hiring rule set, which three of the commands below score with.
 HIRING_RULES = "config/hiring_rules.yaml"
+
+#: How often the Himalayas sweep runs. The command reads every term to the end
+#: of its results (~300 requests) against a board that refreshes once a day, so
+#: daily is seven times the work for the same answer. The declaration in
+#: `config/schedule.yaml` is what the machine actually runs, and a contract
+#: test compares it to this: one fact, not two that drift apart.
+SWEEP_CADENCE = {"weekly": "SUN", "at": "08:00"}
 
 COMMAND_SPEC = {
     "cycle": {"argv": ("cycle",), "config": True},
@@ -479,6 +492,11 @@ COMMAND_SPEC = {
                  "--limit", "3000"),
         "config": False,
     },
+    # `backup` takes no --config and verifies the snapshot it writes, so one
+    # tick is both the copy and the proof that the copy opens.
+    "backup": {"argv": ("backup",), "config": False},
+    # `retention` takes no --config; its TTL is the documented 30 days.
+    "retention": {"argv": ("retention",), "config": False},
 }
 
 
@@ -1212,12 +1230,18 @@ def desired_drift(path=None) -> list:
 
 
 def apply_desired(path=None, *, db="data/jester.db", config="config",
-                  python=None, dry_run=False) -> dict:
+                  python=None, dry_run=False, force=False) -> dict:
     """Make the host match `config/schedule.yaml`. Applying twice changes nothing.
 
     One task at a time, in file order. A declared `enabled: false` is a pause:
     the task stays registered with its cadence and launcher, so re-enabling it
     later restores what was chosen rather than a default.
+
+    A cadence change to a task that is currently ENABLED is refused unless
+    `force`: that is a change to live request volume, and it must be asked for
+    explicitly rather than arrived at by editing a file. Paused tasks move
+    freely — they run nothing — and so do scope changes, which the next tick
+    picks up without new requests.
     """
     if not is_windows():
         return {"ok": False, "results": [],
@@ -1227,12 +1251,22 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
     for spec in load_desired(path):
         task = spec["task"]
         st = status(task)
+        cadence_changed = bool(st.get("installed")) and not cadence_matches(st, spec)
         needs_create = (
             not st.get("installed")
-            or not cadence_matches(st, spec)
+            or cadence_changed
             or bool(_launcher_problems(spec))
         )
         needs_state = st.get("installed") and bool(st.get("enabled", True)) != spec["enabled"]
+        if cadence_changed and bool(st.get("enabled", True)) and not force:
+            results.append({
+                "task": task,
+                "action": "refused",
+                "detail": (f"cadence {st.get('cadence') or 'unknown'} -> "
+                           f"{describe_cadence(spec)} on an enabled task; "
+                           "re-run with --force"),
+            })
+            continue
         if not needs_create and not needs_state:
             results.append({"task": task, "action": "unchanged"})
             continue
@@ -1269,4 +1303,5 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
         results.append({"task": task,
                         "action": "installed" if needs_create else
                                   ("enabled" if spec["enabled"] else "disabled")})
-    return {"ok": all(r["action"] != "failed" for r in results), "results": results}
+    return {"ok": all(r["action"] not in ("failed", "refused") for r in results),
+            "results": results}

@@ -19,8 +19,8 @@ Labels are JSONL. One row is one rater's verdict on one comment::
 each with the labeller's verdict. `unchecked` is a verdict, not a guess: it is
 counted and reported beside the aggregate, never imputed.
 """
+import hashlib
 import json
-import random
 import sys
 from collections import defaultdict, Counter
 
@@ -49,52 +49,154 @@ def length_bucket(chars: int) -> str:
     return "long"
 
 
-def _text(row) -> str:
-    return (row.get("text") or row.get("raw_text") or "").strip()
+def _chars(row) -> int:
+    """Raw length, unstripped.
+
+    The archive draw measures `length(raw_text)` in SQL, which counts every
+    character. `.strip()` here would move a padded row across a 280/1000
+    boundary and make the two paths disagree about its stratum — and the
+    whole point of streaming lengths first is that the ids come out the same.
+    """
+    return len(row.get("text") or row.get("raw_text") or "")
 
 
 def stratum_of(row) -> str:
-    """Platform × category × length bucket — the strata the sample is drawn on."""
+    """Platform × category × length bucket — the strata the sample is drawn on.
+
+    A row may carry `chars` instead of its text: the archive draw reads keys
+    and lengths first, because loading every raw_text costs most of a gigabyte
+    to choose 150 comments.
+    """
+    chars = row.get("chars")
+    if chars is None:
+        chars = _chars(row)
     return (f"{row.get('platform') or 'unknown'}|"
             f"{row.get('category') or 'uncategorised'}|"
-            f"{length_bucket(len(_text(row)))}")
+            f"{length_bucket(int(chars))}")
+
+
+def _rank(seed: int, unique_key: str) -> bytes:
+    """A row's position in the draw, fixed by the seed and its key alone.
+
+    `hashlib`, not `random`: the draw has to be reproducible from a seed, not
+    unpredictable, and a hash rank depends on nothing else — no PRNG
+    implementation, no pool length, no consumption order. The seed is public
+    and recorded in the design file, which is the whole point.
+    """
+    return hashlib.sha256(f"{seed}\x00{unique_key}".encode("utf-8")).digest()
 
 
 def stratified_sample(rows, sizes, seed: int = DEFAULT_SEED):
     """Draw `sizes[stratum]` rows per stratum, deterministically.
 
-    The same seed and the same patch always produce the same ids. Rows are
-    ordered by `unique_key` before sampling and the RNG is consumed in sorted
-    stratum order, so a new row added to the pool cannot reshuffle the others.
-    A stratum with fewer candidates yields all of them; the report shows the
-    shortfall rather than silently topping it up from another stratum.
+    Each row is ranked by `_rank(seed, unique_key)` and the lowest ranks are
+    taken, so the order rows arrive in cannot change the draw and adding one
+    row can displace at most one already-drawn row. A stratum with fewer
+    candidates yields all of them; the report shows the shortfall rather than
+    silently topping it up from another stratum.
     """
     groups = defaultdict(list)
     for raw in rows:
         row = dict(raw)
+        row["chars"] = (int(row["chars"]) if row.get("chars") is not None
+                        else _chars(row))
         row["stratum"] = stratum_of(row)
-        row["chars"] = len(_text(row))
         groups[row["stratum"]].append(row)
 
-    rng = random.Random(seed)
     out = []
     for stratum in sorted(sizes):
         want = max(0, int(sizes[stratum] or 0))
+        # Sorted first so a hash collision, however unlikely, resolves the
+        # same way on every run.
         pool = sorted(groups.get(stratum, []), key=lambda r: r["unique_key"])
-        drawn = rng.sample(pool, min(want, len(pool))) if pool and want else []
+        drawn = sorted(pool, key=lambda r: _rank(seed, r["unique_key"]))[:want]
         out.extend(sorted(drawn, key=lambda r: r["unique_key"]))
     return out
 
 
 def sample_from_db(db, sizes, seed: int = DEFAULT_SEED):
-    """Read-only sample over the archive. The caller chooses the strata sizes."""
+    """Read-only sample over the archive. The caller chooses the strata sizes.
+
+    Keys and lengths are read first and text only for the rows drawn: the
+    archive's raw text is most of a gigabyte, and the draw needs 150 comments,
+    not all 115k. The keys still go through `stratified_sample`, so the ids
+    are exactly those of a draw over the full rows.
+    """
     rows = db.execute(
-        "SELECT unique_key, platform, category, raw_text "
+        "SELECT unique_key, platform, category, length(raw_text) "
         "FROM nuggets WHERE raw_text IS NOT NULL AND raw_text != '' "
         "ORDER BY unique_key").fetchall()
-    return stratified_sample(
+    drawn = stratified_sample(
         ({"unique_key": r[0], "platform": r[1], "category": r[2],
-          "text": r[3]} for r in rows), sizes, seed=seed)
+          "chars": r[3] or 0} for r in rows), sizes, seed=seed)
+    texts = {}
+    keys = [row["unique_key"] for row in drawn]
+    for start in range(0, len(keys), 500):
+        batch = keys[start:start + 500]
+        marks = ",".join("?" * len(batch))
+        texts.update(db.execute(
+            f"SELECT unique_key, raw_text FROM nuggets "
+            f"WHERE unique_key IN ({marks})", batch).fetchall())
+    for row in drawn:
+        row["text"] = texts.get(row["unique_key"], "")
+    return drawn
+
+
+def strata_counts(db) -> dict:
+    """Rows per stratum, read without loading any raw_text."""
+    rows = db.execute(
+        "SELECT platform, category, length(raw_text) FROM nuggets "
+        "WHERE raw_text IS NOT NULL AND raw_text != ''").fetchall()
+    return dict(Counter(stratum_of(
+        {"platform": r[0], "category": r[1], "chars": r[2] or 0})
+        for r in rows))
+
+
+def proportional_sizes(counts, total: int) -> dict:
+    """Allocate `total` rows across strata in proportion to their pools.
+
+    Deterministic: largest remainder for the fractions, ties broken by stratum
+    name, one row guaranteed to every non-empty stratum. No stratum is asked
+    for more rows than it has, and a shortfall is offered to strata with spare
+    capacity rather than silently promised.
+    """
+    pool = {str(k): int(v) for k, v in (counts or {}).items() if int(v) > 0}
+    if not pool or total <= 0:
+        return {}
+    want = min(int(total), sum(pool.values()))
+    by_size = sorted(pool, key=lambda k: (-pool[k], k))
+    if want < len(pool):
+        # Fewer rows than strata: the largest get one each; the rest honestly
+        # get none rather than a fraction.
+        return {k: 1 for k in by_size[:want]}
+
+    pool_total = sum(pool.values())
+    ideal = {k: want * pool[k] / pool_total for k in pool}
+    sizes = {k: max(1, int(ideal[k])) for k in pool}
+
+    # The one-per-stratum floor can overshoot `want` when many strata have a
+    # tiny share; take the excess back from the largest allocations first.
+    excess = sum(sizes.values()) - want
+    while excess > 0:
+        donor = min((k for k in pool if sizes[k] > 1),
+                    key=lambda k: (-sizes[k], k), default=None)
+        if donor is None:
+            break
+        sizes[donor] -= 1
+        excess -= 1
+
+    short = want - sum(sizes.values())
+    order = sorted(pool, key=lambda k: (-(ideal[k] - int(ideal[k])), k))
+    while short > 0:
+        spare = [k for k in order if sizes[k] < pool[k]]
+        if not spare:
+            break
+        for k in spare:
+            if short <= 0:
+                break
+            sizes[k] += 1
+            short -= 1
+    return sizes
 
 
 def cohens_kappa(pairs):
@@ -269,6 +371,7 @@ def cmd_sample(db, sizes, out, seed: int = DEFAULT_SEED) -> dict:
 
 __all__ = [
     "DEFAULT_SEED", "cmd_sample", "cohens_kappa", "evaluate", "format_report",
-    "gate_failures", "length_bucket", "load_labels", "sample_counts",
-    "sample_from_db", "stratified_sample", "stratum_of", "write_sample",
+    "gate_failures", "length_bucket", "load_labels", "proportional_sizes",
+    "sample_counts", "sample_from_db", "strata_counts", "stratified_sample",
+    "stratum_of", "write_sample",
 ]

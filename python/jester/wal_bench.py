@@ -59,7 +59,10 @@ def connect(path, mode, *, set_mode=True):
     timeout applies. `benchmark` switches once, up front, which is also how
     production works — `open_db` sets the mode, then the process reuses it.
     """
-    db = sqlite3.connect(str(path), timeout=5.0)
+    # uri=False is the default and says it out loud: the argument is a file
+    # name, so the "file:...?mode=..." connection-string form cannot be
+    # interpreted here.
+    db = sqlite3.connect(str(path), timeout=5.0, uri=False)
     db.execute("PRAGMA busy_timeout=5000")
     if set_mode:
         db.execute(f"PRAGMA journal_mode={mode}")
@@ -165,7 +168,7 @@ def recovery_check(path, mode):
     db.commit()
     db.close()
 
-    again = sqlite3.connect(str(path))
+    again = sqlite3.connect(str(path), uri=False)
     integrity = again.execute("PRAGMA integrity_check").fetchone()[0]
     mode_now = again.execute("PRAGMA journal_mode").fetchone()[0].lower()
     row = again.execute(

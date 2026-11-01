@@ -6,6 +6,7 @@ so `set_defaults(func=...)` wiring and `from jester.cli import ...` users
 (including the console) are untouched.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -80,6 +81,62 @@ _LABEL_EXAMPLE = (
     '"predicted": [{"insight": "what the extractor said", '
     '"verdict": "supported|fabricated|unchecked"}]}'
 )
+
+
+def cmd_eval_sample(args):
+    """NB4: draw the evaluation sample, before any retention sweep.
+
+    Retention NULLs raw_text past the TTL, and raw_text is the sampling
+    universe: the sweep must never run before this file exists. The archive is
+    opened without migration, because a draw must not reshape what it reads.
+    """
+    from jester.extraction_eval import (cmd_sample, proportional_sizes,
+                                        strata_counts)
+
+    if not os.path.exists(args.db):
+        # `open_db` creates the archive (and its parent) on connect, so
+        # without this the draw would bring a missing archive into existence
+        # and then fail on the first SELECT — leaving an empty file behind.
+        print(f"eval sample: {args.db} does not exist; nothing to draw from")
+        sys.exit(1)
+    db = open_db(args.db, migrate=False)
+    counts = strata_counts(db)
+    sizes = proportional_sizes(counts, args.size)
+    if not sizes:
+        # Exiting 0 here would let a retention sweep proceed believing the
+        # sample had been drawn; the sample is the gate, so say so loudly.
+        print(f"eval sample: no text-bearing nuggets in {args.db}; "
+              "nothing to draw")
+        sys.exit(1)
+
+    out = Path(args.out)
+    res = cmd_sample(db, sizes, out, seed=args.seed)
+    design = {
+        # Basename, not the path it was drawn from: the design file is
+        # committed, and an absolute path names the operator's disk.
+        "archive": os.path.basename(args.db),
+        "seed": args.seed,
+        "requested": args.size,
+        "pool": sum(counts.values()),
+        "strata_in_pool": len(counts),
+        "allocated": sizes,
+        "drawn": res["drawn"],
+        "strata": res["strata"],
+    }
+    design_path = out.with_suffix(".design.json")
+    design_path.write_text(
+        json.dumps(design, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"drew {res['drawn']} comment(s) from {design['pool']} into {out}")
+    print(f"  strata: {len(counts)} in the pool, {len(sizes)} allocated; "
+          f"seed {args.seed}")
+    print(f"  design: {design_path}")
+    short = [(k, res["strata"].get(k, 0), want)
+             for k, want in sorted(sizes.items())
+             if res["strata"].get(k, 0) < want]
+    if short:
+        print("  shortfall (pool smaller than allocation): "
+              + ", ".join(f"{k} {got}/{want}" for k, got, want in short))
+    return {"ok": True, **res}
 
 
 def cmd_eval_extract(args):

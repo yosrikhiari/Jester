@@ -53,9 +53,30 @@ tasks:
     enabled: true
   - task: JesterNightlySignalsSweep
     command: signals-sweep
-    cadence: {at: "08:00"}
+    # Weekly, not daily: the sweep reads every term to the end of Himalayas'
+    # results (~300 requests) and the board refreshes once a day. schedule.py
+    # documents the rationale as SWEEP_CADENCE, and a contract test compares
+    # the two so `apply` cannot quietly multiply the request volume by seven.
+    cadence: {weekly: SUN, at: "08:00"}
     enabled: true
   - task: JesterNightlyLeadsReddit
     command: leads-reddit
     cadence: {at: "09:45"}
     enabled: true
+
+  # ── the operational jobs: a verified backup, then the privacy sweep ─────
+  # Backup runs BEFORE the morning chain and verifies the snapshot it wrote,
+  # so the newest copy is never older than the last write. `--keep` stays at
+  # its default of 14, one per day for a fortnight.
+  - task: JesterNightlyBackup
+    command: backup
+    cadence: {at: "02:30"}
+    enabled: true
+  # Retention NULLs raw_text on nuggets past the 30-day TTL, which is
+  # irreversible and destroys the extraction-evaluation substrate. It stays
+  # PAUSED until the evaluation sample has been drawn and labelled; flipping
+  # `enabled: true` is the owner's decision, not an install side effect.
+  - task: JesterNightlyRetention
+    command: retention
+    cadence: {weekly: SUN, at: "03:30"}
+    enabled: false

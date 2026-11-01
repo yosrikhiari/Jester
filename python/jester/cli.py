@@ -84,6 +84,7 @@ from jester.cli_review import (
     _score,
     cmd_eval,
     cmd_eval_extract,
+    cmd_eval_sample,
     cmd_list,
     cmd_mark,
     cmd_runs,
@@ -92,9 +93,13 @@ from jester.cli_review import (
 
 
 def _cmd_eval(args):
-    """`jester eval` keeps its scoring default; `jester eval extract` is S-06."""
-    if getattr(args, "mode", "score") == "extract":
+    """`jester eval` keeps its scoring default; `extract` is S-06 and `sample`
+    is the NB4 draw that must happen before retention."""
+    mode = getattr(args, "mode", "score")
+    if mode == "extract":
         return cmd_eval_extract(args)
+    if mode == "sample":
+        return cmd_eval_sample(args)
     return cmd_eval(args)
 
 
@@ -1609,6 +1614,7 @@ def cmd_schedule(args):
                 db=args.db,
                 config=args.config,
                 dry_run=getattr(args, "dry_run", False),
+                force=getattr(args, "force", False),
             )
         except _schedule.ScheduleError as exc:
             print(f"schedule: {exc}")
@@ -1633,10 +1639,20 @@ def cmd_schedule(args):
         if st["installed"]:
             nxt = st.get("next_run")
             cadence = st.get("cadence")
+            # `status()` has always computed this; the CLI dropped it, so a
+            # task switched off in Task Scheduler printed the same INSTALLED
+            # line as one that was working. Registered is not running.
+            enabled = st.get("enabled", True)
             print(
-                f"scrape job INSTALLED via {st['scheduler']}"
+                f"scrape job {'INSTALLED' if enabled else 'PAUSED'} "
+                f"via {st['scheduler']}"
                 + (f" — {cadence}" if cadence else "")
                 + (f", next run {nxt}" if nxt else "")
+            )
+            print(
+                "  state  : "
+                + ("DISABLED" if not enabled
+                   else "RUNNING" if st.get("running") else "idle")
             )
             # The scope is the other half of "what is scheduled"; reporting the
             # cadence alone tells you when a black box fires.
@@ -2154,8 +2170,56 @@ def schedule_drift_notes() -> list:
     return [f"{d['task']}: " + "; ".join(d["problems"]) for d in drift]
 
 
+#: Tables `open_db(migrate=True)` reconciles. Their absence is the answer to
+#: "has this archive been migrated?" — a question a diagnostic must be able to
+#: ask without changing the answer.
+MIGRATED_TABLES = ("llm_calls", "edit_log", "edit_proposals", "signal_rule_proposals")
+
+#: Tables a subsystem creates on first use rather than during migration. A
+#: freshly migrated archive legitimately lacks them; absence means the
+#: subsystem has never run, which is a different fact and a separate note.
+LAZY_SUBSYSTEM_TABLES = ("extraction_specs", "maintenance_events")
+
+#: Without these there is no archive to check, and every query below would
+#: raise "no such table" — a traceback, not a finding.
+CORE_TABLES = ("runs", "nuggets", "ideas", "ingest_batch")
+
+
+def _missing_tables(db, names) -> list:
+    present = {r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    return [name for name in names if name not in present]
+
+
 def cmd_doctor(args):
-    db = open_db(args.db)  # SchemaVersionError propagates loud — that is a finding
+    migrate = not getattr(args, "no_migrate", False)
+    if not migrate and not os.path.exists(args.db):
+        # `open_db` creates the file (and its parent) on connect. A read-only
+        # diagnostic must not bring an archive into existence to report that
+        # there is none.
+        print(f"doctor FAIL: {args.db} does not exist; nothing to diagnose")
+        sys.exit(1)
+    # SchemaVersionError propagates loud — that is a finding.
+    db = open_db(args.db, migrate=migrate)
+    print(f"doctor: {args.db} opened "
+          + ("read-write; schema migrated" if migrate else "read-only; no migration"))
+    if not migrate:
+        core = _missing_tables(db, CORE_TABLES)
+        if core:
+            print(f"doctor FAIL: no Jester schema in {args.db} "
+                  f"(missing {', '.join(core)}); nothing to check")
+            sys.exit(1)
+        absent = _missing_tables(db, MIGRATED_TABLES)
+        if absent:
+            print(f"doctor note: archive has not been migrated; absent: "
+                  f"{', '.join(absent)}")
+            print("  fix: take a verified backup, then run `jester migrate`")
+        else:
+            print("doctor note: archive carries the migrated schema")
+        unused = _missing_tables(db, LAZY_SUBSYSTEM_TABLES)
+        if unused and not absent:
+            print("doctor note: never used since migration: "
+                  + ", ".join(unused))
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
     for note in pipeline_paused_notes() + schedule_drift_notes():
@@ -3875,9 +3939,11 @@ def main(argv=None):
     l.set_defaults(func=cmd_list)
 
     e = sub.add_parser("eval")
-    e.add_argument("mode", nargs="?", choices=("score", "extract"), default="score",
+    e.add_argument("mode", nargs="?", choices=("score", "extract", "sample"),
+                   default="score",
                    help="score (default) checks scoring arithmetic; extract runs "
-                        "the S-06 extraction-quality harness over labels")
+                        "the S-06 extraction-quality harness over labels; sample "
+                        "draws the committed 150-comment evaluation sample")
     e.add_argument(
         "--good",
         default=str(Path(__file__).resolve().parents[2] / "eval" / "known_good.md"),
@@ -3892,6 +3958,18 @@ def main(argv=None):
         default=str(Path(__file__).resolve().parents[2] / "eval" / "extraction"
                     / "labels.jsonl"),
         help="JSONL labels for `eval extract`",
+    )
+    e.add_argument("--db", default="data/jester.db")
+    e.add_argument(
+        "--out",
+        default=str(Path(__file__).resolve().parents[2] / "eval" / "extraction"
+                    / "sample.jsonl"),
+        help="with `sample`: JSONL path for the drawn comments",
+    )
+    e.add_argument(
+        "--size", type=int, default=150,
+        help="with `sample`: comments to draw, allocated across strata in "
+             "proportion to their pools (default 150)",
     )
     e.add_argument("--seed", type=int, default=20261031,
                    help="sample seed recorded in the report")
@@ -4125,6 +4203,12 @@ def main(argv=None):
         help="with `apply`: print what would change, change nothing",
     )
     sc.add_argument(
+        "--force",
+        action="store_true",
+        help="with `apply`: allow a cadence change to a task that is currently "
+             "enabled (a change to live request volume)",
+    )
+    sc.add_argument(
         "--at",
         default=_schedule.DEFAULT_TIME,
         help="HH:MM local time for a daily schedule",
@@ -4232,6 +4316,13 @@ def main(argv=None):
 
     dc = sub.add_parser("doctor")
     dc.add_argument("--db", default="data/jester.db")
+    dc.add_argument(
+        "--no-migrate",
+        action="store_true",
+        dest="no_migrate",
+        help="open the archive read-only: diagnose an un-migrated archive "
+             "without reshaping it, and report which schema tables are absent",
+    )
     dc.set_defaults(func=cmd_doctor)
 
     re_ = sub.add_parser("reembed")

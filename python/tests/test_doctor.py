@@ -1,4 +1,5 @@
 """jester doctor tests (§37.11): health findings + exit-code contract."""
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,112 @@ def test_disabled_generative_tasks_are_reported_without_failing(
     out = capsys.readouterr().out
     assert "doctor OK" in out
     assert "paused" in out
+
+
+# --- ND-07: a diagnostic that only reads ---------------------------------------
+
+def _archive(tmp_path):
+    db_path = tmp_path / "old.db"
+    db = open_db(str(db_path))
+    _seed_healthy(db)
+    db.close()
+    return db_path
+
+
+def _tables(db_path):
+    db = sqlite3.connect(db_path)
+    try:
+        return {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        db.close()
+
+
+def test_doctor_no_migrate_names_the_absent_subsystems_and_changes_nothing(
+        tmp_path, capsys):
+    """`doctor` used to migrate the archive it was diagnosing, so asking
+    "has this been migrated?" could itself make the answer yes. Read-only mode
+    must name what is missing and leave the file byte-identical."""
+    from jester.cli import LAZY_SUBSYSTEM_TABLES, MIGRATED_TABLES, cmd_doctor
+
+    db_path = _archive(tmp_path)
+    db = sqlite3.connect(db_path)
+    for table in MIGRATED_TABLES + LAZY_SUBSYSTEM_TABLES:
+        db.execute(f"DROP TABLE IF EXISTS {table}")
+    db.commit()
+    db.close()
+    before = db_path.read_bytes()
+
+    cmd_doctor(_ns(db=str(db_path), no_migrate=True))
+
+    out = capsys.readouterr().out
+    assert "no migration" in out
+    assert "not been migrated" in out
+    assert "llm_calls" in out
+    assert db_path.read_bytes() == before, "a diagnostic must not write"
+    assert "llm_calls" not in _tables(db_path)
+
+
+def test_doctor_no_migrate_says_so_when_a_migrated_archive_is_whole(tmp_path, capsys):
+    from jester.cli import cmd_doctor
+
+    db_path = _archive(tmp_path)
+
+    cmd_doctor(_ns(db=str(db_path), no_migrate=True))
+
+    out = capsys.readouterr().out
+    assert "carries the migrated schema" in out
+    assert "has not been migrated" not in out
+    # These two are created by their subsystems on first use, so a fresh
+    # migration legitimately lacks them; Doctor says which, rather than
+    # treating "never run" as "not migrated".
+    assert "never used since migration" in out
+    assert "extraction_specs" in out and "maintenance_events" in out
+
+
+def test_doctor_no_migrate_on_a_file_with_no_schema_is_one_finding(tmp_path, capsys):
+    from jester.cli import cmd_doctor
+
+    db_path = tmp_path / "empty.db"
+    sqlite3.connect(db_path).close()
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_doctor(_ns(db=str(db_path), no_migrate=True))
+
+    assert exc.value.code == 1
+    assert "no Jester schema" in capsys.readouterr().out
+
+
+def test_doctor_no_migrate_does_not_create_a_missing_archive(tmp_path, capsys):
+    """open_db creates the file and its parent on connect. A read-only
+    diagnostic pointed at a path that is not an archive must say so, not bring
+    an empty database into existence."""
+    from jester.cli import cmd_doctor
+
+    db_path = tmp_path / "never" / "there.db"
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_doctor(_ns(db=str(db_path), no_migrate=True))
+
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().out
+    assert not db_path.exists()
+    assert not db_path.parent.exists()
+
+
+def test_doctor_default_still_migrates(tmp_path, capsys):
+    from jester.cli import cmd_doctor
+
+    db_path = _archive(tmp_path)
+    db = sqlite3.connect(db_path)
+    db.execute("DROP TABLE IF EXISTS llm_calls")
+    db.commit()
+    db.close()
+
+    cmd_doctor(_ns(db=str(db_path)))
+
+    assert "schema migrated" in capsys.readouterr().out
+    assert "llm_calls" in _tables(db_path)
 
 
 # --- Task 2: each finding fires independently ------------------------------------

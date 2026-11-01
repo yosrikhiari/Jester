@@ -43,6 +43,33 @@ def test_migrate_false_does_not_touch_the_schema(tmp_path):
     assert tables == set(), f"a viewing open created {tables}"
 
 
+def test_migrate_false_does_not_convert_a_wal_archive(tmp_path):
+    """A viewing open must not pick the journal mode.
+
+    `PRAGMA journal_mode` writes the file when it asks for a mode the file
+    is not already in. A `migrate=False` open used to run it anyway, so
+    pointing the console or Doctor at a WAL archive silently took it back to
+    DELETE and rewrote the header — a write from the one path that promises
+    none.
+    """
+    path = tmp_path / "wal.db"
+    writer = sqlite3.connect(str(path))
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("CREATE TABLE meta(key TEXT, value TEXT)")
+    writer.execute("INSERT INTO meta VALUES('probe','1')")
+    writer.commit()
+    writer.close()
+    before = path.read_bytes()
+
+    viewer = open_db(str(path), migrate=False)
+    try:
+        assert viewer.execute("SELECT value FROM meta").fetchone()[0] == "1"
+        assert viewer.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        viewer.close()
+    assert path.read_bytes() == before, "a viewing open rewrote the archive"
+
+
 def test_migrate_false_still_reads_a_real_archive(tmp_path):
     path = str(tmp_path / "a.db")
     writer = open_db(path)

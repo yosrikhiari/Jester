@@ -569,6 +569,8 @@ This report adds the `S-*` register and does not supersede `docs/plans/2026-10-2
 
 ## 15. Implementation status — session of 2026-10-31
 
+**Superseded as an index by [docs/STATUS.md](../STATUS.md)**, which carries the S-, ND- and F-registers in one place. This section stays as the dated record of what this session implemented.
+
 This section records what happened after the plan above was executed test-first, on branch `feature/next-development-batches` based on `14bb5ba` (uncommitted at the time of writing). **Implemented** means code and tests exist and the named suite passes. **Owner-gated** means the code side is ready but the remaining step needs the owner's archive, signature, labels, or judgement. **Authored, not run** means the file exists and was checked locally, but the external runner has not executed it. **Not attempted** means no work was done.
 
 | ID | Status | What exists now | Remaining |

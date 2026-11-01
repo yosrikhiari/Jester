@@ -107,6 +107,14 @@ jobs:
       - name: eval gate
         run: python -m jester.cli eval
 
+      # The extraction-quality gate (S-06/NB4). With no committed labels it
+      # says so and exits 0 — the measurement has not been taken yet, which is
+      # a state, not a failure. Once `eval/extraction/labels.jsonl` is
+      # committed, this step prints n, κ, P/R/F1, fabrication and
+      # nuggets/comment and fails below the published floors.
+      - name: extraction eval gate
+        run: python -m jester.cli eval extract
+
       # The quickstart's one command, as docs/quickstart.md writes it, on a
       # machine with no keys, no Ollama and no Qdrant. It is not redundant with
       # the suite: the tests construct their own fixtures, while this runs the
@@ -122,9 +130,17 @@ jobs:
       # report the gate does not read "coverage unknown", it reads 0% and
       # fails the 80% condition, which looks like a coverage collapse rather
       # than a missing file.
+      #
+      # --cov-fail-under is a floor, not a goal. The baseline measured on
+      # 2026-11-01 at HEAD 36d357b was 88% (15,917 statements, 1,935 missed)
+      # with the full suite; the floor is two points below it, so a real
+      # collapse fails the build while ordinary churn does not. Raise it when
+      # the measured number rises and stays — never the other way round.
       - name: Test suite, with coverage
         run: |
-          python -m pytest python/tests -q             --cov=jester --cov-report=xml:coverage.xml --cov-report=term:skip-covered
+          python -m pytest python/tests -q \
+            --cov=jester --cov-report=xml:coverage.xml \
+            --cov-report=term:skip-covered --cov-fail-under=86
 
       # Advisory first: reports known vulnerabilities without turning the
       # build red, so the first run establishes the baseline rather than
