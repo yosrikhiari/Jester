@@ -5,14 +5,14 @@ ID to its evidence; this page says which of them is current and where the
 remaining work sits. **If this page and another document disagree about a
 status, this page wins** — fix the other document in the same change.
 
-**As of 2026-11-01.** Code status is against the working tree built on
-`36d357b` (`main`); items marked *(branch)* are written and tested but not yet
-committed. The live archive was **not** modified by this cycle.
+**As of 2026-11-01.** Code status is against `main` at `a8be9c0`, where this
+cycle's S-, F- and ND- work was committed and pushed; CI run `41300116727` is
+green in all six checks and the SonarCloud gate passes (security rating A on
+new code). The live archive was **not** modified by this cycle.
 
 Status words:
 
 - **Shipped** — code, tests and docs are on `main` and the named suite passes.
-- **Shipped (branch)** — same, but uncommitted at the time of writing.
 - **Owner-gated** — the code side is ready; the next step needs your machine,
   your data, your credentials, your labels, or your judgement.
 - **Not started** — no work done.
@@ -41,18 +41,18 @@ Status words:
 | ID | Status | What exists | What remains (owner unless stated) |
 |---|---|---|---|
 | ND-01 | **Owner-gated** | Verified archive snapshot taken 2026-11-01 (`data/backups/jester-20261101T071405Z.db.gz`, integrity OK) | `jester migrate`, then `jester rescore --pending` in bounded windows; 607 ideas unscored |
-| ND-02 | **Shipped (branch)** | `schedule status` prints PAUSED/DISABLED and RUNNING/idle; tests in `test_schedule_apply.py` | — |
-| ND-03 | **Shipped (branch)** | YAML sweep weekly = `SWEEP_CADENCE`; `apply` refuses an enabled task's cadence change without `--force`; contract test | `schedule apply` on the host (4 changes: reinstall 2, install 2) |
+| ND-02 | **Shipped** | `schedule status` prints PAUSED/DISABLED and RUNNING/idle; tests in `test_schedule_apply.py` | — |
+| ND-03 | **Shipped** | YAML sweep weekly = `SWEEP_CADENCE`; `apply` refuses an enabled task's cadence change without `--force`; contract test | `schedule apply` on the host (4 changes: reinstall 2, install 2) |
 | ND-04 | **Sample drawn; labels owner-gated** | `eval sample`: 150 of 115,199, seed 20261031, 89 strata; `eval extract` wired into CI | Label 150 rows (50 doubled); publish κ/P/R/F1/fabrication |
 | ND-05 | **Owner-gated** | `JesterNightlyRetention` declared weekly SUN 03:30, **`enabled: false`** | Apply only after ND-04's sample is labelled; then flip `enabled: true` |
 | ND-06 | **Owner-gated** | `JesterNightlyBackup` declared daily 02:30, enabled; one backup taken and verified | `schedule apply`; restore drill on a copy |
-| ND-07 | **Shipped (branch)** | `doctor --no-migrate` is byte-identical and creates no tables; prints the mode used | — |
+| ND-07 | **Shipped** | `doctor --no-migrate` is byte-identical and creates no tables; prints the mode used | — |
 | ND-08 | **Not started** | `.github/workflows/live.yml` authored, never dispatched | One dispatch, fix what breaks, weekly cron |
 | ND-09 | **Partly done** | `pytest` out of runtime deps; CI `--cov-fail-under` at the measured baseline − 2 | Branch protection + required checks; Dependabot triage |
-| ND-10 | **Shipped (branch)** | This page | Keep it current |
+| ND-10 | **Shipped** | This page | Keep it current |
 | ND-11 | **CHANGELOG written; tag owner-gated** | [CHANGELOG.md](../CHANGELOG.md) covers both versions | Tag `v0.1.0` after this branch is committed and verified |
 | ND-12 | **Not started** | — | Exercise chat and journal once on fixtures, or demote them in the README |
-| ND-13 | **Shipped (branch)** | [model-providers.md](model-providers.md) | Re-check whenever `roles:` changes |
+| ND-13 | **Shipped** | [model-providers.md](model-providers.md) | Re-check whenever `roles:` changes |
 | ND-14 | **Not this cycle** | — | Split god modules when real work touches them |
 
 ## S register (summary)

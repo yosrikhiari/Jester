@@ -756,19 +756,23 @@ Environmental notes: the first full-suite attempt aborted with 1,926 `Permission
 
 ## Appendix B — File and line index used in this report
 
+Line numbers are against the tree pushed as `a8be9c0`, not the `36d357b` the
+analysis was written against: the cycle moved several of them, and two claims
+below are marked where the behaviour the report found has since been changed.
+
 | Claim | Location |
 |---|---|
 | `open_db` migrates by default | [python/jester/store.py:580](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/store.py#L580) |
-| Doctor opens with default migration | [python/jester/cli.py:2157](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L2157) |
-| Schedule status print drops `enabled`/`running` | [python/jester/cli.py:1631](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L1631) |
-| `status()` computes `enabled`/`running` | [python/jester/schedule.py:586](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L586) |
-| Weekly sweep rationale | [python/jester/schedule.py:776](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L776) |
-| Sweep command definition | [python/jester/schedule.py:472](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L472) |
-| Sweep declared daily | [config/schedule.yaml:54](file:///D:/project%20in%20this%20pc/Jester/Jester/config/schedule.yaml#L54) |
-| `apply_desired` create/state logic | [python/jester/schedule.py:1214](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L1214) |
-| `cadence_matches` | [python/jester/schedule.py:1136](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L1136) |
-| Retention NULLs `raw_text` | [python/jester/store.py:1802](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/store.py#L1802) |
-| Retention command | [python/jester/cli.py:962](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L962) |
+| Doctor opens with default migration | [python/jester/cli.py:2203](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L2203) |
+| Schedule status print carries `enabled`/`running` (**dropped them before NB1**) | [python/jester/cli.py:1654](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L1654) |
+| `status()` computes `enabled`/`running` | [python/jester/schedule.py:604](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L604) |
+| Weekly sweep rationale (`SWEEP_CADENCE`) | [python/jester/schedule.py:413](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L413) |
+| Sweep command definition | [python/jester/schedule.py:485](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L485) |
+| Sweep declared weekly (**daily before NB1**) | [config/schedule.yaml:54](file:///D:/project%20in%20this%20pc/Jester/Jester/config/schedule.yaml#L54) |
+| `apply_desired` create/state logic | [python/jester/schedule.py:1232](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L1232) |
+| `cadence_matches` | [python/jester/schedule.py:1154](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/schedule.py#L1154) |
+| Retention NULLs `raw_text` | [python/jester/store.py:1819](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/store.py#L1819) |
+| Retention command | [python/jester/cli.py:967](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/cli.py#L967) |
 | Sample filters on non-empty `raw_text` | [python/jester/extraction_eval.py:89](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/extraction_eval.py#L89) |
 | `rescore_attempts` column | [python/jester/store.py:120](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/store.py#L120) |
 | `SCORE_STALL_ATTEMPTS` | [python/jester/ops.py:21](file:///D:/project%20in%20this%20pc/Jester/Jester/python/jester/ops.py#L21) |
@@ -784,7 +788,7 @@ Environmental notes: the first full-suite attempt aborted with 1,926 `Permission
 
 ---
 
-## Appendix C — Implementation and end-to-end verification (2026-11-01, working tree on `36d357b`)
+## Appendix C — Implementation and end-to-end verification (2026-11-01, the tree pushed as `a8be9c0`)
 
 **Provenance.** Every command in C.2 was run by the orchestrating agent on this machine (Windows 11, git bash) during implementation, and the outputs below are the verbatim tails. A separate read-only review agent inspected the diff (C.3); it did not run the suite. No human re-ran these commands. `data/jester.db` was never opened for writing: live-archive work used the verified snapshot `C:/Users/mano9/qoder-tmp/jester-backup/jester-20261101T071324Z.db` and the committed copy in `data/backups/`.
 
@@ -851,7 +855,7 @@ Resuming the generative loop; scheduling retention (still `enabled: false`) befo
 
 ### C.5 Owner-gated steps, in order
 
-1. Review this working tree and approve a commit; push (CI then runs the coverage floor and the extraction gate on Linux).
+1. Review, commit and push this working tree — **done**: `a8be9c0` on `main`, CI `41300116727` green in all six checks, gate OK (C.6).
 2. `python -m jester.cli schedule apply` on the host — four changes, none of them the live sweep.
 3. Label `eval/extraction/sample.jsonl` (150 rows, 50 doubled) and run `eval extract` to publish κ/P/R/F1/fabrication; only then flip retention to `enabled: true`.
 4. Back up, then `jester migrate` and drain `jester rescore --pending` on the live archive (ND-01).
@@ -906,12 +910,26 @@ Row 19 supersedes row 1 as the evidence for the final tree: it is the same
 suite plus the two tests added in `test_extraction_eval.py`. Local runs used
 `TMP=D:\tmp\jester-pytest` for the reason in the last paragraph.
 
-**Verification boundary.** The rating is computed by SonarCloud from the next
-analysis; there is no local scanner on this host (no `SONAR_TOKEN`), so the
-rating itself cannot be re-measured here. Ignore entries apply to the scanner
-run, which is the active analysis method: the `Sonar — CI scanner` job and the
-`SonarCloud Code Analysis` check both ran on the same commit (with autoscan
-on, SonarCloud rejects the scanner job).
+**Result on `a8be9c0`.** The gate is green. `api/qualitygates/project_status`
+returns `GATE: OK`: `new_security_rating` **1 (A)**, was 3 (C); the other five
+conditions unchanged (`new_coverage` 94.2 ≥ 80, duplication 0.0 ≤ 3, hotspots
+reviewed 100%, reliability and maintainability 1). CI run `41300116727` is
+green in all six checks, including `Sonar — CI scanner` and
+`SonarCloud Code Analysis`.
+
+Two vulnerabilities remain open and both predate the 0.1.0 baseline (created
+2026-08-25): `pythonsecurity:S8707` on `store.open_db` and `go:S4790` on the
+SHA-1 dedup fingerprint. The issues API with `inNewCodePeriod=true` still
+lists them, because that filter attributes to changed lines; the rating counts
+issues created inside the period, and reports A. Two numbers, one state — not
+a hidden failure.
+
+**Verification boundary.** The rating is computed by SonarCloud, so it could
+only be confirmed by an analysis: there is no local scanner on this host (no
+`SONAR_TOKEN`). Ignore entries apply to the scanner run, which is the active
+analysis method — the `Sonar — CI scanner` job and the `SonarCloud Code
+Analysis` check ran on the same commit, which they cannot both do with
+autoscan on.
 
 **Environment, not code.** `%TEMP%\pytest-of-mano9` became unreadable to its
 own owner (ACL denial) after a stopped suite run on this host, which made
