@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import sys
@@ -1799,20 +1800,86 @@ def cmd_requeue(args):
     print(f"requeue: reset {n} failed batch(es) to pending")
 
 
+def _notify_hook(argv) -> list:
+    """The hook to run: an explicit argv, else JESTER_NOTIFY_CMD, else nothing.
+
+    Windows paths keep their backslashes, so posix-mode shlex (which treats
+    `\\` as an escape and eats it) would turn C:\\Python312\\python.exe into
+    C:Python312python.exe; on Windows quotes are stripped after a plain split
+    instead.
+    """
+    if argv:
+        return list(argv)
+    raw = os.environ.get("JESTER_NOTIFY_CMD", "").strip()
+    if not raw:
+        return []
+    if os.name == "nt":
+        return [part.strip('"') for part in shlex.split(raw, posix=False)]
+    return shlex.split(raw)
+
+
 def cmd_notify(args):
     """R55 failure-hook runner. Best-effort: always exits 0 so it can never
-    mask the nightly wrapper's real exit code."""
+    mask the nightly wrapper's real exit code.
+
+    A scheduled task that fails invokes this before exiting with its own code
+    (`schedule.launcher_script`). Exit 0 is not news and an unset
+    JESTER_NOTIFY_CMD means no hook, so both are silent no-ops: a task that
+    succeeded must not send a "failure" message, and a machine with no hook
+    must not print noise into a log every night.
+    """
+    code = int(args.exit_code)
+    if code == 0:
+        return
+    hook = _notify_hook(getattr(args, "cmd", None))
+    if not hook:
+        return
+    task = getattr(args, "task", "") or ""
     reason = "hard_error"
     if getattr(args, "db", None):
         runs = get_runs(open_db(args.db), limit=1)
         if runs:
             flags = json.loads(runs[0]["floor_flags"] or "[]")
             reason = "FAILED_BATCHES" if "FAILED_BATCHES" in flags else "hard_error"
-    run_id = getattr(args, "run_id", None) or "nightly"
+    run_id = getattr(args, "run_id", None) or task or "nightly"
+    # The hook gets the two facts every operator message needs, without having
+    # to know this project's flags. It also sees the exit code as {exit_code}.
+    env = {**os.environ, "JESTER_TASK": task, "JESTER_EXIT_CODE": str(code)}
     ok, _out = dispatch_notify(
-        list(args.cmd), exit_code=args.exit_code, run_id=run_id, reason=reason
+        hook, exit_code=code, run_id=run_id, reason=reason, task=task, env=env
     )
-    print(f"notify {'OK' if ok else 'FAILED'} ({' '.join(list(args.cmd))})")
+    print(f"notify {'OK' if ok else 'FAILED'} ({' '.join(hook)})")
+
+
+def cmd_health(args):
+    """Is the collector alive? One verdict, one exit code.
+
+    `signals runs` lists what each run did; this answers the other question:
+    a source that keeps returning zero rows is quiet, and after three of them
+    it is barren -- and a barren, stale or erroring source, or a week with no
+    run at all, exits 1 so the schedule can turn it into a notification.
+    """
+    from jester.signals import health as sighealth
+
+    result = sighealth.report(args.db, days=args.days)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"health: last {result['days']} day(s) to "
+              f"{result['window']['to'][:19]} ({result['db']})")
+        if result["runs"]:
+            print(f"{'source':<24}{'last run':<21}{'rows':>6}{'zero':>6}"
+                  f"{'error':>7}  status")
+            for s in result["sources"]:
+                print(f"{s['source']:<24}{(s['last_run_utc'] or '-')[:19]:<21}"
+                      f"{s['rows']:>6}{s['consecutive_zero']:>6}"
+                      f"{s['consecutive_error']:>7}  {s['status']}")
+        for warning in result["warnings"]:
+            print(f"warning: {warning}")
+        print(f"verdict: {result['verdict']} "
+              f"({result['runs']} run(s) in {result['days']} day(s))")
+    if result["exit_code"]:
+        sys.exit(1)
 
 
 def evaluate_smoke(db):
@@ -4047,6 +4114,18 @@ def main(argv=None):
     rs.add_argument("--db", default="data/jester.db")
     rs.set_defaults(func=cmd_runs)
 
+    hl = sub.add_parser(
+        "health",
+        help="is the collector alive? per-source streaks, a verdict and an "
+             "exit code (1 when a source is barren, stale or erroring, or "
+             "when no run happened in the window)")
+    hl.add_argument("--db", default="data/jester.db")
+    hl.add_argument("--days", type=int, default=7,
+                    help="window to judge, in days (default 7)")
+    hl.add_argument("--json", action="store_true",
+                    help="print the same data as machine-readable JSON")
+    hl.set_defaults(func=cmd_health)
+
     sg = sub.add_parser(
         "signals",
         help="the collector problem-signal collector: fixtures -> classifier -> SQLite -> CSV",
@@ -4358,7 +4437,14 @@ def main(argv=None):
     nt = sub.add_parser("notify")
     nt.add_argument("--db", default=None)
     nt.add_argument("--run-id", default=None, dest="run_id")
-    nt.add_argument("--exit-code", type=int, required=True, dest="exit_code")
+    nt.add_argument("--task", default="",
+                    help="the scheduled task that failed; the hook also sees it "
+                         "as JESTER_TASK")
+    # Two spellings of one fact: scripts/nightly.sh has always passed
+    # --exit-code, and the generated launcher passes --exit. Accepting both
+    # means neither caller had to change.
+    nt.add_argument("--exit-code", "--exit", type=int, required=True,
+                    dest="exit_code")
     nt.add_argument("cmd", nargs=argparse.REMAINDER)
     nt.set_defaults(func=cmd_notify)
 

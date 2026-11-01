@@ -47,6 +47,15 @@ tasks:
     command: signals-brief
     cadence: {at: "10:00"}
     enabled: true
+  # The morning verdict on the collector itself. A source that returned zero
+  # rows three runs running is BARREN, one that has not been read in 36 hours
+  # is STALE, and a week with no run at all fails too -- `jester health` exits
+  # 1 for all of them, and the launcher turns that non-zero exit into a
+  # JESTER_NOTIFY_CMD call. 10:15, after the chain and the brief it judges.
+  - task: JesterNightlyHealth
+    command: health
+    cadence: {at: "10:15"}
+    enabled: true
   - task: JesterNightlySignalsHiring
     command: signals-hiring
     cadence: {at: "09:30"}

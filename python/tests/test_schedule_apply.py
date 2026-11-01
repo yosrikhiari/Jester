@@ -21,6 +21,7 @@ DECLARED = [
     "JesterNightlyTreat",
     "JesterNightlySignals",
     "JesterNightlySignalsBrief",
+    "JesterNightlyHealth",
     "JesterNightlySignalsHiring",
     "JesterNightlySignalsSweep",
     "JesterNightlyLeadsReddit",
@@ -137,15 +138,15 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
     assert installed == set(DECLARED)
-    assert len(host.created()) == 10
+    assert len(host.created()) == 11
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
         "JesterNightlyRetention"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 10
-    assert len(host.created()) == 10, "a second apply must not re-register anything"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 11
+    assert len(host.created()) == 11, "a second apply must not re-register anything"
     assert len(host.changes()) == 4, "nor flip the four paused tasks again"
 
 
@@ -161,7 +162,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "10 task(s) would change" in out
+    assert "11 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):

@@ -30,6 +30,7 @@ from typing import Iterable, List, Optional
 
 from . import FIELD_NAMES, Signal, TABLE, limits, mark_removed, upsert
 from .filters import apply_to, load_rules
+from .health import record_source_state
 from .sources import SourceError, get_source
 
 RUN_TABLE = "signal_run"
@@ -203,6 +204,10 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         "note": note,
     }
     _save_run(db, row)
+    # The ledger holds what this run did; the streak holds what the source has
+    # been doing. Written beside the run, not instead of it: existing callers
+    # read `status` exactly as before, and "collected 0" stays a valid run.
+    record_source_state(db, source.name, row)
     # Not a column: the recovery pass needs to know WHICH queries failed on
     # this pass, and it cannot read that back off the table — the previous
     # failure's row is still there, marked error, which is exactly the point
