@@ -49,6 +49,46 @@ def test_load_scraper_config_rejects_bad_action(tmp_path):
         load_scraper_config(p)
 
 
+# --- V3-22: what counts as a secret, and what counts as set ---------------------
+
+def test_scraper_keys_that_name_a_credential_are_secret():
+    from jester.secrets import is_secret_key
+
+    for key in ("license_key", "proxy", "CLOAKBROWSER_LICENSE_KEY", "api_token",
+                "client_secret", "password"):
+        assert is_secret_key(key), key
+    for key in ("cdp_url", "base_url", "geoip", "version", "timezone", "locale",
+                "blocked_response_action", "warmup_navigations"):
+        assert not is_secret_key(key), key
+
+
+def test_a_literal_placeholder_is_not_a_configured_value():
+    """Python's expandvars leaves `${NAME}` literal when NAME is unset; the Go
+    side blanks it. That disagreement is why the console's "set" indicator
+    lied. One helper, one answer, used by both readers."""
+    from jester.secrets import is_configured
+
+    assert is_configured("lic-123") is True
+    assert is_configured("http://u:p@proxy.example:8080") is True
+    assert is_configured("") is False
+    assert is_configured("   ") is False
+    assert is_configured(None) is False
+    assert is_configured("${CLOAKBROWSER_LICENSE_KEY}") is False
+    assert is_configured("$CLOAKBROWSER_PROXY") is False
+
+
+def test_redact_secrets_blanks_credentials_and_reports_only_booleans():
+    from jester.secrets import redact_secrets
+
+    public, flags = redact_secrets({
+        "license_key": "lic-123",
+        "proxy": "${CLOAKBROWSER_PROXY}",
+        "cdp_url": "http://127.0.0.1:9222",
+    })
+    assert public == {"license_key": "", "proxy": "", "cdp_url": "http://127.0.0.1:9222"}
+    assert flags == {"license_key": True, "proxy": False}
+
+
 # --- Task 2: parsing + block detection -------------------------------------------
 
 def test_extract_comments_walks_nested_payload():

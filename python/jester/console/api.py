@@ -62,6 +62,7 @@ from jester import schedule as _schedule
 from jester.fetchers.cloak import load_scraper_config
 from jester.llm import PROMPT_VERSIONS, RUBRIC_VERSION
 from jester.quota import day_key
+from jester.secrets import redact_secrets
 from jester.sources import (
     PLATFORM_KINDS,
     SUPPORTED_KINDS,
@@ -1578,7 +1579,14 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
 
     def config(self):
         t = self._cfg().thresholds
-        scraper = load_scraper_config(Path(self.config_dir) / "scraper.yaml").__dict__
+        # V3-22: scraper.yaml names the CloakBrowser licence key and the
+        # residential proxy, and a proxy URL carries its own credentials.
+        # Neither is served; `secrets_set` is the only thing the Config page
+        # needs, and blanking is decided by key name so a credential added to
+        # the file later cannot leak by being forgotten here.
+        scraper, secrets_set = redact_secrets(
+            dict(load_scraper_config(Path(self.config_dir) / "scraper.yaml").__dict__)
+        )
         return {
             "ok": True,
             "config_dir": self.config_dir,
@@ -1621,6 +1629,7 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
                 if key not in ROLE_PROVIDER_KEYS
             },
             "scraper": scraper,
+            "secrets_set": secrets_set,
             "sources": [s.to_dict() for s in load_sources(self._sources_path)],
             "env": {
                 "JESTER_QDRANT_URL": os.environ.get("JESTER_QDRANT_URL", ""),

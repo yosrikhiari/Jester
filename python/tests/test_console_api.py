@@ -77,6 +77,41 @@ def test_requeue_and_reembed_shapes(api):
     assert re_["ok"] is True and re_["fixed"] == 0
 
 
+# ---- V3-22: /api/config must not serve the scraper's credentials ----------
+
+def test_config_never_serves_the_licence_key(api, monkeypatch):
+    from jester.secrets import is_secret_key
+
+    monkeypatch.setenv("CLOAKBROWSER_LICENSE_KEY", "lic-super-secret-value")
+    res = api.config()
+    assert "lic-super-secret-value" not in json.dumps(res)
+    assert res["scraper"]["license_key"] == ""
+    assert res["secrets_set"]["license_key"] is True
+    # Every secret-looking key is handled the same way, not just the one the
+    # test set: a new credential in scraper.yaml must not leak by default.
+    for key in res["scraper"]:
+        if is_secret_key(key):
+            assert res["scraper"][key] == "", key
+
+
+def test_config_reports_an_unset_placeholder_as_not_set(api, monkeypatch):
+    """The N22 "the indicator lies" case: the variable is unset, Python leaves
+    `${CLOAKBROWSER_LICENSE_KEY}` literal, and a truthiness test calls that
+    configured."""
+    monkeypatch.delenv("CLOAKBROWSER_LICENSE_KEY", raising=False)
+    res = api.config()
+    assert res["secrets_set"]["license_key"] is False
+    assert res["scraper"]["license_key"] == ""
+    assert "${CLOAKBROWSER_LICENSE_KEY}" not in json.dumps(res)
+
+
+def test_config_keeps_a_non_secret_scraper_field_verbatim(api, monkeypatch):
+    monkeypatch.setenv("CLOAKBROWSER_LICENSE_KEY", "lic-super-secret-value")
+    res = api.config()
+    assert res["scraper"]["cdp_url"] == "http://127.0.0.1:9222"
+    assert res["scraper"]["blocked_response_action"] == "backoff"
+
+
 # ---- nuggets: no silent caps (R55) ---------------------------------------
 
 
