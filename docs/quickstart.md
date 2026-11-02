@@ -33,6 +33,30 @@ The first build takes a few minutes; later starts are seconds. Stop with
 `docker compose down` (the volume survives), or `docker compose down -v` to
 discard the demo archive.
 
+### One-time: a volume left by the root-era images
+
+`jester-console` and `go-worker` both run as uid **10001** (one uid, one SQLite
+file: two writers with different uids is how the archive got corrupted before).
+A `jester_docker_data` volume created by an older stack is owned by root, and
+10001 cannot write it — the console entrypoint prints
+`/app/data is not writable by uid 10001` rather than failing with
+`unable to open database file`.
+
+This is a **one-time** migration, not a per-start step: from the moment a
+volume is created from the current images, ownership is already 10001's. Pick
+one, once:
+
+```bash
+docker compose down -v                              # discard the demo archive
+# or keep it and hand it over:
+docker run --rm -v jester_jester_docker_data:/d alpine chown -R 10001:10001 /d
+```
+
+On Windows the second line needs `MSYS_NO_PATHCONV=1` in front of `docker` when
+run from Git Bash: MSYS rewrites the single-letter `/d` into `D:/` and the
+container then chowns a path that does not exist. (Inside the container the
+path is `/d`; that is the whole reason it is spelled that way.)
+
 Optional profiles:
 
 ```bash

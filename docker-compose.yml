@@ -34,7 +34,9 @@
 # nothing, because the host's task scheduler (config/schedule.yaml) is the one
 # scheduler and two of them racing one SQLite file is the failure above. The
 # console container's data volume is chowned to 10001 in the image, which is
-# how a non-root user gets to write the archive.
+# how a non-root user gets to write the archive. The worker image chowns its
+# /app/data the same way and runs as the same 10001, so the shared volume has
+# exactly one owner rather than two writers racing for it.
 #
 # To inspect the real archive, run the console on the host instead:
 #   python -m jester.console --db data/jester.db --config config
@@ -71,6 +73,16 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.python
+    # ONE uid for both writers (R4-05). The worker image fixes the same uid and
+    # owns /app/data at build time, so the named volume starts writable by both
+    # no matter which container creates it first. `user:` is stated here as
+    # well as in the Dockerfile so a `docker compose run` override or an image
+    # rebuilt from a different base cannot quietly reintroduce two writers.
+    user: "10001:10001"
+    # Self-healing, like qdrant/cloakbrowser/clickhouse. A console that dies
+    # (OOM, an unhandled crash) used to stay down until someone noticed, while
+    # the rest of the stack came back on a Docker restart.
+    restart: unless-stopped
     # Code bind-mounted from the repo; only pip deps are baked in.
     volumes:
       - .:/app
@@ -137,6 +149,11 @@ services:
     build:
       context: .
       dockerfile: docker/go.Dockerfile
+    # Same uid as jester-console, for the reason in that service's comment:
+    # one SQLite file, one owner. See docker/go.Dockerfile for the migration
+    # note if the volume predates this line.
+    user: "10001:10001"
+    restart: unless-stopped
     volumes:
       - .:/app
       # Same throwaway archive the console uses — the handoff queue is the
@@ -286,6 +303,17 @@ services:
     networks: [jester_net]
 
 volumes:
+  # ONE-time migration (R4-05). Both writers now run as uid 10001 and the
+  # worker image owns /app/data, so a volume created from here on is 10001's.
+  # A volume created by the old root-era images is still root-owned and 10001
+  # cannot write it — the console entrypoint says so on stderr instead of
+  # failing with "unable to open database file". Pick one, once:
+  #
+  #   docker compose down -v                # discard the throwaway archive
+  #   docker run --rm -v jester_jester_docker_data:/d \
+  #       alpine chown -R 10001:10001 /d    # keep it, hand it to 10001
+  #
+  # After that, ownership is the image's and this is never needed again.
   jester_docker_data:
   qdrant_storage:
   clickhouse_data:
