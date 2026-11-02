@@ -101,7 +101,7 @@ There is no CI run to cite: the branch was never pushed.
 |---|---|---|
 | `python -m pytest python/tests -q` (with `PYTHONPATH=python JESTER_MOCK=1`, `TMP`/`TEMP` set) | tree committed as `69f2353` | `2220 passed, 12 skipped, 13 deselected, 41 warnings in 463.58s (0:07:43)` |
 | the same command | tree committed as `d4ecc28` (four prose-only edits followed the Task 9 run; `test_doc_links` and `test_schedule_apply` were re-run green) | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
-| the same command | tree of the final fix commit (the whole-branch review's two Importants; two tests added, three edited; two prose-only edits — this row and one CHANGELOG bullet — followed the run, and `test_doc_links` was re-run green) | `2227 passed, 12 skipped, 13 deselected, 41 warnings in 475.91s (0:07:55)` |
+| the same command | tree of the final fix commit (the whole-branch review's two Importants and the re-review's notes; two tests added, three edited; this row is the only edit made after the run, and `test_doc_links` was re-run green) | `2227 passed, 12 skipped, 13 deselected, 41 warnings in 480.63s (0:08:00)` |
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2239` / `go test functions: 299` |
 | `go vet ./...` | `go/`, this commit | no output (clean); no Go file changed after `5f66917` |
 | `go test ./...` | `go/`, this commit | every package `ok`; the `cmd/*` probe packages have no test files |

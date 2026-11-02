@@ -92,8 +92,11 @@ not merged; `main` is `5a4bd36`, one docs-only commit after the `v0.1.0` tag
   figure and every saved copy, hashed at approval time. Export and the move to
   `published` recompute it and refuse on a mismatch, naming the changed figure
   or the saved copy.
-- An approval lapses after 30 days (`journal_approval_ttl_days`), and both
-  gates ask for it again rather than accepting an old one.
+- An approval lapses after `journal_approval_ttl_days` (default 30), and both
+  gates ask for it again rather than accepting an old one. The value is read
+  from the config directory given to `jester journal … --config`; before this
+  it was always read from the shipped `config/thresholds.yaml`, so setting it
+  in your own config did nothing.
 - `obs:` targets need a reason: `obs:<label>|<reason>` with at least 8
   characters after the `|`. Headings and inline code are prose now — a number
   in an `<h2>` or between backticks counts like any other figure.

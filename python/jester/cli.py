@@ -3985,9 +3985,10 @@ def cmd_journal(args):
     from jester.journal import states as js
 
     previous_config = J.use_config(args.config)
-    db = J.open_journal(args.db)
+    db = None
     root = Path(args.root)
     try:
+        db = J.open_journal(args.db)
         if args.action == "new":
             slug = args.slug or J.slugify(args.title)
             if J.find(db, slug) is not None:
@@ -4177,7 +4178,8 @@ def cmd_journal(args):
         print(f"journal: {exc}")
         sys.exit(1)
     finally:
-        db.close()
+        if db is not None:
+            db.close()
         J.use_config(previous_config)
 
 

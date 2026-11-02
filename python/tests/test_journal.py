@@ -155,9 +155,20 @@ def test_the_approval_ttl_is_a_config_value_that_defaults_to_thirty(tmp_path):
     previous = J.use_config(cfg_dir)
     try:
         assert J.approval_ttl_days() == 5
+        # An explicit path wins over the chosen directory.
+        assert J.approval_ttl_days(cfg) == 7
     finally:
         J.use_config(previous)
     assert J.approval_ttl_days() == 30
+
+    # A chosen directory with no thresholds file still has a number.
+    empty = tmp_path / "empty-cfg"
+    empty.mkdir()
+    previous = J.use_config(empty)
+    try:
+        assert J.approval_ttl_days() == 30
+    finally:
+        J.use_config(previous)
 
 
 def test_the_manifest_binds_the_revision_its_figures_and_its_saved_sources(db, tmp_path):

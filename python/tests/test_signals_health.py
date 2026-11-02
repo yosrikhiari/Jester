@@ -520,19 +520,29 @@ def test_a_source_read_once_and_silent_for_twelve_days_is_stale(tmp_path):
     A source read once and never again must go STALE once it passes the weekly
     bound, or "no read in 12 days" produces no morning verdict. The read is
     outside the report window on purpose: the per-source read list is not
-    windowed, so the verdict must still see it."""
+    windowed, so the verdict must still see it.
+
+    A second source is read today, so the report has a run inside its window
+    and the non-zero exit cannot come from "no collector run at all" -- it is
+    the forgotten source's STALE that makes the morning verdict fail."""
     path = str(tmp_path / "signals.db")
     db = open_signals(path)
     at = datetime.now(timezone.utc) - timedelta(days=12)
+    fresh = datetime.now(timezone.utc)
     try:
         row = _write_run(db, "tests-forgotten", at=at, collected=2, run_id="forgotten-1")
         sighealth.record_source_state(db, "tests-forgotten", row, at=_iso(at))
+        row = _write_run(db, "tests-live", at=fresh, collected=3, run_id="live-1")
+        sighealth.record_source_state(db, "tests-live", row, at=_iso(fresh))
     finally:
         db.close()
 
     res = sighealth.report(path, days=7)
     row = next(s for s in res["sources"] if s["source"] == "tests-forgotten")
+    assert res["runs"] == 1
     assert row["status"] == sighealth.STALE
+    live = next(s for s in res["sources"] if s["source"] == "tests-live")
+    assert live["status"] == sighealth.HEALTHY
     assert res["exit_code"] == 1
 
 
