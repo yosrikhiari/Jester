@@ -569,14 +569,38 @@ def _parse_time(text: str) -> Optional[datetime]:
     return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
 
 
+#: The config directory chosen for this process by `use_config`, or None.
+_CONFIG_DIR: Optional[Path] = None
+
+
+def use_config(config: Optional[Path]) -> Optional[Path]:
+    """Read the approval TTL from this config directory for the rest of the
+    process; return the previous choice so a caller can restore it.
+
+    `--config` names a directory everywhere in this CLI, so this does too.
+    `None` clears the choice and falls back to the shipped file.
+    """
+    global _CONFIG_DIR
+    previous = _CONFIG_DIR
+    _CONFIG_DIR = Path(config) if config is not None else None
+    return previous
+
+
 def approval_ttl_days(path: Optional[Path] = None) -> int:
     """Days a publish approval stays usable (V3-15), from the config.
 
-    The shipped default applies when the config file is absent -- a deployed
-    package without a checkout still needs a number. A config that exists
-    but cannot be read is not swallowed: a broken file is a broken app.
+    An explicit path wins; otherwise the directory chosen by `use_config`;
+    otherwise the shipped file. The shipped default applies when the config
+    file is absent -- a deployed package without a checkout still needs a
+    number. A config that exists but cannot be read is not swallowed: a broken
+    file is a broken app.
     """
-    config = Path(path) if path is not None else THRESHOLDS
+    if path is not None:
+        config = Path(path)
+    elif _CONFIG_DIR is not None:
+        config = _CONFIG_DIR / "thresholds.yaml"
+    else:
+        config = THRESHOLDS
     if not config.exists():
         return DEFAULT_APPROVAL_TTL_DAYS
     from jester.config import load_thresholds

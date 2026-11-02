@@ -75,6 +75,12 @@ STALE_CADENCE_FACTOR = 1.5
 #: outage a year ago does not set the bar for good.
 CADENCE_SAMPLES = 12
 
+#: The bound applied when the ledger cannot show a rhythm (fewer than two
+#: reads): a week plus the same half-period grace as an observed weekly
+#: interval. Without it a source that was read once and never again stayed
+#: HEALTHY forever, and "no read in 12 days" produced no morning verdict.
+UNOBSERVED_CADENCE_HOURS = 7 * 24
+
 SOURCE_STATE_DDL = f"""
 CREATE TABLE IF NOT EXISTS {SOURCE_STATE_TABLE} (
   source TEXT PRIMARY KEY,
@@ -283,14 +289,18 @@ def _observed_interval_hours(reads: list) -> Optional[float]:
 
 
 def _stale_after_hours(interval: Optional[float]) -> Optional[float]:
-    """How long this source may stay silent, or `None` for "not judgeable".
+    """How long this source may stay silent.
 
     One observed period plus half a period of grace, floored at the daily
     answer so a source that runs several times a day does not get a sub-hour
     threshold: daily -> max(36 h, 24 x 1.5) = 36 h, weekly -> 7 d x 1.5 = 10.5 d.
+
+    An unmeasurable interval (fewer than two reads) is judged against the
+    slowest cadence the system knows, the weekly sweep:
+    `UNOBSERVED_CADENCE_HOURS` x 1.5 = 252 h.
     """
     if interval is None:
-        return None
+        return UNOBSERVED_CADENCE_HOURS * STALE_CADENCE_FACTOR
     return max(STALE_AFTER_HOURS, interval * STALE_CADENCE_FACTOR)
 
 

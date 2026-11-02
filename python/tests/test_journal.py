@@ -147,6 +147,18 @@ def test_the_approval_ttl_is_a_config_value_that_defaults_to_thirty(tmp_path):
     # A date that cannot be read cannot vouch for anything.
     assert J.approval_expired({"at": "not a date"}, days=7) is True
 
+    # A chosen config directory is what the no-argument read uses, and the
+    # choice is restored so it cannot leak into the rest of the process.
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "thresholds.yaml").write_text("journal_approval_ttl_days: 5\n", encoding="utf-8")
+    previous = J.use_config(cfg_dir)
+    try:
+        assert J.approval_ttl_days() == 5
+    finally:
+        J.use_config(previous)
+    assert J.approval_ttl_days() == 30
+
 
 def test_the_manifest_binds_the_revision_its_figures_and_its_saved_sources(db, tmp_path):
     """Same shape as the signals manifest: canonical JSON, sorted identity

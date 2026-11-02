@@ -494,11 +494,10 @@ def test_a_fallback_with_a_bimodal_cadence_is_judged_by_its_longest_gap(tmp_path
     assert res["exit_code"] == 0
 
 
-def test_a_source_with_one_read_is_not_judged_stale_on_one_interval(tmp_path):
-    """One run is not a rhythm. A first-ever read that came back with rows
-    cannot be called STALE: the only "interval" available is the distance
-    between it and now, which says nothing about what the source's cadence
-    is."""
+def test_a_source_with_one_read_is_judged_against_the_weekly_bound(tmp_path):
+    """One run cannot show a rhythm, so the fallback is the slowest rhythm the
+    system knows -- the weekly sweep -- not no rhythm at all. A lone read 60
+    hours old is inside that bound, so the source is still HEALTHY."""
     path = str(tmp_path / "signals.db")
     db = open_signals(path)
     at = datetime.now(timezone.utc) - timedelta(hours=60)
@@ -511,8 +510,30 @@ def test_a_source_with_one_read_is_not_judged_stale_on_one_interval(tmp_path):
     res = sighealth.report(path, days=7)
     row = next(s for s in res["sources"] if s["source"] == "tests-new")
     assert row["status"] == sighealth.HEALTHY
-    assert row["stale_after_hours"] is None
+    assert row["stale_after_hours"] == (
+        sighealth.UNOBSERVED_CADENCE_HOURS * sighealth.STALE_CADENCE_FACTOR)
     assert res["exit_code"] == 0
+
+
+def test_a_source_read_once_and_silent_for_twelve_days_is_stale(tmp_path):
+    """One read is not a rhythm, but it is not immunity from the clock either.
+    A source read once and never again must go STALE once it passes the weekly
+    bound, or "no read in 12 days" produces no morning verdict. The read is
+    outside the report window on purpose: the per-source read list is not
+    windowed, so the verdict must still see it."""
+    path = str(tmp_path / "signals.db")
+    db = open_signals(path)
+    at = datetime.now(timezone.utc) - timedelta(days=12)
+    try:
+        row = _write_run(db, "tests-forgotten", at=at, collected=2, run_id="forgotten-1")
+        sighealth.record_source_state(db, "tests-forgotten", row, at=_iso(at))
+    finally:
+        db.close()
+
+    res = sighealth.report(path, days=7)
+    row = next(s for s in res["sources"] if s["source"] == "tests-forgotten")
+    assert row["status"] == sighealth.STALE
+    assert res["exit_code"] == 1
 
 
 def test_a_weekly_source_that_missed_its_own_week_is_stale(tmp_path):

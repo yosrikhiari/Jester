@@ -9,14 +9,15 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
 | Product | State | Where it lives |
 |---|---|---|
 | **Idea pipeline** — scraped comments → insights → clusters → scored ideas | **Paused since 2026-10-02.** Code and tests complete; the three scheduled tasks are registered and disabled. Resume after the B1 gate in the 2026-10-31 strategy report. | `python/jester/` (agents, archivist, console), `data/jester.db` |
-| **Problem signals** — a deterministic collector that archives buyer-intent records | **Live**, five scheduled tasks, fixture gate green on 2026-10-31. | `go/`, `python/jester/signals/`, `data/signals-*.db`, ClickHouse |
+| **Problem signals** — a deterministic collector that archives buyer-intent records | **Live**, six scheduled tasks (five daily, the sweep weekly), fixture gate green on 2026-10-31. | `go/`, `python/jester/signals/`, `data/signals-*.db`, ClickHouse |
 | **Journal** — plan → run → check → publish with evidence | **Built through slice J3; nothing published yet** (0 articles). | `python/jester/journal/`, `data/journal.db`, site worktree |
 
 ## [Unreleased] — 2026-11-02
 
 Hardening on branch `v3-hardening` (base `5a4bd36`). Not tagged, not pushed,
-not merged; `main` is still `d2da8de` (`v0.1.0`). User-visible changes only;
-per-item status is in [docs/STATUS.md](docs/STATUS.md).
+not merged; `main` is `5a4bd36`, one docs-only commit after the `v0.1.0` tag
+(`d2da8de`). User-visible changes only; per-item status is in
+[docs/STATUS.md](docs/STATUS.md).
 
 ### Idea pipeline
 - `GET /api/config` no longer returns the scraper licence key or proxy. Any key
@@ -60,8 +61,9 @@ per-item status is in [docs/STATUS.md](docs/STATUS.md).
 ### Problem signals
 - Each source has a streak row (`source_state`): consecutive zero-result and
   error runs, the last read, the last error. `jester health --days 7` prints it
-  per source, exits 1 on a barren (3 zero runs), stale (36 h unread) or
-  erroring source, and prints JSON with `--json`.
+  per source, exits 1 on a barren (3 zero runs), stale (silent past its own
+  cadence: 36 h for a daily source, 10.5 d when the ledger shows only one read)
+  or erroring source, and prints JSON with `--json`.
 - A scheduled run that fails now reaches the operator: the Windows launcher and
   the POSIX cron line call `jester notify` on a non-zero exit and still exit
   with the run's own code.

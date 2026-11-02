@@ -266,4 +266,3 @@ def test_a_rescore_with_no_run_in_flight_records_nothing(tmp_path, offline_confi
     db = open_db(path)
     assert db.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 0
     assert db.execute("SELECT demand_signal FROM ideas").fetchone()[0] == 8
-

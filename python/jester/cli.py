@@ -3984,6 +3984,7 @@ def cmd_journal(args):
     from jester.journal import files as jfiles
     from jester.journal import states as js
 
+    previous_config = J.use_config(args.config)
     db = J.open_journal(args.db)
     root = Path(args.root)
     try:
@@ -4177,6 +4178,7 @@ def cmd_journal(args):
         sys.exit(1)
     finally:
         db.close()
+        J.use_config(previous_config)
 
 
 def _add_journal_parser(sub):
@@ -4193,6 +4195,7 @@ def _add_journal_parser(sub):
         p.add_argument("--db", default=DEFAULT_DB)
         p.add_argument("--root", default=DEFAULT_ROOT,
                        help="folder holding the article files; its own git repository")
+        p.add_argument("--config", default=DEFAULT_CONFIG_DIR)
         p.set_defaults(func=cmd_journal)
         return p
 

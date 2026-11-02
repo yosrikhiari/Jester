@@ -7,11 +7,11 @@ status, this page wins** — fix the other document in the same change.
 
 > **Branch `v3-hardening` (base `5a4bd36`).** The V3 hardening cycle lives on
 > the branch `v3-hardening`, which is **not pushed and not merged**. `main` is
-> still `d2da8de`, tagged `v0.1.0`; nothing in
-> [V3 hardening cycle](#v3-hardening-cycle-branch) below is a claim about
-> `main`, and it becomes one only after review and merge. The live archive was
-> **not** modified by this work: no command here opened `data/jester.db` for
-> writing.
+> `5a4bd36` — one docs-only commit after the `v0.1.0` tag (`d2da8de`);
+> nothing in [V3 hardening cycle](#v3-hardening-cycle-branch) below is a claim
+> about `main`, and it becomes one only after review and merge. The live
+> archive was **not** modified by this work: no command here opened
+> `data/jester.db` for writing.
 
 **As of 2026-11-01.** Code status is against `main` at `d2da8de`, which is
 tagged `v0.1.0` (annotated tag object `45d755c`). Push CI `41305838637` is
@@ -100,8 +100,9 @@ There is no CI run to cite: the branch was never pushed.
 | Command | Where | Result |
 |---|---|---|
 | `python -m pytest python/tests -q` (with `PYTHONPATH=python JESTER_MOCK=1`, `TMP`/`TEMP` set) | tree committed as `69f2353` | `2220 passed, 12 skipped, 13 deselected, 41 warnings in 463.58s (0:07:43)` |
-| the same command | tree of this commit (four prose-only edits followed the run; `test_doc_links` and `test_schedule_apply` were re-run green) | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
-| `python scripts/counts.py --no-archive` | this commit | `python tests: 2237` / `go test functions: 299` |
+| the same command | tree committed as `d4ecc28` (four prose-only edits followed the Task 9 run; `test_doc_links` and `test_schedule_apply` were re-run green) | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
+| the same command | tree of the final fix commit (the whole-branch review's two Importants; two tests added, three edited) | `2227 passed, 12 skipped, 13 deselected, 41 warnings in 475.91s (0:07:55)` |
+| `python scripts/counts.py --no-archive` | this commit | `python tests: 2239` / `go test functions: 299` |
 | `go vet ./...` | `go/`, this commit | no output (clean); no Go file changed after `5f66917` |
 | `go test ./...` | `go/`, this commit | every package `ok`; the `cmd/*` probe packages have no test files |
 | `python scripts/check_lock_parity.py` | this commit | `lock parity: 6 direct requirement(s) agree with 30 locked package(s)` |

@@ -39,7 +39,7 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 
 **The generative pipeline is paused since 2026-10-02.** All three scheduled tasks (`JesterNightly`, `JesterNightlyScrape`, `JesterNightlyTreat`) are registered but disabled; their last run exited 0 because they were switched off, not because the work succeeded. `jester doctor` prints them as notes.
 
-**The problem-signal collector is running daily** (six separate tasks), and its fixture gate was last green on 2026-10-31.
+**The problem-signal collector is running (six scheduled tasks: five daily, the weekly sweep), and its fixture gate is green — 21/21 on 2026-11-02.**
 
 Resume the generative loop only after the B1 gate in the [2026-10-31 strategy report](docs/reports/2026-10-31-next-development-strategy.md): one unattended day must end with an honest `quota_stopped` status, no overlapping ticks, and a score backlog that falls.
 
@@ -110,7 +110,7 @@ The idea pipeline is generative and probabilistic. Sitting beside it is a **prob
 
 > **Scope, fields and access status: [docs/scope-and-access.md](docs/scope-and-access.md)** — what each source collects and has produced, the 30-field map, and the open Reddit access decision. Regenerate it with `python -m jester.cli signals scope --db data/signals-live.db --out docs/`.
 >
-> **W1 evidence: [docs/w1-pack/](docs/w1-pack/README.md)** — a fresh clone, one command run twice (5 rows, then 0 new), the field map and the 20/20 fixture gate, captured to files.
+> **W1 evidence: [docs/w1-pack/](docs/w1-pack/README.md)** — a fresh clone, one command run twice (5 rows, then 0 new), the field map and the fixture gate as captured then (20/20), captured to files.
 
 - **No model in the acceptance path.** Classification is rules over text — same input, same verdict, no network and no quota. A model may one day propose new phrases; it never decides one.
 - **Search, not listing walks.** Measured: reading a community's `/new/` returns a 0.65% buyer rate, because what a community posts today is mostly not a buyer. Searching for the sentences a buyer actually writes is the same number of requests at a far higher hit rate.
@@ -271,7 +271,7 @@ Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — ho
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-11-02: 2,237 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-11-02: 2,239 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 
