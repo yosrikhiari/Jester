@@ -74,6 +74,13 @@ jobs:
       - name: Imports resolve from a bare checkout
         run: python -c "import yaml, qdrant_client, ollama, pytest, tzdata; print('imports ok')"
 
+      # R4-04: config-live/ is an overlay on config/, not a copy of it: an
+      # absent key resolves from config/. A live-only key has no default
+      # behind it, and a config-only key outside the script's DEFAULTS_ONLY
+      # list is a forgotten promotion. Needs PyYAML, hence after the install.
+      - name: config-live is an overlay on config
+        run: python scripts/check_config_parity.py
+
       # The documented command, on a checkout nothing has ever run in. This is
       # the exact shape of both shipped defects.
       - name: The documented command, twice, on a fresh checkout
