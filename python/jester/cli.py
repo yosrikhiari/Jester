@@ -3769,7 +3769,8 @@ def cmd_journal(args):
             j = J.create_journal(db, args.title, kind=args.kind, slug=slug,
                                  question=args.question, path=rel)
             sha = jfiles.commit(root, path, f"{slug}: start")
-            J.record_revision(db, j["id"], sha, jfiles.content_sha256(path), rel, note="start")
+            J.record_revision(db, j["id"], sha, jfiles.content_sha256(path), rel, note="start",
+                              article_text=path.read_text(encoding="utf-8"))
             print(f"created {slug} ({args.kind}, captured)")
             print(f"  file: {path}")
             print(f"  next: jester journal show {slug}")
@@ -3811,7 +3812,11 @@ def cmd_journal(args):
                 return
             for j in rows:
                 to, reasons = js.next_step(db, j, file_sha256=_journal_file_sha(root, j))
-                if to is None:
+                if j["state"] == js.RETRACTED:
+                    # Not "done": the page was published and taken back, and
+                    # the reason is the thing an operator needs to see.
+                    nxt = "retracted: " + (j["retracted_reason"] or "no reason recorded")
+                elif to is None:
                     nxt = "done"
                 elif reasons:
                     nxt = f"-> {to}: {len(reasons)} thing(s) to do"
@@ -3849,11 +3854,15 @@ def cmd_journal(args):
             n = (last["n"] + 1) if last else 1
             sha = jfiles.commit(root, path, f"{args.slug}: version {n}"
                                 + (f" - {args.message}" if args.message else ""))
-            rev = J.record_revision(db, j["id"], sha, digest, j["path"], note=args.message)
+            rev = J.record_revision(db, j["id"], sha, digest, j["path"], note=args.message,
+                                    article_text=path.read_text(encoding="utf-8"))
             print(f"saved {args.slug} version {rev['n']} (commit {sha[:8]})")
             return
 
         if args.action == "approve":
+            refuse = js.retracted_approval_refusal(j)
+            if refuse:
+                raise J.JournalError(refuse)
             revision_id = None
             article_text = None
             if args.what in ("review", "publish"):

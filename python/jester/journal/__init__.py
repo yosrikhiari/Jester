@@ -141,6 +141,13 @@ ADDED_COLUMNS = (
     # V3-15: what found the staleness -- the copy on disk or the page itself.
     # A re-check can only clear a finding it was capable of making.
     ("snapshot", "stale_check", _EMPTY_TEXT),
+    # V3-05: the external pages a saved version links to, recorded from its
+    # text when it is saved (or, for a version saved by an older build, when
+    # it is approved). The approval manifest names the saved copy of each one,
+    # so the manifest has to be computable from the database alone -- the
+    # published gate has no article text to read. '' means "never recorded",
+    # which is not the same fact as "cites nothing" ('[]').
+    ("revision", "cited_urls", _EMPTY_TEXT),
 )
 
 DDL = """
@@ -196,6 +203,7 @@ CREATE TABLE IF NOT EXISTS revision (
   path TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
+  cited_urls TEXT NOT NULL DEFAULT '',
   UNIQUE (journal_id, n)
 );
 CREATE TABLE IF NOT EXISTS check_result (
@@ -282,6 +290,15 @@ CREATE TABLE IF NOT EXISTS generated_text (
 
 class JournalError(Exception):
     """A request the store refuses: unknown slug, bad kind, duplicate."""
+
+
+class ManifestError(JournalError):
+    """The version's cited pages were never recorded, so no manifest exists.
+
+    Distinct from a plain refusal because both the export and the `published`
+    gate turn it into the same instruction ("approve it again"), and both
+    need to tell it apart from "the manifest moved".
+    """
 
 
 def now_utc() -> str:
@@ -434,8 +451,22 @@ def _cited_urls(article_text: Optional[str]) -> List[str]:
     return sorted(urls)
 
 
-def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int,
-                     article_text: Optional[str] = None):
+def record_citations(db: sqlite3.Connection, journal_id: int, revision_id: int,
+                     article_text: str) -> None:
+    """Store the external pages this version cites, from its own text.
+
+    The approval manifest names the saved copy of each of them, and both the
+    export and the `published` gate recompute it. The gate has no article
+    text, so the citation set has to be a database fact: it is written here,
+    when the version is saved (or, for a version an older build saved without
+    it, when it is approved).
+    """
+    db.execute("UPDATE revision SET cited_urls = ? WHERE id = ? AND journal_id = ?",
+               (_canonical(_cited_urls(article_text)), revision_id, journal_id))
+    db.commit()
+
+
+def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int):
     """What an approval of one version covers, and the SHA-256 of that list.
 
     Same shape as the signals manifest: canonical JSON, sorted identity
@@ -445,25 +476,28 @@ def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int,
     visible even when the bytes came out identical), and the newest saved
     copy of every page the revision cites.
 
-    `article_text` is the revision's text: the cited pages are only knowable
-    from it. Without it the snapshot list is empty, which no approval taken
-    WITH the text can match -- that mismatch fails closed, and the refusal
-    says to approve again.
+    Computed from the database alone -- the cited pages come from the
+    version's recorded `cited_urls`, not from the text -- because the
+    `published` gate, which must make the same decision the export makes,
+    never sees the text. A version that never recorded its cited pages has no
+    computable manifest: that raises `ManifestError`, which both callers turn
+    into "approve it again", rather than quietly comparing a manifest with no
+    sources in it.
     """
     rev = db.execute("SELECT * FROM revision WHERE id = ? AND journal_id = ?",
                      (revision_id, journal_id)).fetchone()
     if rev is None:
         raise JournalError(f"revision {revision_id} is not part of journal {journal_id}")
+    if not rev["cited_urls"]:
+        raise ManifestError(f"version {rev['n']} has no recorded list of the pages it cites")
     artifacts = [
         {"path": row["path"], "sha256": row["sha256"]}
         for row in db.execute(
             "SELECT path, sha256 FROM artifact WHERE journal_id = ? ORDER BY path, sha256, id",
             (journal_id,)).fetchall()]
     snapshots = []
-    for url in _cited_urls(article_text):
-        row = db.execute(
-            "SELECT url, status, text_sha256, fetched_at FROM snapshot WHERE url = ? "
-            "ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+    for url in json.loads(rev["cited_urls"]):
+        row = _newest_snapshot(db, url)
         if row is None:
             snapshots.append({"url": url, "missing": True})
         else:
@@ -476,6 +510,55 @@ def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int,
         "snapshots": snapshots,
     }
     return manifest, hashlib.sha256(_canonical(manifest).encode("utf-8")).hexdigest()
+
+
+def _newest_snapshot(db: sqlite3.Connection, url: str) -> Optional[sqlite3.Row]:
+    return db.execute("SELECT url, status, text_sha256, fetched_at FROM snapshot WHERE url = ? "
+                      "ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+
+
+def changed_since(db: sqlite3.Connection, journal_id: int, revision_id: int,
+                  approval: sqlite3.Row) -> str:
+    """The figures and saved copies that moved after the approval was given.
+
+    The manifest tells us THAT the set changed; this names what to look at.
+    A row recorded before the approval is covered by it; a later one -- or a
+    cited page with no copy at all -- is the thing to re-approve.
+    """
+    at = approval["at"]
+    names = [row["path"] for row in db.execute(
+        "SELECT path FROM artifact WHERE journal_id = ? AND created_at >= ? ORDER BY id",
+        (journal_id, at)).fetchall()]
+    rev = db.execute("SELECT cited_urls FROM revision WHERE id = ?", (revision_id,)).fetchone()
+    for url in json.loads(rev["cited_urls"] or "[]"):
+        snap = _newest_snapshot(db, url)
+        if snap is None or snap["fetched_at"] >= at:
+            names.append(f"the saved copy of {url}")
+    return "; ".join(dict.fromkeys(names)) or "the figures or saved copies changed"
+
+
+def manifest_problem(db: sqlite3.Connection, j: sqlite3.Row, rev: sqlite3.Row,
+                     approval: sqlite3.Row) -> str:
+    """Why this approval no longer covers what would ship; '' when it does.
+
+    The one comparison the export and the `published` gate both make, so the
+    two cannot drift: recompute the manifest from the database and compare it
+    with the one the approval recorded, naming what moved.
+    """
+    command = f"jester journal approve {j['slug']} publish"
+    if not approval["manifest_sha256"]:
+        return (f"your approval of publishing version {rev['n']} did not record the figures "
+                f"and saved copies it covered; approve it again ({command})")
+    try:
+        _, current = journal_manifest(db, j["id"], rev["id"])
+    except ManifestError:
+        return (f"version {rev['n']} has no recorded list of the pages it cites, so the figures "
+                f"and saved copies cannot be checked; approve it again ({command})")
+    if current == approval["manifest_sha256"]:
+        return ""
+    return (f"the figures or saved copies changed after you approved publishing version "
+            f"{rev['n']} ({changed_since(db, j['id'], rev['id'], approval)}); "
+            f"approve it again ({command})")
 
 
 def _parse_time(text: str) -> Optional[datetime]:
@@ -527,14 +610,33 @@ def approve(db: sqlite3.Connection, journal_id: int, what: str, actor: str = HUM
 
     A publish approval also records the manifest of what it approved: the
     revision, every figure the journal has made, and every saved source copy
-    the revision cites. Export recomputes that manifest and refuses when it
-    has moved, so a figure redrawn after approval cannot ship under it.
+    the revision cites. Export and the `published` gate recompute that
+    manifest and refuse when it has moved, so a figure redrawn after approval
+    cannot ship under it.
+
+    The manifest is computed from the database. `article_text`, when given,
+    is written onto the version first (which is how a version saved by an
+    older build gains its citation list). Without it -- and without a
+    recorded list -- the approval names no manifest at all, and both paths
+    refuse it as unapproved: an approval that never saw the text must not
+    claim to cover copies it could not check.
     """
     if what not in APPROVALS:
         raise JournalError(f"approval must be one of {', '.join(APPROVALS)} (got {what!r})")
+    from jester.journal import states as js
+
+    journal = db.execute("SELECT * FROM journal WHERE id = ?", (journal_id,)).fetchone()
+    refuse = js.retracted_approval_refusal(journal) if journal is not None else ""
+    if refuse:
+        raise JournalError(refuse)
     manifest_sha = ""
     if what == "publish" and revision_id is not None:
-        _, manifest_sha = journal_manifest(db, journal_id, revision_id, article_text)
+        if article_text is not None:
+            record_citations(db, journal_id, revision_id, article_text)
+        try:
+            _, manifest_sha = journal_manifest(db, journal_id, revision_id)
+        except ManifestError:
+            manifest_sha = ""
     cur = db.execute(
         "INSERT INTO approval (journal_id, what, actor, at, note, revision_id, publication_id, "
         "manifest_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -553,13 +655,17 @@ def human_approvals(db: sqlite3.Connection, journal_id: int, what: str) -> List[
 
 def record_revision(db: sqlite3.Connection, journal_id: int, git_sha: str,
                     content_sha256: str, path: str, note: str = "",
-                    at: Optional[str] = None) -> sqlite3.Row:
+                    at: Optional[str] = None, article_text: Optional[str] = None) -> sqlite3.Row:
+    """Save one version. With its text, its cited pages are recorded too --
+    the approval manifest names their saved copies, and it has to be
+    computable from the database alone (see `journal_manifest`)."""
     last = latest_revision(db, journal_id)
     n = (last["n"] + 1) if last else 1
+    cited = _canonical(_cited_urls(article_text)) if article_text is not None else ""
     db.execute(
-        "INSERT INTO revision (journal_id, n, git_sha, content_sha256, path, note, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (journal_id, n, git_sha, content_sha256, path, note, at or now_utc()))
+        "INSERT INTO revision (journal_id, n, git_sha, content_sha256, path, note, created_at, "
+        "cited_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (journal_id, n, git_sha, content_sha256, path, note, at or now_utc(), cited))
     db.execute("UPDATE journal SET updated_at = ? WHERE id = ?", (now_utc(), journal_id))
     db.commit()
     return latest_revision(db, journal_id)

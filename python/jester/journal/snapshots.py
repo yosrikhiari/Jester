@@ -39,6 +39,10 @@ _TEXT_TYPES = ("text/plain", "text/markdown", "application/json", "text/csv")
 #: made: the stored bytes are re-readable from here, a page that changed is
 #: only visible to a check that goes back to the page.
 CHECK_COPY, CHECK_PAGE = "copy", "page"
+#: A copy a person supplied (`--from-file`): login-walled pages, text pulled
+#: out of a PDF. Its provenance is recorded, and it is not the page's own
+#: text, so the page behind it can never be compared with it.
+MANUAL = "manual"
 
 
 def strip_fragment(url: str) -> str:
@@ -139,7 +143,7 @@ def take(db: sqlite3.Connection, root: Path, url: str, opener: Optional[Callable
     if from_file is not None:
         text = Path(from_file).read_text(encoding="utf-8", errors="replace")
         got = {"status": 200, "final_url": url, "content_type": "text/plain", "error": ""}
-        method = "manual"
+        method = MANUAL
     else:
         got = fetch(url, opener=opener)
         text = readable_text(got["body"], got["content_type"]) if 200 <= got["status"] < 300 else None
@@ -184,6 +188,12 @@ def verify(db: sqlite3.Connection, root: Path, row: Optional[sqlite3.Row],
     to the page. A local re-check therefore never erases "the page changed".
     A page that cannot be reached proves nothing about the copy -- an outage
     is not a changed article -- so it is reported without marking anything.
+
+    A `manual` copy (a login-walled page, text extracted from a PDF) is never
+    compared with the page: it is somebody's extract, not the site's own text,
+    so it could not match if it wanted to and the comparison would mark every
+    such copy stale. Its provenance is recorded and shown on the page instead;
+    its bytes on disk are still checked, because those are what it claims.
     """
     if row is None:
         return False, "no saved copy yet (jester journal snapshot)"
@@ -197,7 +207,7 @@ def verify(db: sqlite3.Connection, root: Path, row: Optional[sqlite3.Row],
         else:
             if hashlib.sha256(stored).hexdigest() != row["text_sha256"]:
                 reason, found_by = "the saved copy on disk changed since it was stored", CHECK_COPY
-    if refetch and not reason:
+    if refetch and not reason and row["method"] != MANUAL:
         got = fetch(row["url"], opener=opener)
         if got["status"] == 0:
             return False, f"could not re-check the page: {got['error']}"

@@ -73,6 +73,20 @@ def next_state(j: sqlite3.Row) -> Optional[str]:
     return FORWARD[FORWARD.index(state) + 1]
 
 
+def retracted_approval_refusal(j: sqlite3.Row) -> str:
+    """Why this article cannot be approved; '' when it can.
+
+    A retraction is not a stage of publishing: the page was out there and was
+    taken back, on purpose. Recording a fresh approval on it reads as a step
+    towards shipping a page that is deliberately off the site, so the refusal
+    names the retraction reason and points at the only real answer.
+    """
+    if j["state"] != RETRACTED:
+        return ""
+    return (f"{j['slug']} was retracted ({j['retracted_reason'] or 'no reason recorded'}); "
+            "a retracted article is not approved again -- publish a new one instead")
+
+
 # ---- the gates --------------------------------------------------------------
 
 def _gate_proposed(db, j, ctx):
@@ -188,15 +202,15 @@ def _gate_published(db, j, ctx):
                 out.append(f"your approval of publishing version {rev['n']} expired on "
                            f"{expiry[:10]}; approve it again "
                            f"(jester journal approve {j['slug']} publish)")
-            elif not approval["manifest_sha256"]:
+            else:
                 # The approval names the revision, the figures and the saved
-                # copies it covered. One that names none of them was recorded
-                # before this column existed, or without the text -- it cannot
-                # vouch for what shipped, so it is answered the same way the
-                # export answers it.
-                out.append(f"your approval of publishing version {rev['n']} did not record "
-                           "the figures and saved copies it covered; approve it again "
-                           f"(jester journal approve {j['slug']} publish)")
+                # copies it covered; recompute that list from the database and
+                # refuse when it moved -- the same comparison, and the same
+                # sentence, the export makes. A hash is not a receipt.
+                problem = J.manifest_problem(db, j, rev, approval)
+                if problem:
+                    out.append(problem)
+
     if not j["canonical_url"].strip():
         out.append("record where the original lives (set --canonical-url)")
     if not j["disclosure"].strip():

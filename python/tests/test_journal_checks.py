@@ -195,6 +195,32 @@ def test_a_check_that_never_read_the_page_cannot_clear_a_page_finding(db, tmp_pa
     assert S.latest(db, URL)["stale_reason"] == ""
 
 
+def test_a_manual_copy_is_checked_on_disk_and_never_re_fetched(db, tmp_path):
+    """Minor 4: a copy supplied by hand -- a login-walled page, text pulled out
+    of a PDF -- can never hash-match the live page: it is the author's extract,
+    not the site's HTML-to-text. A `--verify --network` therefore marked it
+    stale every time and blocked the export of an article whose copy was
+    exactly what the author vouched for. The network comparison is skipped for
+    a manual copy (its provenance is recorded and shown); its bytes on disk
+    are still checked, because that part can be checked."""
+    src = tmp_path / "extracted.txt"
+    src.write_text("The PDF says 40 minutes of labelling.", encoding="utf-8")
+    row = S.take(db, tmp_path, URL, from_file=src)
+    assert row["method"] == "manual"
+
+    def no_network(req, timeout=None):
+        raise AssertionError("a manual copy must not be re-fetched")
+
+    assert S.verify(db, tmp_path, row, opener=no_network, refetch=True) == (True, "")
+    assert S.latest(db, URL)["stale_reason"] == ""
+
+    # The bytes on disk are still the part a check can prove.
+    (tmp_path / row["text_path"]).write_text("edited by hand", encoding="utf-8")
+    ok, why = S.verify(db, tmp_path, row, opener=no_network, refetch=True)
+    assert not ok and "changed" in why
+    assert "changed" in S.latest(db, URL)["stale_reason"]
+
+
 # ---- the checks -----------------------------------------------------------------
 
 def test_lint_title_rules():
@@ -217,6 +243,24 @@ def test_lint_counts_structure_signals():
     assert score >= C.FAIL_AT and stats["em_dashes"] == 4
     outcome = C.check_lint(md)
     assert not outcome.ok
+
+
+def test_heading_words_do_not_dilute_the_lint_density():
+    """Minor 8: a heading's number is checked like any other (5b), but a
+    heading is a label, not prose: counting its words in the lint's per-100
+    denominator lets a long heading buy room for extra em dashes and bold.
+    The two kinds are now separate lists -- nothing is exempt from the number
+    check."""
+    sentence = "A plain sentence of prose that says one thing only. "
+    para = sentence * 15 + "It ended — twice — here."     # 154 words, 2 em dashes
+    md = "# Title\n\n## " + " ".join(["context"] * 60) + "\n\n" + para + "\n"
+    score, findings, stats = C.lint_prose(md)
+    messages = " | ".join(f["message"] for f in findings)
+    assert stats["words"] == 154, "a heading's words are not prose words"
+    assert "2 em dashes in 154 words" in messages, messages
+    assert score > 0
+    # And the heading is still checked for its numbers.
+    assert not C.check_numbers(None, None, 0, "## Results from 3 runs\n\nAll good.").ok
 
 
 def test_lint_warnings_below_the_threshold_do_not_fail():

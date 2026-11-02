@@ -151,17 +151,19 @@ def test_the_approval_ttl_is_a_config_value_that_defaults_to_thirty(tmp_path):
 def test_the_manifest_binds_the_revision_its_figures_and_its_saved_sources(db, tmp_path):
     """Same shape as the signals manifest: canonical JSON, sorted identity
     lists, a SHA-256 over the bytes, and a check that re-computes instead of
-    trusting a flag."""
+    trusting a flag. It is computed from the database alone -- the cited pages
+    were recorded when the version was saved -- because the `published` gate
+    (which must make the same decision) never sees the article text."""
     from jester.journal import snapshots as S
     from jester.journal.fixtures import FakeWeb
 
     url = "https://blog.example.org/post"
     j = J.create_journal(db, "Manifest", path="m/index.md")
-    rev = J.record_revision(db, j["id"], "c1", "h1", "m/index.md")
+    text = f"# M\n\nA claim [1]({url}).\n"
+    rev = J.record_revision(db, j["id"], "c1", "h1", "m/index.md", article_text=text)
     S.take(db, tmp_path, url, opener=FakeWeb({url: {"status": 200, "content_type": "text/html",
                                                    "body": "<p>one</p>"}}))
-    text = f"# M\n\nA claim [1]({url}).\n"
-    manifest, digest = J.journal_manifest(db, j["id"], rev["id"], text)
+    manifest, digest = J.journal_manifest(db, j["id"], rev["id"])
     assert manifest["revision"] == {"content_sha256": "h1"}
     assert manifest["artifacts"] == []
     assert [s["url"] for s in manifest["snapshots"]] == [url]
@@ -172,8 +174,19 @@ def test_the_manifest_binds_the_revision_its_figures_and_its_saved_sources(db, t
                "VALUES (?, 'figure', 'm/figures/a.svg', 'abc', ?)", (j["id"], J.now_utc()))
     db.execute("UPDATE snapshot SET fetched_at = '2030-01-01T00:00:00+00:00'")
     db.commit()
-    _, after = J.journal_manifest(db, j["id"], rev["id"], text)
+    _, after = J.journal_manifest(db, j["id"], rev["id"])
     assert after != digest, "a new figure or a newer saved copy is a different manifest"
+
+    # A version whose cited pages were never recorded has no computable
+    # manifest; both callers turn that into "approve again" rather than
+    # comparing a list with no sources in it. Approving it WITH the text is
+    # how it gains the list (`journal approve SLUG publish` reads the file).
+    bare = J.record_revision(db, j["id"], "c2", "h2", "m/index.md")
+    with pytest.raises(J.ManifestError):
+        J.journal_manifest(db, j["id"], bare["id"])
+    J.approve(db, j["id"], "publish", revision_id=bare["id"], article_text=text)
+    assert J.journal_manifest(db, j["id"], bare["id"])[0]["snapshots"][0]["url"] == url
+    assert J.human_approvals(db, j["id"], "publish")[-1]["manifest_sha256"]
 
 
 # ---- the whole walk ---------------------------------------------------------

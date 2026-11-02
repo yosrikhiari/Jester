@@ -152,6 +152,30 @@ def test_retract_records_a_reason_and_needs_one(run):
     assert "retracted: the numbers were wrong" in run("show", "withdrawn")
 
 
+def test_a_retracted_journal_says_so_in_the_list_and_cannot_be_approved(run):
+    """Minor 7: a retracted article is not a finished one -- it was published
+    and taken back. `list` called it `done`, and `approve publish` still
+    recorded a fresh approval on it, which reads as a step towards shipping a
+    page that is deliberately off the site."""
+    run("new", "Withdrawn", "--kind", "note", "--question", "q")
+    db = J.open_journal(run.db)
+    j = J.get(db, "withdrawn")
+    db.execute("UPDATE journal SET state='published' WHERE id=?", (j["id"],))
+    db.commit()
+    db.close()
+    run("retract", "withdrawn", "--reason", "the numbers were wrong")
+
+    out = run("list")
+    assert "retracted: the numbers were wrong" in out
+    assert "done" not in out, "a retracted article is not a finished one"
+
+    refused = run("approve", "withdrawn", "publish", ok=False)
+    assert "retracted" in refused and "the numbers were wrong" in refused
+    db = J.open_journal(run.db)
+    assert J.human_approvals(db, j["id"], "publish") == []
+    db.close()
+
+
 def test_measure_records_numbers_and_opens_the_measured_gate(run):
     from datetime import datetime, timedelta, timezone
 

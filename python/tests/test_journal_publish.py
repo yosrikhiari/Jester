@@ -90,7 +90,8 @@ def setup(tmp_path):
     made = lab.figure(db, root, "rules", [r["id"] for r in rows][:1], "buyer", "buyers", caption="Buyers")
     assert made["path"].exists()
     sha = F.commit(F.ensure_repo(root), path, "rules: v1")
-    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"])
+    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"],
+                            article_text=ARTICLE)
     for kind in J.REQUIRED_CHECKS:
         J.record_check(db, rev["id"], kind, True)
     J.approve(db, j["id"], "review", revision_id=rev["id"])
@@ -199,7 +200,8 @@ def _listed_journal(setup, slug, body, approve=True):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
     sha = F.commit(F.ensure_repo(root), path, f"{slug}: v1")
-    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"])
+    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"],
+                            article_text=body)
     for kind in J.REQUIRED_CHECKS:
         J.record_check(db, rev["id"], kind, True)
     if approve:
@@ -350,6 +352,82 @@ def test_a_tampered_snapshot_is_stale_and_blocks_export(setup):
     assert SRC in problems and "stale" in problems.lower()
     with pytest.raises(J.JournalError):
         P.export(db, root, "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_the_published_gate_recomputes_the_manifest_and_refuses_a_moved_one(setup):
+    """V3-05 requires BOTH paths -- export and publish -- to recompute the
+    current manifest and refuse when it differs from the approval's, naming
+    the changed artifact. The gate checked only that a manifest was present,
+    so a figure registered after the approval still marked the article
+    published. The manifest is a fact about the database, so the gate can
+    compute it without the article text."""
+    db = setup["db"]
+    J.update_brief(db, "rules", canonical_url=P.canonical_url(BASE, "rules"))
+    db.execute("INSERT INTO artifact (journal_id, kind, path, sha256, created_at) "
+               "VALUES (?, 'figure', 'figures/later.svg', 'deadbeef', ?)",
+               (setup["jid"], J.now_utc()))
+    db.commit()
+
+    problems = " | ".join(js.blockers(db, J.get(db, "rules"), "published"))
+    assert "figures/later.svg" in problems, problems
+    assert "approve" in problems
+    with pytest.raises(js.MoveRefused, match="figures/later.svg"):
+        js.move(db, "rules", "published")
+    assert J.get(db, "rules")["state"] == "ready", "a refused move leaves the state alone"
+
+    # Nothing is wedged: an approval that matches again publishes normally.
+    J.approve(db, setup["jid"], "publish", revision_id=setup["rev"]["id"], article_text=ARTICLE)
+    assert js.move(db, "rules", "published")["state"] == "published"
+
+
+def test_the_published_gate_names_a_saved_copy_refetched_after_the_approval(setup):
+    """The other half of the manifest: a cited page whose copy was re-fetched
+    after the approval is a different page. The gate names it and refuses."""
+    from jester.journal import snapshots as S
+    from jester.journal.fixtures import FakeWeb
+
+    db, root = setup["db"], setup["root"]
+    J.update_brief(db, "rules", canonical_url=P.canonical_url(BASE, "rules"))
+    S.take(db, root, SRC, opener=FakeWeb({SRC: {"status": 200, "content_type": "text/html",
+                                                "body": "<p>the survey now says the opposite</p>"}}))
+    problems = " | ".join(js.blockers(db, J.get(db, "rules"), "published"))
+    assert SRC in problems and "approve" in problems
+    assert J.get(db, "rules")["state"] == "ready"
+
+
+def test_an_approval_taken_without_the_text_does_not_promise_a_manifest(setup):
+    """Minor 3: `approve` with no article text used to record a hash over an
+    empty snapshot list, so the approval looked complete and the export blamed
+    "the figures or saved copies changed" -- a message about a change that
+    never happened. An approval that could not see the text records no
+    manifest and is refused as unapproved; one whose version recorded its
+    cited pages at save time needs no text at all."""
+    db, root = setup["db"], setup["root"]
+    body = f"# Old\n\nThe [survey]({SRC}) says so.\n"
+    j = J.create_journal(db, "Old", kind="article", slug="old", path="old/index.md")
+    path = root / "old" / "index.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(body, encoding="utf-8")
+    sha = F.commit(F.ensure_repo(root), path, "old: v1")
+    # Saved the way an older build saved versions: bytes only, no text.
+    rev = J.record_revision(db, j["id"], sha, F.content_sha256(path), j["path"])
+    for kind in J.REQUIRED_CHECKS:
+        J.record_check(db, rev["id"], kind, True)
+    J.update_brief(db, "old", disclosure="written by hand",
+                   canonical_url=P.canonical_url(BASE, "old"))
+    db.execute("UPDATE journal SET state='ready' WHERE id=?", (j["id"],))
+    db.commit()
+    J.approve(db, j["id"], "publish", revision_id=rev["id"])
+
+    problems = " | ".join(P.ready_to_export(db, root, J.get(db, "old")))
+    assert "did not record" in problems, problems
+    assert "figures or saved copies changed" not in problems, problems
+
+    # A version that recorded its cited pages at save time: the same text-less
+    # approval matches, because the manifest is computed from the database.
+    J.approve(db, setup["jid"], "publish", revision_id=setup["rev"]["id"])
+    made = P.export(db, root, "rules", _site(setup["tmp"]), base_url=BASE)
+    assert made["url"] == f"{BASE}/journal/rules/"
 
 
 def test_the_published_gate_refuses_an_approval_that_named_no_figures(setup):

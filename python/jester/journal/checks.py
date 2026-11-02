@@ -474,8 +474,14 @@ def lint_title(title: str) -> List[str]:
 
 
 def lint_prose(md: str) -> Tuple[int, List[Dict], Dict]:
-    """(score, findings, stats) for the prose. Score >= FAIL_AT fails."""
-    blocks = [b for b in T.prose_blocks(md) if b.kind != "table"]
+    """(score, findings, stats) for the prose. Score >= FAIL_AT fails.
+
+    Headings are prose for the number check but not here: they are labels, and
+    counting their words would let a long heading dilute the per-100-word
+    em-dash and bold budgets (`text.LINT_KINDS`). The title is linted on its
+    own by `lint_title`.
+    """
+    blocks = [b for b in T.prose_blocks(md, kinds=T.LINT_KINDS) if b.kind != "table"]
     findings: List[Dict] = []
     score = 0
     n_words = 0

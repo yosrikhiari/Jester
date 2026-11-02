@@ -20,7 +20,14 @@ import unicodedata
 from dataclasses import dataclass
 from typing import List, Optional
 
+#: Every kind of prose. A number in any of these is a claim a reader will
+#: check, headings included (they are rendered as `<h2>`).
 PROSE_KINDS = frozenset({"heading", "paragraph", "list", "quote", "table"})
+#: The kinds the lint's per-100-word budgets are measured over. A heading is
+#: prose for the number check but a label for the lint: its words are not
+#: sentences, so counting them in the denominator would let a long heading buy
+#: room for extra em dashes and bold.
+LINT_KINDS = PROSE_KINDS - {"heading"}
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
@@ -150,8 +157,8 @@ def mask(text: str, inline_code: bool = True) -> str:
     return "".join(out)
 
 
-def prose_blocks(md: str) -> List[Block]:
-    return [b for b in blocks(md) if b.kind in PROSE_KINDS]
+def prose_blocks(md: str, kinds: frozenset = PROSE_KINDS) -> List[Block]:
+    return [b for b in blocks(md) if b.kind in kinds]
 
 
 def title_of(md: str) -> str:

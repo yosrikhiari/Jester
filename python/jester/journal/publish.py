@@ -63,24 +63,6 @@ def _git(cwd: Path, *args: str) -> str:
 
 # ---- preconditions ----------------------------------------------------------------
 
-def _changed_since(db: sqlite3.Connection, j: sqlite3.Row, md: str,
-                   approval: sqlite3.Row) -> str:
-    """The figures and saved copies that moved after the approval was given.
-
-    The manifest tells us THAT the set changed; this names what to look at.
-    A row recorded before the approval is covered by it; a later one is the
-    thing to re-approve.
-    """
-    names = [row["path"] for row in db.execute(
-        "SELECT path FROM artifact WHERE journal_id = ? AND created_at >= ? ORDER BY id",
-        (j["id"], approval["at"])).fetchall()]
-    for url in sorted(_referenced(md)["sources"]):
-        snap = S.latest(db, url)
-        if snap is not None and snap["fetched_at"] >= approval["at"]:
-            names.append(f"the saved copy of {url}")
-    return "; ".join(dict.fromkeys(names)) or "the figures or saved copies changed"
-
-
 def ready_to_export(db: sqlite3.Connection, root: Path, j: sqlite3.Row) -> List[str]:
     """Why this article cannot be exported now. Empty = it can."""
     from jester.journal import files as F
@@ -124,18 +106,15 @@ def ready_to_export(db: sqlite3.Connection, root: Path, j: sqlite3.Row) -> List[
             out.append(f"your approval of publishing version {rev['n']} expired on "
                        f"{expiry[:10]}; approve it again "
                        f"(jester journal approve {j['slug']} publish)")
-        elif md:
+        else:
             # The approval covers a revision AND the figures and saved copies
-            # that existed when it was given (V3-05). Recompute, never trust:
-            # a figure redrawn after the approval is a different page.
-            _, current = J.journal_manifest(db, j["id"], rev["id"], md)
-            if not approval["manifest_sha256"]:
-                out.append("your approval did not record the figures and saved copies it "
-                           f"covered; approve publishing version {rev['n']} again")
-            elif current != approval["manifest_sha256"]:
-                out.append("the figures or saved copies changed after you approved publishing "
-                           f"version {rev['n']} ({_changed_since(db, j, md, approval)}); "
-                           "approve it again")
+            # that existed when it was given (V3-05). The file was proved to
+            # be this revision above, so the comparison is one recomputed
+            # manifest against the recorded one -- the same helper, and the
+            # same sentence, the `published` gate uses.
+            problem = J.manifest_problem(db, j, rev, approval)
+            if problem:
+                out.append(problem)
     if md:
         # A cited page whose copy is dead, missing or stale cannot back the
         # article any more. The page itself must not ship around it.
@@ -243,7 +222,7 @@ def evidence_html(db: sqlite3.Connection, j: sqlite3.Row, md: str) -> str:
         for url in sorted(refs["sources"]):
             snap = S.latest(db, url)
             when = snap["fetched_at"] if snap is not None else "not saved"
-            how = " (copy supplied by the author)" if snap is not None and snap["method"] == "manual" else ""
+            how = " (copy supplied by the author)" if snap is not None and snap["method"] == S.MANUAL else ""
             trouble = ""
             if snap is None or not S.is_ok(snap) or snap["stale_reason"]:
                 why = snap["stale_reason"] if snap is not None and snap["stale_reason"] else S.describe(snap)
