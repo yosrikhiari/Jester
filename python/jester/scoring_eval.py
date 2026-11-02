@@ -17,7 +17,13 @@ Each axis is reported as mean absolute error with its own denominator, and one
 row counts as compared when at least one axis is comparable.
 
 A malformed row (not an object, or no `human`/`model` mapping) is skipped and
-counted, so a report can say how much of the file it did not use.
+counted, so a report can say how much of the file it did not use. A row that
+has both mappings but no comparable axis (no shared key, or every shared value
+null or non-numeric) is counted as uncompared, so every read row lands in
+exactly one of the three buckets and the printed totals reconcile. A shared
+axis whose value on either side is not a number is counted as an unscored pair:
+a file of `"7"` strings reads as 30 rows, 0 compared, 0 skipped, 120 unscored
+pairs, not as silence.
 """
 import json
 from collections import defaultdict
@@ -80,7 +86,7 @@ def evaluate_agreement(rows, *, min_rows=DEFAULT_MIN) -> dict:
     sums = defaultdict(float)
     counts = defaultdict(int)
     seen = set()
-    n_compared = n_skipped = 0
+    n_compared = n_skipped = n_uncompared = n_unscored = 0
 
     for row in rows:
         if not isinstance(row, dict):
@@ -97,11 +103,15 @@ def evaluate_agreement(rows, *, min_rows=DEFAULT_MIN) -> dict:
             seen.add(axis)
             h, m = _number(human_value), _number(model[axis])
             if h is None or m is None:
+                n_unscored += 1
                 continue
             sums[axis] += abs(h - m)
             counts[axis] += 1
             compared = True
-        n_compared += compared
+        if compared:
+            n_compared += 1
+        else:
+            n_uncompared += 1
 
     axes = {
         axis: {"mae": sums[axis] / counts[axis] if counts[axis] else None,
@@ -114,6 +124,8 @@ def evaluate_agreement(rows, *, min_rows=DEFAULT_MIN) -> dict:
         "n_rows": len(rows),
         "n_compared": n_compared,
         "n_skipped": n_skipped,
+        "n_uncompared": n_uncompared,
+        "n_unscored": n_unscored,
         "min_rows": required,
         "measurable": n_compared >= required,
     }
@@ -127,8 +139,11 @@ def format_report(report, *, labels_path) -> str:
     lines = [
         f"scoring agreement ({labels_path})",
         f"  rows = {report['n_rows']} read, {report['n_compared']} compared, "
-        f"{report['n_skipped']} skipped",
+        f"{report['n_skipped']} skipped, {report['n_uncompared']} uncompared",
     ]
+    if report["n_unscored"]:
+        lines.append(f"  unscored = {report['n_unscored']} shared axis pair(s) "
+                     f"with a null or non-numeric score")
     if not report["axes"]:
         lines.append("  no axis appears in both the human and the model scores")
     for axis, stats in report["axes"].items():

@@ -10,7 +10,7 @@ from argparse import Namespace
 import pytest
 
 from jester.cli_review import cmd_eval_agreement
-from jester.scoring_eval import evaluate_agreement, format_report
+from jester.scoring_eval import evaluate_agreement, format_report, load_rows
 
 AXES = ("overall", "demand", "feasibility", "competition")
 HUMAN = {"overall": 7.0, "demand": 6.0, "feasibility": 8.0, "competition": 5.0}
@@ -79,6 +79,84 @@ def test_the_report_prints_each_axis_with_its_denominator():
     for axis in AXES:
         assert f"{axis}: MAE" in text
     assert "(1 pairs)" in text
+
+
+# ---- every read row lands in exactly one bucket -------------------------------
+
+def test_every_read_row_is_compared_skipped_or_uncompared(tmp_path):
+    # Five rows read: one comparable, one with no shared axis, one whose only
+    # shared value is null on both sides, one with no mapping at all, and one
+    # broken line. Before the fix the middle two were in no bucket, so the
+    # printed totals did not add up (5 read / 1 compared / 2 skipped).
+    path = tmp_path / "agreement.jsonl"
+    path.write_text("\n".join([
+        json.dumps(_row(1)),                                    # comparable
+        json.dumps({"idea_id": 2, "human": {"overall": 7.0},
+                    "model": {"demand": 6.0}}),                 # no shared axis
+        json.dumps({"idea_id": 3, "human": {"overall": None},
+                    "model": {"overall": None}}),               # null only
+        json.dumps({"idea_id": 4}),                             # no mapping
+        '{"idea_id": 5, "human": {"overall": 7.0',              # broken JSON
+    ]) + "\n", encoding="utf-8")
+
+    report = evaluate_agreement(load_rows(path))
+
+    assert (report["n_rows"], report["n_compared"], report["n_skipped"],
+            report["n_uncompared"]) == (5, 1, 2, 2)
+    assert report["n_rows"] == (report["n_compared"] + report["n_skipped"]
+                                + report["n_uncompared"]), \
+        "the printed totals must reconcile"
+    text = format_report(report, labels_path=path)
+    assert "5 read, 1 compared, 2 skipped, 2 uncompared" in text
+
+
+def test_a_file_of_string_scores_is_counted_as_unscored_not_compared():
+    # A hand-written file of "7" strings: 30 rows read, nothing compared, and
+    # the report must say why rather than stay silent. Strings are not coerced.
+    rows = [{"idea_id": i, "human": {axis: "7" for axis in AXES},
+             "model": {axis: "6" for axis in AXES}} for i in range(30)]
+
+    report = evaluate_agreement(rows)
+
+    assert (report["n_rows"], report["n_compared"], report["n_skipped"],
+            report["n_uncompared"]) == (30, 0, 0, 30)
+    assert report["n_unscored"] == 30 * len(AXES)
+    for axis in AXES:
+        assert report["axes"][axis]["mae"] is None
+        assert report["axes"][axis]["n"] == 0
+    text = format_report(report, labels_path="a.jsonl")
+    assert "unscored = 120 shared axis pair(s)" in text
+    assert "MAE = n/a (0 pairs)" in text
+
+
+# ---- a broken line costs one row, not the file --------------------------------
+
+def test_one_valid_line_and_one_broken_line_through_the_cli(tmp_path, capsys):
+    path = tmp_path / "agreement.jsonl"
+    path.write_text(json.dumps(_row(1)) + "\n" + '{"idea_id": 2, "human": {\n',
+                    encoding="utf-8")
+
+    res = cmd_eval_agreement(_ns(path, minimum=1))
+
+    out = capsys.readouterr().out
+    assert (res["n_rows"], res["n_compared"], res["n_skipped"],
+            res["n_uncompared"]) == (2, 1, 1, 0)
+    assert res["axes"]["overall"]["mae"] == pytest.approx(0.5)
+    assert "2 read, 1 compared, 1 skipped, 0 uncompared" in out
+    assert "measurable: 1 compared of 1 required" in out
+
+
+def test_the_default_labels_path_is_used_when_no_flag_is_given(
+        tmp_path, capsys, monkeypatch):
+    path = _write(tmp_path / "agreement.jsonl", [_row(1), _row(2)])
+    monkeypatch.setattr("jester.cli_review.DEFAULT_AGREEMENT_PATH", path)
+
+    res = cmd_eval_agreement(Namespace(min=2))     # no `labels` attribute
+
+    out = capsys.readouterr().out
+    assert str(path) in out
+    assert res["n_compared"] == 2 and res["measurable"] is True
+    assert "measurable: 2 compared of 2 required" in out
 
 
 # ---- the CLI: measurable, not yet measurable, and nothing invented -----------

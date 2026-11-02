@@ -332,8 +332,13 @@ def gate_failures(report, *, min_f1=0.70, max_fabrication=0.05,
     out = []
     kappa = report.get("kappa")
     if kappa is not None and kappa < min_kappa:
+        # A hand-built report can carry κ without the count it was computed
+        # on; printing 0 there would state a denominator the report lacks.
+        doubled = report.get("double_labelled")
+        behind = (f"{doubled} double-labelled" if doubled is not None
+                  else "denominator unavailable")
         out.append(f"kappa {kappa:.3f} is below the {min_kappa:.2f} floor "
-                   f"({report.get('double_labelled', 0)} double-labelled)")
+                   f"({behind})")
     f1 = report.get("f1")
     if f1 is None:
         out.append("F1 is unavailable: the label set has no supported predictions "

@@ -312,6 +312,16 @@ def test_single_labelled_labels_raise_no_kappa_failure():
     assert not any("kappa" in f for f in gate_failures(report))
 
 
+def test_a_kappa_message_without_a_denominator_says_unavailable():
+    # A hand-built report can carry κ without the denominator it came from.
+    # Printing 0 there would assert a count the report does not have.
+    failures = gate_failures({"kappa": 0.0})
+
+    assert failures[0] == ("kappa 0.000 is below the 0.60 floor "
+                           "(denominator unavailable)")
+    assert "(0 double-labelled)" not in " ".join(failures)
+
+
 # ---- fabrication: an assertion the comment does not support is counted ---------
 
 def test_fabrication_counts_unmatched_assertions():
