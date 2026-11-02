@@ -195,7 +195,9 @@ def test_a_groq_role_still_sends_the_same_request(wire):
     req = wire[0]
     assert req["url"] == "https://api.groq.com/openai/v1/chat/completions"
     assert req["headers"]["Authorization"] == "Bearer test-key"
-    assert req["timeout"] == 60.0
+    # The first attempt gets what is left of the whole-call budget, which a
+    # fine-grained clock puts a hair under the configured 60 seconds.
+    assert req["timeout"] == pytest.approx(60.0, abs=0.05)
     assert set(req["body"]) == {"model", "messages", "temperature", "response_format"}
     assert req["body"]["temperature"] == 0.2
     assert req["body"]["response_format"] == {"type": "json_object"}
@@ -250,7 +252,7 @@ def test_every_openai_setting_is_sent(wire):
         (0.1, 0.9, 0.5, 3)
     assert body["reasoning_effort"] == "low"
     assert "response_format" not in body
-    assert wire[0]["timeout"] == 30
+    assert wire[0]["timeout"] == pytest.approx(30, abs=0.05)
     assert critic._client.max_retries == 1
 
 

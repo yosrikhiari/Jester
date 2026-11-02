@@ -282,7 +282,7 @@ def test_pruning_takes_the_manifest_with_the_backup(tmp_path):
         (d / f"jester-{stamp}.db.gz.manifest.json").write_bytes(b"{}")
 
     backup.prune_backups(str(d), keep=1, stem="jester")
-    assert [p.name for p in d.iterdir()] == [
+    assert sorted(p.name for p in d.iterdir()) == [
         "jester-20260102T000000Z.db.gz",
         "jester-20260102T000000Z.db.gz.manifest.json",
     ]
