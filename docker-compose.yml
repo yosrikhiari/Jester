@@ -121,11 +121,13 @@ services:
         condition: service_started
     healthcheck:
       # /metrics answers a stale or absent archive by design (schema gauges
-      # are omitted and jester_schema_ok is 0), and the entrypoint migrates a
-      # fresh volume before the console starts, so this passes read-only too.
+      # are omitted and jester_schema_ok is 0), and the entrypoint bootstraps
+      # the schema before the console starts, so this passes read-only too.
       # With --read-auth every GET needs the token, so send it when .env sets
-      # one and stay header-free when it does not.
-      test: ["CMD", "python", "-c", "import os,urllib.request; t=os.environ.get('JESTER_CONSOLE_TOKEN'); h={'Authorization': 'Bearer '+t} if t else {}; urllib.request.urlopen(urllib.request.Request('http://localhost:8619/metrics', headers=h), timeout=10)"]
+      # one and stay header-free when it does not. The probe's own timeout=3
+      # stays under this check's `timeout: 5s`, so a hung request surfaces as
+      # a probe timeout instead of being killed by Docker at the boundary.
+      test: ["CMD", "python", "-c", "import os,urllib.request; t=os.environ.get('JESTER_CONSOLE_TOKEN'); h={'Authorization': 'Bearer '+t} if t else {}; urllib.request.urlopen(urllib.request.Request('http://localhost:8619/metrics', headers=h), timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 10

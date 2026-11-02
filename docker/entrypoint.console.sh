@@ -33,25 +33,44 @@ fi
 # the console starts. This is the container's own archive setup, not an HTTP
 # write path -- the server still refuses writes, including /api/migrate.
 #
-# The archive is whatever the console was told via --db VALUE or --db=VALUE;
-# the image CMD passes /app/data/jester-docker.db, which is also the fallback.
-db=/app/data/jester-docker.db
-previous=
+# The bootstrap is `open_db`, the documented schema path (go/cmd/contractcheck
+# documents the same call): it creates and reconciles the schema and is
+# idempotent. Deliberately NOT `jester migrate`: that command refuses while any
+# run row says status='running' (the R31 guard), so one stale row left by a
+# crashed run would make the viewer exit 1 and look like a missing schema.
+#
+# The archive is whatever the console was told via --db VALUE or --db=VALUE,
+# last one winning. An empty or valueless --db falls back to $JESTER_DB and
+# then the image CMD's /app/data/jester-docker.db, because an empty path is not
+# a path and must never be handed to open_db.
+fallback_db=${JESTER_DB:-/app/data/jester-docker.db}
+db=
+want_db=
 for arg in "$@"; do
+    if [ -n "$want_db" ]; then
+        want_db=
+        case $arg in
+            -*) ;;              # a flag is not a path; keep the fallback
+            *) db=$arg ;;
+        esac
+        continue
+    fi
     case $arg in
+        --db) want_db=1 ;;
         --db=*) db=${arg#--db=} ;;
     esac
-    if [ "$previous" = "--db" ]; then
-        db=$arg
-    fi
-    previous=$arg
 done
+db=${db:-$fallback_db}
 
 if [ -z "${JESTER_CONSOLE_TOKEN:-}" ]; then
-    echo "console-entrypoint: JESTER_CONSOLE_TOKEN is unset; migrating $db, then starting the console read-only." >&2
+    if [ -z "$db" ]; then
+        echo "console-entrypoint: refusing to bootstrap an empty archive path." >&2
+        exit 1
+    fi
+    echo "console-entrypoint: JESTER_CONSOLE_TOKEN is unset; bootstrapping $db, then starting the console read-only." >&2
     # Fail loudly: with no schema every route answers 503, which /metrics hides.
-    if ! python -m jester.cli migrate --db "$db"; then
-        echo "console-entrypoint: migration of $db failed; refusing to start a console with no schema." >&2
+    if ! python -c 'import sys; from jester.store import open_db; open_db(sys.argv[1])' "$db"; then
+        echo "console-entrypoint: schema bootstrap of $db failed; refusing to start a console with no schema." >&2
         exit 1
     fi
     set -- "$@" --read-only
