@@ -101,6 +101,23 @@ JESTER_MOCK=1 python -m jester.cli run --db data/jester.db   # fixture corpus
 python -m jester.console --db data/jester.db --port 8619
 ```
 
+Reads are open, but **every write needs a token**. With no
+`JESTER_CONSOLE_TOKEN` the console refuses POSTs under `/api/*` with 401, so
+it is read-only by default. To drive it:
+
+```bash
+export JESTER_CONSOLE_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+python -m jester.console --db data/jester.db --port 8619
+```
+
+The console's own UI asks for the token once and keeps it for the tab;
+`curl` sends `Authorization: Bearer <token>`. For a view-only session,
+`--read-only` serves without writes and needs no token. The Docker stack
+passes `JESTER_CONSOLE_TOKEN` through from `.env`, so unset means its console
+is read-only too, and binding a non-loopback `--host` without a token or
+`--read-only` is refused at startup. Details:
+[console-security.md](console-security.md).
+
 Drop `JESTER_MOCK=1` once the Go worker is filling the queue with real
 fetches. `jester models` prints which provider and model each job resolved to
 before you spend a single call; `jester doctor` checks the archive and the

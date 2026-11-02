@@ -30,6 +30,11 @@ import pytest
 
 from jester.console import server as srv
 
+#: R4-03: writes always need a token, so every fixture that POSTs configures
+#: one. Tests that assert on the refusal live in test_console_auth.py.
+TOKEN = "server-test-token"
+AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
 
 # ---- the path-traversal guard ---------------------------------------------
 
@@ -66,10 +71,11 @@ def test_a_missing_file_is_not_a_crash():
 # ---- a real server on a real socket ----------------------------------------
 
 @pytest.fixture()
-def console(tmp_path, offline_config):
+def console(tmp_path, offline_config, monkeypatch):
     """The actual server, on an ephemeral port, torn down afterwards."""
     import argparse
 
+    monkeypatch.setenv(srv.TOKEN_ENV, TOKEN)
     args = argparse.Namespace(db=str(tmp_path / "j.db"), config=str(offline_config),
                               signals_db=str(tmp_path / "s.db"),
                               host="127.0.0.1", port=0)
@@ -162,7 +168,7 @@ def test_read_auth_accepts_the_token_and_still_serves_the_page(read_auth_console
 def test_a_cross_origin_post_is_refused(console):
     status, _headers, body = _get(
         console, "/api/migrate", method="POST", body=b"{}",
-        headers={"Origin": "http://evil.test"})
+        headers={"Origin": "http://evil.test", **AUTH})
     assert status == 403
     assert "cross-origin" in json.loads(body)["error"]
 
@@ -199,8 +205,8 @@ def test_a_refused_post_with_a_body_still_delivers_its_403(console):
 def test_a_same_origin_post_is_not_refused_for_its_origin(console):
     status, _headers, _body = _get(
         console, "/api/migrate", method="POST", body=b"{}",
-        headers={"Origin": console})
-    assert status != 403
+        headers={"Origin": console, **AUTH})
+    assert status == 200
 
 
 def test_an_asset_is_served_with_its_own_type(console):
@@ -233,6 +239,22 @@ def test_an_unknown_api_route_is_a_json_404(console):
     assert json.loads(body)["ok"] is False
 
 
+# ---- R4-03: /api/config reports the Qdrant URL by presence, not by value ----
+
+def test_config_never_serialises_the_qdrant_url(console, monkeypatch):
+    """A Qdrant URL carries credentials (http://user:pass@host:6333), and the
+    Config page only needs to know whether it is set."""
+    monkeypatch.setenv("JESTER_QDRANT_URL", "http://user:pass@host:6333")
+    status, _headers, body = _get(console, "/api/config")
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "user:pass" not in text
+    assert "host:6333" not in text
+    env = json.loads(text)["env"]
+    assert env["JESTER_QDRANT_URL_set"] is True
+    assert "JESTER_QDRANT_URL" not in env
+
+
 def test_head_returns_the_headers_without_the_body(console):
     status, headers, body = _get(console, "/", method="HEAD")
     assert status == 200
@@ -241,7 +263,8 @@ def test_head_returns_the_headers_without_the_body(console):
 
 
 def test_a_malformed_post_body_is_reported_as_such(console):
-    status, _, body = _get(console, "/api/run", method="POST", body=b"{not json")
+    status, _, body = _get(console, "/api/run", method="POST", body=b"{not json",
+                           headers=AUTH)
     assert status == 400
     assert "bad JSON body" in json.loads(body)["error"]
 
@@ -249,7 +272,8 @@ def test_a_malformed_post_body_is_reported_as_such(console):
 def test_a_post_body_that_is_not_an_object_is_refused(console):
     """`_read_json` promises a dict. A bare list would otherwise reach the
     route and fail later with an AttributeError about `.get`."""
-    status, _, body = _get(console, "/api/run", method="POST", body=b"[1, 2, 3]")
+    status, _, body = _get(console, "/api/run", method="POST", body=b"[1, 2, 3]",
+                           headers=AUTH)
     assert status == 400
     assert "bad JSON body" in json.loads(body)["error"]
 
@@ -284,7 +308,8 @@ def test_a_traversal_attempt_over_real_http_gets_nothing(console):
 
 def test_an_oversized_body_is_refused_with_413_before_parsing(console):
     body = b"x" * (srv.MAX_BODY_BYTES + 1)
-    status, _headers, payload = _get(console, "/api/run", method="POST", body=body)
+    status, _headers, payload = _get(console, "/api/run", method="POST", body=body,
+                                     headers=AUTH)
     assert status == 413
     assert "too large" in json.loads(payload)["error"].lower()
 
@@ -359,7 +384,8 @@ def test_an_oversized_body_also_says_the_connection_will_close(console):
     """Fix round 1, minor: the 413 path set close_connection but never said so
     on the wire, so an HTTP/1.1 client could still believe it was reusable."""
     body = b"x" * (srv.MAX_BODY_BYTES + 1)
-    status, headers, _payload = _get(console, "/api/run", method="POST", body=body)
+    status, headers, _payload = _get(console, "/api/run", method="POST", body=body,
+                                     headers=AUTH)
     assert status == 413
     assert (headers.get("Connection") or "").lower() == "close", dict(headers)
 
@@ -373,6 +399,7 @@ def test_a_chunked_post_is_refused_with_411(console):
         sock.sendall(
             b"POST /api/migrate HTTP/1.1\r\n"
             b"Host: " + host.encode() + b"\r\n"
+            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
             b"Transfer-Encoding: chunked\r\n"
             b"Content-Type: application/json\r\n\r\n"
             b"2\r\n{}\r\n0\r\n\r\n")
@@ -394,6 +421,7 @@ def test_a_slow_body_hits_the_request_timeout(console, monkeypatch):
         sock.sendall(
             b"POST /api/migrate HTTP/1.1\r\n"
             b"Host: " + host.encode() + b"\r\n"
+            b"Authorization: Bearer " + TOKEN.encode() + b"\r\n"
             b"Content-Type: application/json\r\n"
             b"Content-Length: 100\r\n\r\n"
             b"{"
@@ -452,9 +480,11 @@ def test_an_allowed_hosts_list_with_localhost_does_not_warn(monkeypatch, capsys)
 
 def test_serve_binds_what_it_was_told_and_says_where(capsys, tmp_path, monkeypatch):
     """serve() is three lines and one of them is the only thing that tells an
-    operator which address to open."""
+    operator which address to open. A non-loopback bind needs a token now
+    (R4-03), so the test configures one."""
     import argparse
 
+    monkeypatch.setenv(srv.TOKEN_ENV, TOKEN)
     bound = {}
 
     class _FakeServer:
@@ -475,6 +505,55 @@ def test_serve_binds_what_it_was_told_and_says_where(capsys, tmp_path, monkeypat
     assert bound["served"] is True
     assert srv.Handler.args is args, "the handler reads its config off the class"
     assert "9999" in capsys.readouterr().out
+
+
+# ---- R4-03: a non-loopback bind needs a token -------------------------------
+
+def _args(host, **kw):
+    import argparse
+
+    return argparse.Namespace(db="j.db", config="cfg", host=host, port=8619, **kw)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "[::1]"])
+def test_loopback_binds_need_no_token(monkeypatch, host):
+    monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
+    assert srv._bind_refusal(_args(host)) is None
+
+
+def test_a_network_bind_with_no_token_is_refused(monkeypatch):
+    """Binding every interface used to only print a warning, so the console
+    became an unauthenticated control plane for anyone on the LAN."""
+    monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
+    reason = srv._bind_refusal(_args("0.0.0.0"))
+    assert reason and srv.TOKEN_ENV in reason and "--read-only" in reason
+
+
+def test_a_network_bind_with_a_token_is_allowed(monkeypatch):
+    monkeypatch.setenv(srv.TOKEN_ENV, "s3cret")
+    assert srv._bind_refusal(_args("0.0.0.0")) is None
+
+
+def test_a_network_bind_read_only_is_allowed(monkeypatch):
+    monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
+    assert srv._bind_refusal(_args("0.0.0.0", read_only=True)) is None
+
+
+def test_serve_exits_nonzero_instead_of_binding_a_network_address(
+        monkeypatch, capsys):
+    """The refusal must happen before the socket exists: a warning followed by
+    a live listener is the defect."""
+    monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
+
+    def must_not_bind(address, handler):
+        raise AssertionError(f"serve bound {address} despite the refusal")
+
+    monkeypatch.setattr(srv, "ThreadingHTTPServer", must_not_bind)
+    with pytest.raises(SystemExit) as exc:
+        srv.serve(_args("0.0.0.0"))
+    assert exc.value.code != 0
+    err = capsys.readouterr().err
+    assert srv.TOKEN_ENV in err and "--read-only" in err
 
 
 def test_main_defaults_and_flags_reach_serve(monkeypatch):
@@ -559,10 +638,11 @@ def test_metrics_counts_quota_stopped_runs(console, tmp_path):
 
 
 @pytest.fixture()
-def stale_console(tmp_path, offline_config):
+def stale_console(tmp_path, offline_config, monkeypatch):
     """A real server pointed at an archive that predates the schema."""
     import argparse
 
+    monkeypatch.setenv(srv.TOKEN_ENV, TOKEN)
     db = tmp_path / "stale.db"
     conn = sqlite3.connect(db)
     conn.executescript("CREATE TABLE runs (id INTEGER PRIMARY KEY, run_id TEXT);")
@@ -602,6 +682,7 @@ def test_a_stale_archive_still_serves_the_shell_and_metrics(stale_console):
 
 
 def test_the_migrate_route_is_reachable_through_the_preflight(stale_console):
-    status, _, body = _get(stale_console, "/api/migrate", method="POST", body=b"{}")
+    status, _, body = _get(stale_console, "/api/migrate", method="POST", body=b"{}",
+                           headers=AUTH)
     assert status == 200 and json.loads(body)["ok"] is True
     assert _get(stale_console, "/api/config")[0] == 200

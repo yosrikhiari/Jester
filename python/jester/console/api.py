@@ -56,7 +56,7 @@ from jester.config import (
     save_models,
     save_thresholds,
 )
-from jester.export import default_export_dir, export_csv
+from jester.export import export_csv, resolve_export_dir
 from jester.worker import go_binary, ingest as worker_ingest
 from jester import schedule as _schedule
 from jester.fetchers.cloak import load_scraper_config
@@ -1632,7 +1632,10 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
             "secrets_set": secrets_set,
             "sources": [s.to_dict() for s in load_sources(self._sources_path)],
             "env": {
-                "JESTER_QDRANT_URL": os.environ.get("JESTER_QDRANT_URL", ""),
+                # Presence, never the value: a Qdrant URL carries credentials
+                # (http://user:pass@host:6333), and the Config page only needs
+                # to say whether vectors are server-backed.
+                "JESTER_QDRANT_URL_set": bool(os.environ.get("JESTER_QDRANT_URL")),
                 "JESTER_ORIGIN": os.environ.get("JESTER_ORIGIN", "manual"),
                 "JESTER_NOTIFY_CMD_set": bool(os.environ.get("JESTER_NOTIFY_CMD")),
             },
@@ -2369,9 +2372,14 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         return {"ok": res["ok"], "detail": res["detail"]}
 
     def export(self, out_dir=None):
-        """CSV dump of the archive, split by content type and origin."""
+        """CSV dump of the archive, split by content type and origin.
+
+        `out_dir` is contained by `resolve_export_dir`: an ExportPathError
+        (a ValueError) propagates so the server can answer 400, because a
+        target outside the exports root is a rejected request, not a fault.
+        """
+        target = resolve_export_dir(out_dir, self.db_path)
         try:
-            target = out_dir or default_export_dir(self.db_path)
             manifest = export_csv(self.db, target)
         except OSError as exc:
             return {"ok": False, "error": str(exc)}

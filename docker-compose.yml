@@ -81,6 +81,10 @@ services:
       - ./docker/config/thresholds.yaml:/app/config/thresholds.yaml:ro
     environment:
       JESTER_MOCK: "1"
+      # Writes need a token: with none configured the console refuses every
+      # mutating POST, so this stack is read-only unless .env sets one. The
+      # empty default is deliberate — no secret ships in the repo.
+      JESTER_CONSOLE_TOKEN: ${JESTER_CONSOLE_TOKEN:-}
       JESTER_QDRANT_URL: http://qdrant:6333
       # Service names, not 127.0.0.1. The repo's config/scraper.yaml is
       # bind-mounted in here and says 127.0.0.1:9222, which is correct for a

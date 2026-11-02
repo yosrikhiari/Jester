@@ -662,6 +662,37 @@ def default_export_dir(db_path: str) -> str:
     return os.path.join(os.path.dirname(base), "exports")
 
 
+class ExportPathError(ValueError):
+    """A requested export directory that escapes the exports root.
+
+    ValueError so a caller that only knows "the request was wrong" still
+    catches it; the console maps it to 400 rather than 500.
+    """
+
+
+def exports_root(db_path: str) -> Path:
+    """Where exports may be written: ``JESTER_EXPORTS_DIR``, else beside the db."""
+    configured = os.environ.get("JESTER_EXPORTS_DIR", "").strip()
+    return Path(configured or default_export_dir(db_path)).resolve()
+
+
+def resolve_export_dir(out_dir, db_path) -> Path:
+    """The export target, contained inside the exports root.
+
+    Both sides go through ``Path.resolve()`` before the comparison, so a
+    symlink that points out of the root is caught the same way as ``..`` and
+    an absolute path elsewhere: the resolved target is what the writes would
+    land on, and that is what has to be inside.
+    """
+    root = exports_root(db_path)
+    target = Path(out_dir).expanduser().resolve() if out_dir else root
+    if not target.is_relative_to(root):
+        raise ExportPathError(
+            f"export directory {str(out_dir)!r} resolves to {target}, which is "
+            f"outside the exports root {root}")
+    return target
+
+
 def prune_exports(out_dir, ttl_days: int = 30, now=None) -> int:
     """§14: drop export directories whose manifest is past the TTL.
 

@@ -253,7 +253,9 @@ def test_manifest_records_what_was_written_and_the_retention_caveat(db, tmp_path
 def test_console_export_action(tmp_path):
     api = ConsoleAPI(db_path=str(tmp_path / "c.db"), config_dir=str(REPO_CONFIG))
     api.seed_mock()
-    res = api.export(str(tmp_path / "out"))
+    # Inside the exports root (beside the db): the console refuses a target
+    # outside it (R4-03).
+    res = api.export(str(tmp_path / "exports" / "out"))
     assert res["ok"] is True
     assert res["counts"]["comments"] >= 1
     assert Path(res["out_dir"], "comments", "reddit", "reddit-001.csv").exists()

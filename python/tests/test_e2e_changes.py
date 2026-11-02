@@ -355,7 +355,7 @@ def test_threshold_knob_console_to_pipeline_round_trip(worker_bin, e2e_home):
          "--config", e2e_home["config"], "--host", "127.0.0.1",
          "--port", str(port)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        env=_child_env(), cwd=str(REPO_ROOT),
+        env=_child_env(JESTER_CONSOLE_TOKEN="e2e-token"), cwd=str(REPO_ROOT),
     )
     try:
         _wait_http(base)
@@ -363,6 +363,7 @@ def test_threshold_knob_console_to_pipeline_round_trip(worker_bin, e2e_home):
         req = urllib.request.Request(base + "/api/thresholds", data=body,
                                      method="POST")
         req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Bearer e2e-token")
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read())
         assert payload["ok"] is True, payload

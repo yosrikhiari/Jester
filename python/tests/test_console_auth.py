@@ -1,8 +1,9 @@
-"""F-01: console write-guard — token auth + read-only POST rejection.
+"""F-01/R4-03: console write-guard — token auth + read-only POST rejection.
 
-When JESTER_CONSOLE_TOKEN is set, every mutating POST under /api/* must
-present it; when --read-only is on, every POST is refused regardless. GETs
-stay open so dashboards can poll without holding the secret.
+Every mutating POST under /api/* must present JESTER_CONSOLE_TOKEN, and a
+console with no token configured refuses every write (read-only until a
+token exists). When --read-only is on, every POST is refused regardless.
+GETs stay open so dashboards can poll without holding the secret.
 """
 import argparse
 import json
@@ -40,7 +41,7 @@ def guarded_console(tmp_path, offline_config, monkeypatch):
 
 @pytest.fixture()
 def open_console(tmp_path, offline_config, monkeypatch):
-    """Real server with NO token configured: the local default."""
+    """Real server with NO token configured: writes are refused, GETs open."""
     monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
     args = argparse.Namespace(db=str(tmp_path / "j.db"), config=str(offline_config),
                               signals_db=str(tmp_path / "s.db"),
@@ -142,11 +143,21 @@ def test_gets_stay_open_when_token_is_set(guarded_console):
     assert payload["ok"] is True
 
 
-def test_no_token_configured_means_open_writes(open_console):
-    """Local default is unchanged: without the env var, a POST with no
-    credential reaches the route (here: an empty thresholds patch, which the
-    tmp config accepts without changing anything)."""
+def test_no_token_configured_refuses_writes(open_console):
+    """R4-03: a console with no token cannot authenticate a write, so it must
+    not perform one. The default posture is read-only until a token exists,
+    and the refusal has to name both ways out."""
     status, payload = _post(open_console, "/api/thresholds",
                             body=json.dumps({"patch": {}}).encode())
+    assert status == 401
+    assert payload["ok"] is False
+    assert srv.TOKEN_ENV in payload["error"]
+    assert "--read-only" in payload["error"]
+
+
+def test_no_token_still_serves_reads(open_console):
+    """GETs stay open (unchanged): a dashboard polls without holding a
+    secret, and the write guard is the thing that closes the mutation path."""
+    status, payload = _get(open_console, "/api/config")
     assert status == 200
     assert payload["ok"] is True
