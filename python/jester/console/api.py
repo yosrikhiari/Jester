@@ -1087,18 +1087,18 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         return {"ok": True, "job": got}
 
     def jobs(self, limit: int = 10):
-        from jester.jobs import reap_stale_jobs, recent_jobs
+        """Recent jobs — a read, and nothing else.
 
-        # A daemon thread does not survive a restart; a row still saying
-        # "running" after one is a job nobody is working on.
-        #
-        # Reaping is maintenance, and a console visiting somebody else's live
-        # archive has no business doing maintenance on it: the jobs it would
-        # declare dead belong to a process it cannot see.
-        if not self.read_only:
-            reap_stale_jobs(self.db)
-        return {"ok": True, "jobs": recent_jobs(self.db, limit),
-                "reaped": not self.read_only}
+        This route is polled every few seconds, so it may not write. It used
+        to call `reap_stale_jobs` (unless --read-only), which opens with
+        `ensure_schema` — DDL — and commits an UPDATE: the exact per-poll
+        write-lock contention the read path exists to remove. Reaping is
+        maintenance and now lives in `jester.jobs.start_job`, the write path
+        that starts work.
+        """
+        from jester.jobs import recent_jobs
+
+        return {"ok": True, "jobs": recent_jobs(self.db, limit)}
 
     def cluster_run(self, threshold=None, min_size=None, min_nuggets=None,
                     limit=None, run_id="console-cluster"):

@@ -155,6 +155,20 @@ def _normalize_host(value: str) -> str:
     return value
 
 
+def _allowed_hosts_for(args) -> set:
+    """The Host names a console started with `args` answers to."""
+    raw = os.environ.get(ALLOWED_HOSTS_ENV, "").strip()
+    if raw:
+        return {_normalize_host(h) for h in raw.split(",") if h.strip()}
+    hosts = {_normalize_host(h) for h in DEFAULT_ALLOWED_HOSTS}
+    bound = _normalize_host(getattr(args, "host", "") or "")
+    if bound:
+        hosts.add(bound)
+        if bound == "::":
+            hosts.add("[::]")
+    return hosts
+
+
 def _allowed_hosts(handler) -> set:
     """The Host names this console answers to.
 
@@ -162,17 +176,33 @@ def _allowed_hosts(handler) -> set:
     operator who sets JESTER_ALLOWED_HOSTS replaces the list wholesale: the
     variable exists for the deliberate case (a reverse proxy on another name),
     and silently adding names to an explicit list would defeat it.
+
+    Because it replaces the list, a list without a loopback name breaks the
+    Docker healthcheck; `serve` warns about that at startup.
     """
-    raw = os.environ.get(ALLOWED_HOSTS_ENV, "").strip()
-    if raw:
-        return {_normalize_host(h) for h in raw.split(",") if h.strip()}
-    hosts = {_normalize_host(h) for h in DEFAULT_ALLOWED_HOSTS}
-    bound = _normalize_host(getattr(getattr(handler, "args", None), "host", "") or "")
-    if bound:
-        hosts.add(bound)
-        if bound == "::":
-            hosts.add("[::]")
-    return hosts
+    return _allowed_hosts_for(getattr(handler, "args", None))
+
+
+def _warn_if_healthcheck_host_is_missing(args) -> None:
+    """Say so when JESTER_ALLOWED_HOSTS drops every loopback name.
+
+    The compose healthcheck is `http://localhost:8619/api/doctor`. Overriding
+    the list is supported, but doing it without `localhost` turns that request
+    into a 403 and the container unhealthy, with no other symptom. A warning
+    in the startup log is the cheapest way to make that failure explain
+    itself. `.env.example` documents the same rule for operators.
+    """
+    if not os.environ.get(ALLOWED_HOSTS_ENV, "").strip():
+        return
+    loopback = {_normalize_host(h) for h in DEFAULT_ALLOWED_HOSTS}
+    if _allowed_hosts_for(args) & loopback:
+        return
+    print(f"jester console WARNING: {ALLOWED_HOSTS_ENV} replaces the default "
+          "host allow-list and names no loopback host (localhost, 127.0.0.1 "
+          "or [::1]); the Docker healthcheck requests "
+          "http://localhost:8619/api/doctor, will receive 403, and the "
+          "container will report unhealthy. Add localhost to the list.",
+          file=sys.stderr)
 
 
 def _host_allowed(handler) -> bool:
@@ -321,9 +351,30 @@ class _BodyTooLarge(ValueError):
     """A declared body above MAX_BODY_BYTES: answer 413, do not parse it."""
 
 
+class _LengthRequired(ValueError):
+    """A body framed by Transfer-Encoding: answer 411, do not parse it."""
+
+
 class Handler(BaseHTTPRequestHandler):
     args: argparse.Namespace = None  # injected by serve()
     server_version = "jester-console"
+
+    def setup(self):
+        """Bound the socket BEFORE the request line is read (V3-12).
+
+        `_guard` runs only after BaseHTTPRequestHandler has read the request
+        line and headers, so a client that connected and sent nothing held a
+        ThreadingHTTPServer thread forever -- one per socket, unauthenticated.
+        StreamRequestHandler.setup applies `self.timeout` at accept, and
+        BaseHTTPRequestHandler turns the resulting timeout into a closed
+        connection with no request parsed.
+
+        A class attribute would be the shorter spelling, but this reads
+        REQUEST_TIMEOUT at connection time so the module constant stays the one
+        knob (and a test can shorten it).
+        """
+        self.timeout = REQUEST_TIMEOUT
+        super().setup()
 
     def _send(self, body: bytes, content_type: str, code=200, extra=()):
         self._status = code
@@ -338,11 +389,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, payload, code=200):
+    def _json(self, payload, code=200, extra=()):
         body = json.dumps(payload, default=str).encode("utf-8")
         # The console reads live pipeline state; a cached /api/overview is a
         # stale console, which is worse than an extra request.
-        self._send(body, "application/json", code, extra=[("Cache-Control", "no-store")])
+        self._send(body, "application/json", code,
+                   extra=[("Cache-Control", "no-store"), *extra])
 
     def _discard_body(self):
         """Read what is left of a declared body before the socket closes.
@@ -377,9 +429,9 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.close_connection = True
 
-    def _refuse(self, payload, code):
+    def _refuse(self, payload, code, extra=()):
         """Answer a POST refused before its body was read, then drain."""
-        self._json(payload, code)
+        self._json(payload, code, extra=extra)
         self._discard_body()
 
     def _static(self, url_path: str) -> bool:
@@ -648,7 +700,17 @@ class Handler(BaseHTTPRequestHandler):
             # V3-12: refuse before parsing or buffering. The drain above is
             # bounded slightly higher than the cap so a body just over it is
             # consumed and the 413 is not lost to a reset on Windows.
-            self._refuse({"ok": False, "error": f"request body too large: {exc}"}, 413)
+            # Fix round 1: say "close" on the wire too, not only in the server.
+            self._refuse({"ok": False, "error": f"request body too large: {exc}"}, 413,
+                         extra=[("Connection", "close")])
+            self.close_connection = True
+            return
+        except _LengthRequired as exc:
+            # A chunked body cannot be framed here, and it cannot be left in
+            # the socket: the next keep-alive request would be parsed out of
+            # the chunk stream. Refuse unread, say close, close.
+            self._refuse({"ok": False, "error": f"length required: {exc}"}, 411,
+                         extra=[("Connection", "close")])
             self.close_connection = True
             return
         except TimeoutError:
@@ -785,6 +847,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "not found"}, 404)
 
     def _read_json(self) -> dict:
+        # Fix round 1: a Transfer-Encoding body has no Content-Length, and the
+        # old code returned {} without reading a byte. The POST then ran with
+        # defaults (a chunked /api/run started a run nobody described), and the
+        # unread chunk stream was parsed as the next keep-alive request.
+        # Refuse it instead: 411 tells the client to declare a length.
+        encoding = (self.headers.get("Transfer-Encoding") or "").strip()
+        if encoding:
+            raise _LengthRequired(
+                f"{encoding} bodies are not supported; send Content-Length")
         length = int(self.headers.get("Content-Length") or 0)
         if length < 0:
             length = 0
@@ -818,6 +889,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(args):
     Handler.args = args
+    _warn_if_healthcheck_host_is_missing(args)
     if (str(getattr(args, "host", "")) == "0.0.0.0"
             and not _console_token()
             and not bool(getattr(args, "read_only", False))):

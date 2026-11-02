@@ -2137,6 +2137,34 @@ JOURNAL_NOTE = (
 _NETWORK_FSTYPES = {"cifs", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "nfs"}
 
 
+def _posix_local_disk(target, mounts_path="/proc/mounts") -> bool:
+    """Whether `target` is on a local (non-network) mount, from a mount table.
+
+    The longest mount point that covers the path wins. When no line covers it
+    the filesystem cannot be identified, and the answer is False: the sentinel
+    "unknown" is not evidence of a local disk. A host with no mount table at
+    all (macOS has no /proc/mounts) is the same case.
+    """
+    mount_point, fstype, identified = "/", "unknown", False
+    try:
+        with open(mounts_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mnt = parts[1].replace("\\040", " ")
+                prefix = mnt.rstrip("/") or "/"
+                matches = mnt == "/" or target == mnt or target.startswith(prefix + "/")
+                if matches and len(mnt) >= len(mount_point):
+                    mount_point, fstype = mnt, parts[2].lower()
+                    identified = True
+    except OSError:
+        return False
+    if not identified:
+        return False
+    return not (fstype.startswith("nfs") or fstype in _NETWORK_FSTYPES)
+
+
 def _on_local_disk(path) -> bool:
     """Whether `path` lives on a local fixed disk.
 
@@ -2159,22 +2187,7 @@ def _on_local_disk(path) -> bool:
             return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 3
         except Exception:  # noqa: BLE001 - the note is optional
             return False
-    mount_point, fstype = "/", "unknown"
-    target = os.path.abspath(path)
-    try:
-        with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-                mnt = parts[1].replace("\\040", " ")
-                prefix = mnt.rstrip("/") or "/"
-                matches = mnt == "/" or target == mnt or target.startswith(prefix + "/")
-                if matches and len(mnt) >= len(mount_point):
-                    mount_point, fstype = mnt, parts[2].lower()
-    except OSError:
-        return False
-    return not (fstype.startswith("nfs") or fstype in _NETWORK_FSTYPES)
+    return _posix_local_disk(os.path.abspath(path))
 
 
 def journal_note(db) -> list:

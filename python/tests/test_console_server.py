@@ -302,6 +302,91 @@ def test_localhost_is_still_allowed_for_the_docker_healthcheck(console):
     assert json.loads(body)["ok"] is True
 
 
+def test_a_jobs_poll_writes_nothing_to_the_archive(console, tmp_path, offline_config,
+                                                  monkeypatch):
+    """Fix round 1, Important 2: /api/jobs is polled every few seconds, and it
+    used to call reap_stale_jobs — which ran ensure_schema (DDL) and committed
+    an UPDATE on every tick. The route the task exists to protect still wrote.
+    A GET must not CREATE, INSERT, UPDATE or DELETE anything."""
+    from jester.console.api import ConsoleAPI
+    from jester.store import open_db
+
+    db_path = tmp_path / "poll.db"
+    open_db(str(db_path)).close()  # base schema; `jobs` has never existed
+    statements = []
+
+    def tracked_api(args):
+        # Built in the request thread, as `_api` is in production: a sqlite
+        # connection may only be used in the thread that opened it.
+        api = ConsoleAPI(db_path=str(db_path), config_dir=str(offline_config))
+        api.db.set_trace_callback(statements.append)
+        return api
+
+    monkeypatch.setattr(srv, "_api", tracked_api)
+
+    status, _headers, body = _get(console, "/api/jobs")
+
+    assert status == 200
+    assert json.loads(body)["jobs"] == []
+    writes = [s for s in statements
+              if s.strip().upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE"))]
+    assert not writes, writes
+    db = open_db(str(db_path), migrate=False)
+    try:
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+        ).fetchone() is None, "the poll created the jobs table"
+    finally:
+        db.close()
+
+
+def test_an_idle_client_is_dropped_before_it_sends_a_request_line(console, monkeypatch):
+    """Fix round 1, Important 3: the socket timeout used to live in `_guard`,
+    which BaseHTTPRequestHandler runs only after the request line and headers
+    are read. A client that connected and sent nothing held one
+    ThreadingHTTPServer thread until the process ended. The timeout has to be
+    applied at accept, not at dispatch."""
+    monkeypatch.setattr(srv, "REQUEST_TIMEOUT", 0.2)
+    host, port = console.removeprefix("http://").rsplit(":", 1)
+    started = time.time()
+    with socket.create_connection((host, int(port)), timeout=10) as sock:
+        sock.settimeout(5)
+        assert sock.recv(1024) == b"", "the idle connection was never closed"
+    assert time.time() - started < 4
+
+
+def test_an_oversized_body_also_says_the_connection_will_close(console):
+    """Fix round 1, minor: the 413 path set close_connection but never said so
+    on the wire, so an HTTP/1.1 client could still believe it was reusable."""
+    body = b"x" * (srv.MAX_BODY_BYTES + 1)
+    status, headers, _payload = _get(console, "/api/run", method="POST", body=body)
+    assert status == 413
+    assert (headers.get("Connection") or "").lower() == "close", dict(headers)
+
+
+def test_a_chunked_post_is_refused_with_411(console):
+    """Fix round 1, minor: a Transfer-Encoding body has no Content-Length, and
+    the old code returned {} without reading it — the POST ran with defaults
+    and the unread chunk stream poisoned the next keep-alive request."""
+    host, port = console.removeprefix("http://").rsplit(":", 1)
+    with socket.create_connection((host, int(port)), timeout=10) as sock:
+        sock.sendall(
+            b"POST /api/migrate HTTP/1.1\r\n"
+            b"Host: " + host.encode() + b"\r\n"
+            b"Transfer-Encoding: chunked\r\n"
+            b"Content-Type: application/json\r\n\r\n"
+            b"2\r\n{}\r\n0\r\n\r\n")
+        sock.settimeout(5)
+        raw = b""
+        while b"\r\n\r\n" not in raw:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            raw += chunk
+    assert b" 411 " in raw.split(b"\r\n", 1)[0], raw[:160]
+    assert b"connection: close" in raw.lower(), raw[:400]
+
+
 def test_a_slow_body_hits_the_request_timeout(console, monkeypatch):
     monkeypatch.setattr(srv, "REQUEST_TIMEOUT", 0.2)
     host, port = console.removeprefix("http://").rsplit(":", 1)
@@ -325,6 +410,45 @@ def test_a_slow_body_hits_the_request_timeout(console, monkeypatch):
 
 
 # ---- wiring ----------------------------------------------------------------
+
+class _StubServer:
+    """Accept the bind arguments and return, so serve() can be inspected."""
+
+    def __init__(self, address, handler):
+        self.address = address
+
+    def serve_forever(self):
+        pass
+
+
+def _serve_and_capture(monkeypatch, capsys, allowed_hosts):
+    import argparse
+
+    monkeypatch.setenv(srv.ALLOWED_HOSTS_ENV, allowed_hosts)
+    monkeypatch.setattr(srv, "ThreadingHTTPServer", _StubServer)
+    srv.serve(argparse.Namespace(db="j.db", config="cfg",
+                                 host="127.0.0.1", port=8619))
+    out, err = capsys.readouterr()
+    return out + err
+
+
+def test_an_allowed_hosts_list_without_loopback_warns_about_the_healthcheck(
+        monkeypatch, capsys):
+    """Fix round 1, Important 4: JESTER_ALLOWED_HOSTS replaces the defaults. An
+    operator who adds only a LAN name silently turns the Docker healthcheck
+    (http://localhost:8619/api/doctor) into a 403, so the container goes
+    unhealthy with nothing in the logs saying why."""
+    text = _serve_and_capture(monkeypatch, capsys, "jester.lan,192.168.1.9")
+    assert "WARNING" in text
+    assert "healthcheck" in text.lower()
+    assert srv.ALLOWED_HOSTS_ENV in text
+
+
+def test_an_allowed_hosts_list_with_localhost_does_not_warn(monkeypatch, capsys):
+    text = _serve_and_capture(monkeypatch, capsys, "jester.lan,localhost")
+    assert "WARNING" not in text
+    assert "healthcheck" not in text.lower()
+
 
 def test_serve_binds_what_it_was_told_and_says_where(capsys, tmp_path, monkeypatch):
     """serve() is three lines and one of them is the only thing that tells an

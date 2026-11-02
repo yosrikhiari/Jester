@@ -399,3 +399,60 @@ def test_doctor_does_not_advise_wal_when_the_archive_is_already_wal(tmp_path, mo
     db.execute("PRAGMA journal_mode=wal")
 
     assert cli.journal_note(db) == []
+
+
+def _mounts(tmp_path, text):
+    """Write a /proc/mounts-shaped table: device, mount point, fstype, opts."""
+    path = tmp_path / "proc-mounts"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_a_local_mount_covering_the_path_is_local(tmp_path):
+    import jester.cli as cli
+
+    mounts = _mounts(tmp_path, "/dev/sda2 / ext4 rw,relatime 0 0\n")
+    assert cli._posix_local_disk("/srv/jester/data/jester.db",
+                                 mounts_path=mounts) is True
+
+
+def test_a_network_mount_is_not_local(tmp_path):
+    """Advice on a network mount is how a WAL switch breaks sidecars."""
+    import jester.cli as cli
+
+    mounts = _mounts(
+        tmp_path,
+        "/dev/sda2 / ext4 rw 0 0\n"
+        "192.168.1.5:/export /mnt/nas nfs4 rw 0 0\n")
+    assert cli._posix_local_disk("/mnt/nas/jester/data/jester.db",
+                                 mounts_path=mounts) is False
+
+
+def test_an_unclassifiable_path_is_not_local(tmp_path):
+    """Fix round 1, minor: the docstring promises False when the filesystem
+    cannot be identified, but a mount table with no line covering the path
+    left `fstype` at its "unknown" sentinel and the function returned True —
+    advising a WAL switch on a mount nobody classified."""
+    import jester.cli as cli
+
+    mounts = _mounts(tmp_path, "proc /proc proc rw 0 0\nsysfs /sys sysfs rw 0 0\n")
+    assert cli._posix_local_disk("/srv/jester/data/jester.db",
+                                 mounts_path=mounts) is False
+
+
+def test_an_empty_mount_table_is_not_local(tmp_path):
+    import jester.cli as cli
+
+    mounts = _mounts(tmp_path, "")
+    assert cli._posix_local_disk("/srv/jester/data/jester.db",
+                                 mounts_path=mounts) is False
+
+
+def test_a_system_without_proc_mounts_is_not_local(tmp_path):
+    """macOS has no /proc/mounts. "Cannot be identified" is False, not a
+    guess — the same rule the docstring states."""
+    import jester.cli as cli
+
+    missing = str(tmp_path / "no-such-proc-mounts")
+    assert cli._posix_local_disk("/srv/jester/data/jester.db",
+                                 mounts_path=missing) is False

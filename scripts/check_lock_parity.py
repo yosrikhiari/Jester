@@ -10,12 +10,15 @@ versions that agree:
   by definition -- the two platforms may resolve anything);
 * every requirement must appear in the lock (a missing row means Linux never
   installs something Windows does);
-* an exact pin (``==``) must equal the locked version (a bumped pin on one
-  side only is the drift this check exists to catch).
+* every specifier must hold for the locked version, whatever its operator.
 
-Floors (``>=``) are reported as warnings when the lock is older than the
-floor: that is real drift, but the lock is Linux-generated and regenerating it
-is a deliberate act, so it must not fail an otherwise healthy tree.
+The last rule is the whole point. A floor (``>=``) newer than the lock means
+Windows installs something Linux does not -- real drift, and it fails. Every
+other operator (``==``, ``===``, ``!=``, ``<=``, ``<``, ``>``, ``~=`` and a
+wildcard ``==X.Y.*``) is evaluated the same way rather than ignored. When the
+files disagree, one side has to move: regenerate the lock on Linux, or lower
+the floor to the version the lock proves. Both are deliberate; a warning is
+not.
 
 Stdlib only. TOML is parsed with ``tomllib`` on 3.11+; older interpreters fall
 back to a small reader for the ``[[packages]]`` shape pip lock emits.
@@ -105,14 +108,66 @@ def _read_lock_fallback(path):  # pragma: no cover - exercised on 3.10 only
     return locked
 
 
+def _compatible_bounds(wanted):
+    """PEP 440 `~=`: (lower bound, exclusive upper prefix), or None if odd."""
+    parts = []
+    for piece in wanted.split("."):
+        digits = re.match(r"\d+", piece)
+        if digits is None:
+            return None
+        parts.append(int(digits.group()))
+    if len(parts) < 2:
+        return None
+    lower = tuple(parts)
+    if len(parts) == 2:
+        upper = (parts[0] + 1,)
+    else:
+        upper = (parts[0], parts[1] + 1)
+    return lower, upper
+
+
+def _violation(operator, wanted, version):
+    """None when `version` satisfies the specifier, else a short reason."""
+    key = version_key(version)
+    if operator in ("==", "===") and wanted.endswith(".*"):
+        prefix = version_key(wanted[:-2])
+        if key[: len(prefix)] != prefix:
+            return f"is not {wanted}"
+        return None
+    if operator == "===":
+        return None if version == wanted else f"is not exactly {wanted!r}"
+    if operator == "==":
+        return None if version == wanted else f"is not {wanted}"
+    if operator == ">=":
+        return None if key >= version_key(wanted) else f"is older than the required {wanted}"
+    if operator == ">":
+        return None if key > version_key(wanted) else f"is not newer than {wanted}"
+    if operator == "<=":
+        return None if key <= version_key(wanted) else f"is newer than the allowed {wanted}"
+    if operator == "<":
+        return None if key < version_key(wanted) else f"is not older than {wanted}"
+    if operator == "!=":
+        if version == wanted or key == version_key(wanted):
+            return f"is the excluded {wanted}"
+        return None
+    if operator == "~=":
+        bounds = _compatible_bounds(wanted)
+        if bounds is None:
+            return f"has an unusable ~= bound {wanted}"
+        lower, upper = bounds
+        if key < lower or key[: len(upper)] >= upper:
+            return f"is outside the ~= {wanted} range"
+        return None
+    return f"uses an operator this checker does not understand ({operator})"
+
+
 def check(requirements_path, lock_path):
-    """Return (errors, warnings). Empty errors means the files agree."""
+    """Return (errors, locked names). Empty errors means the files agree."""
     rows = read_requirements(requirements_path)
     locked = read_lock(lock_path)
-    errors, warnings, seen = [], [], set()
+    errors = []
     for name, specs, raw in rows:
         key = normalize(name)
-        seen.add(key)
         if key not in locked:
             errors.append(f"{name} is in requirements.txt but not pylock.toml")
             continue
@@ -123,15 +178,12 @@ def check(requirements_path, lock_path):
             continue
         version = locked[key]
         for operator, wanted in specs:
-            if operator in ("==", "===") and wanted != version:
+            reason = _violation(operator, wanted, version)
+            if reason:
                 errors.append(
                     f"{raw} does not match pylock.toml, which pins "
-                    f"{name} {version}")
-            elif operator == ">=" and version_key(version) < version_key(wanted):
-                warnings.append(
-                    f"{raw} asks for at least {wanted}, but pylock.toml pins "
-                    f"{version}; regenerate the lock on Linux")
-    return errors, warnings, sorted(locked)
+                    f"{name} {version} ({version} {reason})")
+    return errors, sorted(locked)
 
 
 def main(argv=None):
@@ -140,12 +192,10 @@ def main(argv=None):
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     args = parser.parse_args(argv)
     try:
-        errors, warnings, locked = check(args.requirements, args.lock)
+        errors, locked = check(args.requirements, args.lock)
     except (OSError, ValueError) as exc:
         print(f"lock parity: {exc}", file=sys.stderr)
         return 2
-    for warning in warnings:
-        print(f"warning: {warning}")
     if errors:
         for error in errors:
             print(f"lock parity: {error}", file=sys.stderr)

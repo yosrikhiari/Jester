@@ -164,6 +164,67 @@ def test_reading_jobs_does_not_create_the_table(tmp_path):
         db.close()
 
 
+def test_a_console_jobs_poll_does_not_reap(tmp_path, offline_config):
+    """Fix round 1, Important 2: the reap lived on the GET. `reap_stale_jobs`
+    opens with `ensure_schema` and commits an UPDATE, so every jobs poll was a
+    write — DDL included — against the archive the read path exists to leave
+    alone. A poll must report a stale row, not repair it."""
+    from jester.console.api import ConsoleAPI
+    from jester.jobs import ensure_schema
+
+    path = str(tmp_path / "poll.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('cluster','running', datetime('now','-300 minutes'))"
+    )
+    db.commit()
+    db.close()
+
+    api = ConsoleAPI(db_path=path, config_dir=str(offline_config))
+    statements = []
+    api.db.set_trace_callback(statements.append)
+    payload = api.jobs()
+
+    assert payload["jobs"][0]["status"] == "running", "a GET reaped a job"
+    writes = [s for s in statements
+              if s.strip().upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE"))]
+    assert not writes, writes
+
+
+def test_the_job_write_path_reaps_rows_left_by_a_dead_process(tmp_path):
+    """Fix round 1, Important 2: reaping is maintenance, so it moved to the
+    write path that starts work — `start_job`. A console that starts a job is
+    demonstrably alive, so any 'running' row older than the window belongs to
+    a process that is gone."""
+    from jester.jobs import ensure_schema
+
+    path = str(tmp_path / "w.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('stale','running', datetime('now','-300 minutes'))"
+    )
+    db.commit()
+    db.close()
+
+    res = start_job(path, "demo", lambda progress: {})
+    assert res["ok"] is True
+    _wait(path, res["job_id"])
+
+    db = open_db(path)
+    try:
+        stale = db.execute(
+            "SELECT status, error FROM jobs WHERE kind='stale'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert stale[0] == "error", stale[0]
+    assert "process exited" in stale[1]
+
+
 def test_a_job_gets_its_own_database_connection(tmp_path):
     """sqlite3 connections belong to the thread that opened them. The first
     async regroup died instantly with "SQLite objects created in a thread can

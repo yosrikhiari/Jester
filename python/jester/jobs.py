@@ -78,7 +78,15 @@ def start_job(db_path: str, kind: str, fn: Callable[[Callable[[str], None]], dic
             }
 
         db = open_db(db_path)
-        ensure_schema(db)
+        # Reaping is maintenance, so it belongs on a write path. This is the
+        # one: a process that is starting a job is demonstrably alive, so any
+        # 'running' row older than the window belongs to a process that is
+        # gone. `reap_stale_jobs` installs the table itself (ensure_schema),
+        # so this replaces the old explicit call.
+        #
+        # It used to run on the console's GET /api/jobs poll instead, which
+        # made every poll a DDL + UPDATE write against the archive.
+        reap_stale_jobs(db)
         cur = db.execute(
             "INSERT INTO jobs(kind, status, progress) VALUES(?, 'running', ?)",
             (kind, "starting"),
