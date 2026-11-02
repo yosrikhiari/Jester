@@ -174,6 +174,56 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     assert "14 task(s) would change" in out
 
 
+def test_each_task_is_applied_against_its_own_archive(host):
+    """R4-02: the launcher is what the scheduler runs, so the resolved database
+    has to reach the file. Before this every task -- signals and health
+    included -- was pointed at the nuggets archive."""
+    assert schedule.apply_desired()["ok"] is True
+
+    assert schedule.read_launcher("signals")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("health")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("leads-reddit")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+    assert schedule.read_launcher("backup")["db"] == "data/jester.db"
+
+
+def test_an_explicit_signals_archive_is_used_and_checked(host):
+    assert schedule.apply_desired(signals_db="data/collector.db")["ok"] is True
+    assert schedule.read_launcher("signals")["db"] == "data/collector.db"
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+
+
+def test_a_launcher_pointed_at_the_wrong_archive_is_reinstalled(host):
+    """The bug this closes: a host that already applied the declaration keeps a
+    launcher naming data/jester.db, and an apply that only compares argv and
+    the format marker reports it "unchanged" forever."""
+    assert schedule.apply_desired()["ok"] is True
+    schedule.write_launcher("data/jester.db", "config", None, command="signals")
+
+    actions = {r["task"]: r["action"] for r in schedule.apply_desired()["results"]}
+
+    assert actions["JesterNightlySignals"] == "installed"
+    assert actions["JesterNightlyBackup"] == "unchanged"
+    assert schedule.read_launcher("signals")["db"] == "data/signals-live.db"
+
+
+def test_a_dry_run_names_the_archive_each_task_would_write(host):
+    res = schedule.apply_desired(dry_run=True)
+    dbs = {r["task"]: r.get("db") for r in res["results"]}
+
+    assert dbs["JesterNightlySignals"] == "data/signals-live.db"
+    assert dbs["JesterNightlyHealth"] == "data/signals-live.db"
+    assert dbs["JesterNightlyLeadsReddit"] == "data/signals-live.db"
+    assert dbs["JesterNightly"] == "data/jester.db"
+    assert dbs["JesterNightlyBackup"] == "data/jester.db"
+
+
+def test_the_cli_passes_the_signals_archive_through(host, capsys):
+    cli.main(["schedule", "apply", "--dry-run", "--signals-db", "data/collector.db"])
+    out = capsys.readouterr().out
+    assert "data/collector.db" in out
+
+
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
     path = tmp_path / "week.yaml"
     path.write_text(

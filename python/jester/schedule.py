@@ -524,14 +524,21 @@ TASK_FOR_COMMAND = {
     "signals-load": "JesterClickHouseLoad",
 }
 
-#: What each schedulable command expands to on the command line, and whether it
-#: takes `--config`.
+#: What each schedulable command expands to on the command line, whether it
+#: takes `--config`, and which archive it writes.
 #:
 #: `signals` needed both: it is a sub-command (`signals run`, not `signals`),
 #: and it has no `--config` option, so the launcher's fixed
 #: `--db X --config Y` shape would have made it exit 2 on every tick. A table
 #: is cheaper than a branch in the launcher, and it is the place to look when
 #: the next command does not fit the mould either.
+#:
+#: `db` is the other half of "what this tick is": every task used to be handed
+#: the same `--db data/jester.db`, so the signals collector wrote its ledger
+#: into the nuggets archive the Go worker owns -- and the two `source_state`
+#: tables, same name and no columns in common, could not both exist there. A
+#: command either reads and writes the nuggets archive (`main`) or the
+#: collector's own file (`signals`), and this table says which.
 #: The hiring rule set, which three of the commands below score with.
 HIRING_RULES = "config/hiring_rules.yaml"
 
@@ -543,10 +550,10 @@ HIRING_RULES = "config/hiring_rules.yaml"
 SWEEP_CADENCE = {"weekly": "SUN", "at": "08:00"}
 
 COMMAND_SPEC = {
-    "cycle": {"argv": ("cycle",), "config": True},
-    "ingest": {"argv": ("ingest",), "config": True},
-    "treat": {"argv": ("treat",), "config": True},
-    "signals": {"argv": ("signals", "run"), "config": False},
+    "cycle": {"argv": ("cycle",), "config": True, "db": "main"},
+    "ingest": {"argv": ("ingest",), "config": True, "db": "main"},
+    "treat": {"argv": ("treat",), "config": True, "db": "main"},
+    "signals": {"argv": ("signals", "run"), "config": False, "db": "signals"},
     # Turn the Reddit hiring adverts the worker has ALREADY collected into
     # leads. Two pipelines existed and never met: the worker writes those rooms
     # into `nuggets`, which has no audience column, so adding the subreddits
@@ -561,6 +568,7 @@ COMMAND_SPEC = {
                  "--rules", HIRING_RULES,
                  "--archive", "data/jester.db"),
         "config": False,
+        "db": "signals",
     },
     # The forum collector and the hiring collector are two different questions
     # and two different rule sets, so they are two schedulable commands.
@@ -600,14 +608,17 @@ COMMAND_SPEC = {
                  "--fallback", "himalayas,remotive,jobicy",
                  "--also-reddit-archive", "--archive", "data/jester.db"),
         "config": False,
+        "db": "signals",
     },
     # The buyer brief page, rebuilt from the archive after the morning runs,
     # so the list a person reads is never older than the leads behind it.
     # Reads the archive only: no requests to anyone.
-    "signals-brief": {"argv": ("signals", "brief"), "config": False},
+    "signals-brief": {"argv": ("signals", "brief"), "config": False,
+                      "db": "signals"},
     # `health` takes no --config and no scrape scope: it reads the archive and
-    # reports. Its non-zero exit is the point, so it is schedulable.
-    "health": {"argv": ("health",), "config": False},
+    # reports. Its non-zero exit is the point, so it is schedulable. It reads
+    # the SIGNALS archive: the streaks it judges are the collector's.
+    "health": {"argv": ("health",), "config": False, "db": "signals"},
     # Himalayas read to the END of its results for the terms that found 95%
     # of the stored listings (developer and engineer alone are 74%). Only a
     # complete read can tell a closed listing from one further down, and the
@@ -624,27 +635,29 @@ COMMAND_SPEC = {
                  "--query", "automation", "--query", "devops",
                  "--limit", "3000"),
         "config": False,
+        "db": "signals",
     },
     # `backup` takes no --config and verifies the snapshot it writes, so one
     # tick is both the copy and the proof that the copy opens.
-    "backup": {"argv": ("backup",), "config": False},
+    "backup": {"argv": ("backup",), "config": False, "db": "main"},
     # The drill restores into a temp directory and reports; `backup drill`
     # takes no --config and needs no path, so it can run unattended.
-    "backup-drill": {"argv": ("backup", "drill"), "config": False},
+    "backup-drill": {"argv": ("backup", "drill"), "config": False, "db": "main"},
     # `retention` takes no --config; its TTL is the documented 30 days.
-    "retention": {"argv": ("retention",), "config": False},
+    "retention": {"argv": ("retention",), "config": False, "db": "main"},
     # `signals retention` is a sub-command and takes no --config, and its
     # window is fixed here rather than in `options`: `options` are the scrape
     # ceilings (`SCRAPE_OPTION_FLAGS`) and nothing else. 365 days, not the
     # nugget pipeline's 30: a record is a 600-character excerpt, but the row
     # is still the only evidence that a post said what it said.
     "signals-retention": {"argv": ("signals", "retention", "--days", "365"),
-                          "config": False},
+                          "config": False, "db": "signals"},
     # `signals load` is a sub-command, so it takes no `--config` for the same
     # reason as the two above -- the launcher's fixed `--config` tail would
     # make it exit 2 on every tick. `--db` is still appended by the launcher,
     # and it is the archive the load reads.
-    "signals-load": {"argv": ("signals", "load"), "config": False},
+    "signals-load": {"argv": ("signals", "load"), "config": False,
+                     "db": "signals"},
 }
 
 
@@ -655,6 +668,59 @@ def command_argv(command: str):
 
 def command_takes_config(command: str) -> bool:
     return COMMAND_SPEC.get(command, {"config": True}).get("config", True)
+
+
+#: The two archives a scheduled task can write. `main` is the nuggets archive
+#: the Go worker owns; `signals` is the collector's own file, which holds
+#: `signal_run`, `problem_signal` and the per-source streaks.
+DB_ROLE_MAIN = "main"
+DB_ROLE_SIGNALS = "signals"
+SIGNALS_DB_NAME = "signals-live.db"
+
+#: The `--db` a host gets before anyone passes one.
+DEFAULT_DB = "data/jester.db"
+
+
+def command_db_role(command: str) -> str:
+    """Which archive a schedulable command reads and writes."""
+    return COMMAND_SPEC.get(command, {}).get("db", DB_ROLE_MAIN)
+
+
+def default_signals_db(main_db: str = DEFAULT_DB) -> str:
+    """The collector's archive: the sibling of the main one.
+
+    Beside `--db` rather than a constant, so a host that moved its archive with
+    `--db /srv/archive.db` moves this one with it. It is also where the console
+    already looks for it (`console/api_signals.py`).
+
+    `as_posix` because the sibling is a relative path on most hosts and the
+    declaration, the dry run and the launcher log should all spell it the way a
+    person wrote it ("data/signals-live.db") rather than with Windows
+    separators from `str(Path)`. Both sides accept either.
+    """
+    return Path(main_db).with_name(SIGNALS_DB_NAME).as_posix()
+
+
+def resolve_task_db(spec: dict, *, main_db: str = DEFAULT_DB,
+                    signals_db: str | None = None) -> str:
+    """The `--db` one declared task should be installed with.
+
+    Three sources, in order:
+
+    * a `db:` on the task wins outright -- the declaration is the operator's
+      word, and a relative path is read from the repo root (the launcher `cd`s
+      there, so that is what it means);
+    * otherwise the command's role decides: `signals` commands and `health`
+      take the collector's archive, everything else the nuggets one;
+    * `signals_db` overrides the default sibling for the signals role only.
+    """
+    override = str((spec or {}).get("db") or "").strip()
+    if override:
+        path = Path(override)
+        return str(path if path.is_absolute() else repo_root() / path)
+    if command_db_role((spec or {}).get("command", "")) == DB_ROLE_SIGNALS:
+        return signals_db or default_signals_db(main_db)
+    return main_db
 
 
 def humanise_repeat(raw: str) -> str:
@@ -1427,12 +1493,23 @@ def load_desired(path=None) -> list:
         if unknown:
             raise ScheduleError(
                 f"{path}: task {task!r}: unknown option(s): {', '.join(sorted(unknown))}")
+        # Optional per-task archive. Absent, the command's own role decides --
+        # which is what the shipped file relies on.
+        db = raw.get("db")
+        if db is None:
+            db = ""
+        elif not isinstance(db, (str, os.PathLike)):
+            raise ScheduleError(
+                f"{path}: task {task!r}: `db` must be a path, got {db!r}")
+        else:
+            db = str(db).strip()
         out.append({
             "task": task,
             "command": command,
             "cadence": cadence,
             "enabled": bool(raw.get("enabled", True)),
             "options": options,
+            "db": db,
         })
     return out
 
@@ -1471,7 +1548,8 @@ def cadence_matches(st: dict, spec: dict) -> bool:
         st.get("start_time") or "", cadence["at"])
 
 
-def _launcher_problems(spec: dict) -> list:
+def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
+                       signals_db: str | None = None) -> list:
     """What the generated launcher says versus what the declaration asks.
 
     The declaration carries a scope (`options`), and `apply` used to compare
@@ -1479,6 +1557,11 @@ def _launcher_problems(spec: dict) -> list:
     apply printed "unchanged" while the task kept scraping the old scope. The
     launcher is the file the scheduler runs, so it is the honest thing to
     compare. `treat` takes no scrape scope, so its options are not a fact.
+
+    The `--db` is compared for the same reason. If it were not, every host that
+    already applied the declaration would keep a launcher naming
+    `data/jester.db` for `signals` and `health` and be reported "unchanged"
+    forever -- the archive split would ship and never reach the machine.
     """
     launcher = read_launcher(spec["command"])
     if launcher is None:
@@ -1495,6 +1578,10 @@ def _launcher_problems(spec: dict) -> list:
     if version > LAUNCHER_VERSION:
         return [f"launcher format v{version} is newer than v{LAUNCHER_VERSION}; "
                 f"apply would rewrite {name}"]
+    want_db = resolve_task_db(spec, main_db=main_db, signals_db=signals_db)
+    if (launcher.get("db") or "") != want_db:
+        return [f"launcher writes {(launcher.get('db') or 'no database')!r}; "
+                f"should be {want_db!r}"]
     if spec["command"] == "treat":
         return []
     # Where the scope sits depends on the command: with a --config it is in
@@ -1509,7 +1596,8 @@ def _launcher_problems(spec: dict) -> list:
     return []
 
 
-def _drift_of(st: dict, spec: dict) -> list:
+def _drift_of(st: dict, spec: dict, *, main_db: str = DEFAULT_DB,
+              signals_db: str | None = None) -> list:
     problems = []
     if not st.get("installed"):
         # A task declared off and absent is still off. Only a task that should
@@ -1525,11 +1613,13 @@ def _drift_of(st: dict, spec: dict) -> list:
     enabled = st.get("enabled", True)
     if bool(enabled) != spec["enabled"]:
         problems.append("should be enabled" if spec["enabled"] else "should be disabled")
-    problems.extend(_launcher_problems(spec))
+    problems.extend(_launcher_problems(spec, main_db=main_db,
+                                       signals_db=signals_db))
     return problems
 
 
-def desired_drift(path=None) -> list:
+def desired_drift(path=None, *, main_db: str = DEFAULT_DB,
+                  signals_db: str | None = None) -> list:
     """Declared tasks whose live registration disagrees with the file.
 
     Windows-only: cron has one line per user and no per-task enabled state, so
@@ -1540,14 +1630,15 @@ def desired_drift(path=None) -> list:
     out = []
     for spec in load_desired(path):
         st = status(spec["task"])
-        problems = _drift_of(st, spec)
+        problems = _drift_of(st, spec, main_db=main_db, signals_db=signals_db)
         if problems:
             out.append({"task": spec["task"], "problems": problems})
     return out
 
 
-def apply_desired(path=None, *, db="data/jester.db", config="config",
-                  python=None, dry_run=False, force=False) -> dict:
+def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
+                  signals_db=None, python=None, dry_run=False,
+                  force=False) -> dict:
     """Make the host match `config/schedule.yaml`. Applying twice changes nothing.
 
     One task at a time, in file order. A declared `enabled: false` is a pause:
@@ -1559,6 +1650,10 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
     explicitly rather than arrived at by editing a file. Paused tasks move
     freely — they run nothing — and so do scope changes, which the next tick
     picks up without new requests.
+
+    `db` is the nuggets archive; the collector's own file is its sibling
+    `signals-live.db` unless `signals_db` says otherwise. A task may also name
+    its own archive in the declaration, which wins over both.
     """
     if not is_windows():
         return {"ok": False, "results": [],
@@ -1567,12 +1662,13 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
     results = []
     for spec in load_desired(path):
         task = spec["task"]
+        task_db = resolve_task_db(spec, main_db=db, signals_db=signals_db)
         st = status(task)
         cadence_changed = bool(st.get("installed")) and not cadence_matches(st, spec)
         needs_create = (
             not st.get("installed")
             or cadence_changed
-            or bool(_launcher_problems(spec))
+            or bool(_launcher_problems(spec, main_db=db, signals_db=signals_db))
         )
         needs_state = st.get("installed") and bool(st.get("enabled", True)) != spec["enabled"]
         if cadence_changed and bool(st.get("enabled", True)) and not force:
@@ -1582,10 +1678,11 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
                 "detail": (f"cadence {st.get('cadence') or 'unknown'} -> "
                            f"{describe_cadence(spec)} on an enabled task; "
                            "re-run with --force"),
+                "db": task_db,
             })
             continue
         if not needs_create and not needs_state:
-            results.append({"task": task, "action": "unchanged"})
+            results.append({"task": task, "action": "unchanged", "db": task_db})
             continue
         if dry_run:
             what = []
@@ -1594,14 +1691,16 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
                 what.append(f"{verb} ({describe_cadence(spec)})")
             if needs_state:
                 what.append("enable" if spec["enabled"] else "disable")
-            results.append({"task": task, "action": "would " + ", ".join(what)})
+            results.append({"task": task,
+                            "action": "would " + ", ".join(what),
+                            "db": task_db})
             continue
 
         if needs_create:
             cadence = spec["cadence"]
             res = install(
                 at=cadence.get("at", DEFAULT_TIME),
-                db=db, config=config, task_name=task, python=python,
+                db=task_db, config=config, task_name=task, python=python,
                 every=cadence.get("every"),
                 extra=scrape_flags({} if spec["command"] == "treat" else spec["options"]),
                 command=spec["command"], weekly=cadence.get("weekly"),
@@ -1609,17 +1708,18 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
             )
             if not res.get("ok"):
                 results.append({"task": task, "action": "failed",
-                                "detail": res.get("detail", "")})
+                                "detail": res.get("detail", ""), "db": task_db})
                 continue
         current = status(task)
         if bool(current.get("enabled", True)) != spec["enabled"]:
             res = set_enabled(task, spec["enabled"])
             if not res.get("ok"):
                 results.append({"task": task, "action": "failed",
-                                "detail": res.get("detail", "")})
+                                "detail": res.get("detail", ""), "db": task_db})
                 continue
         results.append({"task": task,
                         "action": "installed" if needs_create else
-                                  ("enabled" if spec["enabled"] else "disabled")})
+                                  ("enabled" if spec["enabled"] else "disabled"),
+                        "db": task_db})
     return {"ok": all(r["action"] not in ("failed", "refused") for r in results),
             "results": results}

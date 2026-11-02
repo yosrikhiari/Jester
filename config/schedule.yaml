@@ -19,6 +19,17 @@
 #   monthly: 1         -- monthly on day 1-28 (add `at:` for the time)
 # `options` are the scrape ceilings (`only`, `max_posts`, `max_comments`,
 # `max_ideas`) passed to the command; ignored for `treat`, which takes none.
+#
+# `db` is OPTIONAL and normally absent: each command already declares which
+# archive it writes (the `db` role in `COMMAND_SPEC`, jester/schedule.py). The
+# signals collector, `health` and the Reddit hiring step write the collector's
+# archive -- `signals-live.db` beside `--db`, i.e. `data/signals-live.db` -- and
+# `cycle`, `ingest`, `treat`, `retention` and `backup` write `data/jester.db`.
+# The split is not cosmetic: the Go worker owns a `source_state` table in the
+# nuggets archive and the collector owns `signals_source_state`, so a task
+# pointed at the wrong file either reads nothing or writes into the other
+# component's table. Set `db:` on a task only to send it somewhere else on
+# purpose; a relative path is read from the repo root. Nothing here needs it.
 
 tasks:
   # ── the generative pipeline: paused on 2026-10-02 for quota ────────────

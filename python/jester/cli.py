@@ -1742,6 +1742,7 @@ def cmd_schedule(args):
                 getattr(args, "file", None),
                 db=args.db,
                 config=args.config,
+                signals_db=getattr(args, "signals_db", None) or None,
                 dry_run=getattr(args, "dry_run", False),
                 force=getattr(args, "force", False),
             )
@@ -1750,6 +1751,11 @@ def cmd_schedule(args):
             sys.exit(2)
         for r in res["results"]:
             line = f"  {r['task']:<32} {r['action']}"
+            # The archive is half of what a tick does, and Task Scheduler shows
+            # none of it: a task writing the wrong database looks identical to
+            # a working one from there. A dry run has to say so.
+            if r.get("db"):
+                line += f"  [{r['db']}]"
             if r.get("detail"):
                 line += f" — {r['detail']}"
             print(line)
@@ -4461,7 +4467,10 @@ def main(argv=None):
         help="is the collector alive? per-source streaks, a verdict and an "
              "exit code (1 when a source is barren, stale or erroring, or "
              "when no run happened in the window)")
-    hl.add_argument("--db", default="data/jester.db")
+    hl.add_argument(
+        "--db", default="data/signals-live.db",
+        help="the collector's archive (default: data/signals-live.db). It is "
+             "NOT the nuggets archive: the two share no streak schema")
     hl.add_argument("--days", type=int, default=7,
                     help="window to judge, in days (default 7)")
     hl.add_argument("--json", action="store_true",
@@ -4488,7 +4497,9 @@ def main(argv=None):
                          "write the handover list | record what came of a lead | "
                          "list or restore a record's corrections | "
                          "score the stored Reddit rooms | write the buyer brief page")
-    sg.add_argument("--db", default="data/jester.db")
+    sg.add_argument(
+        "--db", default="data/signals-live.db",
+        help="the collector's archive (default: data/signals-live.db)")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
     sg.add_argument("--rules", default=None,
@@ -4763,6 +4774,14 @@ def main(argv=None):
              "while treatment waits for a quota reset.",
     )
     sc.add_argument("--db", default="data/jester.db")
+    sc.add_argument(
+        "--signals-db",
+        default=None,
+        metavar="PATH",
+        help="with `apply`: the collector's archive for the signals tasks "
+             "(default: signals-live.db beside --db). A task may also name "
+             "its own with a `db:` key in the declaration, which wins",
+    )
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     sc.add_argument(
         "--replay", type=int, default=0, metavar="TICKS",
