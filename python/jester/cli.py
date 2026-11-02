@@ -1341,6 +1341,24 @@ def _export_csvs(args, cfg=None, db=None):
         print(f"export skipped: {exc}")
 
 
+def _reap_stale_jobs(db) -> int:
+    """Mark console jobs a dead process left at 'running'.
+
+    The console used to repair these on GET /api/jobs, which made a READ write
+    DDL and an UPDATE against the archive (V3-08). Reaping then moved to
+    `start_job` — correct, but only heals when somebody presses a button. The
+    scheduler tick is the narrowest path that already writes and already runs
+    on a clock, so the console heals itself with no browser open, and a poll
+    still only reads.
+    """
+    from jester.jobs import reap_stale_jobs
+
+    reaped = reap_stale_jobs(db)
+    if reaped:
+        print(f"reaped {reaped} job(s) left 'running' by a dead process")
+    return reaped
+
+
 def cmd_cycle(args):
     """One full turn of the loop: fetch, then process what was fetched.
 
@@ -1363,6 +1381,7 @@ def cmd_cycle(args):
     reaped = reap_running(db, older_than_minutes=stale)
     if reaped:
         print(f"reaped {reaped} run(s) stuck 'running' for over {stale}m")
+    _reap_stale_jobs(db)
     busy = active_run(db)
     if busy:
         # Exit 0: a skipped tick is the guard working, not a failure. A
@@ -1496,25 +1515,73 @@ def cmd_identify(args):
     }
 
 
+def _counts_text(counts) -> str:
+    return ", ".join(f"{k}={v}" for k, v in (counts or {}).items()) or "no tables"
+
+
 def cmd_backup(args):
     """Snapshot the archive, verify the snapshot, prune old ones.
 
     Verification is not optional here: a backup nobody has opened is a hope,
     not a backup, and a mid-write filesystem copy produces a file that opens
     fine and is corrupt.
+
+    Three verbs share this command because they are one story: take the
+    snapshot, prove a snapshot opens (`restore`, `drill`), and say what a
+    snapshot covers. A backup nobody has ever restored is an assumption, and
+    the restore is the only thing that turns it into a fact — which is why the
+    file it writes is checked twice (integrity, then counts against the
+    manifest) and never overwrites anything.
     """
-    from jester.backup import backup_db, prune_backups, verify_backup
+    from jester.backup import (
+        backup_set,
+        prune_backup_sets,
+        restore_backup,
+        restore_drill,
+        verify_backup,
+    )
+
+    action = getattr(args, "action", "") or ""
+    if action == "restore":
+        if not args.backup or not args.dest:
+            print("usage: jester backup restore <backup> <new path>")
+            sys.exit(2)
+        got = restore_backup(args.backup, args.dest)
+        if not got["ok"]:
+            print(f"restore refused: {got['error']}")
+            sys.exit(1)
+        print(f"restored {got['path']} — integrity {got['integrity']}, "
+              f"{_counts_text(got['counts'])}")
+        print(f"  {got['note']}")
+        print("  put it in place by hand: this command never overwrites the "
+              "archive it was taken from")
+        return got
+    if action == "drill":
+        got = restore_drill(args.backup or "", db_path=args.db,
+                            out_dir=args.out or "")
+        if not got["ok"]:
+            print(f"restore drill FAILED: {got['error']}")
+            sys.exit(1)
+        print(f"drill OK: restored {got['backup']} into a temp directory in "
+              f"{got['seconds']}s")
+        print(f"  integrity {got['integrity']}, {_counts_text(got['counts'])}")
+        print(f"  {got['note']}")
+        print("  the temp directory was removed; nothing was written beside "
+              "the archive")
+        return got
 
     if args.verify:
         got = verify_backup(args.verify)
         if not got["ok"]:
             print(f"backup UNUSABLE: {got['error']}")
             sys.exit(1)
-        counts = ", ".join(f"{k}={v}" for k, v in got["counts"].items())
+        counts = _counts_text(got["counts"])
         print(f"backup OK (integrity {got['integrity']}) — {counts}")
         return got
 
-    res = backup_db(args.db, args.out or "", compress=not args.no_compress)
+    res = backup_set(args.db, args.out or "", compress=not args.no_compress,
+                     also_to=getattr(args, "also_to", "") or "",
+                     env_root=getattr(args, "env_root", None) or None)
     if not res["ok"]:
         print(f"backup failed: {res['error']}")
         sys.exit(1)
@@ -1529,14 +1596,27 @@ def cmd_backup(args):
         # protection and is not.
         print(f"  VERIFY FAILED: {check['error']}")
         sys.exit(1)
-    counts = ", ".join(f"{k}={v}" for k, v in check["counts"].items())
+    counts = _counts_text(check["counts"])
     print(f"  verified: integrity {check['integrity']}, {counts}")
+    # What else the set covers is part of the report: a backup that silently
+    # stopped including the journal is a backup the owner believes covers it.
+    companions = [n for n in res["files"] if n != Path(res["path"]).name]
+    if companions:
+        print(f"  also wrote: {', '.join(companions)}")
+    if res["absent"]:
+        print(f"  not present: {', '.join(res['absent'])}")
+    if res["failed"]:
+        print("  companion FAILED: " + ", ".join(
+            f"{k} ({v})" for k, v in res["failed"].items()))
+    if getattr(args, "also_to", ""):
+        print(f"  second copy: {len(res['copied_to_second'])} file(s) in "
+              f"{res['also_to']}")
+    print(f"  manifest: {res['manifest']}")
     print(f"  note: {res['detail']}")
 
-    removed = prune_backups(
+    removed = prune_backup_sets(
         args.out or str(Path(args.db).parent / "backups"),
         keep=args.keep,
-        stem=Path(args.db).stem,
     )
     if removed:
         print(f"  pruned {len(removed)} old backup(s), keeping {args.keep}")
@@ -1576,6 +1656,8 @@ def cmd_treat(args):
     reaped = reap_running(db, older_than_minutes=stale)
     if reaped:
         print(f"reaped {reaped} run(s) stuck 'running' for over {stale}m")
+    # Before the stand-down, so a tick that skips still heals the console.
+    _reap_stale_jobs(db)
     busy = active_run(db)
     if busy:
         print(f"skipping this tick — run '{busy}' is still in progress")
@@ -1743,6 +1825,8 @@ def cmd_schedule(args):
             extra=flags,
             command=command,
             weekly=getattr(args, "weekly", None),
+            monthly=getattr(args, "monthly", None),
+            run_as=getattr(args, "run_as", "") or "",
         )
     elif args.action == "remove":
         res = _schedule.remove(_task)
@@ -3206,6 +3290,41 @@ def cmd_signals(args):
         finally:
             db.close()
 
+    if action == "revisions":
+        # The snapshot table is what makes a correction recoverable; without a
+        # command, "recoverable" would mean "editable from a Python prompt".
+        db = sig.open_signals(args.db)
+        try:
+            if not args.record:
+                print("which record? pass --record <record_id> "
+                      "(the last column of leads.csv)")
+                sys.exit(1)
+            rows = db.execute(
+                f"SELECT revision, snapshot_utc, title FROM {sig.REVISION_TABLE} "
+                "WHERE record_id=? ORDER BY revision_id", (args.record,)).fetchall()
+            if not rows:
+                print(f"no revision recorded for {args.record} — nothing has "
+                      "replaced that row since it was collected")
+                if args.restore:
+                    sys.exit(1)
+                return
+            if args.restore:
+                try:
+                    res = sig.restore_revision(db, args.record,
+                                               revision=args.revision)
+                except ValueError as exc:
+                    print(f"revisions: {exc}")
+                    sys.exit(1)
+                print(f"restored {res['record_id']} to revision {res['revision']} "
+                      f"({res['restored_utc']})")
+                return
+            print(f"{len(rows)} revision(s) of {args.record}, oldest first:")
+            for r in rows:
+                print(f"  r{r['revision']}  {r['snapshot_utc']}  {r['title'][:70]}")
+        finally:
+            db.close()
+        return
+
     if action == "retention":
         # The archive's own window, separate from `jester retention` (which
         # is the idea pipeline's sweep). Off by default: the schedule entry
@@ -4312,7 +4431,7 @@ def main(argv=None):
                              "load", "queries", "evidence", "retention",
                              "run", "recover", "runs", "sources",
                              "digest", "reclassify", "leads", "outcome",
-                             "from-archive", "brief"],
+                             "revisions", "from-archive", "brief"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
@@ -4321,6 +4440,7 @@ def main(argv=None):
                          "list runs | list sources | write the weekly digest | "
                          "re-score the archive against the rules | "
                          "write the handover list | record what came of a lead | "
+                         "list or restore a record's corrections | "
                          "score the stored Reddit rooms | write the buyer brief page")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
@@ -4369,7 +4489,13 @@ def main(argv=None):
                          "(default: the problem-signal set). A second rule set "
                          "needs a second set of cases, or it has no gate.")
     sg.add_argument("--record", default="",
-                    help="outcome: which record_id to mark (last column of leads.csv)")
+                    help="outcome/revisions: which record_id to mark or inspect "
+                         "(last column of leads.csv)")
+    sg.add_argument("--restore", action="store_true",
+                    help="revisions: put the most recent (or --revision) row back")
+    sg.add_argument("--revision", type=int, default=None,
+                    help="revisions: which revision number to restore "
+                         "(default: the most recent)")
     sg.add_argument("--set", default="", dest="set",
                     help="outcome: picked | contacted | replied | meeting | won | no | unfit, "
                          "or empty to clear it")
@@ -4542,6 +4668,24 @@ def main(argv=None):
         default=None,
         metavar="DAY",
         help="run once a week on DAY (MON..SUN) at --at, instead of daily",
+    )
+    sc.add_argument(
+        "--monthly",
+        type=int,
+        default=None,
+        metavar="DAY",
+        help="run once a month on DAY (1-28) at --at, instead of daily",
+    )
+    # Windows only, and never defaulted. `schtasks` would happily accept
+    # /ru SYSTEM, and a nightly scrape holding a SYSTEM token is a privilege
+    # escalation nobody asked for; naming an account makes schtasks prompt for
+    # its password, so it stays an explicit act.
+    sc.add_argument(
+        "--run-as",
+        default="",
+        metavar="ACCOUNT",
+        help="Windows: register the task to run as ACCOUNT (/ru). Omitted, the "
+             "task runs as the account that installed it — never SYSTEM",
     )
     # What each tick fetches and how deep. Without these a scheduled run always
     # means "every enabled source, no ceiling", which is the last thing you
@@ -4746,14 +4890,40 @@ def main(argv=None):
     tr.set_defaults(func=cmd_treat)
 
     bk = sub.add_parser(
-        "backup", help="snapshot the archive and verify the snapshot"
+        "backup", help="snapshot the archive, verify it, restore it into a new file"
+    )
+    # The verbs come first so `jester backup restore <backup> <dest>` reads the
+    # way an operator says it. No verb (the default) is the snapshot, which is
+    # what the schedule's `backup` task runs.
+    bk.add_argument(
+        "action", nargs="?", default="", choices=["", "restore", "drill"],
+        help="(default) take a snapshot | restore <backup> <new path> | drill "
+             "(restore the newest backup into a temp dir and report)",
+    )
+    bk.add_argument(
+        "backup", nargs="?", default="",
+        help="restore: the backup file to read. drill: the backup to rehearse "
+             "(default: the newest one in --out)",
+    )
+    bk.add_argument(
+        "dest", nargs="?", default="",
+        help="restore: the NEW path to write; an existing file is refused",
     )
     bk.add_argument("--db", default="data/jester.db")
     bk.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     bk.add_argument("--out", default=None, help="directory (default: data/backups)")
     bk.add_argument(
+        "--also-to", default="",
+        help="write a second copy of the whole set to this directory (the "
+             "other disk). Nothing is written when it is not supplied.",
+    )
+    bk.add_argument(
+        "--env-root", default="",
+        help="where to look for the dotenv (default: this checkout)",
+    )
+    bk.add_argument(
         "--keep", type=int, default=14,
-        help="how many backups to retain (default 14)",
+        help="how many backup sets to retain (default 14)",
     )
     bk.add_argument("--no-compress", action="store_true")
     bk.add_argument(

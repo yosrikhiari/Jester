@@ -20,14 +20,21 @@
 # directory. They share the `jester_docker_data` VOLUME, not the host's ./data.
 #
 # That separation is deliberate and load-bearing. This stack runs every
-# provider as `fake` (JESTER_MOCK=1 plus the thresholds override below) and
-# starts cron inside the console container, so it generates stand-in
-# extractions on a schedule. Pointed at the host's ./data it would write those
-# into the real archive, where `extractor_model` exists specifically to keep
-# them out — and it would do so as a THIRD writer of a SQLite file whose other
-# writers are the host CLI and the scheduled tasks. SQLite's locking is not
-# reliable across a Docker bind mount, and on 2026-08-28 that combination
-# corrupted ingest_batch mid-ingest ("database disk image is malformed").
+# provider as `fake` (JESTER_MOCK=1 plus the thresholds override below), so it
+# generates stand-in extractions on a schedule. Pointed at the host's ./data it
+# would write those into the real archive, where `extractor_model` exists
+# specifically to keep them out — and it would do so as a THIRD writer of a
+# SQLite file whose other writers are the host CLI and the scheduled tasks.
+# SQLite's locking is not reliable across a Docker bind mount, and on 2026-08-28
+# that combination corrupted ingest_batch mid-ingest ("database disk image is
+# malformed").
+#
+# There is no scheduler in this stack. The console container used to install
+# cron and start it from its entrypoint; it now runs as uid 10001 and schedules
+# nothing, because the host's task scheduler (config/schedule.yaml) is the one
+# scheduler and two of them racing one SQLite file is the failure above. The
+# console container's data volume is chowned to 10001 in the image, which is
+# how a non-root user gets to write the archive.
 #
 # To inspect the real archive, run the console on the host instead:
 #   python -m jester.console --db data/jester.db --config config

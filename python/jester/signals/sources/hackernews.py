@@ -96,11 +96,20 @@ class HackerNews:
               "no account, no commercial restriction stated")
     terms_url = "https://hn.algolia.com/api"
     rate = f"{RATE:.1f}s between requests, {RETRIES} backoff retries"
+    #: A search is complete only for its `since` window, unlike a board that
+    #: returns its whole catalogue. `run.mark_closed` reads this: a seven-day
+    #: read must not close a record from last year.
+    windowed_reads = True
 
     def __init__(self, opener=None, sleep=time.sleep, timeout: int = 30,
                  user_agent: str = "jester-signals/1.0 (the collector problem-signal collector)"):
         self._opener = opener or urllib.request.urlopen
         self._sleep = sleep
+        #: What each search returned, keyed by the stored query:
+        #: {"ids": every `hackernews:<objectID>` the read returned, kept or
+        #: skipped, "complete": whether the read reached the last page}.
+        #: A deleted posting is one a complete read no longer returns.
+        self.reads = {}
         self._timeout = timeout
         self._user_agent = user_agent
         self._last_call = 0.0
@@ -153,23 +162,40 @@ class HackerNews:
         if since_utc:
             params["numericFilters"] = f"created_at_i>{_epoch(since_utc)}"
 
+        entry = self.reads.setdefault(query, {"ids": set(), "complete": False})
+        complete = False
         seen = 0
-        while seen < limit:
-            body = self._get(params)
-            hits = body.get("hits") or []
-            if not hits:
-                return
-            for hit in hits:
-                signal = self._to_signal(hit, query)
-                if signal is None:
-                    continue
-                yield signal
-                seen += 1
-                if seen >= limit:
+        try:
+            while seen < limit:
+                body = self._get(params)
+                hits = body.get("hits") or []
+                if not hits:
+                    complete = True
                     return
-            params["page"] += 1
-            if params["page"] >= int(body.get("nbPages") or 0):
-                return
+                for hit in hits:
+                    # Recorded whether or not it becomes a Signal: the read
+                    # returned it, so it is not deleted. A hit we skip for
+                    # having nothing storable is still evidence the posting is
+                    # there.
+                    oid = str(hit.get("objectID") or "").strip()
+                    if oid:
+                        entry["ids"].add(f"{self.platform}:{oid}")
+                    signal = self._to_signal(hit, query)
+                    if signal is None:
+                        continue
+                    yield signal
+                    seen += 1
+                    if seen >= limit:
+                        return
+                params["page"] += 1
+                if params["page"] >= int(body.get("nbPages") or 0):
+                    complete = True
+                    return
+        finally:
+            # Reached the last page -> complete for this window. Stopped at the
+            # cap, or raised part-way -> not complete, and the sweep will
+            # judge nothing from it.
+            entry["complete"] = entry["complete"] or complete
 
     def _to_signal(self, hit: dict, query: str) -> Signal | None:
         source_id = str(hit.get("objectID") or "").strip()

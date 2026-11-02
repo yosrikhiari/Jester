@@ -403,18 +403,20 @@ def test_retention_takes_revision_rows_with_it(db):
     """Task 7 adds revision rows. Retention must not leave them orphaned
     behind a deleted record, and it must find them without being told the
     table's name."""
-    db.execute("CREATE TABLE problem_signal_revision ("
-               "revision_id TEXT PRIMARY KEY, record_id TEXT, text_hash TEXT)")
-    db.execute("INSERT INTO problem_signal_revision VALUES ('r1','reddit:t3_old','h')")
-    db.execute("INSERT INTO problem_signal_revision VALUES ('r2','reddit:t3_new','h')")
-    db.commit()
+    # A real edit through `upsert`, not a hand-made table: the contract is
+    # that the snapshot Task 7 writes is swept, and a fixture with invented
+    # columns would keep passing after the real table drifted.
     sig.upsert(db, [_signal("t3_old")], seen_at="2025-01-01T00:00:00+00:00")
+    sig.upsert(db, [_signal("t3_old", title="edited")], seen_at="2025-01-02T00:00:00+00:00")
     sig.upsert(db, [_signal("t3_new")], seen_at="2026-09-20T00:00:00+00:00")
+    sig.upsert(db, [_signal("t3_new", title="edited")], seen_at="2026-09-20T00:00:00+00:00")
+    assert db.execute(
+        f"SELECT COUNT(*) FROM {sig.REVISION_TABLE}").fetchone()[0] == 2
 
     assert sig.retention(db, days=30,
                          now=datetime(2026, 10, 1, tzinfo=timezone.utc)) == 1
 
-    left = {r[0] for r in db.execute("SELECT record_id FROM problem_signal_revision")}
+    left = {r[0] for r in db.execute(f"SELECT record_id FROM {sig.REVISION_TABLE}")}
     assert left == {"reddit:t3_new"}
 
 

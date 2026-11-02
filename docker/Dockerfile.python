@@ -25,9 +25,15 @@ RUN CGO_ENABLED=0 go build -o /out/worker ./cmd/worker
 # golang pin) — a retagged python:3.12-slim changed bytes nobody decided on.
 FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 
+# PYTHONDONTWRITEBYTECODE: a non-root user cannot write `__pycache__` into the
+# bind-mounted /app, which is root-owned on the host. Without it every import
+# of the console's own code is re-parsed and logs nothing useful; with it, no
+# bytecode is expected in the first place.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/python \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/home/jester
 
 WORKDIR /app
 
@@ -53,31 +59,43 @@ COPY python/pylock.toml /tmp/pylock.toml
 RUN pip install --no-cache-dir -q --only-binary :all: "pip==26.2.1" \
     && pip install --no-cache-dir --only-binary :all: -r /tmp/pylock.toml
 
-# WHY THIS CONTAINER RUNS AS ROOT, deliberately and not by omission:
-# the entrypoint starts the cron daemon and the Schedule tab writes crontabs
-# at runtime. cron owns /var/spool/cron/crontabs at mode 1730 and refuses to
-# run without it, so dropping to a non-root user turns the scheduler into a
-# feature that silently never fires. The go-worker image stays root for the
-# matching reason - it shares the SQLite database with this container through
-# a volume, and two different uids writing one SQLite file is the cross-process
-# contract breaking quietly rather than loudly.
+# WHY THIS CONTAINER DROPS ROOT (V3-25). It used to install `cron` and run as
+# root so the Schedule tab could write crontabs inside the container. That made
+# the container a second, silent scheduler: the host's task scheduler already
+# registers the jobs (config/schedule.yaml), and two schedulers racing one
+# SQLite file is the failure the compose header documents. So cron is gone from
+# this image, and with it the only reason to be root.
 #
-# `cron` so the Schedule tab can register a real job inside the container.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends cron \
-    && rm -rf /var/lib/apt/lists/*
+# The uid is fixed at 10001 rather than "whatever useradd picks" so a volume
+# written by one build stays writable by the next. /app/data is created and
+# chowned HERE, before USER: Docker copies a mount point's ownership into a
+# fresh named volume, so the `jester_docker_data` volume starts owned by 10001
+# and the console can write the archive. A volume created by an older root
+# image keeps root ownership — the entrypoint says so plainly rather than
+# failing with "unable to open database file".
+RUN groupadd --gid 10001 jester \
+    && useradd --uid 10001 --gid 10001 --no-log-init \
+       --home-dir /home/jester --create-home --shell /usr/sbin/nologin jester \
+    && mkdir -p /app/data \
+    && chown -R jester:jester /app/data /home/jester
 
-# Prebuilt Go worker binary (resolvable as `worker` on PATH); lets the cron
-# cycle run ingest without a Go toolchain in this image.
+# Prebuilt Go worker binary (resolvable as `worker` on PATH); lets a scheduled
+# ingest run without a Go toolchain in this image. The HOST scheduler runs it
+# through `docker compose exec`; this container no longer schedules anything.
 COPY --from=gobuild /out/worker /usr/local/bin/worker
 
-# Entrypoint starts the cron daemon, then launches the console.
+# Launch the console. The entrypoint is a plain `exec python -m jester.console`
+# now: the cron daemon it used to start is gone with the package.
 COPY docker/entrypoint.console.sh /usr/local/bin/console-entrypoint.sh
 RUN chmod +x /usr/local/bin/console-entrypoint.sh
 
 # Default launch: the operator console (serves the static UI + /api).
 # Override with `docker compose run jester-console python -m jester.cli ...`.
 EXPOSE 8619
+# Everything above this line runs as root at BUILD time, which is what lets
+# pip install into the image and the uid be fixed. From here the container is
+# uid 10001 for its whole life, including the healthcheck.
+USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/console-entrypoint.sh"]
 # jester-docker.db, NOT jester.db, and the name is the whole point.
 #

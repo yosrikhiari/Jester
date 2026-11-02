@@ -12,6 +12,8 @@ rewriting whatever schedule this machine has registered — pointing it at a bar
 firing; it just no longer did what the operator configured.
 """
 from types import SimpleNamespace
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -267,6 +269,180 @@ def test_the_signals_cron_line_matches_the_same_shape():
                               command="signals")
     assert "jester.cli signals run" in line
     assert "--config" not in line
+
+
+# --- V3-26: least privilege, rotation, and a cron line that round-trips ------
+
+def _create_cmd(host):
+    """The `/create` call, not the PowerShell settings patch that follows it."""
+    return next(c for c in reversed(host.calls) if c[1:2] == ["/create"])
+
+
+@pytest.fixture
+def schtasks(monkeypatch):
+    """A recording schtasks that never reaches the real Task Scheduler."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: True)
+    fake = FakeRun()
+    monkeypatch.setattr(schedule, "_run", fake)
+    return fake
+
+
+def test_every_created_task_asks_for_least_privilege(schtasks):
+    """schtasks registers at HIGHEST unless told otherwise, so a job that
+    fetches a forum and appends to a log ran with the token of an elevated
+    shell. `/rl LIMITED` is the whole fix and it has to be on every task."""
+    schedule.install(at="04:30", db="data/j.db", config="config")
+    cmd = _create_cmd(schtasks)
+    assert cmd[cmd.index("/rl") + 1] == "LIMITED"
+
+
+def test_run_as_adds_ru_only_when_the_owner_names_an_account(schtasks):
+    """Never defaulted to SYSTEM. A nightly scrape holding a SYSTEM token is a
+    privilege escalation nobody asked for, and schtasks would accept it
+    silently."""
+    schedule.install(at="04:30", db="data/j.db", config="config")
+    assert "/ru" not in _create_cmd(schtasks)
+    assert not any("SYSTEM" in str(part).upper() for part in _create_cmd(schtasks))
+
+    schedule.install(at="04:30", db="data/j.db", config="config",
+                     run_as=r"JESTER-PC\svc-jester")
+    cmd = _create_cmd(schtasks)
+    assert cmd[cmd.index("/ru") + 1] == r"JESTER-PC\svc-jester"
+
+
+def test_the_cli_passes_run_as_and_monthly_through(schtasks, capsys):
+    import os
+
+    from jester import cli
+
+    before = os.environ.copy()
+    try:
+        cli.main(["schedule", "install", "--at", "03:00", "--monthly", "1",
+                  "--command", "backup-drill", "--run-as", "svc-jester",
+                  "--db", "data/j.db"])
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+    cmd = _create_cmd(schtasks)
+    assert cmd[cmd.index("/sc") + 1] == "MONTHLY"
+    assert cmd[cmd.index("/d") + 1] == "1"
+    assert cmd[cmd.index("/ru") + 1] == "svc-jester"
+    assert cmd[cmd.index("/rl") + 1] == "LIMITED"
+
+
+def _batch_fragment(log) -> bytes:
+    """The rotation exactly as the launcher writes it: guard at the top, the
+    labelled body last, and one append in between."""
+    return (
+        "@echo off\r\n"
+        f"{schedule.rotation_guard(log)}\r\n"
+        f'>>"{log}" echo tick\r\n'
+        "exit /b 0\r\n"
+        f"{schedule.rotation_body(log)}\r\n"
+    ).encode()
+
+
+@pytest.mark.skipif(shutil.which("cmd") is None, reason="needs cmd.exe")
+def test_the_generated_launcher_rotates_a_log_past_the_bound(tmp_path):
+    """Nothing ever trimmed a scheduled log, so the noisiest command grew one
+    file forever on the same disk as the archive. The guard is executed, not
+    inspected: `%%~zA`, `call :label` and `move /y` are the parts that can be
+    wrong in ways reading the text cannot show."""
+    log = tmp_path / "data" / "schedule-cycle.log"
+    log.parent.mkdir()
+    log.write_bytes(b"x" * (schedule.MAX_LOG_BYTES + 1))
+    script = tmp_path / "rotate.cmd"
+    script.write_bytes(_batch_fragment(log))
+
+    subprocess.run(["cmd", "/c", str(script)], check=True, capture_output=True)
+
+    first = Path(str(log) + ".1")
+    assert first.is_file(), "the over-bound log was not rotated"
+    assert first.stat().st_size >= schedule.MAX_LOG_BYTES
+    # Rotated BEFORE the append, so the new tick is the only thing in the log.
+    assert log.read_text(encoding="utf-8").count("tick") == 1
+
+
+@pytest.mark.skipif(shutil.which("cmd") is None, reason="needs cmd.exe")
+def test_a_log_under_the_bound_is_left_alone(tmp_path):
+    log = tmp_path / "data" / "schedule-cycle.log"
+    log.parent.mkdir()
+    log.write_text("earlier tick\n", encoding="utf-8")
+    script = tmp_path / "rotate.cmd"
+    script.write_bytes(_batch_fragment(log))
+
+    subprocess.run(["cmd", "/c", str(script)], check=True, capture_output=True)
+
+    assert not Path(str(log) + ".1").exists()
+    assert log.read_text(encoding="utf-8").count("tick") == 2
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
+def test_the_cron_line_rotates_the_same_log(tmp_path):
+    """The other shape of the same schedule. Every step is guarded so the first
+    tick of the month — when there is no log at all — still exits 0."""
+    log = tmp_path / "schedule-cycle.log"
+    log.write_bytes(b"x" * (schedule.MAX_LOG_BYTES + 1))
+
+    subprocess.run(["sh", "-c", schedule.posix_rotation(log)], check=True,
+                   capture_output=True)
+
+    assert Path(str(log) + ".1").is_file()
+    assert not log.exists()
+
+
+def test_the_launcher_looks_at_the_log_before_it_appends():
+    """Rotate first, or the run that pushes the log over the bound is the one
+    that keeps it there."""
+    script = schedule.launcher_script("data/j.db", "config", "py.exe")
+    guard = script.index("for %%A in (")
+    append = script.index("starting\r\n")
+    body = script.index("\r\n:" + schedule.ROTATE_LABEL)
+    assert guard < append < body, "guard, append, then the labelled body"
+
+
+def test_the_cron_line_round_trips_to_the_exact_argv(monkeypatch, tmp_path):
+    """`--query "machine learning"` used to be flattened into two words by a
+    plain join, so argparse saw a stray `learning` and the sweep tick exited 2
+    every week. And the repo path here has a space, which broke both `cd` and
+    the PYTHONPATH assignment in the old line."""
+    root = tmp_path / "repo with space"
+    root.mkdir()
+    monkeypatch.setattr(schedule, "repo_root", lambda: root)
+    extra = ("--query", "machine learning", "--limit", "3000")
+
+    line = schedule.cron_line("08:00", "data/j.db", "config", "py.exe",
+                              extra=extra, command="signals-sweep", weekly="SUN")
+
+    tokens = shlex.split(line)
+    end = tokens.index(">>")
+    assert tokens[tokens.index("jester.cli") - 3:end] == schedule.command_line_argv(
+        "data/j.db", "config", "py.exe", extra, "signals-sweep")
+    # The command's own scope already carries the two-word query; the point is
+    # that the line quotes it rather than splitting it into `--query learning`.
+    assert "machine learning" in tokens
+    assert "learning" not in tokens
+    assert f"PYTHONPATH={root / 'python'}" in tokens
+    assert str(root) in tokens, "cd lost the space in the path"
+
+
+def test_reinstalling_a_quoted_command_replaces_its_line(monkeypatch, tmp_path):
+    """The needle that finds a command's own line has to be quoted the way the
+    line is, or install APPENDS a second schedule and both fire."""
+    monkeypatch.setattr(schedule, "is_windows", lambda: False)
+    monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
+    written = {}
+    monkeypatch.setattr(schedule, "_read_crontab", lambda: [])
+    monkeypatch.setattr(schedule, "_write_crontab", _capture(written))
+    extra = ("--query", "machine learning")
+
+    schedule.install(at="08:00", db="data/j.db", extra=extra,
+                     command="signals-sweep", weekly="SUN")
+    schedule.install(at="08:00", db="data/j.db", extra=extra,
+                     command="signals-sweep", weekly="SUN")
+
+    hits = [ln for ln in written["lines"] if "jester.cli signals run" in ln]
+    assert len(hits) == 1, written["lines"]
 
 
 # --- the hiring collector is schedulable ------------------------------------

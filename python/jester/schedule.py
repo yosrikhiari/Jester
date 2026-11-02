@@ -143,6 +143,66 @@ def log_path(command: str = "cycle") -> Path:
     return repo_root() / "data" / f"schedule-{command or 'cycle'}.log"
 
 
+#: Where a log stops growing, and how many rotations are kept.
+#:
+#: A scheduled command appends forever and nothing ever trims it: a 30-minute
+#: job that prints a few hundred lines a tick is a few hundred megabytes a
+#: year, on the same disk as the archive it is backing up. Five megabytes is
+#: roughly a week of ticks for the noisiest command, and three rotations keep
+#: the fortnight the backup retention already promises.
+MAX_LOG_BYTES = 5 * 1024 * 1024
+LOG_ROTATIONS = 3
+
+#: The batch label the rotation lives under. Named once so the guard and the
+#: body cannot drift apart.
+ROTATE_LABEL = "jester_rotate_log"
+
+
+def rotation_guard(log: Path | str, *, limit: int = MAX_LOG_BYTES) -> str:
+    """The one line in a `.cmd` launcher that starts a rotation.
+
+    `%%~zA` is the file's size in bytes. The `if exist` guard matters: with no
+    log yet, `%%~zA` expands to nothing and `if` fails with a syntax error the
+    operator would read as "the task did not run".
+
+    The label it calls is written by `rotation_body`, at the END of the file.
+    It cannot sit next to this line: batch runs top to bottom, so a label
+    placed here would be fallen into after the call returned and would rotate
+    the log a second time, then `exit /b 0` the whole task before it ran.
+    """
+    log = str(log)
+    return (f'if exist "{log}" for %%A in ("{log}") do '
+            f"if %%~zA GEQ {int(limit)} call :{ROTATE_LABEL}")
+
+
+def rotation_body(log: Path | str, *, keep: int = LOG_ROTATIONS) -> str:
+    """The rotation itself, as the labelled tail of a `.cmd` launcher."""
+    log = str(log)
+    lines = [f":{ROTATE_LABEL}", f'del /q "{log}.{keep}" 2>nul']
+    for n in range(keep - 1, 0, -1):
+        lines.append(f'if exist "{log}.{n}" move /y "{log}.{n}" "{log}.{n + 1}" >nul')
+    lines.append(f'move /y "{log}" "{log}.1" >nul')
+    lines.append("exit /b 0")
+    return "\r\n".join(lines)
+
+
+def posix_rotation(log: Path | str, *, keep: int = LOG_ROTATIONS,
+                   limit: int = MAX_LOG_BYTES) -> str:
+    """The same rotation as one POSIX shell fragment.
+
+    `wc -c` rather than `stat`, because `stat` has two incompatible syntaxes
+    and cron runs whatever `sh` the host has. Every step is guarded: a missing
+    rotation is not an error, or the first tick of the month would exit 1.
+    """
+    log = shlex.quote(str(log))
+    steps = [f"rm -f {log}.{keep}"]
+    for n in range(keep - 1, 0, -1):
+        steps.append(f"[ -f {log}.{n} ] && mv -f {log}.{n} {log}.{n + 1}")
+    steps.append(f"mv -f {log} {log}.1")
+    return (f'if [ -f {log} ] && [ "$(wc -c < {log})" -ge {int(limit)} ]; then '
+            + "; ".join(steps) + "; fi")
+
+
 def launcher_script(db, config, python, command="cycle", extra=()) -> str:
     """The batch file the scheduled task actually runs.
 
@@ -180,6 +240,12 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         # the log was 9009, because four digits are not a handle number.
         # Verified: the natural form writes "exited " and this form writes
         # "exited 7".
+        #
+        # Rotate BEFORE the first append, or the run that pushes the log over
+        # the bound is the one that keeps growing it: nothing ever trimmed a
+        # scheduled log, so a noisy tick was a few hundred megabytes a year on
+        # the same disk as the archive it backs up.
+        f"{rotation_guard(log)}\r\n"
         f'>>"{log}" echo [%DATE% %TIME%] jester {command} starting\r\n'
         # -u, because this stdout goes to a FILE. Python block-buffers a
         # redirected stream, so a `treat` run that spends an hour in synthesis
@@ -202,6 +268,12 @@ def launcher_script(db, config, python, command="cycle", extra=()) -> str:
         f'if not "%RC%"=="0" "{py}" -m jester.cli notify --task "{task}" '
         f'--exit "%RC%" >>"{log}" 2>&1\r\n'
         'exit /b %RC%\r\n'
+        # The rotation's labelled tail. It has to be the LAST thing in the
+        # file: batch executes top to bottom, so a label written next to the
+        # `call` above would be fallen into when the call returned — rotating
+        # the log a second time and then `exit /b 0`, which would report every
+        # scheduled run as a success. `call :label` reaches past `exit /b`.
+        f"{rotation_body(log)}\r\n"
     )
 
 
@@ -406,6 +478,10 @@ TASK_FOR_COMMAND = {
     # in config/schedule.yaml; retention is declared PAUSED until the
     # evaluation sample exists.
     "backup": TASK_NAME + "Backup",
+    # The monthly restore drill: open the newest backup in a temp directory,
+    # run integrity_check and compare counts with its manifest. Declared
+    # PAUSED until the owner picks the machine that runs it.
+    "backup-drill": TASK_NAME + "BackupDrill",
     "retention": TASK_NAME + "Retention",
     # The signals archive's own window. A different sweep from `retention`
     # above, on a different database: that one minimises text in the idea
@@ -520,6 +596,9 @@ COMMAND_SPEC = {
     # `backup` takes no --config and verifies the snapshot it writes, so one
     # tick is both the copy and the proof that the copy opens.
     "backup": {"argv": ("backup",), "config": False},
+    # The drill restores into a temp directory and reports; `backup drill`
+    # takes no --config and needs no path, so it can run unattended.
+    "backup-drill": {"argv": ("backup", "drill"), "config": False},
     # `retention` takes no --config; its TTL is the documented 30 days.
     "retention": {"argv": ("retention",), "config": False},
     # `signals retention` is a sub-command and takes no --config, and its
@@ -576,10 +655,12 @@ def interval_minutes(fields: dict):
     if total > 0:
         return total
     # A daily trigger repeats once every 24h; that is still a cadence. So is
-    # a weekly one (one day named).
+    # a weekly one (one day named), and a monthly one (a 30-day window).
     kind = (fields.get("schedule type") or "").strip().lower()
     if kind.startswith("daily"):
         return 24 * 60
+    if kind.startswith("monthly"):
+        return 30 * 24 * 60
     if kind.startswith("weekly"):
         days = [d for d in re.split(r"[,\s]+", fields.get("days") or "") if d]
         return 7 * 24 * 60 // max(1, len(days))
@@ -628,6 +709,8 @@ def _cadence_from(fields: dict) -> str:
     days = (fields.get("days") or "").strip()
     if kind.lower().startswith("weekly") and days and start:
         return f"weekly on {days} at {start}"
+    if kind.lower().startswith("monthly") and days and start:
+        return f"monthly on day {days} at {start}"
     if kind and start:
         return f"{kind.lower()} at {start}"
     return kind or repeat or ""
@@ -807,7 +890,12 @@ def _jester_cron_lines(command: str | None = None) -> tuple:
     """
     if command is None:
         return ("jester.cli",)
-    return (f"jester.cli {' '.join(command_argv(command))} --db ",)
+    # The tail is written by `shlex.join` in `cron_line`, so a command whose
+    # scope carries a two-word argument ("machine learning") is quoted here
+    # exactly as it is there. `" ".join` stopped matching that line the moment
+    # quoting was fixed, and an unmatched needle makes install APPEND a second
+    # schedule instead of replacing the first.
+    return (f"jester.cli {shlex.join(command_argv(command))} --db ",)
 
 
 def _line_is_ours(line: str, needles: tuple) -> bool:
@@ -866,6 +954,46 @@ def weekday(value: str) -> str:
     return key
 
 
+def month_day(value) -> int:
+    """A day of the month, 1-28.
+
+    29-31 is refused rather than accepted and silently skipped in February:
+    "monthly on the 31st" is a schedule that does not run six months a year,
+    and Task Scheduler and cron both express it without warning.
+    """
+    try:
+        day = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"not a day of the month: {value!r}; use 1-28") from None
+    if not 1 <= day <= 28:
+        raise ValueError(
+            f"monthly day must be 1-28, got {day}: later days do not exist in "
+            "every month")
+    return day
+
+
+def command_line_argv(
+    db: str = "data/jester.db",
+    config: str = "config",
+    python: str | None = None,
+    extra=(),
+    command: str = "cycle",
+) -> list:
+    """The exact argv a POSIX schedule runs, one token per argument.
+
+    A list rather than a string, because `cron_line` builds the line with
+    `shlex.join`. The plain `" ".join` it replaced flattened
+    `--query "machine learning"` into two words: argparse then read
+    `learning` as a stray argument and the sweep tick exited 2 every week —
+    the exact failure a quoting test is for.
+    """
+    argv = [python or sys.executable, "-u", "-m", "jester.cli",
+            *command_argv(command), "--db", str(db)]
+    if command_takes_config(command):
+        argv += ["--config", str(config)]
+    return argv + [str(a) for a in extra]
+
+
 def cron_line(
     at: str = DEFAULT_TIME,
     db: str = "data/jester.db",
@@ -875,11 +1003,13 @@ def cron_line(
     extra=(),
     command: str = "cycle",
     weekly: str | None = None,
+    monthly: int | None = None,
 ) -> str:
     """The crontab line to install. `every` gives an every-N-minutes cadence;
-    otherwise it is daily at `at`. `extra` carries the scrape scope, which the
-    POSIX path used to drop on the floor — a crontab line that quietly walks
-    every source is not the schedule the operator configured."""
+    otherwise it is daily at `at`, weekly on `weekly`, or monthly on day
+    `monthly`. `extra` carries the scrape scope, which the POSIX path used to
+    drop on the floor — a crontab line that quietly walks every source is not
+    the schedule the operator configured."""
     root = repo_root()
     py = python or sys.executable
     if every:
@@ -899,27 +1029,36 @@ def cron_line(
             )
     else:
         hh, _, mm = at.partition(":")
-        dow = str(WEEKDAYS[weekday(weekly)]) if weekly else "*"
-        when = f"{int(mm or 0)} {int(hh)} * * {dow}"
-    args = "".join(f" {a}" for a in extra)
-    cfg = f" --config {config}" if command_takes_config(command) else ""
-    log = log_path(command)
-    env = f"PYTHONPATH={root / 'python'}"
-    task = TASK_FOR_COMMAND.get(command, command)
+        if monthly is not None:
+            when = f"{int(mm or 0)} {int(hh)} {month_day(monthly)} * *"
+        else:
+            dow = str(WEEKDAYS[weekday(weekly)]) if weekly else "*"
+            when = f"{int(mm or 0)} {int(hh)} * * {dow}"
+    # Every interpolated token goes through shlex, so the line round-trips
+    # through `shlex.split` to the argv above. A repo path with a space
+    # ("D:\\project in this pc\\...") broke the old line twice: cron's sh saw
+    # `cd D:\project` and the assignment saw `PYTHONPATH=D:\project`.
+    log_at = log_path(command)
+    log = shlex.quote(str(log_at))
+    env = f"PYTHONPATH={shlex.quote(str(root / 'python'))}"
+    run = shlex.join(command_line_argv(db, config, py, extra, command))
+    task = shlex.quote(TASK_FOR_COMMAND.get(command, command))
     # One crontab line has no room for an `if` block that reads well, but it
     # does have room for the same contract as the .cmd launcher: keep the
     # code, and turn a non-zero one into a notify call. `exit "$rc"` is what
     # tells cron (and anyone reading the log) what really happened; without it
     # the last command in the line decides.
+    #
+    # The rotation runs FIRST and is the POSIX twin of the launcher's guard,
+    # so both shapes of the same schedule bound their log the same way. Each
+    # step inside it is guarded: the first tick of the month has no log yet,
+    # and an unguarded `mv` would exit 1 through the notify branch.
     return (
-        f"{when}  "
-        f"cd {root} && {env} "
-        f"{py} -m jester.cli {' '.join(command_argv(command))} "
-        f"--db {db}{cfg}{args} "
+        f"{when}  {posix_rotation(log_at)}; "
+        f"cd {shlex.quote(str(root))} && {env} {run} "
         f">> {log} 2>&1; rc=$?; "
-        f'if [ "$rc" -ne 0 ]; then {env} {py} -m jester.cli notify '
-        f'--task "{task}" '
-        f'--exit "$rc" >> {log} 2>&1; fi; exit "$rc"'
+        f'if [ "$rc" -ne 0 ]; then {env} {shlex.quote(str(py))} -m jester.cli notify '
+        f"--task {task} --exit \"$rc\" >> {log} 2>&1; fi; exit \"$rc\""
     )
 
 
@@ -933,18 +1072,32 @@ def install(
     extra=(),
     command: str = "cycle",
     weekly: str | None = None,
+    monthly: int | None = None,
+    run_as: str = "",
 ) -> dict:
     """Register the scrape+process job. Returns {ok, action, detail}.
 
     `every` schedules every N minutes; `weekly` ("SUN") once a week at `at`;
-    with neither the job runs daily at `at`.
+    `monthly` (1-28) once a month at `at`; with none of them the job runs
+    daily at `at`. Exactly one cadence.
     Either way the registered command is `jester cycle` — fetch AND process.
     Registering `run` was the original bug: the job fired on time for months
     and archived nothing, because nothing had queued anything for it to read.
+
+    `run_as` is an account name for `/ru`, and is EMPTY by default. It is not
+    defaulted to SYSTEM: a nightly scrape that reads HTTP and writes one SQLite
+    file has no business holding a SYSTEM token, and `schtasks` would accept
+    that silently. When an account is named, `schtasks` prompts for its
+    password — which is why this is an explicit, interactive act rather than a
+    default.
     """
-    if every is not None and weekly:
+    chosen = [name for name, present in (
+        ("every", every is not None), ("weekly", bool(weekly)),
+        ("monthly", monthly is not None)) if present]
+    if len(chosen) > 1:
         return {"ok": False, "action": "create",
-                "detail": "choose one cadence: --every N minutes, or --weekly DAY"}
+                "detail": "choose one cadence: --every N minutes, --weekly DAY, "
+                          "or --monthly DAY"}
     if every is not None:
         try:
             sc, mo = interval_schedule(every)
@@ -955,10 +1108,15 @@ def install(
             weekly = weekday(weekly)
         except ValueError as exc:
             return {"ok": False, "action": "create", "detail": str(exc)}
+    if monthly is not None:
+        try:
+            month_day(monthly)
+        except ValueError as exc:
+            return {"ok": False, "action": "create", "detail": str(exc)}
     if not is_windows():
         try:
             line = cron_line(at, db, config, python, every=every, extra=extra,
-                             command=command, weekly=weekly)
+                             command=command, weekly=weekly, monthly=monthly)
         except ValueError as exc:
             return {"ok": False, "action": "manual", "detail": str(exc)}
         try:
@@ -987,6 +1145,12 @@ def install(
     # schtasks takes the whole command as one string; quote the inner argv.
     tr = subprocess.list2cmdline(action)
     cmd = ["schtasks", "/create", "/tn", task_name, "/tr", tr]
+    # /rl LIMITED on EVERY task: without it schtasks registers at HIGHEST, so a
+    # job that fetches a forum and appends to a log ran with the same token as
+    # an elevated shell. Nothing this module schedules needs more.
+    cmd += ["/rl", "LIMITED"]
+    if run_as:
+        cmd += ["/ru", run_as]
     if every is not None:
         # Task Scheduler's default multiple-instances policy is IgnoreNew, so
         # a tick that overruns its interval is skipped rather than doubled.
@@ -997,6 +1161,12 @@ def install(
     elif weekly:
         cmd += ["/sc", "WEEKLY", "/d", weekly, "/st", at]
         cadence = f"weekly on {weekly} at {at}"
+    elif monthly is not None:
+        # 1-28 only: schtasks accepts 29-31 and then skips the months that
+        # lack the day, which is a schedule that silently does not run.
+        day = month_day(monthly)
+        cmd += ["/sc", "MONTHLY", "/d", str(day), "/st", at]
+        cadence = f"monthly on day {day} at {at}"
     else:
         cmd += ["/sc", "DAILY", "/st", at]
         cadence = f"daily at {at}"
@@ -1166,18 +1336,34 @@ def load_desired(path=None) -> list:
         cadence = raw.get("cadence")
         if not isinstance(cadence, dict):
             raise ScheduleError(f"{path}: task {task!r} needs a `cadence` mapping")
-        unknown = set(cadence) - {"every", "at", "weekly"}
+        unknown = set(cadence) - {"every", "at", "weekly", "monthly"}
         if unknown:
             raise ScheduleError(
                 f"{path}: task {task!r}: unknown cadence key(s): "
                 f"{', '.join(sorted(unknown))}")
-        if "weekly" not in cadence and len(
-                [k for k in ("every", "at") if k in cadence]) != 1:
+        primary = [k for k in ("every", "weekly", "monthly") if k in cadence]
+        if len(primary) > 1:
             raise ScheduleError(
-                f"{path}: task {task!r} needs exactly one of every/at/weekly")
+                f"{path}: task {task!r} needs exactly one of every/at/weekly/monthly")
+        if not primary and "at" not in cadence:
+            raise ScheduleError(
+                f"{path}: task {task!r} needs exactly one of every/at/weekly/monthly")
+        if "every" in cadence and "at" in cadence:
+            # An interval already carries its phase; a stray `at` here was
+            # silently ignored, which read as "run at 09:00 every 30 min".
+            raise ScheduleError(
+                f"{path}: task {task!r}: `every` takes no `at`; interval "
+                "cadences start from installation time")
         if "weekly" in cadence:
             try:
                 cadence = {"weekly": weekday(cadence["weekly"]),
+                           "at": str(cadence.get("at") or DEFAULT_TIME)}
+                datetime.strptime(cadence["at"], "%H:%M")
+            except (ValueError, TypeError) as exc:
+                raise ScheduleError(f"{path}: task {task!r}: {exc}") from None
+        elif "monthly" in cadence:
+            try:
+                cadence = {"monthly": month_day(cadence["monthly"]),
                            "at": str(cadence.get("at") or DEFAULT_TIME)}
                 datetime.strptime(cadence["at"], "%H:%M")
             except (ValueError, TypeError) as exc:
@@ -1224,6 +1410,8 @@ def describe_cadence(spec: dict) -> str:
         return f"every {n} minute" + ("s" if n != 1 else "")
     if "weekly" in cadence:
         return f"weekly on {cadence['weekly']} at {cadence['at']}"
+    if "monthly" in cadence:
+        return f"monthly on day {int(cadence['monthly'])} at {cadence['at']}"
     return f"daily at {cadence['at']}"
 
 
@@ -1236,6 +1424,11 @@ def cadence_matches(st: dict, spec: dict) -> bool:
     if "weekly" in cadence:
         return (registered.startswith("weekly")
                 and cadence["weekly"].lower() in registered
+                and _same_time(st.get("start_time") or "", cadence["at"]))
+    if "monthly" in cadence:
+        day = str(int(cadence["monthly"]))
+        return (registered.startswith("monthly")
+                and re.search(rf"\bday {day}\b", registered) is not None
                 and _same_time(st.get("start_time") or "", cadence["at"]))
     return registered.startswith("daily") and _same_time(
         st.get("start_time") or "", cadence["at"])
@@ -1364,6 +1557,7 @@ def apply_desired(path=None, *, db="data/jester.db", config="config",
                 every=cadence.get("every"),
                 extra=scrape_flags({} if spec["command"] == "treat" else spec["options"]),
                 command=spec["command"], weekly=cadence.get("weekly"),
+                monthly=cadence.get("monthly"),
             )
             if not res.get("ok"):
                 results.append({"task": task, "action": "failed",

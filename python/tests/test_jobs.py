@@ -225,6 +225,49 @@ def test_the_job_write_path_reaps_rows_left_by_a_dead_process(tmp_path):
     assert "process exited" in stale[1]
 
 
+def test_the_scheduler_tick_reaps_a_job_no_browser_will_ask_about(tmp_path, capsys):
+    """Reaping left the GET (V3-08) and landed on `start_job`, which only heals
+    when somebody presses a console button. The tick runs on a clock with
+    nobody watching, so it is where an orphan heals itself — and a poll still
+    only reads."""
+    import os
+
+    from jester import cli
+    from jester.jobs import ensure_schema
+    from jester.store import start_run
+
+    path = str(tmp_path / "tick.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('cluster','running', datetime('now','-300 minutes'))"
+    )
+    # A run that really is in progress: the tick stands down on it, which is
+    # what proves the heal happens even on a tick that does no work.
+    start_run(db, "cycle-alive", models_used={})
+    db.commit()
+    db.close()
+
+    before = os.environ.copy()
+    try:
+        cli.main(["cycle", "--db", path, "--no-timestamps"])
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+
+    out = capsys.readouterr().out
+    assert "skipping this tick" in out, out
+    assert "reaped 1 job(s) left 'running'" in out, out
+    db = open_db(path)
+    try:
+        status = db.execute(
+            "SELECT status FROM jobs WHERE kind='cluster'").fetchone()[0]
+    finally:
+        db.close()
+    assert status == "error", "the orphaned job still reads as running"
+
+
 def test_a_job_gets_its_own_database_connection(tmp_path):
     """sqlite3 connections belong to the thread that opened them. The first
     async regroup died instantly with "SQLite objects created in a thread can

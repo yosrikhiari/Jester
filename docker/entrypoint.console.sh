@@ -1,16 +1,22 @@
 #!/bin/sh
-# Start the cron daemon (so the Schedule tab's registered job actually fires
-# inside the container), then launch the operator console.
+# Launch the operator console, as a non-root user.
+#
+# There is no cron daemon to start any more. It was here so the Schedule tab
+# could register a job inside the container, which made this container the
+# second scheduler on a machine that already has one — the host's. The host's
+# scheduler is the scheduler (see docker/Dockerfile.python), so the only thing
+# left to do is check the archive volume and hand over to the console.
 set -e
 
-# cron needs its spool dirs; create them idempotently.
-mkdir -p /var/spool/cron/crontabs /etc/cron.d
-chmod 1730 /var/spool/cron/crontabs 2>/dev/null || true
-chmod 644 /etc/cron.d 2>/dev/null || true
-
-# Start cron if present; never fail the container if it can't.
-if command -v cron >/dev/null 2>&1; then
-    cron 2>/dev/null || service cron start 2>/dev/null || true
+# A named volume created by the root-era image is still owned by root, and the
+# failure that produces ("unable to open database file") reads like a code
+# bug. Say what it is, once, and let the console fail for its own reason if
+# the operator does not fix it.
+if [ ! -w /app/data ]; then
+    echo "console-entrypoint: /app/data is not writable by uid $(id -u)." >&2
+    echo "  This volume was probably created by the old root image." >&2
+    echo "  Recreate it once (docker compose down -v) or, to keep its data:" >&2
+    echo "  docker run --rm -v jester_jester_docker_data:/d alpine chown -R 10001:10001 /d" >&2
 fi
 
 exec python -m jester.console "$@"

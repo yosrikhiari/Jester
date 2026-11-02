@@ -112,6 +112,34 @@ EXCERPT_CHARS = 600
 
 TABLE = "problem_signal"
 
+#: Where the row a re-read replaced is kept, so a correction is recoverable.
+#: The name is `<TABLE>_...` and the key column is `record_id` on purpose:
+#: `_related_tables` discovers it at run time, so retention takes a record's
+#: revisions with it without a second hard-coded list to keep in step.
+REVISION_TABLE = "problem_signal_revision"
+
+#: What a later observation of the same record may overwrite. Everything the
+#: collector reads, plus its own bookkeeping — and nothing that is identity
+#: (`record_id`, `mode`), history (`first_seen_utc`), a removal stamp (cleared
+#: on sight below) or a person's verdict (`outcome*`, which no collector may
+#: write, let alone overwrite).
+UPDATE_FIELDS = (
+    "source_url", "community", "kind", "author", "title", "excerpt", "text_hash",
+    "query", "match_reason", "match_confidence", "relevant", "audience",
+    "company", "buyer_intent", "created_utc",
+    "run_id", "run_status", "error", "last_seen_utc",
+)
+
+#: What counts as a revision. The text hash alone was the old test, and it
+#: missed exactly the correction that matters: a retitled post whose body did
+#: not move. Bookkeeping (`run_id`, `run_status`, `error`, `last_seen_utc`)
+#: moves on every pass by design, and `query` is which search surfaced the
+#: record rather than anything the record says; counting either would make
+#: `revisions` a measure of how often the collector ran.
+REVISION_FIELDS = tuple(
+    f for f in UPDATE_FIELDS
+    if f not in ("run_id", "run_status", "error", "last_seen_utc", "query"))
+
 
 def sqlite_ddl() -> str:
     cols = ",\n  ".join(f"{n} {t}" for n, t, _c, _d in FIELDS)
@@ -121,6 +149,83 @@ def sqlite_ddl() -> str:
         f"CREATE INDEX IF NOT EXISTS idx_{TABLE}_seen ON {TABLE} (last_seen_utc);\n"
         f"CREATE INDEX IF NOT EXISTS idx_{TABLE}_mode ON {TABLE} (mode, relevant);\n"
     )
+
+
+def revision_ddl() -> str:
+    """The snapshot table, generated from the same field map as the archive.
+
+    It carries every field the record had plus the revision number it was
+    replacing, because "the old row" means all of it: a corrected permalink or
+    company is as recoverable as a corrected title.
+    """
+    cols = ",\n  ".join(f"{n} {t}" for n, t, _c, _d in FIELDS if n != "record_id")
+    return (
+        f"CREATE TABLE IF NOT EXISTS {REVISION_TABLE} (\n"
+        f"  revision_id INTEGER PRIMARY KEY,\n"
+        f"  record_id TEXT NOT NULL,\n"
+        "  revision INTEGER NOT NULL DEFAULT 0,\n"
+        f"  {cols},\n"
+        "  snapshot_utc TEXT NOT NULL\n);\n"
+        f"CREATE INDEX IF NOT EXISTS idx_{REVISION_TABLE}_record "
+        f"ON {REVISION_TABLE} (record_id);\n"
+    )
+
+
+def _ensure_revision_table(db: sqlite3.Connection) -> None:
+    """Create the snapshot table, and widen an older one additively.
+
+    Same contract as `_catch_up_columns`: a field added to the map later must
+    not make an existing snapshot table unreadable, and nothing is ever
+    dropped or retyped here.
+    """
+    db.executescript(revision_ddl())
+    have = {r[1] for r in db.execute(f"PRAGMA table_info({REVISION_TABLE})")}
+    added = False
+    for name, sqltype, _ch, _doc in FIELDS:
+        if name in have:
+            continue
+        default = "0" if sqltype in ("INTEGER", "REAL") else "''"
+        db.execute(f"ALTER TABLE {REVISION_TABLE} ADD COLUMN {name} {sqltype} "
+                   f"NOT NULL DEFAULT {default}")
+        added = True
+    if added:
+        db.commit()
+
+
+def _same(a, b) -> bool:
+    """Equal as stored, treating NULL and '' as the same nothing.
+
+    A column added by `_catch_up_columns` is backfilled to '', an old row that
+    predates it may still read NULL, and `None == ''` is False — which would
+    count a revision on the first sighting after an upgrade for a change
+    nobody made.
+    """
+    if a is None:
+        a = ""
+    if b is None:
+        b = ""
+    if isinstance(a, (int, float)) or isinstance(b, (int, float)):
+        try:
+            return float(a) == float(b)
+        except (TypeError, ValueError):
+            return False
+    return a == b
+
+
+def _snapshot_row(db: sqlite3.Connection, row: sqlite3.Row, *, at: str) -> int:
+    """Write the row as it stands, before it is replaced.
+
+    Called only when something actually changed: a snapshot per unchanged
+    sighting would make the table a second copy of the archive and the
+    revision numbers meaningless. Returns the snapshot's `revision_id`.
+    """
+    _ensure_revision_table(db)
+    cur = db.execute(
+        f"INSERT INTO {REVISION_TABLE} ({','.join(FIELD_NAMES)}, revision, snapshot_utc) "
+        f"VALUES ({','.join('?' * len(FIELD_NAMES))}, ?, ?)",
+        [row[n] for n in FIELD_NAMES] + [int(row["revisions"] or 0), at],
+    )
+    return int(cur.lastrowid)
 
 
 def clickhouse_ddl() -> str:
@@ -288,6 +393,7 @@ def open_signals(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(sqlite_ddl())
     _catch_up_columns(db)
+    _ensure_revision_table(db)
     _relabel_synthetic(db)
     db.commit()
     return db
@@ -347,15 +453,22 @@ def upsert(db: sqlite3.Connection, signals: Iterable[Signal], *, seen_at: Option
 
     This is where "repeat import creates no duplicates" actually lives. An
     unchanged record updates `last_seen_utc` only; a changed one also stamps
-    `edited_utc` (the first time we notice) and counts a revision. Nothing is
-    ever inserted twice, and `first_seen_utc` is never overwritten — it is the
-    one date that says how long the archive has known about a problem.
+    `edited_utc` (the first time we notice), counts a revision and — before
+    the update — writes the row it is replacing to `problem_signal_revision`,
+    so a correction is recoverable rather than simply lost.
+
+    Every mutable field is refreshed, not the old subset. `title`, `company`,
+    `buyer_intent` and `source_url` used to be written once and frozen, so a
+    source that fixed a typo or a permalink was contradicted by our archive
+    for the rest of the record's life. `first_seen_utc` and the person-written
+    `outcome*` columns are deliberately absent from the update: one is the
+    record's age, the other is the only field that comes from reality.
     """
     new = seen = edited = 0
     for s in signals:
         row = s.row(seen_at)
         old = db.execute(
-            f"SELECT text_hash, revisions, edited_utc FROM {TABLE} WHERE record_id=?",
+            f"SELECT {','.join(FIELD_NAMES)} FROM {TABLE} WHERE record_id=?",
             (row["record_id"],),
         ).fetchone()
         if old is None:
@@ -366,22 +479,68 @@ def upsert(db: sqlite3.Connection, signals: Iterable[Signal], *, seen_at: Option
             )
             new += 1
             continue
-        changed = old["text_hash"] != row["text_hash"]
+        changed = [name for name in REVISION_FIELDS if not _same(old[name], row[name])]
+        if changed:
+            _snapshot_row(db, old, at=row["last_seen_utc"])
         db.execute(
-            f"UPDATE {TABLE} SET last_seen_utc=?, excerpt=?, text_hash=?, "
-            "match_reason=?, match_confidence=?, relevant=?, audience=?, run_id=?, run_status=?, error=?, "
-            "revisions=?, edited_utc=?, removed_utc='' WHERE record_id=?",
-            (row["last_seen_utc"], row["excerpt"], row["text_hash"],
-             row["match_reason"], row["match_confidence"], row["relevant"], row["audience"],
-             row["run_id"], row["run_status"], row["error"],
-             (old["revisions"] or 0) + (1 if changed else 0),
-             (old["edited_utc"] or (row["last_seen_utc"] if changed else "")),
-             row["record_id"]),
+            f"UPDATE {TABLE} SET " + ", ".join(f"{n}=?" for n in UPDATE_FIELDS) +
+            ", revisions=?, edited_utc=?, removed_utc='' WHERE record_id=?",
+            [row[n] for n in UPDATE_FIELDS] + [
+                int(old["revisions"] or 0) + (1 if changed else 0),
+                (old["edited_utc"] or (row["last_seen_utc"] if changed else "")),
+                row["record_id"],
+            ],
         )
         seen += 1
         edited += 1 if changed else 0
     db.commit()
     return {"new": new, "seen_again": seen, "edited": edited}
+
+
+def restore_revision(db: sqlite3.Connection, record_id: str, *,
+                     revision: Optional[int] = None,
+                     at: Optional[str] = None) -> dict:
+    """Put a replaced row back, and keep the one it replaces.
+
+    `revision=None` restores the most recent snapshot. The current row is
+    snapshotted first, so a restore is itself undoable — otherwise "recover a
+    correction" would mean choosing, once, which of two states to lose.
+
+    Only the mutable fields come back. The person-written outcome and the
+    first-seen date do not: those describe the record's life, not its text,
+    and a content restore must not silently un-work a lead.
+    """
+    _ensure_revision_table(db)
+    if revision is None:
+        snap = db.execute(
+            f"SELECT * FROM {REVISION_TABLE} WHERE record_id=? "
+            "ORDER BY revision_id DESC LIMIT 1", (record_id,)).fetchone()
+    else:
+        snap = db.execute(
+            f"SELECT * FROM {REVISION_TABLE} WHERE record_id=? AND revision=? "
+            "ORDER BY revision_id DESC LIMIT 1", (record_id, int(revision))).fetchone()
+    if snap is None:
+        wanted = ("the most recent revision" if revision is None
+                  else f"revision {revision!r}")
+        raise ValueError(f"no {wanted} recorded for {record_id!r}")
+    current = db.execute(
+        f"SELECT {','.join(FIELD_NAMES)} FROM {TABLE} WHERE record_id=?",
+        (record_id,)).fetchone()
+    if current is None:
+        raise ValueError(f"no record {record_id!r} in {TABLE}")
+
+    stamp = at or _now()
+    if any(not _same(current[n], snap[n]) for n in REVISION_FIELDS):
+        _snapshot_row(db, current, at=stamp)
+    db.execute(
+        f"UPDATE {TABLE} SET " + ", ".join(f"{n}=?" for n in REVISION_FIELDS) +
+        ", revisions=?, edited_utc=? WHERE record_id=?",
+        [snap[n] for n in REVISION_FIELDS] +
+        [int(current["revisions"] or 0) + 1, stamp, record_id],
+    )
+    db.commit()
+    return {"record_id": record_id, "revision": int(snap["revision"] or 0),
+            "title": snap["title"], "restored_utc": stamp}
 
 
 def mark_removed(db: sqlite3.Connection, record_ids: Iterable[str], *, at: Optional[str] = None) -> int:
@@ -636,6 +795,12 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
             "mode_filter": mode or "all",
             "rows_in_db": len(db_ids),
             "rows_in_csv": rows_in_csv,
+            # Removed rows are still rows: they were real when they were
+            # collected, they carry the `removed_utc` that says so, and
+            # dropping them from the CSV would make the id-based
+            # reconciliation fail against a database that keeps them. Marked,
+            # not excluded, so a reader can count what has gone.
+            "removed_rows": sum(1 for r in rows if (r["removed_utc"] or "")),
             # The two hashes are what a later check re-computes; `reconciles`
             # is a summary of them and is not the evidence itself.
             "row_ids_sha256": _sha256_text("\n".join(file_ids)),

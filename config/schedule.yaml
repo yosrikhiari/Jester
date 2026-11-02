@@ -16,6 +16,7 @@
 #   every: 30          -- every N minutes
 #   at: "09:00"        -- daily at HH:MM local time
 #   weekly: SUN        -- weekly on that day (add `at:` for the time)
+#   monthly: 1         -- monthly on day 1-28 (add `at:` for the time)
 # `options` are the scrape ceilings (`only`, `max_posts`, `max_comments`,
 # `max_ideas`) passed to the command; ignored for `treat`, which takes none.
 
@@ -98,4 +99,14 @@ tasks:
   - task: JesterSignalsRetention
     command: signals-retention
     cadence: {weekly: SUN, at: "04:00"}
+    enabled: false
+  # The monthly restore drill: it restores the newest backup into a throwaway
+  # temp directory, runs PRAGMA integrity_check and compares row counts with
+  # the backup's manifest, then removes the directory. A backup nobody has
+  # restored is a backup nobody knows works, so this is the proof -- but it is
+  # a report, not a nightly job, and it stays PAUSED until the owner picks the
+  # machine that runs it.
+  - task: JesterNightlyBackupDrill
+    command: backup-drill
+    cadence: {monthly: 1, at: "03:00"}
     enabled: false

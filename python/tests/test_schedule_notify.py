@@ -69,7 +69,16 @@ def test_the_posix_cron_line_notifies_before_it_exits():
                               command="health")
 
     assert "jester.cli health" in line
-    assert 'jester.cli notify --task "JesterNightlyHealth" --exit' in line
+    # The whole line is built with `shlex.join` (Task 7d), so a task name that
+    # needs no quoting is written bare rather than in literal double quotes.
+    # What the old text assertion protected -- the name is ONE word to cron's
+    # shell, and the hook runs before the exit -- is checked by splitting the
+    # line the way that shell would, which also holds for a name that really
+    # does need quoting.
+    tokens = shlex.split(line)
+    at = tokens.index("notify")
+    assert tokens[at + 1:at + 5] == ["--task", "JesterNightlyHealth", "--exit", "$rc"], \
+        tokens[at:at + 6]
     assert 'exit "$rc"' in line
     assert line.split()[:5] == ["15", "10", "*", "*", "*"]
 

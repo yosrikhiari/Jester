@@ -28,6 +28,7 @@ DECLARED = [
     "JesterNightlyBackup",
     "JesterNightlyRetention",
     "JesterSignalsRetention",
+    "JesterNightlyBackupDrill",
 ]
 
 
@@ -87,6 +88,8 @@ class FakeSchtasks:
             kind, repeat = "Daily", "Disabled"
         elif t["sc"] == "WEEKLY":
             kind, repeat = "Weekly", "Disabled"
+        elif t["sc"] == "MONTHLY":
+            kind, repeat = "Monthly", "Disabled"
         elif t["sc"] == "HOURLY":
             kind, repeat = "One Time Only, Hourly", f"{t['mo']} Hour(s), 0 Minute(s)"
         else:
@@ -126,12 +129,14 @@ def test_the_shipped_declaration_names_every_task():
     assert [s["task"] for s in specs] == DECLARED
     assert {s["task"] for s in specs if not s["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention", "JesterSignalsRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention",
+        "JesterNightlyBackupDrill"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     assert cadence["JesterNightly"] == "every 30 minutes"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
     assert cadence["JesterNightlySignalsSweep"] == "weekly on SUN at 08:00"
     assert cadence["JesterNightlySignalsHiring"] == "daily at 09:30"
+    assert cadence["JesterNightlyBackupDrill"] == "monthly on day 1 at 03:00"
 
 
 def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(host):
@@ -139,16 +144,17 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
     assert installed == set(DECLARED)
-    assert len(host.created()) == 12
+    assert len(host.created()) == 13
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention", "JesterSignalsRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention",
+        "JesterNightlyBackupDrill"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 12
-    assert len(host.created()) == 12, "a second apply must not re-register anything"
-    assert len(host.changes()) == 5, "nor flip the five paused tasks again"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 13
+    assert len(host.created()) == 13, "a second apply must not re-register anything"
+    assert len(host.changes()) == 6, "nor flip the six paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -163,7 +169,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "12 task(s) would change" in out
+    assert "13 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
@@ -436,3 +442,41 @@ def test_the_declared_sweep_cadence_matches_the_code_rationale():
                  if s["command"] == "signals-sweep")
     assert sweep["cadence"] == schedule.SWEEP_CADENCE
     assert sweep["cadence"] == {"weekly": "SUN", "at": "08:00"}
+
+
+# ---- a monthly cadence, for the restore drill (V3-23) -----------------------
+
+def test_the_restore_drill_is_declared_monthly_and_disabled():
+    """Restoring into a temp dir proves a backup opens. It is off by default
+    because it is a monthly report, not a nightly job, and the owner chooses
+    the machine that runs it."""
+    drill = next(s for s in schedule.load_desired() if s["command"] == "backup-drill")
+    assert drill["task"] == schedule.TASK_FOR_COMMAND["backup-drill"]
+    assert drill["enabled"] is False
+    assert drill["cadence"] == {"monthly": 1, "at": "03:00"}
+    assert schedule.command_argv("backup-drill") == ("backup", "drill")
+
+
+def test_a_monthly_task_registers_monthly_and_reads_back(host):
+    res = schedule.install(at="03:00", task_name="Drill", command="backup-drill",
+                           monthly=1)
+    assert res["ok"] is True, res
+    create = host.created()[-1]
+    assert create[create.index("/sc") + 1] == "MONTHLY"
+    assert create[create.index("/d") + 1] == "1"
+    assert schedule.cadence_matches(
+        schedule.status("Drill"), {"cadence": {"monthly": 1, "at": "03:00"}})
+
+
+def test_a_monthly_cadence_is_refused_out_of_range(host):
+    res = schedule.install(at="03:00", task_name="Drill", command="backup-drill",
+                           monthly=31)
+    assert res["ok"] is False
+    assert host.created() == []
+
+
+def test_a_monthly_cron_line_is_a_valid_five_field_schedule(monkeypatch, tmp_path):
+    monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
+    line = schedule.cron_line(at="03:00", monthly=1, command="backup-drill")
+    assert line.split()[:5] == ["0", "3", "1", "*", "*"]
+    assert "jester.cli backup drill --db data/jester.db" in line
