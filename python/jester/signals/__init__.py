@@ -870,9 +870,12 @@ def retention(db: sqlite3.Connection, days: int, *, now: Optional[datetime] = No
     it would delete the one thing the last_seen column exists to say.
 
     Only records past the window go, and any table that keeps rows about a
-    record (revisions) goes with them. There is no dry-run flag: the count
-    returned is the report, and a window below one day is refused rather than
-    read as a typo that empties the archive.
+    record (revisions) goes with them. The reads ledger is audit data with no
+    reader left, so its rows age out by their own `read_utc` — including on a
+    run that removes no records at all, which is why the sweep below happens
+    before the early return. There is no dry-run flag: the count returned is
+    the report, and a window below one day is refused rather than read as a
+    typo that empties the archive.
     """
     window = int(days)
     if window < 1:
@@ -881,6 +884,13 @@ def retention(db: sqlite3.Connection, days: int, *, now: Optional[datetime] = No
         raise ValueError(f"retention needs a window of at least one day, got {days!r}")
     cutoff = ((now or datetime.now(timezone.utc))
               - timedelta(days=window)).isoformat(timespec="seconds")
+    # The table name comes from the module that writes it rather than a second
+    # literal here, and the import is deferred because `run` imports this
+    # module. An archive written before the table existed simply has none.
+    from .run import READS_TABLE
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                  (READS_TABLE,)).fetchone():
+        db.execute(f"DELETE FROM {READS_TABLE} WHERE read_utc < ?", (cutoff,))
     # A row whose last sighting is empty has no age to judge — it comes from a
     # table that predates the column — and an empty string compares as older
     # than any date. Deleting on an unreadable date is the destructive guess
@@ -889,6 +899,9 @@ def retention(db: sqlite3.Connection, days: int, *, now: Optional[datetime] = No
         f"SELECT record_id FROM {TABLE} "
         "WHERE last_seen_utc != '' AND last_seen_utc < ?", (cutoff,))]
     if not old:
+        # Committed anyway: the reads above were pruned even though no record
+        # was old enough to go.
+        db.commit()
         return 0
     for extra in _related_tables(db):
         db.executemany(f'DELETE FROM "{extra}" WHERE record_id = ?',

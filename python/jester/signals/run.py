@@ -43,11 +43,12 @@ RUN_TABLE = "signal_run"
 #: for a real post.
 FAILURE_PREFIX = "query-failure"
 
-#: What each run actually read, one row per (run, source, record). The set is
-#: the whole point: a record that a COMPLETE read did not return is gone, and
-#: "what did that run see" has to be answerable after the process that saw it
-#: has exited. `record_id` is the archive's own key, which also makes the
-#: table discoverable by retention (`<problem_signal>_...` plus a record_id).
+#: What each run actually read, one row per (run, source, record). Written by
+#: `record_reads` and swept by `signals retention` on its own `read_utc`: it is
+#: audit data now, kept to answer "what did that run see" after the process that
+#: saw it has exited, and nothing reads it back to decide what is gone — the
+#: sweep in `mark_closed` uses the source's own in-memory set. Keeping it
+#: bounded is retention's job, not a reader's.
 READS_TABLE = "problem_signal_read"
 
 READS_DDL = f"""
@@ -110,12 +111,15 @@ def ensure_run_table(db: sqlite3.Connection) -> None:
 
 def record_reads(db: sqlite3.Connection, run_id: str, source, reads, *,
                  at: Optional[str] = None) -> int:
-    """Store what the run read, so a later sweep can be judged against it.
+    """Store what the run read, so "what did that run see" is a SELECT.
 
     The source keeps the set in memory during the run (`source.reads`); this is
-    what makes it a fact afterwards. Ids are the archive's `record_id`, so the
-    membership test in `mark_closed` does not have to know each source's id
-    shape.
+    what makes it a fact afterwards, and the sweep that decides what is gone
+    uses the same set in the same process. Ids are the archive's `record_id`,
+    so the rows are comparable across sources without knowing each id shape.
+
+    Nothing prunes these rows but `signals retention`, which ages them out by
+    `read_utc` — they are audit data, not state anything reads back.
     """
     ensure_run_table(db)
     stamp = at or _now()
@@ -132,25 +136,6 @@ def record_reads(db: sqlite3.Connection, run_id: str, source, reads, *,
     return len(rows)
 
 
-def reads_for_run(db: sqlite3.Connection, run_id: str) -> dict:
-    """A run's reads in the shape the sources hand over, keyed by query."""
-    out = {}
-    present = db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (READS_TABLE,)).fetchone()
-    if present is None:
-        # A database written before this table existed has no reads to offer;
-        # reading is not the place to create one.
-        return out
-    for query, rid, complete in db.execute(
-            f"SELECT query, record_id, complete FROM {READS_TABLE} WHERE run_id=?",
-            (run_id,)):
-        entry = out.setdefault(query, {"ids": set(), "complete": False})
-        entry["ids"].add(rid)
-        entry["complete"] = entry["complete"] or bool(complete)
-    return out
-
-
 def _as_datetime(value) -> datetime:
     """An ISO stamp or a datetime, in UTC. Our own stamps always are."""
     if not value:
@@ -164,11 +149,11 @@ def _as_datetime(value) -> datetime:
 def _window_start(since: str, at=None) -> Optional[str]:
     """The oldest stamp a `since` read could have returned, as an ISO string.
 
-    A Hacker News search with `since` is complete FOR ITS WINDOW: a record last
-    seen last year is outside the window, not deleted. The sweep compares
-    against this stamp, so only records the read could actually have returned
-    are judged. Both sides are our own UTC stamps, written with the same
-    format, so the comparison is a plain string one.
+    A Hacker News search with `since` is complete FOR ITS WINDOW: a record
+    created before the window is outside it, not deleted. The sweep compares
+    this stamp against the record's `created_utc`, which the source wrote in its
+    own format, so the comparison is done by SQLite's `julianday` rather than as
+    a string one.
     """
     text = (since or "").strip()
     if not text:
@@ -274,7 +259,7 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
     # Persist the read set before judging it: "what this run saw" has to survive
     # the process, and the sweep reads the same ids the source handed over.
     record_reads(db, run_id, source, getattr(source, "reads", None), at=seen_at)
-    closed = mark_closed(db, source, mode=mode, at=seen_at, since=since, run_id=run_id)
+    closed = mark_closed(db, source, mode=mode, at=seen_at, since=since)
     if closed["marked"]:
         if getattr(source, "windowed_reads", False):
             note = "; ".join(filter(None, [note, f"{closed['marked']} posting(s) gone from "
@@ -345,8 +330,7 @@ CLOSE_FLOOR = 20
 
 
 def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
-                at: Optional[str] = None, since: str = "",
-                run_id: str = "") -> dict:
+                at: Optional[str] = None, since: str = "") -> dict:
     """Mark the listings a board no longer shows as removed at source.
 
     A job advert closes when the role is filled, and until now nothing
@@ -363,20 +347,19 @@ def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
 
     * a board read is its whole catalogue, so everything with a matching query
       is judged;
-    * a search read is complete only for its `since` window, so only records
-      whose last sighting falls inside that window are judged. Without this a
-      seven-day Hacker News read would delete the entire older archive, which
-      is the difference between "deleted" and "not in this week's search".
+    * a search read is complete only for its `since` window -- the fetch asks
+      for postings CREATED inside it -- so only records created inside that
+      window are judged. Without this a seven-day Hacker News read would delete
+      the entire older archive, which is the difference between "deleted" and
+      "not in this week's search". `last_seen_utc` is the wrong side of that
+      comparison: a posting created last month that yesterday's run saw is
+      outside the window and simply was not asked for.
 
     The comparison is on `record_id`, which both shapes write into `reads`;
     comparing the archive's bare `source_id` against prefixed ids would have
     matched nothing and marked everything gone.
     """
     reads = getattr(source, "reads", None) or {}
-    if not reads and run_id:
-        # A sweep invoked outside the run that made the read (the scheduler's
-        # tick) still has the set, because the run stored it.
-        reads = reads_for_run(db, run_id)
     complete = {q: r["ids"] for q, r in reads.items() if r.get("complete") and r.get("ids")}
     if not complete or mode != "live":
         return {"marked": 0, "held": "", "judged": 0}
@@ -391,7 +374,17 @@ def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
             # No window, no judgement: the read cannot say which records it
             # could have returned.
             return {"marked": 0, "held": "", "judged": 0}
-        where += " AND last_seen_utc >= ?"
+        # The predicate the FETCH used, not last_seen_utc. The search asks for
+        # `created_at_i > since`, so a posting created before the window was
+        # never a candidate for this read: judging it removed deleted the older
+        # archive, one routine run at a time, and `upsert` reopens only on a
+        # re-sighting. `julianday` parses both sides natively because they are
+        # formatted differently -- HN's `created_at` (`...T10:00:00Z`, sometimes
+        # with milliseconds) and `_window_start`'s `...+00:00`. Strict `>`
+        # mirrors `created_at_i > epoch(since)`: equality was a posting the
+        # fetch excluded.
+        where += (" AND COALESCE(created_utc, '') != '' "
+                  "AND julianday(created_utc) > julianday(?)")
         args.append(cutoff)
     rows = db.execute(
         f"SELECT record_id, source_id FROM {TABLE} WHERE {where}", args).fetchall()

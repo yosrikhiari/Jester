@@ -174,6 +174,56 @@ def test_a_restore_without_a_manifest_says_so_rather_than_pretending(archive, tm
     assert "manifest" in got["note"]
 
 
+def test_a_backup_that_does_not_match_its_manifest_hash_is_refused(archive, tmp_path):
+    """The counts are an aggregate: a file edited in place can still hold the
+    right number of rows. The hash in the manifest is what says it is the file
+    that was written, so restoring has to check it before writing anything."""
+    res = _set(archive, compress=False)
+    backup_file = Path(res["path"])
+    backup_file.write_bytes(backup_file.read_bytes() + b"\x00")
+    dest = tmp_path / "restored.db"
+
+    got = backup.restore_backup(res["path"], str(dest))
+    assert got["ok"] is False
+    assert "does not match its manifest hash" in got["error"]
+    assert not dest.exists(), "a refused restore must not leave a file behind"
+
+
+def test_a_companion_whose_counts_are_all_unknown_says_it_did_not_compare(archive, tmp_path):
+    """`journal.db` has none of the counted tables, so its manifest entry is
+    `{nuggets: None, ...}`. Comparing two dictionaries of Nones "matched" and
+    said so, which is a promise about a check that never happened."""
+    res = _set(archive)
+    files = _manifest(res)["files"]
+    name = next(n for n, e in files.items() if e["role"] == "journal")
+    src = Path(res["path"]).parent / name
+    # The set's manifest is one file, and every entry in it is keyed by the
+    # file it describes; `restore_backup` looks for it beside the file it is
+    # restoring.
+    Path(str(src) + ".manifest.json").write_text(
+        Path(res["manifest"]).read_text(encoding="utf-8"), encoding="utf-8")
+
+    got = backup.restore_backup(str(src), str(tmp_path / "journal.db"))
+    assert got["ok"] is True, got.get("error")
+    assert got["matches_manifest"] is None, got
+    assert got["expected"] is None
+    assert "counts match" not in got["note"]
+    assert "no comparable counts" in got["note"], got["note"]
+
+
+def test_an_unwritable_destination_is_reported_not_raised(archive, tmp_path):
+    """A parent that cannot be made is an error like any other: the caller
+    reads `ok`/`error`, and a traceback out of a restore is a crash in the one
+    command someone runs when the archive is already gone."""
+    res = _set(archive)
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file, not a directory", encoding="utf-8")
+
+    got = backup.restore_backup(res["path"], str(blocked / "restored.db"))
+    assert got["ok"] is False
+    assert got["error"]
+
+
 # -- the drill --------------------------------------------------------------
 
 def test_the_drill_restores_into_a_temporary_directory_and_reports(archive, monkeypatch):

@@ -17,6 +17,7 @@ reads set is stored per run so "what did that run actually see" is a SELECT.
 """
 import json
 import urllib.error
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -92,6 +93,11 @@ def rules():
 def _removed(db):
     return {r[0] for r in db.execute(
         f"SELECT record_id FROM {sig.TABLE} WHERE COALESCE(removed_utc, '') != ''")}
+
+
+def _ago(days: float) -> str:
+    """An ISO stamp `days` in the past, for the window's two edges."""
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
 
 
 def _signal(**kw):
@@ -190,6 +196,34 @@ def test_restoring_an_unknown_record_says_so(db):
         sig.restore_revision(db, "reddit:never-seen")
 
 
+def test_an_older_revision_table_is_widened_and_still_snapshots(db):
+    """`_ensure_revision_table` widens a table written by an older build, and
+    nothing asserted it: the shape was only ever exercised as a fresh CREATE,
+    so a widening that missed a column would have failed on the one machine
+    that had history."""
+    db.execute(f"DROP TABLE {sig.REVISION_TABLE}")
+    db.execute(
+        f"CREATE TABLE {sig.REVISION_TABLE} ("
+        "revision_id INTEGER PRIMARY KEY, "
+        "record_id TEXT NOT NULL, "
+        "revision INTEGER NOT NULL DEFAULT 0, "
+        "snapshot_utc TEXT NOT NULL)")
+    db.commit()
+
+    sig.upsert(db, [_signal(title="old title")], seen_at="2026-11-01T00:00:00+00:00")
+    sig.upsert(db, [_signal(title="new title")], seen_at="2026-11-02T00:00:00+00:00")
+
+    columns = {r[1] for r in db.execute(f"PRAGMA table_info({sig.REVISION_TABLE})")}
+    assert {"title", "source_url", "company", "buyer_intent"} <= columns
+
+    row = db.execute(
+        f"SELECT title, source_url, company, buyer_intent, revision FROM "
+        f"{sig.REVISION_TABLE} WHERE record_id='reddit:t3_a'").fetchone()
+    assert row is not None, "the snapshot went into the widened table"
+    assert row["title"] == "old title"
+    assert row["revision"] == 0
+
+
 def test_the_revisions_command_lists_and_restores(tmp_path, capsys):
     """Recoverable has to mean reachable from a prompt: the snapshot table is
     useless to the person who noticed the bad correction if putting it back
@@ -239,11 +273,38 @@ def test_an_incomplete_read_marks_nothing_removed(db, rules):
     assert _removed(db) == set(), "a read that died early cannot say what is gone"
 
 
-def test_a_windowed_read_judges_only_what_the_window_could_hold(db, rules):
-    """A seven-day HN search says nothing about a record last seen last year:
-    it is outside the window, not deleted."""
+def test_a_record_created_before_the_window_is_not_marked_removed(db, rules):
+    """The fetch asks for `created_at_i > since`, so a posting created a month
+    ago is not in a seven-day read even when the previous run saw it yesterday.
+    Judging on `last_seen_utc` made every routine run mark that share of the
+    older archive removed, and `upsert` reopens only on a re-sighting -- so a
+    real lead vanished for good."""
     sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
-        {"hits": [_hit("1")], "nbPages": 1}])),
+        {"hits": [_hit("1", created_at=_ago(30))], "nbPages": 1}])),
+        seen_at=_ago(1))
+    sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
+        {"hits": [_hit("2")], "nbPages": 1}])))
+
+    assert _removed(db) == set(), "the fetch never asked for it; its absence proves nothing"
+
+
+def test_a_record_created_inside_the_window_is_marked_removed(db, rules):
+    """The other side of the same predicate: a posting the fetch could have
+    returned and did not is gone. Without this the fix could pass C1 by
+    judging nothing at all."""
+    sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
+        {"hits": [_hit("1", created_at=_ago(1))], "nbPages": 1}])))
+    sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
+        {"hits": [_hit("2")], "nbPages": 1}])))
+
+    assert _removed(db) == {"hackernews:1"}
+
+
+def test_a_windowed_read_judges_only_what_the_window_could_hold(db, rules):
+    """A seven-day HN search says nothing about a record created before it --
+    even one whose last sighting was inside it."""
+    sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
+        {"hits": [_hit("1", created_at="2024-01-01T00:00:00Z")], "nbPages": 1}])),
         seen_at="2025-01-01T00:00:00+00:00")
     sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
         {"hits": [_hit("2")], "nbPages": 1}])))
@@ -309,4 +370,47 @@ def test_retention_takes_the_revisions_it_should(db):
                          now=datetime(2026, 11, 3, tzinfo=timezone.utc)) == 1
 
     left = {r[0] for r in db.execute(f"SELECT record_id FROM {sig.REVISION_TABLE}")}
+    assert left == {"reddit:t3_new"}
+
+
+def _reads(db):
+    return {r[0] for r in db.execute(f"SELECT read_utc FROM {sigrun.READS_TABLE}")}
+
+
+def test_retention_ages_out_read_rows_even_when_no_record_is_old(db):
+    """`problem_signal_read` is audit data: one row per run x query x id, and
+    nothing reads it back, so nothing else will ever bound it. A run whose
+    archive has no old records must still prune the old reads -- returning
+    early on "no old records" left them growing forever."""
+    sig.upsert(db, [_signal()], seen_at="2026-11-01T00:00:00+00:00")
+    source = type("S", (), {"platform": "reddit"})()
+    fresh = {"q": {"ids": {"reddit:t3_a"}, "complete": True}}
+    sigrun.record_reads(db, "run-old", source, fresh, at="2023-01-01T00:00:00+00:00")
+    sigrun.record_reads(db, "run-new", source, fresh, at="2026-11-02T00:00:00+00:00")
+
+    from datetime import datetime, timezone
+    assert sig.retention(db, days=30,
+                         now=datetime(2026, 11, 3, tzinfo=timezone.utc)) == 0
+
+    assert _reads(db) == {"2026-11-02T00:00:00+00:00"}, _reads(db)
+
+
+def test_retention_takes_the_reads_of_the_record_it_removes(db):
+    """The reads of a swept record go with it, by the same discovery that takes
+    its revisions; the one still in the archive keeps what it read."""
+    sig.upsert(db, [_signal(source_id="t3_old")], seen_at="2025-01-01T00:00:00+00:00")
+    sig.upsert(db, [_signal(source_id="t3_new")], seen_at="2026-11-01T00:00:00+00:00")
+    source = type("S", (), {"platform": "reddit"})()
+    sigrun.record_reads(db, "run-old", source,
+                        {"q": {"ids": {"reddit:t3_old"}, "complete": True}},
+                        at="2025-01-01T00:00:00+00:00")
+    sigrun.record_reads(db, "run-new", source,
+                        {"q": {"ids": {"reddit:t3_new"}, "complete": True}},
+                        at="2026-11-02T00:00:00+00:00")
+
+    from datetime import datetime, timezone
+    assert sig.retention(db, days=30,
+                         now=datetime(2026, 11, 3, tzinfo=timezone.utc)) == 1
+
+    left = {r[0] for r in db.execute(f"SELECT record_id FROM {sigrun.READS_TABLE}")}
     assert left == {"reddit:t3_new"}

@@ -276,15 +276,23 @@ def _read_manifest(backup: Path) -> dict | None:
 
 
 def _expected_counts(manifest: dict | None, name: str) -> dict | None:
-    """What the manifest says a given file should contain, if anything."""
+    """What the manifest says a given file should contain, if anything.
+
+    None means "nothing to compare", and it is the answer for a companion whose
+    entry counts none of `COUNTED_TABLES` — `journal.db` and `chat.db` have no
+    nuggets, so their entry is `{nuggets: None, ...}`. Comparing two dicts of
+    Nones matched, and reporting "counts match" for that is a promise about a
+    check that never ran.
+    """
     if not manifest:
         return None
     entry = (manifest.get("files") or {}).get(name) or {}
-    if entry.get("counts") is not None:
-        return entry["counts"]
-    if name == manifest.get("backup"):
-        return manifest.get("counts")
-    return None
+    counts = entry.get("counts")
+    if counts is None and name == manifest.get("backup"):
+        counts = manifest.get("counts")
+    if not isinstance(counts, dict) or all(v is None for v in counts.values()):
+        return None
+    return counts
 
 
 def _unlink_quietly(path: Path) -> None:
@@ -450,10 +458,16 @@ def restore_backup(backup_path: str, dest: str) -> dict:
 
     New file only: an existing destination is refused rather than overwritten,
     because the common way to lose an archive twice is to "restore" over the
-    one copy that still worked. The restored file is checked twice — SQLite's
-    own `PRAGMA integrity_check`, then the table counts against the manifest
-    written beside the backup — and any failure removes it, so a refusal can
-    never be mistaken for a restore that produced a file.
+    one copy that still worked. The file is proven three times — its SHA-256
+    against the manifest entry, SQLite's own `PRAGMA integrity_check`, then the
+    table counts against the same manifest — and any failure removes what was
+    written, so a refusal can never be mistaken for a restore that produced a
+    file.
+
+    The hash comes first, and before anything is written: counts are an
+    aggregate, so a file edited in place can still hold the right number of
+    rows, and the manifest hash is the only thing that says these are the bytes
+    that were backed up.
     """
     src, dst = Path(backup_path), Path(dest)
     if not src.is_file():
@@ -462,7 +476,21 @@ def restore_backup(backup_path: str, dest: str) -> dict:
         return {"ok": False,
                 "error": f"refusing to overwrite {dst}; choose a new path"}
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
+    manifest = _read_manifest(src)
+    entry = ((manifest or {}).get("files") or {}).get(src.name) or {}
+    want_hash = entry.get("sha256")
+    if want_hash and _sha256_file(src) != want_hash:
+        return {"ok": False,
+                "error": f"{src.name} does not match its manifest hash; refusing "
+                         "to restore it"}
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # A parent that cannot be made is an error like any other: the caller
+        # reads `ok`/`error`, and a traceback here is a crash in the one
+        # command someone runs when the archive is already gone.
+        return {"ok": False, "error": f"cannot write {dst}: {exc}"}
     try:
         opener = gzip.open if src.suffix == ".gz" else open
         with opener(src, "rb") as fin, open(dst, "xb") as fout:
@@ -485,15 +513,22 @@ def restore_backup(backup_path: str, dest: str) -> dict:
         _unlink_quietly(dst)
         return {"ok": False, "error": f"integrity_check said {integrity!r}"}
 
-    manifest = _read_manifest(src)
     expected = _expected_counts(manifest, src.name)
     if expected is not None and counts != expected:
         _unlink_quietly(dst)
         return {"ok": False,
                 "error": f"counts {counts} differ from the manifest {expected}; "
                          "the file was removed"}
-    note = ("no manifest beside the backup; counts were not compared"
-            if manifest is None else f"counts match {_manifest_path(src).name}")
+    # `expected is None` is the only thing that decides this. "Counts match"
+    # over two dicts of Nones matched nothing, and saying so claimed a check
+    # that never ran.
+    if expected is None:
+        note = ("no manifest beside the backup; counts were not compared"
+                if manifest is None else
+                f"{_manifest_path(src).name} carries no comparable counts for "
+                f"{src.name}; they were not compared")
+    else:
+        note = f"counts match {_manifest_path(src).name}"
     return {"ok": True, "path": str(dst), "integrity": integrity,
             "counts": counts, "expected": expected,
             "matches_manifest": None if expected is None else True,

@@ -244,6 +244,27 @@ def test_apply_restores_a_deleted_launcher(host):
     assert schedule.launcher_path("cycle").is_file()
 
 
+def test_an_older_launcher_format_is_reinstalled(host):
+    """Argv alone cannot see this: a launcher installed before Task 7 runs the
+    same command and has no rotation guard, so apply called it "unchanged" and
+    the host never received the fix."""
+    assert schedule.apply_desired()["ok"] is True
+    path = schedule.launcher_path("cycle")
+    marker = f"REM jester-launcher-version: {schedule.LAUNCHER_VERSION}"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        marker, "REM jester-launcher-version: 1"), encoding="utf-8")
+
+    notes = cli.schedule_drift_notes()
+    assert any(n.startswith("JesterNightly:") and "is older than v2" in n
+               for n in notes), notes
+
+    actions = {r["task"]: r["action"] for r in schedule.apply_desired()["results"]}
+    assert actions["JesterNightly"] == "installed"
+    assert actions["JesterNightlySignals"] == "unchanged"
+    assert schedule.read_launcher("cycle")["version"] == schedule.LAUNCHER_VERSION
+    assert [r["action"] for r in schedule.apply_desired()["results"]] == ["unchanged"] * 13
+
+
 @pytest.mark.parametrize("body", [
     "tasks: []\n",
     "tasks:\n  - task: T\n    command: nonsense\n    cadence: {every: 30}\n",

@@ -49,6 +49,32 @@ def test_a_launcher_this_code_wrote_is_not_stale():
         assert schedule.launcher_drift(command)["stale"] is False, command
 
 
+def test_a_launcher_written_before_the_rotation_guard_is_rewritten():
+    """A launcher installed before Task 7 has the same argv as one written now
+    but no rotation guard, and nothing compared the two: `schedule apply` said
+    "unchanged" and `refresh` skipped it, so an installed host never received
+    the fix. The format marker is what an unchanged-from-outside file carries."""
+    schedule.write_launcher("data/jester.db", "config", PY, command="cycle")
+    path = schedule.launcher_path("cycle")
+    marker = f"REM jester-launcher-version: {schedule.LAUNCHER_VERSION}"
+    text = path.read_text(encoding="utf-8")
+    assert marker in text
+    path.write_text(text.replace(marker, "REM jester-launcher-version: 1"),
+                    encoding="utf-8")
+
+    drift = schedule.launcher_drift("cycle")
+    assert drift["argv"] == drift["want"], "the command is identical; only the format moved"
+    assert drift["stale"] is True
+    assert drift["version"] == 1
+    assert drift["want_version"] == schedule.LAUNCHER_VERSION
+    assert schedule.read_launcher("cycle")["version"] == 1
+
+    done = schedule.refresh_launchers(["cycle"])
+    assert [d["command"] for d in done] == ["cycle"]
+    assert schedule.read_launcher("cycle")["version"] == schedule.LAUNCHER_VERSION
+    assert schedule.launcher_drift("cycle")["stale"] is False
+
+
 def test_the_launcher_that_missed_the_boards_is_caught():
     schedule.write_launcher("data/signals-live.db", "config", PY, command="signals-hiring")
     _age("signals-hiring", "signals run --source hackernews-hiring --rules "
