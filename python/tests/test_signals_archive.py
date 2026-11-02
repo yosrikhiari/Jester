@@ -133,6 +133,47 @@ def test_a_crash_before_the_manifest_leaves_no_export(db, tmp_path, monkeypatch)
     assert not list(tmp_path.glob("*.tmp")), "temp files are cleaned up"
 
 
+def test_the_old_manifest_is_invalidated_before_the_csv_replaces_it(
+        db, tmp_path, monkeypatch):
+    """The hard-kill window, not the handled exception.
+
+    A SIGKILL between the two renames cannot run the cleanup below, so what
+    survives is whatever the two names hold at that instant. If the PREVIOUS
+    manifest were still on disk when the new CSV landed, it would vouch for
+    bytes (and possibly a `csv` name) it never hashed — a manifest that reads
+    as a successful export. The old manifest must therefore be gone BEFORE
+    the CSV rename: the worst case is then "manifest absent", which is
+    detectably incomplete. The end state after a handled exception is clean
+    either way, so the state at the CSV rename is what is asserted.
+    """
+    _seeded(db)
+    sig.export_csv(db, tmp_path, mode="synthetic")
+    manifest_path = tmp_path / "manifest.json"
+    assert manifest_path.exists(), "a good export first"
+
+    real_replace = sig.os.replace
+    manifest_at_csv_rename = "not observed"
+
+    def replace(src, dst, *a, **kw):
+        nonlocal manifest_at_csv_rename
+        if str(dst).endswith("signals-synthetic.csv"):
+            manifest_at_csv_rename = manifest_path.exists()
+        if str(dst).endswith("manifest.json"):
+            raise OSError("injected: killed before the new manifest landed")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(sig.os, "replace", replace)
+    with pytest.raises(OSError, match="injected"):
+        sig.export_csv(db, tmp_path, mode="synthetic")
+
+    assert manifest_at_csv_rename is False, \
+        "the previous manifest must be removed before the CSV rename"
+    assert not manifest_path.exists(), \
+        "no manifest may be left vouching for bytes it never hashed"
+    assert not (tmp_path / "signals-synthetic.csv").exists(), \
+        "the handled path still leaves no export"
+
+
 def test_a_crash_while_the_csv_is_written_leaves_nothing(db, tmp_path, monkeypatch):
     def die(fd):
         raise OSError("injected: fsync failed")
@@ -172,8 +213,17 @@ class FakeClient:
 
     def execute(self, sql, body="", **params):
         self.calls.append(sql)
-        if sql.upper().startswith("DESCRIBE"):
+        upper = sql.upper()
+        if upper.startswith("DESCRIBE"):
             return "".join(f"{name}\tString\n" for name in self.columns)
+        # A real server's DESCRIBE changes after an ADD COLUMN; the fake has
+        # to as well, or a second evolve is judged against a stale picture.
+        marker = "ADD COLUMN IF NOT EXISTS "
+        at = upper.find(marker)
+        if "ALTER TABLE" in upper and at != -1:
+            name = sql[at + len(marker):].split()[0]
+            if name not in self.columns:
+                self.columns.append(name)
         return ""
 
 
@@ -202,6 +252,24 @@ def test_a_current_schema_triggers_no_alter():
     res = ch.evolve_schema(client)
     assert _alters(client) == []
     assert res["columns_added"] == []
+
+
+def test_a_second_evolve_after_the_column_lands_issues_no_alter():
+    """Schema evolution must converge. The first load adds the missing field
+    (one ALTER); a second load against the table as it now is must add
+    nothing, or a loader that compares against a stale picture would issue
+    the same ALTER on every run."""
+    client = FakeClient([n for n in sig.FIELD_NAMES if n != "outcome_note"])
+
+    first = ch.evolve_schema(client)
+    assert first["columns_added"] == ["outcome_note"]
+    assert len(_alters(client)) == 1
+
+    client.calls.clear()
+    second = ch.evolve_schema(client)
+    assert second["columns_added"] == []
+    assert _alters(client) == [], "a column already present is never altered twice"
+    assert _drops(client) == []
 
 
 def test_a_column_the_code_no_longer_knows_is_left_alone():
@@ -373,6 +441,31 @@ def test_the_retention_command_deletes_and_says_so(tmp_path, capsys):
     finally:
         db.close()
     assert left == {"reddit:t3_new"}
+
+
+def test_the_retention_command_refuses_an_out_of_range_window(tmp_path, capsys):
+    """`--days 0` is not "everything" — it is refused, exits 1, and deletes
+    nothing. The library guard is tested above; this covers the CLI branch
+    that turns it into an exit code and a message."""
+    from jester import cli
+
+    path = str(tmp_path / "s.db")
+    db = sig.open_signals(path)
+    sig.upsert(db, [_signal("t3_old")], seen_at="2025-01-01T00:00:00+00:00")
+    db.close()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["signals", "retention", "--db", path, "--days", "0"])
+
+    assert exc.value.code == 1
+    assert "retention:" in capsys.readouterr().out
+
+    db = sig.open_signals(path)
+    try:
+        left = {r[0] for r in db.execute(f"SELECT record_id FROM {sig.TABLE}")}
+    finally:
+        db.close()
+    assert left == {"reddit:t3_old"}, "a refused window deletes nothing"
 
 
 # ---- the declaration: retention exists and is off by default ---------------

@@ -576,9 +576,12 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
 
     So the CSV goes to `<name>.csv.tmp` in the same directory, is flushed and
     fsynced, and is renamed into place with `os.replace`; the manifest is
-    written the same way and only after that rename succeeded. Any exception
-    removes the temp files AND the final pair, so a directory is either a
-    complete export or no export at all.
+    written the same way and only after that rename succeeded. The PREVIOUS
+    manifest is removed before the CSV rename, so a hard kill (SIGKILL, power
+    loss) between the two renames — which never reaches the exception handler
+    below — leaves no manifest rather than one vouching for bytes it never
+    hashed. Any exception removes the temp files AND the final pair, so a
+    directory is either a complete export or no export at all.
 
     The reconciliation is by identity, not count. After the rename the file
     is re-read and the manifest carries the SHA-256 of the sorted
@@ -611,6 +614,14 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
                 w.writerow([r[n] for n in FIELD_NAMES])
             fh.flush()
             os.fsync(fh.fileno())
+        # Invalidate the old manifest BEFORE the new CSV becomes visible. A
+        # SIGKILL between the two renames cannot run the cleanup at the
+        # bottom, and without this ordering it would leave the previous
+        # manifest beside a CSV it never hashed (possibly under a different
+        # `csv` name), which reads as a successful export. Removing it first
+        # makes the worst case "manifest absent" — detectably incomplete.
+        _unlink_quietly(manifest_path)
+        _fsync_dir(out)
         os.replace(tmp_csv, csv_path)
         _fsync_dir(out)
 
@@ -644,9 +655,10 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
         return manifest
     except BaseException:
         # Complete or absent. The final CSV is removed too: a crash between
-        # the two renames leaves a file that no manifest vouches for, and an
-        # earlier manifest is removed with it because it describes bytes that
-        # are no longer the ones on disk. Both would read as an export.
+        # the two renames leaves a file that no manifest vouches for, and any
+        # earlier manifest was already removed before that rename because it
+        # describes bytes that are no longer the ones on disk. Both would
+        # read as an export.
         _unlink_quietly(tmp_csv)
         _unlink_quietly(tmp_manifest)
         _unlink_quietly(csv_path)
