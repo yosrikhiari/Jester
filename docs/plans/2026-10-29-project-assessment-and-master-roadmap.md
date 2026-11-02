@@ -71,7 +71,7 @@
 
 ### 1.5 Current-state re-check (2026-10-29, post-merge)
 
-**For the current status of any F item, read [docs/STATUS.md](../../STATUS.md)** — it indexes this register against the S- and ND-registers. The table below is the dated 2026-10-29 re-check.
+**For the current status of any F item, read [docs/STATUS.md](../STATUS.md)** — it indexes this register against the S- and ND-registers. The table below is the dated 2026-10-29 re-check.
 
 Re-checked every load-bearing claim in this roadmap and the three reviews against the tree now on `main`, not against the baseline. `HEAD == origin/main == 70f966f`, clean tree; `main` carries 76 upstream commits beyond the baseline (chat, scheduler, specs, maintenance, console chat). The comparison changes no historical finding; it changes which ones are still open.
 

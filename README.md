@@ -30,7 +30,7 @@ Jester crawls community forums — Reddit, Hacker News, Discourse, Lemmy, Stack 
                                                         ↓
 Operator console  ←  Python pipeline  ←────────  LLM agent chain
    (:8619)                  ↓                           ↓
-                   ClickHouse + CSV            Qdrant (vectors + dedup)
+              CSV + optional ClickHouse          Qdrant (vectors + dedup)
 ```
 
 **Numbers from the working archive** (measured read-only on 2026-10-31): 133,402 comments, 115,185 nuggets, 2,627 ideas. Counts move; the console and [`docs/reports/2026-10-31-next-development-strategy.md`](docs/reports/2026-10-31-next-development-strategy.md) carry the dated detail.
@@ -51,9 +51,20 @@ Resume the generative loop only after the B1 gate in the [2026-10-31 strategy re
 |-------|-------|------|
 | **Ingestion** | Go, CloakBrowser (stealth Chromium) | Scrapes via documented APIs or a headless browser; deposits raw comments into a SQLite handoff queue |
 | **Processing** | Python, Ollama / Groq / any OpenAI-compatible server | Seven model jobs (extractor, synthesizer, critic, labeller, embedding, chat, specifier), each with its own provider, model and generation settings in one `roles:` block |
-| **Storage** | SQLite, Qdrant, ClickHouse | SQLite for pipeline state; Qdrant for semantic dedup (0.87 cosine) and cluster search; ClickHouse for the queryable problem-signal archive |
+| **Storage** | SQLite, Qdrant, ClickHouse | **SQLite is the source of truth** for every product: pipeline state, the problem-signal archive and the journal. Qdrant holds vectors for semantic dedup (0.87 cosine) and cluster search. ClickHouse is an **optional, manually loaded mirror** of the signals archive — the same rows, loaded on demand, never read back as truth |
 | **Console** | Python stdlib HTTP, vanilla JS | The operator UI at `:8619` — no build step, ships inside the Python package |
 | **Orchestration** | Docker Compose | One command for the stack; profiles add the scraping browser, local models and the archive |
+
+**Where the data lives, and what "optional" means here.** SQLite is the source
+of truth for every product; a count, a verdict or an export is computed from
+it. ClickHouse holds a copy of the signals archive and nothing else: it is
+loaded by hand with `jester signals load`, or by the `JesterClickHouseLoad`
+task in `config/schedule.yaml`, which is declared and **paused** because a load
+needs a running ClickHouse (the compose `clickhouse` service starts only under
+the `signals` profile). Nothing in the pipeline waits for it. `jester signals
+evidence` is how the three copies are compared: it reconciles SQLite against
+ClickHouse against the CSV export and exits non-zero if they disagree, so a
+stale mirror is a reported fact rather than a silent second opinion.
 
 ## Model jobs
 
@@ -148,6 +159,8 @@ Slice J2 adds experiments. `journal plan` writes the hypothesis, metric, the thr
 Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version — and that approval is bound to what it approved: the version, every figure the journal has drawn and every saved copy it cites are hashed into a manifest at the moment you approve, and an export whose recomputed manifest differs is refused by name ("buyers.svg", "the saved copy of https://…"). An approval also lapses: after `journal_approval_ttl_days` (30 by default) export and the move to `published` both ask you to approve again. A published article that turns out to be wrong is retracted rather than edited in place — `journal retract SLUG --reason "…"` — and a retracted article leaves the index, the feed and export.
 
 Every other platform gets a version that links back (`journal variant`): Dev.to gets the full article as an unpublished draft, Bluesky and Mastodon a short post, LinkedIn/HN/Reddit/Medium a text you post yourself and then record with `journal posted`. A version may not add a number the original does not have, must fit the platform and must pass the lint. Approving it (`journal approve SLUG post --channel X`) stores the fingerprint of the file you read; editing it afterwards blocks posting until you approve again. Credentials come from `.env` (`DEVTO_API_KEY`, `BLUESKY_HANDLE` + `BLUESKY_APP_PASSWORD`, `MASTODON_INSTANCE` + `MASTODON_TOKEN`).
+
+Approvals recorded before the manifest binding described above were hashed over the earlier, text-derived manifest and no longer match: they are refused, not silently honoured, until the same approval is taken once more with `jester journal approve SLUG publish`.
 
 `journal measure` records a dated reading of a posted article: one `channel_metric` row on that channel's latest posted version. The timestamp must carry a timezone, and at least one of `--views`, `--points`, `--comments` is required. The journal reaches `measured` only after both the 7-day and 30-day readings exist for every channel it was posted on; the command prints the next blocked reason.
 
@@ -258,13 +271,13 @@ Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — ho
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-10-31: 1,926 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-11-02: 2,237 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 
 **Languages:** Python 3.11+, Go 1.22+
 
-**Data:** SQLite (handoff queue + pipeline state), Qdrant (vectors), ClickHouse (signal archive)
+**Data:** SQLite (the source of truth: handoff queue, pipeline state, signal archive, journal), Qdrant (vectors), ClickHouse (optional manual mirror of the signal archive)
 
 **Models:** Ollama (local), Groq (cloud, OpenAI-compatible)
 

@@ -48,6 +48,17 @@ tasks:
     command: signals-brief
     cadence: {at: "10:00"}
     enabled: true
+  # The ClickHouse mirror of the signals archive: `signals load` copies the
+  # records into ClickHouse and then reconciles the two stores. It is declared
+  # and PAUSED for two reasons. SQLite is the source of truth, so the mirror is
+  # optional and can be loaded by hand (`jester signals load`) at any time; and
+  # a load needs a running ClickHouse, which the shipped stack starts only
+  # under the `signals` profile. Flipping `enabled: true` is the owner's
+  # decision, not an install side effect.
+  - task: JesterClickHouseLoad
+    command: signals-load
+    cadence: {at: "10:30"}
+    enabled: false
   # The morning verdict on the collector itself. A source that returned zero
   # rows three runs running is BARREN, one that has not been read in 36 hours
   # is STALE, and a week with no run at all fails too -- `jester health` exits

@@ -21,6 +21,7 @@ DECLARED = [
     "JesterNightlyTreat",
     "JesterNightlySignals",
     "JesterNightlySignalsBrief",
+    "JesterClickHouseLoad",
     "JesterNightlyHealth",
     "JesterNightlySignalsHiring",
     "JesterNightlySignalsSweep",
@@ -130,13 +131,14 @@ def test_the_shipped_declaration_names_every_task():
     assert {s["task"] for s in specs if not s["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
         "JesterNightlyRetention", "JesterSignalsRetention",
-        "JesterNightlyBackupDrill"}
+        "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     assert cadence["JesterNightly"] == "every 30 minutes"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
     assert cadence["JesterNightlySignalsSweep"] == "weekly on SUN at 08:00"
     assert cadence["JesterNightlySignalsHiring"] == "daily at 09:30"
     assert cadence["JesterNightlyBackupDrill"] == "monthly on day 1 at 03:00"
+    assert cadence["JesterClickHouseLoad"] == "daily at 10:30"
 
 
 def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(host):
@@ -144,17 +146,17 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
     assert installed == set(DECLARED)
-    assert len(host.created()) == 13
+    assert len(host.created()) == 14
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
         "JesterNightlyRetention", "JesterSignalsRetention",
-        "JesterNightlyBackupDrill"}
+        "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 13
-    assert len(host.created()) == 13, "a second apply must not re-register anything"
-    assert len(host.changes()) == 6, "nor flip the six paused tasks again"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 14
+    assert len(host.created()) == 14, "a second apply must not re-register anything"
+    assert len(host.changes()) == 7, "nor flip the seven paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -169,7 +171,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "13 task(s) would change" in out
+    assert "14 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
@@ -262,7 +264,7 @@ def test_an_older_launcher_format_is_reinstalled(host):
     assert actions["JesterNightly"] == "installed"
     assert actions["JesterNightlySignals"] == "unchanged"
     assert schedule.read_launcher("cycle")["version"] == schedule.LAUNCHER_VERSION
-    assert [r["action"] for r in schedule.apply_desired()["results"]] == ["unchanged"] * 13
+    assert [r["action"] for r in schedule.apply_desired()["results"]] == ["unchanged"] * 14
 
 
 @pytest.mark.parametrize("body", [
@@ -463,6 +465,28 @@ def test_the_declared_sweep_cadence_matches_the_code_rationale():
                  if s["command"] == "signals-sweep")
     assert sweep["cadence"] == schedule.SWEEP_CADENCE
     assert sweep["cadence"] == {"weekly": "SUN", "at": "08:00"}
+
+
+# ---- the ClickHouse mirror is declared, and paused (V3-19) ------------------
+
+def test_the_clickhouse_load_is_declared_disabled_after_the_brief():
+    """SQLite is the source of truth, so the ClickHouse copy is optional and
+    can be loaded by hand. It is declared anyway -- a load policy that only
+    exists in prose is one nobody can turn on deliberately -- and it is PAUSED
+    because a load needs a running ClickHouse. It runs after the brief, so the
+    archive it copies is the one the brief was built from."""
+    specs = schedule.load_desired()
+    load = next(s for s in specs if s["command"] == "signals-load")
+    assert load["task"] == "JesterClickHouseLoad"
+    assert load["task"] == schedule.TASK_FOR_COMMAND["signals-load"]
+    assert load["enabled"] is False
+    assert schedule.describe_cadence(load) == "daily at 10:30"
+    assert schedule.command_argv("signals-load") == ("signals", "load")
+    assert schedule.command_takes_config("signals-load") is False, (
+        "a signals sub-command has no --config; the launcher would exit 2")
+    order = [s["task"] for s in specs]
+    assert order.index("JesterClickHouseLoad") == (
+        order.index("JesterNightlySignalsBrief") + 1)
 
 
 # ---- a monthly cadence, for the restore drill (V3-23) -----------------------

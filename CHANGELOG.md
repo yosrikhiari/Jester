@@ -12,6 +12,123 @@ this file is the history. Dates are UTC+01:00 (the operator's zone).
 | **Problem signals** — a deterministic collector that archives buyer-intent records | **Live**, five scheduled tasks, fixture gate green on 2026-10-31. | `go/`, `python/jester/signals/`, `data/signals-*.db`, ClickHouse |
 | **Journal** — plan → run → check → publish with evidence | **Built through slice J3; nothing published yet** (0 articles). | `python/jester/journal/`, `data/journal.db`, site worktree |
 
+## [Unreleased] — 2026-11-02
+
+Hardening on branch `v3-hardening` (base `5a4bd36`). Not tagged, not pushed,
+not merged; `main` is still `d2da8de` (`v0.1.0`). User-visible changes only;
+per-item status is in [docs/STATUS.md](docs/STATUS.md).
+
+### Idea pipeline
+- `GET /api/config` no longer returns the scraper licence key or proxy. Any key
+  matching `license|proxy|secret|token|key|password` is blanked server-side,
+  and a `secrets_set` map tells the console whether a field is set — a literal
+  `${VAR}` counts as not set, the same rule the Go side applies.
+- An idea's evidence is claimed and the idea inserted in one `BEGIN IMMEDIATE`
+  unit, with a deterministic support key and an index over it. A crash between
+  the claim and the insert leaves neither; two writers on the same evidence
+  produce one idea.
+- A corrupt `blocked_until` fails closed: the quota reports a named block
+  window instead of reading as "no block". A quota charge is one conditional
+  statement whose rowcount is the verdict, so two processes cannot both spend
+  the last unit; the rescore queue takes a per-idea claim before asking.
+- A reply that could not be parsed, or that the role's own check refused, is
+  filed `ok=0` with an error instead of `ok=1`. Rescores now file `llm_calls`
+  rows, and nuggets archived without a vector are counted and logged once per
+  run.
+- One retry policy: socket timeout, DNS failure, reset connection and TLS error
+  are retried like a 503, and every attempt shares one per-call deadline rather
+  than restarting the timeout.
+- Crash recording is scoped to the run the command started. A failing
+  subcommand no longer marks an unrelated live run as errored.
+- Read paths execute no DDL: `GET /api/jobs`, `get_job` and `recent_jobs` ask
+  `sqlite_master` first, and a missing table returns the documented default.
+- Unknown top-level `thresholds.yaml` keys are refused by name, and a `roles:`
+  block must name a provider and model for each role it lists instead of
+  inheriting a built-in silently.
+- The console refuses a body over 1 MiB with 413, answers a foreign `Host` with
+  403, times out an idle connection at 30 s, and still answers `localhost` for
+  the compose healthcheck.
+- `scripts/check_lock_parity.py` runs in both Python CI jobs: an unpinned
+  requirement, one missing from `pylock.toml`, or a floor above the locked
+  version fails the build.
+- `jester eval` gates the extraction report on κ >= 0.6 when κ is defined, and
+  prints the double-labelled denominator the floor was measured over.
+- `jester eval agreement` reports per-axis MAE between human and model scores
+  with its denominator, never imputes a missing value, and says when fewer than
+  `--min 30` rows are comparable.
+
+### Problem signals
+- Each source has a streak row (`source_state`): consecutive zero-result and
+  error runs, the last read, the last error. `jester health --days 7` prints it
+  per source, exits 1 on a barren (3 zero runs), stale (36 h unread) or
+  erroring source, and prints JSON with `--json`.
+- A scheduled run that fails now reaches the operator: the Windows launcher and
+  the POSIX cron line call `jester notify` on a non-zero exit and still exit
+  with the run's own code.
+- A correction keeps the row it replaced (`problem_signal_revision`, with
+  `signals revisions --restore`), every mutable field is refreshed, and a
+  sweep judges only the ids a *completed* fetch actually saw, so a Hacker News
+  deletion is observed rather than inferred. Those reads are kept as
+  `problem_signal_read` rows.
+- The CSV export is complete or absent: written to a temp file, fsynced and
+  renamed, reconciled by the row-id set and a content hash, and both files
+  removed if either step fails.
+- ClickHouse schema v2: missing columns are added with `ALTER TABLE ... ADD
+  COLUMN IF NOT EXISTS`, and `signals load` prints the schema version, the
+  columns described and what it added. A field added to the map no longer needs
+  a manual `DROP`.
+- `jester signals retention --days 365` deletes records whose last sighting is
+  older than the window, and ages out `problem_signal_read` audit rows by read
+  time. Declared as `JesterSignalsRetention` (weekly SUN 04:00) and **paused**:
+  the excerpt is the only copy, so the TTL is an owner decision.
+- The ClickHouse load is declared, not implied: `JesterClickHouseLoad` (daily
+  10:30, after the brief) is in `config/schedule.yaml` and **paused**, because
+  SQLite is the source of truth and a load needs a running ClickHouse.
+
+### Journal
+- An approval binds what it approved: a manifest over the revision, every
+  figure and every saved copy, hashed at approval time. Export and the move to
+  `published` recompute it and refuse on a mismatch, naming the changed figure
+  or the saved copy.
+- An approval lapses after 30 days (`journal_approval_ttl_days`), and both
+  gates ask for it again rather than accepting an old one.
+- `obs:` targets need a reason: `obs:<label>|<reason>` with at least 8
+  characters after the `|`. Headings and inline code are prose now — a number
+  in an `<h2>` or between backticks counts like any other figure.
+- `published`, `shared` and `measured` articles can be retracted
+  (`journal retract SLUG --reason`): the state, the reason and the transition
+  are recorded, and the article leaves the index, the feed and export.
+- `journal snapshots SLUG --verify` re-checks the stored bytes on disk by
+  default and re-fetches only with `--network`; a changed page is marked stale
+  and blocks the export that would quote it.
+
+### Operations
+- `jester backup` covers `journal.db`, `chat.db` and `.env` alongside the
+  archive, writes one manifest per set, verifies the snapshot it wrote, names
+  what was absent, and can copy the set to a second volume (`--also-to`).
+- `jester backup restore <file> <new path>` restores into a file that does not
+  exist yet, decompressing on the way, and runs `integrity_check` plus the
+  manifest's counts before it reports success. `jester backup drill` does the
+  same into a temp directory; declared monthly and **paused**.
+- The console container runs as uid 10001 with cron removed from the image, so
+  the scheduler has one owner: the host's.
+- Windows tasks register `/rl LIMITED` and take `/run-as` explicitly, never
+  SYSTEM; run logs rotate at 5 MB with three kept; a launcher format marker
+  (v2) makes an argv-identical older launcher visibly stale to `apply` and to
+  the console.
+- `docs/data-retention.md` now states that the signal archive has its own
+  365-day window rather than claiming nothing is ever deleted.
+
+### Repository
+- `python/tests/test_doc_links.py` checks every relative link in every tracked
+  Markdown file, skipping code blocks, inline code, anchors and URI schemes.
+  It found one real break, now repaired.
+- `docs/plans/archive/README.md` defines when a plan is archived and records
+  that, as of 2026-11-02, no plan's own header says it is superseded. Nothing
+  was moved and no report was touched.
+- README: SQLite is named the source of truth, ClickHouse an optional manually
+  loaded mirror, and the tests paragraph carries counts measured on 2026-11-02.
+
 ## [0.1.0] — 2026-11-01
 
 First release. The anchor was the 2026-10-31 state at commit `36d357b`, with

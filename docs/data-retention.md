@@ -5,7 +5,9 @@ the boundary is where it is. The code that enforces all of this is
 `retention_sweep` in `python/jester/store.py` plus `prune_exports` in
 `python/jester/export.py`; this page is the readable version of the same
 facts, so a policy question has somewhere to land that is not a function
-signature.
+signature. The problem-signal archive is a separate database with a separate
+window, enforced by `signals.retention` — see
+[its own section](#the-signal-archive-has-its-own-window).
 
 ## The clock
 
@@ -70,12 +72,49 @@ actually changed.
   sweep does not delete them; a backup that quietly ages out with the data it
   protects would be worse than no backup.
 - **The problem-signal archive.** `data/signals-*.db` and its ClickHouse table
-  are a different pipeline with a different rule: a signal record stores only
-  a **600-character excerpt** by construction (`EXCERPT_CHARS`), never the
-  full text, so there is nothing for this sweep to minimize. Counts stay
-  reconcilable because the row is not deleted.
+  are a different pipeline with a different clock, so this sweep does not touch
+  them: a signal record stores only a **600-character excerpt** by construction
+  (`EXCERPT_CHARS`), never the full text, and there is nothing here for the
+  nugget sweep to minimize. Its records are not immortal, though — they age out
+  on their own window, described in the next section.
 - **The journal.** `data/journal.db`, the article files and the site worktree
   are outside this sweep; they have their own versioning and approval gates.
+
+## The signal archive has its own window
+
+The problem-signal archive is a separate database (`data/signals-*.db`) and it
+has its own sweep, `jester signals retention`, which is a different command
+from the 30-day sweep above. What it does:
+
+- **One window: 365 days**, fixed in `schedule.COMMAND_SPEC` as
+  `signals retention --days 365` rather than defaulted at the call site. It is
+  measured from each record's **last sighting**, not its first: a posting still
+  being returned every morning is current, and the window is "nobody has seen
+  this for a year".
+- **It deletes whole records.** A signal record is a 600-character excerpt and
+  the row is the only copy of it, so there is nothing to minimize field by
+  field: the row goes, and with it the evidence behind every buyer count taken
+  from it. A window below one day is refused (`--days 0` would mean
+  "everything").
+- **The read audit ages out by its own clock.** `problem_signal_read` rows
+  (which query read which record, and whether the read completed) are removed
+  by `read_utc` once they are older than the window, even in a run that deletes
+  no record. That table is bookkeeping for the removal sweep, not an archive.
+- **It is PAUSED.** `JesterSignalsRetention` is declared weekly on SUN 04:00
+  with `enabled: false`. Nothing deletes a signal record until the owner picks
+  a TTL and flips the declaration; a load or a run by hand is the only way it
+  happens before that.
+- **It is observable.** `jester health --days 7` reports each source's streak
+  and exits 1 on a barren, stale or erroring one, and `jester signals evidence`
+  reconciles SQLite against ClickHouse against the CSV export. A sweep that
+  removed more than intended shows up as a change in the first and a
+  disagreement in the second.
+
+The command is safe to run by hand:
+
+```bash
+python -m jester.cli signals retention --db data/signals-live.db --days 365
+```
 
 ## Backups and retention are declared, not remembered
 
@@ -85,16 +124,22 @@ and is corrupt), then **opens the snapshot** and runs `PRAGMA
 integrity_check` plus row counts before reporting success. Only after that
 does it prune old backups, keeping the newest **14** (`--keep`).
 
-`config/schedule.yaml` declares both jobs:
+`config/schedule.yaml` declares all four operational jobs:
 
 | Task | Command | Cadence | Enabled |
 |---|---|---|---|
 | `JesterNightlyBackup` | `backup` | daily 02:30 | **yes** |
 | `JesterNightlyRetention` | `retention` | weekly SUN 03:30 | **no** |
+| `JesterSignalsRetention` | `signals-retention` | weekly SUN 04:00 | **no** |
+| `JesterNightlyBackupDrill` | `backup-drill` | monthly day 1 at 03:00 | **no** |
 
-Backup is enabled because it only adds a copy. Retention is declared but
-disabled until the extraction sample in `eval/extraction/` is drawn and
-labelled: a sweep NULLs `raw_text`, and the sample depends on that text.
+Backup is enabled because it only adds a copy. The three disabled jobs are each
+waiting on an owner decision: the nugget retention sweep NULLs `raw_text`, and
+the extraction sample in `eval/extraction/` depends on that text; the signals
+sweep deletes the only copy of a record's excerpt, so it waits for a chosen
+TTL; and the restore drill is a monthly report whose machine the owner picks —
+a backup nobody has restored is a backup nobody knows works.
+
 `jester schedule apply` installs what the file says; `jester schedule status`
 prints the disabled task as PAUSED. It refuses, and exits non-zero, when the
 file moves the cadence of a task that is enabled right now — that is a change

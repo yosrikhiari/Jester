@@ -514,6 +514,14 @@ TASK_FOR_COMMAND = {
     # The name the task card specifies, verbatim — it does not carry the
     # `JesterNightly` prefix the other entries share.
     "signals-retention": "JesterSignalsRetention",
+    # The ClickHouse mirror of the signals archive. SQLite is the source of
+    # truth, so this is a convenience rather than a pipeline step: the load is
+    # idempotent (a ReplacingMergeTree keyed on the record id) and safe to skip
+    # entirely. Declared PAUSED because it needs a running ClickHouse, which
+    # the shipped stack only starts under the `signals` profile. The task name
+    # is the one the documentation uses, verbatim -- like `signals-retention`
+    # above, it does not carry the `JesterNightly` prefix.
+    "signals-load": "JesterClickHouseLoad",
 }
 
 #: What each schedulable command expands to on the command line, and whether it
@@ -632,6 +640,11 @@ COMMAND_SPEC = {
     # is still the only evidence that a post said what it said.
     "signals-retention": {"argv": ("signals", "retention", "--days", "365"),
                           "config": False},
+    # `signals load` is a sub-command, so it takes no `--config` for the same
+    # reason as the two above -- the launcher's fixed `--config` tail would
+    # make it exit 2 on every tick. `--db` is still appended by the launcher,
+    # and it is the archive the load reads.
+    "signals-load": {"argv": ("signals", "load"), "config": False},
 }
 
 
