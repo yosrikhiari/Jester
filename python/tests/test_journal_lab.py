@@ -58,11 +58,25 @@ def test_an_older_database_gets_the_new_columns(tmp_path):
                       "hypothesis TEXT, metric TEXT, threshold TEXT, baseline TEXT, n_planned INTEGER, "
                       "checklist TEXT, created_at TEXT, locked_at TEXT);"
                       "CREATE TABLE experiment_run (id INTEGER PRIMARY KEY, experiment_id INTEGER, "
-                      "status TEXT, started_at TEXT, finished_at TEXT, raw_path TEXT, result TEXT);")
+                      "status TEXT, started_at TEXT, finished_at TEXT, raw_path TEXT, result TEXT);"
+                      # The tables V3-05/V3-15 widened, as an older build wrote them.
+                      "CREATE TABLE journal (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE, "
+                      "title TEXT NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, "
+                      "created_at TEXT NOT NULL, updated_at TEXT NOT NULL);"
+                      "CREATE TABLE approval (id INTEGER PRIMARY KEY, journal_id INTEGER, "
+                      "what TEXT NOT NULL, actor TEXT NOT NULL, at TEXT NOT NULL);"
+                      "CREATE TABLE snapshot (id INTEGER PRIMARY KEY, url TEXT NOT NULL, "
+                      "status INTEGER NOT NULL, method TEXT NOT NULL, fetched_at TEXT NOT NULL);")
     old.close()
     conn = J.open_journal(str(path))
     cols = {r[1] for r in conn.execute("PRAGMA table_info(experiment_run)")}
     assert {"source", "command", "env", "exit_code", "duration_s"} <= cols
+    # V3-05: the approval names the manifest it covered.
+    assert "manifest_sha256" in {r[1] for r in conn.execute("PRAGMA table_info(approval)")}
+    # V3-15: a retraction says why, a stale saved copy says what moved and
+    # which check found it.
+    assert "retracted_reason" in {r[1] for r in conn.execute("PRAGMA table_info(journal)")}
+    assert {"stale_reason", "stale_check"} <= {r[1] for r in conn.execute("PRAGMA table_info(snapshot)")}
     assert J._catch_up_columns(conn) == []
     conn.close()
 

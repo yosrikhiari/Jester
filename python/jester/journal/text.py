@@ -1,10 +1,12 @@
 """Reading an article's Markdown the way the proof checks need it.
 
 Not a Markdown renderer. The checks only need to know, for each piece of
-text, whether it is prose a reader will take as a claim (paragraphs, lists,
-quotes, tables) or something that is not (code, headings, comments), plus
-where the links are, so a number inside `[91%](run:12)` counts as backed and
-a number inside a URL is not counted at all.
+text, whether it is prose a reader will take as a claim (headings,
+paragraphs, lists, quotes, tables) or something that is not (code,
+comments), plus where the links are, so a number inside `[91%](run:12)`
+counts as backed and a number inside a URL is not counted at all. Headings
+count because they are rendered as `<h2>`: a figure in one is read like any
+other claim.
 
 Every finding carries a line number, so a block remembers the line it
 started on and offsets inside it map back to lines.
@@ -18,7 +20,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import List, Optional
 
-PROSE_KINDS = frozenset({"paragraph", "list", "quote", "table"})
+PROSE_KINDS = frozenset({"heading", "paragraph", "list", "quote", "table"})
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s")
@@ -124,14 +126,21 @@ def links(text: str) -> List[Link]:
             for m in _LINK.finditer(text)]
 
 
-def mask(text: str) -> str:
-    """Blank out what is not prose -- inline code, inline comments, link
-    targets -- keeping every offset where it was, so positions found in the
-    masked text are positions in the original."""
+def mask(text: str, inline_code: bool = True) -> str:
+    """Blank out what is not prose -- inline comments, link targets -- keeping
+    every offset where it was, so positions found in the masked text are
+    positions in the original.
+
+    Inline code is blanked too by default: emphasis and quotation checks read
+    a code span as a name, not as the author speaking. The number check asks
+    for `inline_code=False`: a measurement written in backticks is still a
+    claim a reader will check, so it is not exempt from proof.
+    """
     def blank(m):
         return re.sub(r"[^\n]", " ", m.group(0))
 
-    text = _INLINE_CODE.sub(blank, text)
+    if inline_code:
+        text = _INLINE_CODE.sub(blank, text)
     text = _INLINE_COMMENT.sub(blank, text)
     out = list(text)
     for ln in links(text):

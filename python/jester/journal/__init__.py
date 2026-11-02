@@ -45,11 +45,20 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 DEFAULT_DB = "data/journal.db"
+
+#: Where the shipped thresholds live. Read lazily by `approval_ttl_days`, so
+#: the store stays importable without the config package.
+THRESHOLDS = Path(__file__).resolve().parents[3] / "config" / "thresholds.yaml"
+#: Days a publish approval stays usable when no config says otherwise.
+DEFAULT_APPROVAL_TTL_DAYS = 30
+#: Format version of the manifest an approval records. A hash is only
+#: comparable to a hash made the same way, so the shape is versioned.
+MANIFEST_VERSION = 1
 
 #: Who may open a human gate. Anything else -- an agent role name, a script --
 #: is recorded but never counted by a gate.
@@ -119,6 +128,19 @@ ADDED_COLUMNS = (
     # clock -- re-exporting on a later day wrote new bytes and moved the
     # display date. Only the first export stamps it.
     ("journal", "first_export_at", _EMPTY_TEXT),
+    # V3-05: a publish approval covers a revision AND the figures and saved
+    # source copies that existed when it was given. The hash names that set;
+    # export recomputes it and refuses when it moved.
+    ("approval", "manifest_sha256", _EMPTY_TEXT),
+    # V3-15: a retraction is a published page taken back, and it says why.
+    ("journal", "retracted_reason", _EMPTY_TEXT),
+    # V3-15: set when a saved copy no longer matches what was stored or the
+    # page behind it changed. Freshness is a fact about the copy, so it lives
+    # on the snapshot row.
+    ("snapshot", "stale_reason", _EMPTY_TEXT),
+    # V3-15: what found the staleness -- the copy on disk or the page itself.
+    # A re-check can only clear a finding it was capable of making.
+    ("snapshot", "stale_check", _EMPTY_TEXT),
 )
 
 DDL = """
@@ -138,6 +160,7 @@ CREATE TABLE IF NOT EXISTS journal (
   path TEXT NOT NULL DEFAULT '',
   parked_from TEXT NOT NULL DEFAULT '',
   abandoned_reason TEXT NOT NULL DEFAULT '',
+  retracted_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   published_at TEXT NOT NULL DEFAULT '',
@@ -161,7 +184,8 @@ CREATE TABLE IF NOT EXISTS approval (
   at TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   revision_id INTEGER,
-  publication_id INTEGER
+  publication_id INTEGER,
+  manifest_sha256 TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS revision (
   id INTEGER PRIMARY KEY,
@@ -231,6 +255,8 @@ CREATE TABLE IF NOT EXISTS snapshot (
   error TEXT NOT NULL DEFAULT '',
   text_path TEXT NOT NULL DEFAULT '',
   text_sha256 TEXT NOT NULL DEFAULT '',
+  stale_reason TEXT NOT NULL DEFAULT '',
+  stale_check TEXT NOT NULL DEFAULT '',
   fetched_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshot_url ON snapshot (url);
@@ -389,16 +415,130 @@ def history(db: sqlite3.Connection, journal_id: int) -> List[sqlite3.Row]:
 
 # ---- approvals --------------------------------------------------------------
 
+def _canonical(value) -> str:
+    """The one JSON spelling of a manifest, so its hash is the hash of it."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _cited_urls(article_text: Optional[str]) -> List[str]:
+    """Every external page the revision links to, sorted and de-fragmented."""
+    if not article_text:
+        return []
+    from jester.journal import text as T
+
+    urls = set()
+    for block in T.prose_blocks(article_text):
+        for link in T.links(block.text):
+            if link.external and not link.image:
+                urls.add(link.target.split("#", 1)[0])
+    return sorted(urls)
+
+
+def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int,
+                     article_text: Optional[str] = None):
+    """What an approval of one version covers, and the SHA-256 of that list.
+
+    Same shape as the signals manifest: canonical JSON, sorted identity
+    lists, and a hash over the bytes, so a reader checks it by recomputing
+    instead of trusting a flag. The list is the revision's content hash,
+    every figure the journal has registered (each row, so redrawing one is
+    visible even when the bytes came out identical), and the newest saved
+    copy of every page the revision cites.
+
+    `article_text` is the revision's text: the cited pages are only knowable
+    from it. Without it the snapshot list is empty, which no approval taken
+    WITH the text can match -- that mismatch fails closed, and the refusal
+    says to approve again.
+    """
+    rev = db.execute("SELECT * FROM revision WHERE id = ? AND journal_id = ?",
+                     (revision_id, journal_id)).fetchone()
+    if rev is None:
+        raise JournalError(f"revision {revision_id} is not part of journal {journal_id}")
+    artifacts = [
+        {"path": row["path"], "sha256": row["sha256"]}
+        for row in db.execute(
+            "SELECT path, sha256 FROM artifact WHERE journal_id = ? ORDER BY path, sha256, id",
+            (journal_id,)).fetchall()]
+    snapshots = []
+    for url in _cited_urls(article_text):
+        row = db.execute(
+            "SELECT url, status, text_sha256, fetched_at FROM snapshot WHERE url = ? "
+            "ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+        if row is None:
+            snapshots.append({"url": url, "missing": True})
+        else:
+            snapshots.append({"url": row["url"], "status": row["status"],
+                              "text_sha256": row["text_sha256"], "fetched_at": row["fetched_at"]})
+    manifest = {
+        "version": MANIFEST_VERSION,
+        "revision": {"content_sha256": rev["content_sha256"]},
+        "artifacts": artifacts,
+        "snapshots": snapshots,
+    }
+    return manifest, hashlib.sha256(_canonical(manifest).encode("utf-8")).hexdigest()
+
+
+def _parse_time(text: str) -> Optional[datetime]:
+    try:
+        when = datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+def approval_ttl_days(path: Optional[Path] = None) -> int:
+    """Days a publish approval stays usable (V3-15), from the config.
+
+    The shipped default applies when the config file is absent -- a deployed
+    package without a checkout still needs a number. A config that exists
+    but cannot be read is not swallowed: a broken file is a broken app.
+    """
+    config = Path(path) if path is not None else THRESHOLDS
+    if not config.exists():
+        return DEFAULT_APPROVAL_TTL_DAYS
+    from jester.config import load_thresholds
+
+    return int(load_thresholds(config).journal_approval_ttl_days)
+
+
+def approval_expiry(approval: sqlite3.Row, days: Optional[int] = None) -> Optional[str]:
+    """When this approval stops vouching for the article (ISO), or None."""
+    at = _parse_time(approval["at"])
+    if at is None:
+        return None
+    return (at + timedelta(days=approval_ttl_days() if days is None else days)).isoformat()
+
+
+def approval_expired(approval: sqlite3.Row, at: Optional[str] = None,
+                     days: Optional[int] = None) -> bool:
+    """Has the approval lapsed? An approval whose date cannot be read has."""
+    expiry = approval_expiry(approval, days)
+    if expiry is None:
+        return True
+    now = _parse_time(at) if at else _parse_time(now_utc())
+    return now is not None and now >= datetime.fromisoformat(expiry)
+
+
 def approve(db: sqlite3.Connection, journal_id: int, what: str, actor: str = HUMAN,
             note: str = "", revision_id: Optional[int] = None,
-            publication_id: Optional[int] = None, at: Optional[str] = None) -> int:
-    """Record a decision. Anyone may record one; only `actor == HUMAN` counts."""
+            publication_id: Optional[int] = None, at: Optional[str] = None,
+            article_text: Optional[str] = None) -> int:
+    """Record a decision. Anyone may record one; only `actor == HUMAN` counts.
+
+    A publish approval also records the manifest of what it approved: the
+    revision, every figure the journal has made, and every saved source copy
+    the revision cites. Export recomputes that manifest and refuses when it
+    has moved, so a figure redrawn after approval cannot ship under it.
+    """
     if what not in APPROVALS:
         raise JournalError(f"approval must be one of {', '.join(APPROVALS)} (got {what!r})")
+    manifest_sha = ""
+    if what == "publish" and revision_id is not None:
+        _, manifest_sha = journal_manifest(db, journal_id, revision_id, article_text)
     cur = db.execute(
-        "INSERT INTO approval (journal_id, what, actor, at, note, revision_id, publication_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (journal_id, what, actor, at or now_utc(), note, revision_id, publication_id))
+        "INSERT INTO approval (journal_id, what, actor, at, note, revision_id, publication_id, "
+        "manifest_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (journal_id, what, actor, at or now_utc(), note, revision_id, publication_id, manifest_sha))
     db.commit()
     return cur.lastrowid
 

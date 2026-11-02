@@ -3402,6 +3402,8 @@ def _print_journal(db, root, j):
         print(f"  parked from: {j['parked_from']}")
     if j["state"] == js.ABANDONED:
         print(f"  abandoned: {j['abandoned_reason']}")
+    if j["state"] == js.RETRACTED:
+        print(f"  retracted: {j['retracted_reason']}")
     path = _journal_file(root, j)
     file_sha = _journal_file_sha(root, j)
     revs = J.revisions(db, j["id"])
@@ -3574,6 +3576,36 @@ def _journal_snapshot(db, root, j, args, sleep=None, opener=None):
         md = path.read_text(encoding="utf-8")
         urls = list(dict.fromkeys(S.strip_fragment(ln.target)
                                   for b in T.prose_blocks(md) for ln in T.links(b.text) if ln.external))
+    if args.verify:
+        if args.from_file or args.refresh:
+            raise J.JournalError("--verify re-checks saved copies; it does not store one "
+                                 "(use --network to re-fetch, or snapshot without --verify)")
+        stale = 0
+        checked = 0
+        for url in urls:
+            row = S.latest(db, url)
+            if row is None:
+                print(f"  missing  {url} (jester journal snapshot)")
+                stale += 1
+                continue
+            if checked and args.network:
+                sleep(1.0)  # one request a second, as when taking a copy
+            ok, why = S.verify(db, root, row, opener=opener, refetch=args.network)
+            checked += 1
+            marked = S.latest(db, url)["stale_reason"]
+            if ok:
+                print(f"  ok    {url} (saved {row['fetched_at']})")
+            elif marked:
+                print(f"  STALE  {url} - {marked}")
+                stale += 1
+            else:
+                print(f"  FAIL   {url} - {why}")
+                stale += 1
+        if not urls:
+            print("no links to verify")
+        if stale:
+            sys.exit(1)
+        return
     if args.from_file and len(urls) != 1:
         raise J.JournalError("--from-file needs exactly one --url")
     if not urls:
@@ -3713,6 +3745,8 @@ def cmd_journal(args):
         save      commit the article file as a new version
         approve   record YOUR decision (choose | plan | review | publish)
         state     move to a state; refused with reasons if a gate fails
+        retract   take a published article back, with the reason
+        snapshot  save copies of the pages it links to; --verify re-checks them
 
     Approvals made here are recorded as `human`. That is the only actor the
     gates count, so nothing an agent does can open a human gate.
@@ -3821,6 +3855,7 @@ def cmd_journal(args):
 
         if args.action == "approve":
             revision_id = None
+            article_text = None
             if args.what in ("review", "publish"):
                 last = J.latest_revision(db, j["id"])
                 if last is None:
@@ -3830,6 +3865,11 @@ def cmd_journal(args):
                     raise J.JournalError("the file has unsaved changes; save first, so you "
                                          "approve what you actually read")
                 revision_id = last["id"]
+                if args.what == "publish":
+                    # The manifest covers the pages the text cites, so the
+                    # approval is taken against the text that was verified.
+                    path = _journal_file(root, j)
+                    article_text = path.read_text(encoding="utf-8") if path is not None and path.exists() else None
             if args.what == "post":
                 from jester.journal import channels as CH
 
@@ -3840,10 +3880,16 @@ def cmd_journal(args):
                       f"(file {pub['approved_sha256'][:8]}); editing it means approving again")
                 return
             J.approve(db, j["id"], args.what, actor=J.HUMAN, note=args.note,
-                      revision_id=revision_id)
+                      revision_id=revision_id, article_text=article_text)
             what = f"{args.what} on version {J.latest_revision(db, j['id'])['n']}" \
                 if revision_id else args.what
             print(f"recorded your approval: {args.slug} {what}")
+            return
+
+        if args.action == "retract":
+            j = js.move(db, args.slug, js.RETRACTED, actor=J.HUMAN, note=args.note,
+                        reason=args.reason)
+            print(f"{args.slug} is retracted: {j['retracted_reason']}")
             return
 
         if args.action == "state":
@@ -3852,7 +3898,7 @@ def cmd_journal(args):
             print(f"{args.slug} is now {j['state']}")
             return
 
-        if args.action == "snapshot":
+        if args.action in ("snapshot", "snapshots"):
             _journal_snapshot(db, root, j, args)
             return
 
@@ -3884,7 +3930,7 @@ def cmd_journal(args):
                 sys.exit(1)
             return
     except js.MoveRefused as exc:
-        print(f"{args.slug} cannot move to {args.to}:")
+        print(f"{args.slug} cannot move to {exc.to}:")
         for r in exc.reasons:
             print(f"  - {r}")
         sys.exit(1)
@@ -3942,15 +3988,25 @@ def _add_journal_parser(sub):
     p.add_argument("slug")
     p.add_argument("to", choices=STATES)
     p.add_argument("--note", default="")
-    p.add_argument("--reason", default="", help="why it is abandoned")
+    p.add_argument("--reason", default="", help="why it is abandoned or retracted")
 
-    p = common(jsub.add_parser("snapshot", help="save copies of the pages the article links to"))
+    p = common(jsub.add_parser("retract", help="take a published article back, with the reason"))
+    p.add_argument("slug")
+    p.add_argument("--reason", default="", help="why it is retracted (required)")
+    p.add_argument("--note", default="")
+
+    p = common(jsub.add_parser("snapshot", aliases=["snapshots"],
+                               help="save copies of the pages the article links to, or verify them"))
     p.add_argument("slug")
     p.add_argument("--url", default="", help="save just this one")
     p.add_argument("--from-file", default="",
                    help="with --url: store this text file as the copy (a PDF you extracted, "
                         "a page behind a login); recorded as manual")
     p.add_argument("--refresh", action="store_true", help="fetch again even if a good copy exists")
+    p.add_argument("--verify", action="store_true",
+                   help="re-check saved copies: their bytes on disk always, the page only with --network")
+    p.add_argument("--network", action="store_true",
+                   help="with --verify: re-fetch the page and compare it to the saved copy")
 
     common(jsub.add_parser("check", help="run the proof checks on the saved version")).add_argument("slug")
 

@@ -2,7 +2,7 @@
   {
     "id": "clean-draft",
     "want": "pass",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n",
     "runs": [
       {
         "result": {
@@ -26,7 +26,7 @@
     "id": "planted-count",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe read 500 posts by hand.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe read 500 posts by hand.\n",
     "runs": [
       {
         "result": {
@@ -50,7 +50,7 @@
     "id": "planted-percent",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nRecall fell by 3.5% on short posts.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nRecall fell by 3.5% on short posts.\n",
     "runs": [
       {
         "result": {
@@ -74,7 +74,7 @@
     "id": "planted-times-sign",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nIt was 3× faster than the baseline.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nIt was 3× faster than the baseline.\n",
     "runs": [
       {
         "result": {
@@ -98,7 +98,7 @@
     "id": "planted-thousands",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe archive holds 1,303 buyers.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe archive holds 1,303 buyers.\n",
     "runs": [
       {
         "result": {
@@ -122,7 +122,7 @@
     "id": "planted-currency",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nEach post with a link costs $0.20 on X.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nEach post with a link costs $0.20 on X.\n",
     "runs": [
       {
         "result": {
@@ -146,7 +146,7 @@
     "id": "planted-decimal",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe kept a threshold of 0.87 for duplicates.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nWe kept a threshold of 0.87 for duplicates.\n",
     "runs": [
       {
         "result": {
@@ -170,7 +170,7 @@
     "id": "planted-unit",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe median call took 12 ms.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nThe median call took 12 ms.\n",
     "runs": [
       {
         "result": {
@@ -194,7 +194,7 @@
     "id": "planted-range",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nBetween 3–13% of links were invented.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nBetween 3–13% of links were invented.\n",
     "runs": [
       {
         "result": {
@@ -218,7 +218,7 @@
     "id": "planted-x-suffix",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nLocal scoring was 5x cheaper.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nLocal scoring was 5x cheaper.\n",
     "runs": [
       {
         "result": {
@@ -242,7 +242,7 @@
     "id": "planted-spaced-percent",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nAbout 50 % of runs hit the limit.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nAbout 50 % of runs hit the limit.\n",
     "runs": [
       {
         "result": {
@@ -266,7 +266,7 @@
     "id": "planted-minutes",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\nA full run took 9.9 minutes.\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\nA full run took 9.9 minutes.\n",
     "runs": [
       {
         "result": {
@@ -290,7 +290,7 @@
     "id": "planted-table-cell",
     "want": "fail",
     "reason": "has no proof",
-    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log).\n\nModels: `qwen3:8b` on an `RTX 4060` with `Python 3.12`. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from 2 runs\n\n<!-- a comment with 99 numbers in it -->\n\n| model | f1 |\n|---|---|\n| llm | 0.88 |\n",
+    "article": "# Rules vs a decision model\n\nThe rules reached [91.2%](run:1#accuracy) on [500](run:1#n) labelled posts, with a median\nlatency of [12.4 ms](run:1#latency_ms.p50). A 2026 study found [3.5%](https://arxiv.example.org/abs/2604) of research\nlinks were invented. Labelling took me [about 4 hours](obs:labelling-log|timed-the-labelling-session).\n\nModels: `qwen3:8b` on an Nvidia RTX card with a recent Python. The run started 2026-10-01T09:00:00Z,\ngpt-oss-120b judged it, the library was version 1.2.3, the change is PR #41, see the note[^1].\n\n1. A first step with no figures.\n2. A second step.\n\n<!-- backed-by: run:1 -->\n| model | accuracy |\n|---|---|\n| rules | 0.912 |\n\n```\nfor i in range(100): total += 3.5\n```\n\n## Results from both runs\n\n<!-- a comment with 99 numbers in it -->\n\n| model | f1 |\n|---|---|\n| llm | 0.88 |\n",
     "runs": [
       {
         "result": {
@@ -473,8 +473,53 @@
   {
     "id": "observation",
     "want": "pass",
+    "article": "I spent [6 hours](obs:notes|timed-the-labelling-session) labelling.",
+    "web": {}
+  },
+  {
+    "id": "observation-without-reason",
+    "want": "fail",
+    "reason": "say what you observed",
     "article": "I spent [6 hours](obs:notes) labelling.",
     "web": {}
+  },
+  {
+    "id": "heading-number",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "## Results from 3 runs\n\nAll good.",
+    "web": {}
+  },
+  {
+    "id": "heading-number-linked",
+    "want": "pass",
+    "article": "## Results from [3 runs](run:1#n)\n\nAll good.",
+    "runs": [
+      {
+        "result": {
+          "n": 3
+        }
+      }
+    ]
+  },
+  {
+    "id": "backticked-number",
+    "want": "fail",
+    "reason": "has no proof",
+    "article": "The threshold was `0.87`.",
+    "web": {}
+  },
+  {
+    "id": "backticked-number-linked",
+    "want": "pass",
+    "article": "The threshold was [`0.87`](run:1#threshold).",
+    "runs": [
+      {
+        "result": {
+          "threshold": 0.87
+        }
+      }
+    ]
   },
   {
     "id": "years-dates-versions-identifiers",

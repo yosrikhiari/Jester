@@ -10,6 +10,7 @@ will write the rows these gates read. Here the tests write them directly,
 which is exactly the contract those slices must meet.
 """
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 
 import pytest
@@ -129,6 +130,52 @@ def test_approve_rejects_unknown_decisions(db):
         J.approve(db, j["id"], "vibe-check")
 
 
+def test_the_approval_ttl_is_a_config_value_that_defaults_to_thirty(tmp_path):
+    """V3-15: the lapse is configurable, and a missing file still has a
+    number (a deployed package has no checkout to read one from)."""
+    assert J.DEFAULT_APPROVAL_TTL_DAYS == 30
+    assert J.approval_ttl_days(tmp_path / "absent.yaml") == 30
+
+    cfg = tmp_path / "thresholds.yaml"
+    cfg.write_text("journal_approval_ttl_days: 7\n", encoding="utf-8")
+    assert J.approval_ttl_days(cfg) == 7
+
+    approval = {"at": "2026-01-01T00:00:00+00:00"}
+    assert J.approval_expiry(approval, 7).startswith("2026-01-08")
+    assert J.approval_expired(approval, at="2026-01-07T23:59:59+00:00", days=7) is False
+    assert J.approval_expired(approval, at="2026-01-08T00:00:00+00:00", days=7) is True
+    # A date that cannot be read cannot vouch for anything.
+    assert J.approval_expired({"at": "not a date"}, days=7) is True
+
+
+def test_the_manifest_binds_the_revision_its_figures_and_its_saved_sources(db, tmp_path):
+    """Same shape as the signals manifest: canonical JSON, sorted identity
+    lists, a SHA-256 over the bytes, and a check that re-computes instead of
+    trusting a flag."""
+    from jester.journal import snapshots as S
+    from jester.journal.fixtures import FakeWeb
+
+    url = "https://blog.example.org/post"
+    j = J.create_journal(db, "Manifest", path="m/index.md")
+    rev = J.record_revision(db, j["id"], "c1", "h1", "m/index.md")
+    S.take(db, tmp_path, url, opener=FakeWeb({url: {"status": 200, "content_type": "text/html",
+                                                   "body": "<p>one</p>"}}))
+    text = f"# M\n\nA claim [1]({url}).\n"
+    manifest, digest = J.journal_manifest(db, j["id"], rev["id"], text)
+    assert manifest["revision"] == {"content_sha256": "h1"}
+    assert manifest["artifacts"] == []
+    assert [s["url"] for s in manifest["snapshots"]] == [url]
+    canonical = json.dumps(manifest, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    assert digest == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    db.execute("INSERT INTO artifact (journal_id, kind, path, sha256, created_at) "
+               "VALUES (?, 'figure', 'm/figures/a.svg', 'abc', ?)", (j["id"], J.now_utc()))
+    db.execute("UPDATE snapshot SET fetched_at = '2030-01-01T00:00:00+00:00'")
+    db.commit()
+    _, after = J.journal_manifest(db, j["id"], rev["id"], text)
+    assert after != digest, "a new figure or a newer saved copy is a different manifest"
+
+
 # ---- the whole walk ---------------------------------------------------------
 
 def test_an_article_walks_every_state_and_each_gate_blocks_first(db):
@@ -191,7 +238,8 @@ def test_an_article_walks_every_state_and_each_gate_blocks_first(db):
     reasons = _blocked(db, slug, "published")
     for want in ("approved publishing", "where the original lives", "how AI was used"):
         assert want in reasons
-    J.approve(db, jid, "publish", revision_id=rev["id"])
+    J.approve(db, jid, "publish", revision_id=rev["id"],
+              article_text="# Rules\n\nA version with no figures and no cited pages.\n")
     J.update_brief(db, slug, canonical_url="https://example.dev/journal/rules",
                    disclosure="hand-written; AI proofread")
     j = js.move(db, slug, "published", at="2026-10-05T12:00:00+00:00")
@@ -313,6 +361,18 @@ def test_published_work_cannot_be_abandoned(db):
     db.execute("UPDATE journal SET state='published' WHERE slug=?", (slug,))
     assert "cannot be abandoned" in _blocked(db, slug, "abandoned", reason="x")
     assert "cannot be parked" in _blocked(db, slug, "parked")
+
+
+def test_a_published_article_can_be_retracted_with_a_reason(db):
+    slug, _ = _to_drafting(db)
+    assert "cannot be retracted" in _blocked(db, slug, "retracted", reason="x")
+    db.execute("UPDATE journal SET state='published' WHERE slug=?", (slug,))
+    db.commit()
+    assert "--reason" in _blocked(db, slug, "retracted")
+    j = js.move(db, slug, "retracted", reason="the benchmark was wrong")
+    assert (j["state"], j["retracted_reason"]) == ("retracted", "the benchmark was wrong")
+    assert J.history(db, j["id"])[-1]["note"] == "the benchmark was wrong"
+    assert "only move forward" in _blocked(db, slug, "published")
 
 
 def test_going_back_has_no_gate(db):

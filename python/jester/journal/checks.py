@@ -3,20 +3,24 @@
     citations  every external link has a saved copy that answered 2xx, and
                every quotation of five words or more is attributed to a
                link whose saved copy really contains those words
-    numbers    every number in the prose is linked to its proof:
+    numbers    every number in the prose -- headings and inline backticks
+               included -- is linked to its proof:
                  [91.2%](run:12#accuracy)  a run of this journal's experiment
                                            (the value must match what the run
                                            recorded; without #key, against
                                            every value it recorded)
                  [3.5%](https://...)       a source whose saved copy has it
-                 [4 hours](obs:labelling)  your own observation
+                 [4 hours](obs:labelling|timed-the-session)
+                                           your own observation: a label, and
+                                           a reason of at least 8 characters
                or sits in a block marked `<!-- backed-by: run:12,run:13 -->`,
                where every number must be a value those runs recorded (what
-               `journal table` writes). A name or version (`RTX 4060`,
-               `Python 3.12`) goes in backticks, which says "this is not a
-               measurement". And every image in the article, wherever its
-               link points, must be a figure `journal figure` drew from runs
-               and nobody edited afterwards.
+               `journal table` writes). Only fenced code blocks are exempt:
+               a name or version with digits (`RTX 4060`, `Python 3.12`) is
+               still a number a reader will check, so it needs a link like
+               any other. And every image in the article, wherever its link
+               points, must be a figure `journal figure` drew from runs and
+               nobody edited afterwards.
     lint       the article does not read like generated text, and its
                title is not clickbait
     origin     no paragraph a tool wrote speaks in the first person, gives
@@ -41,6 +45,11 @@ from jester.journal import snapshots as S
 from jester.journal import text as T
 
 MIN_QUOTE_WORDS = 5
+#: An observation links to a label and a reason: `obs:<label>|<reason>`.
+#: The reason is what a person actually saw, so "obs:notes" alone is the
+#: author's word for it, not evidence. Hyphens rather than spaces because a
+#: Markdown link target cannot carry a space.
+MIN_OBS_REASON = 8
 
 
 @dataclass
@@ -274,12 +283,25 @@ def _number_in(token: str, body: str) -> bool:
     return re.search(r"(?<![\d.])" + re.escape(shown) + r"(?![\d])", hay) is not None
 
 
+def _verify_obs(target: str) -> Optional[str]:
+    """None if `obs:<label>|<reason>` is a usable observation; else why not."""
+    label, sep, reason = target[len("obs:"):].partition("|")
+    if not label.strip():
+        return (f"{target}: say what you observed and give it a label "
+                "(obs:<label>|<reason>; join words with hyphens)")
+    if not sep or len(reason.strip()) < MIN_OBS_REASON:
+        return (f"{target}: say what you observed, and give a reason of at least "
+                f"{MIN_OBS_REASON} characters after the | (obs:<label>|<reason>; "
+                "join words with hyphens, a link target cannot carry spaces)")
+    return None
+
+
 def _verify_link(db, root: Path, journal_id: int, target: str, token: Optional[str]) -> Tuple[str, Optional[str]]:
     """(kind, problem) for a number linked to `target`."""
     if target.startswith("run:"):
         return "run", _verify_run(db, journal_id, target, token)
     if target.startswith("obs:"):
-        return "observation", None
+        return "observation", _verify_obs(target)
     if target.startswith(("http://", "https://")):
         body, why = _copy_text(root, S.latest(db, target))
         if why:
@@ -287,7 +309,7 @@ def _verify_link(db, root: Path, journal_id: int, target: str, token: Optional[s
         if token is not None and not _number_in(token, body):
             return "source", f"{token} does not appear in the saved copy of {target}"
         return "source", None
-    return "unknown", f"{target}: not a kind of proof (use run:, obs: or a source link)"
+    return "unknown", f"{target}: not a kind of proof (use run:, obs:<label>|<reason> or a source link)"
 
 
 def _leaves(value) -> List[float]:
@@ -358,7 +380,7 @@ def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) 
         block_problem, block_values = None, None
         if block.backing:
             block_values, block_problem = _block_runs(db, journal_id, block.backing)
-        for start, _end, token in _figures(T.mask(block.text)):
+        for start, _end, token in _figures(T.mask(block.text, inline_code=False)):
             out.stats["numbers"] += 1
             line = block.line_at(start)
             owner = next((ln for ln in lks if ln.text_start <= start < ln.text_end), None)
@@ -377,8 +399,8 @@ def check_numbers(db: sqlite3.Connection, root: Path, journal_id: int, md: str) 
                     out.stats["block"] += 1
             else:
                 out.stats["unbacked"] += 1
-                out.fail(line, f"{token} has no proof: link it to a run, a source or obs:, "
-                               "or put it in `backticks` if it is a name or version")
+                out.fail(line, f"{token} has no proof: link it to a run, a source or "
+                               "obs:<label>|<reason>")
     return out
 
 

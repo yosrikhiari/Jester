@@ -6,7 +6,9 @@
 Kinds without an experiment (til, note, postmortem) go researching -> drafting.
 Any state before `published` can be parked (and resumed) or abandoned. An
 abandoned journal keeps every record: a test that went wrong is still a
-finding, and may become its own "what failed" post.
+finding, and may become its own "what failed" post. A published article can
+instead be retracted -- taken back with a reason, and dropped from every
+listing and export.
 
 A gate is a function that returns the reasons a move is blocked, in plain
 words. No reasons -> the move happens and is written to `transition` with the
@@ -31,7 +33,11 @@ from jester import journal as J
 FORWARD = ("captured", "proposed", "chosen", "researching", "experimenting",
            "drafting", "in_review", "ready", "published", "shared", "measured")
 PARKED, ABANDONED = "parked", "abandoned"
-STATES = FORWARD + (PARKED, ABANDONED)
+#: A published page taken back. Not a step forward: it is reachable from any
+#: published state, needs a reason, and nothing lists or exports it after.
+RETRACTED = "retracted"
+STATES = FORWARD + (PARKED, ABANDONED, RETRACTED)
+RETRACTABLE = frozenset({"published", "shared", "measured"})
 
 #: States a journal can be parked or abandoned from. Once published, the
 #: article is out in the world; taking it back is a different act
@@ -167,9 +173,30 @@ def _gate_ready(db, j, ctx):
 def _gate_published(db, j, ctx):
     rev, out = _review_matches_latest(db, j)
     if rev is not None:
-        published = {a["revision_id"] for a in J.human_approvals(db, j["id"], "publish")}
-        if rev["id"] not in published:
+        approvals = [a for a in J.human_approvals(db, j["id"], "publish")
+                     if a["revision_id"] == rev["id"]]
+        if not approvals:
             out.append(f"you have not approved publishing version {rev['n']} (approve publish)")
+        else:
+            approval = approvals[-1]
+            days = J.approval_ttl_days()
+            expiry = J.approval_expiry(approval, days)
+            if expiry is None:
+                out.append(f"the approval of publishing version {rev['n']} has no readable "
+                           "timestamp; approve it again")
+            elif J.approval_expired(approval, days=days):
+                out.append(f"your approval of publishing version {rev['n']} expired on "
+                           f"{expiry[:10]}; approve it again "
+                           f"(jester journal approve {j['slug']} publish)")
+            elif not approval["manifest_sha256"]:
+                # The approval names the revision, the figures and the saved
+                # copies it covered. One that names none of them was recorded
+                # before this column existed, or without the text -- it cannot
+                # vouch for what shipped, so it is answered the same way the
+                # export answers it.
+                out.append(f"your approval of publishing version {rev['n']} did not record "
+                           "the figures and saved copies it covered; approve it again "
+                           f"(jester journal approve {j['slug']} publish)")
     if not j["canonical_url"].strip():
         out.append("record where the original lives (set --canonical-url)")
     if not j["disclosure"].strip():
@@ -232,7 +259,7 @@ GATES: Dict[str, Gate] = {
 
 class MoveRefused(J.JournalError):
     def __init__(self, slug: str, to: str, reasons: List[str]):
-        self.reasons = reasons
+        self.slug, self.to, self.reasons = slug, to, reasons
         super().__init__(f"{slug} cannot move to {to}: " + "; ".join(reasons))
 
 
@@ -244,6 +271,10 @@ def blockers(db: sqlite3.Connection, j: sqlite3.Row, to: str,
         return [f"{to!r} is not a state ({', '.join(STATES)})"]
     if to == state:
         return [f"already {state}"]
+    if to == RETRACTED:
+        if state not in RETRACTABLE:
+            return [f"a {state} journal cannot be retracted (only a published one)"]
+        return [] if reason.strip() else ["say why it is retracted (--reason)"]
     if to == PARKED:
         return [] if state in OPEN else [f"a {state} journal cannot be parked"]
     if to == ABANDONED:
@@ -277,6 +308,8 @@ def move(db: sqlite3.Connection, slug: str, to: str, actor: str = J.HUMAN,
         sets["parked_from"] = ""
     if to == ABANDONED:
         sets["abandoned_reason"] = reason.strip()
+    if to == RETRACTED:
+        sets["retracted_reason"] = reason.strip()
     if to == "published":
         sets["published_at"] = at
     db.execute(f"UPDATE journal SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
@@ -292,7 +325,7 @@ def move(db: sqlite3.Connection, slug: str, to: str, actor: str = J.HUMAN,
 
 def _passed_checks(frm: str, to: str) -> List[str]:
     """What the transition row says was checked, for the audit trail."""
-    if to in (PARKED, ABANDONED) or frm == PARKED or (frm, to) in BACK:
+    if to in (PARKED, ABANDONED, RETRACTED) or frm == PARKED or (frm, to) in BACK:
         return []
     return [f"gate:{to}"]
 

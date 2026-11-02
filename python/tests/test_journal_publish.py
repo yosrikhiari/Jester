@@ -27,7 +27,7 @@ SRC = "https://blog.example.org/post"
 ARTICLE = f"""# Rules beat the model on short posts
 
 The rules kept [11](run:1#buyer) buyers out of [722](run:1#collected) posts. I counted
-[40 minutes](obs:labelling) of labelling, and the [survey]({SRC}) agrees.
+[40 minutes](obs:labelling|timed-the-session) of labelling, and the [survey]({SRC}) agrees.
 
 <!-- backed-by: run:1 -->
 | run | buyer |
@@ -94,7 +94,7 @@ def setup(tmp_path):
     for kind in J.REQUIRED_CHECKS:
         J.record_check(db, rev["id"], kind, True)
     J.approve(db, j["id"], "review", revision_id=rev["id"])
-    J.approve(db, j["id"], "publish", revision_id=rev["id"])
+    J.approve(db, j["id"], "publish", revision_id=rev["id"], article_text=ARTICLE)
     J.update_brief(db, "rules", disclosure="Written by hand; a local model proofread it.")
     db.execute("UPDATE journal SET state='ready' WHERE id=?", (j["id"],))
     db.commit()
@@ -109,7 +109,7 @@ def test_render_body():
                        "\n```python\nprint('<b>')\n```\n\n1. one\n   wrapped\n2. two\n\n<script>alert(1)</script>\n")
     assert "<h1" not in body and '<h2 id="what-failed">What failed</h2>' in body
     assert '<a href="#evidence-run-1" class="proof">11</a>' in body
-    assert '<a href="#evidence-obs-labelling" class="proof">40 minutes</a>' in body
+    assert '<a href="#evidence-obs-labelling-timed-the-session" class="proof">40 minutes</a>' in body
     assert f'<a href="{SRC}" rel="noopener">survey</a>' in body
     assert '<img src="figures/buyers.svg" alt="Buyers per pass" loading="lazy">' in body
     assert "<th>buyer</th>" in body and "<td>11</td>" in body and "backed-by" not in body
@@ -174,7 +174,8 @@ def test_export_writes_the_site_branch_and_leaves_the_checkout_alone(setup):
     assert 'id="evidence-run-1"' in page and "abc123" in page and "RTX 4060" in page
     assert "happened before the plan was written" in page
     assert "over 10 → over 9" in page and "both on defaults" in page and "one day only" in page
-    assert f'<a href="{SRC}" rel="noopener">{SRC}</a>' in page and 'id="evidence-obs-labelling"' in page
+    assert f'<a href="{SRC}" rel="noopener">{SRC}</a>' in page
+    assert 'id="evidence-obs-labelling-timed-the-session"' in page
     assert "a local model proofread it" in page
     assert (out / "rules" / "figures" / "buyers.svg").exists()
     assert "Rules beat the model" in (out / "index.html").read_text(encoding="utf-8")
@@ -202,7 +203,7 @@ def _listed_journal(setup, slug, body, approve=True):
     for kind in J.REQUIRED_CHECKS:
         J.record_check(db, rev["id"], kind, True)
     if approve:
-        J.approve(db, j["id"], "publish", revision_id=rev["id"])
+        J.approve(db, j["id"], "publish", revision_id=rev["id"], article_text=body)
     db.execute("UPDATE journal SET state='published', published_at=? WHERE id=?",
                ("2026-10-01T00:00:00+00:00", j["id"]))
     db.commit()
@@ -245,6 +246,23 @@ def test_an_entry_with_no_approved_version_ships_no_words_from_the_file(setup):
     assert "Text nobody approved" not in feed and "no longer matches" not in feed
 
 
+def test_a_retracted_article_leaves_the_index_and_the_feed_and_cannot_export(setup):
+    """A retraction is not a draft state: the page was out there, is taken
+    back with a reason, and stops being listed and shippable. The reason is
+    recorded, not inferred."""
+    db, root = setup["db"], setup["root"]
+    _listed_journal(setup, "withdrawn", "# Withdrawn\n\nWords that were published.\n")
+    assert "The withdrawn post" in P.index_page(db, root, BASE, also=setup["jid"])
+    js.move(db, "withdrawn", "retracted", reason="the numbers were wrong")
+    idx = P.index_page(db, root, BASE, also=setup["jid"])
+    feed = P.feed_xml(db, root, BASE, also=setup["jid"])
+    assert "The withdrawn post" not in idx and "The withdrawn post" not in feed
+    assert "Words that were published" not in idx
+    assert "retracted" in " ".join(P.ready_to_export(db, root, J.get(db, "withdrawn")))
+    with pytest.raises(J.JournalError, match="retracted"):
+        P.export(db, root, "withdrawn", _site(setup["tmp"]), base_url=BASE)
+
+
 def test_export_refuses_a_figure_edited_after_it_was_made(setup):
     figure = setup["root"] / "rules" / "figures" / "buyers.svg"
     figure.write_text(figure.read_text(encoding="utf-8") + "<!-- edited -->\n", encoding="utf-8")
@@ -255,6 +273,11 @@ def test_export_refuses_a_figure_edited_after_it_was_made(setup):
 def test_export_refuses_a_figure_that_no_run_made(setup):
     setup["db"].execute("DELETE FROM artifact")
     setup["db"].commit()
+    # The approval covers the figures that existed when it was given; deleting
+    # them is itself a change to the manifest. Approve the new (empty) set so
+    # this test reaches the image check it is about, not the manifest gate.
+    J.approve(setup["db"], setup["jid"], "publish", revision_id=setup["rev"]["id"],
+              article_text=ARTICLE)
     with pytest.raises(J.JournalError, match="was not made from runs"):
         P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
 
@@ -263,6 +286,99 @@ def test_export_refuses_a_figure_that_is_gone(setup):
     (setup["root"] / "rules" / "figures" / "buyers.svg").unlink()
     with pytest.raises(J.JournalError, match="buyers.svg is missing"):
         P.export(setup["db"], setup["root"], "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_export_refuses_a_figure_regenerated_after_the_approval(setup):
+    """V3-05: approving version N approves the figures as they were then.
+    Re-drawing a figure -- even from the same runs, even to the same bytes --
+    registers a new artifact, so the approval no longer describes what would
+    ship. Approving again is the deliberate act that covers it."""
+    from jester.journal import lab as L
+
+    db, root = setup["db"], setup["root"]
+    rows = db.execute("SELECT id FROM experiment_run").fetchall()
+    L.figure(db, root, "rules", [r["id"] for r in rows][:1], "buyer", "buyers", caption="Buyers")
+    site = _site(setup["tmp"])
+    with pytest.raises(J.JournalError) as got:
+        P.export(db, root, "rules", site, base_url=BASE)
+    assert "buyers.svg" in str(got.value) and "approve" in str(got.value)
+
+    J.approve(db, setup["jid"], "publish", revision_id=setup["rev"]["id"], article_text=ARTICLE)
+    made = P.export(db, root, "rules", site, base_url=BASE)
+    assert made["figures"] == ["figures/buyers.svg"]
+
+
+def test_export_refuses_a_snapshot_changed_after_the_approval(setup):
+    """The saved copy of a cited page is part of what approval covers: a
+    re-fetched page can say the opposite of what the article quotes."""
+    from jester.journal import snapshots as S
+    from jester.journal.fixtures import FakeWeb
+
+    db, root = setup["db"], setup["root"]
+    S.take(db, root, SRC, opener=FakeWeb({SRC: {"status": 200, "content_type": "text/html",
+                                                "body": "<p>the survey now says the opposite</p>"}}))
+    with pytest.raises(J.JournalError) as got:
+        P.export(db, root, "rules", _site(setup["tmp"]), base_url=BASE)
+    assert SRC in str(got.value) and "approve" in str(got.value)
+
+
+def test_an_expired_publish_approval_blocks_export_and_publish(setup):
+    """V3-15: an approval vouches for the article you read that day. After the
+    TTL it is a memory of that reading, so exporting and publishing both ask
+    for a fresh decision (and say where to make it)."""
+    db, root = setup["db"], setup["root"]
+    db.execute("UPDATE approval SET at='2026-01-01T00:00:00+00:00' WHERE what='publish'")
+    db.commit()
+    problems = " | ".join(P.ready_to_export(db, root, J.get(db, "rules")))
+    assert "expired" in problems and "approve" in problems
+    with pytest.raises(J.JournalError, match="expired"):
+        P.export(db, root, "rules", _site(setup["tmp"]), base_url=BASE)
+    with pytest.raises(js.MoveRefused, match="expired"):
+        js.move(db, "rules", "published")
+
+
+def test_a_tampered_snapshot_is_stale_and_blocks_export(setup):
+    from jester.journal import snapshots as S
+
+    db, root = setup["db"], setup["root"]
+    row = S.latest(db, SRC)
+    (root / row["text_path"]).write_text("the saved copy now says something else", encoding="utf-8")
+    ok, why = S.verify(db, root, row)
+    assert not ok and "changed" in why
+    assert "changed" in S.latest(db, SRC)["stale_reason"]
+    problems = " | ".join(P.ready_to_export(db, root, J.get(db, "rules")))
+    assert SRC in problems and "stale" in problems.lower()
+    with pytest.raises(J.JournalError):
+        P.export(db, root, "rules", _site(setup["tmp"]), base_url=BASE)
+
+
+def test_the_published_gate_refuses_an_approval_that_named_no_figures(setup):
+    """V3-05: an approval that recorded no manifest cannot vouch for the
+    figures (it predates the column, or was recorded without the text). The
+    state move is the record that the article shipped, so it sends you back to
+    approve again -- the same answer export gives."""
+    db = setup["db"]
+    J.update_brief(db, "rules", canonical_url=P.canonical_url(BASE, "rules"))
+    db.execute("UPDATE approval SET manifest_sha256 = '' WHERE what = 'publish'")
+    db.commit()
+    with pytest.raises(js.MoveRefused, match="did not record"):
+        js.move(db, "rules", "published")
+
+
+def test_the_evidence_list_separates_an_observation_from_its_reason(setup):
+    """`obs:<label>|<reason>` is a link target, not prose: shipped as-is it
+    reads `label|reason` on the page. The label anchors it, the reason is what
+    the reader is owed, so each is printed as itself."""
+    page = P.evidence_html(setup["db"], J.get(setup["db"], "rules"), ARTICLE)
+    assert "labelling — timed-the-session: the author’s own observation" in page
+    assert "labelling|" not in page
+
+
+def test_verifying_an_unchanged_snapshot_keeps_it_fresh(setup):
+    from jester.journal import snapshots as S
+
+    ok, why = S.verify(setup["db"], setup["root"], S.latest(setup["db"], SRC))
+    assert ok and why == "" and S.latest(setup["db"], SRC)["stale_reason"] == ""
 
 
 def test_export_verifies_the_shipped_figure_bytes_and_cleans_up(setup, monkeypatch):
@@ -364,6 +480,9 @@ def test_export_stamps_its_date_once_and_keeps_it(setup, monkeypatch):
     assert stamped[:10] in page
 
     monkeypatch.setattr(J, "now_utc", lambda: "2027-05-05T09:00:00+00:00")
+    # The approval TTL has lapsed by then, which is the point of 5c: moving
+    # the clock forward means approving again, not reusing yesterday's yes.
+    J.approve(db, setup["jid"], "publish", revision_id=setup["rev"]["id"], article_text=ARTICLE)
     later = P.export(db, root, "rules", site, base_url=BASE)
     assert J.get(db, "rules")["first_export_at"] == stamped, \
         "only the first export stamps the date"

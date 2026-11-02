@@ -35,6 +35,10 @@ USER_AGENT = "jester-journal/1.0 (saving a copy of a page cited in an article)"
 MAX_BYTES = 5_000_000
 SNAPSHOT_DIR = "_snapshots"
 _TEXT_TYPES = ("text/plain", "text/markdown", "application/json", "text/csv")
+#: What found a staleness. A check can only clear a finding it could have
+#: made: the stored bytes are re-readable from here, a page that changed is
+#: only visible to a check that goes back to the page.
+CHECK_COPY, CHECK_PAGE = "copy", "page"
 
 
 def strip_fragment(url: str) -> str:
@@ -157,6 +161,72 @@ def latest(db: sqlite3.Connection, url: str) -> Optional[sqlite3.Row]:
 
 def is_ok(row: Optional[sqlite3.Row]) -> bool:
     return row is not None and 200 <= row["status"] < 300
+
+
+def mark_stale(db: sqlite3.Connection, snapshot_id: int, reason: str, check: str) -> None:
+    db.execute("UPDATE snapshot SET stale_reason = ?, stale_check = ? WHERE id = ?",
+               (reason, check, snapshot_id))
+    db.commit()
+
+
+def clear_stale(db: sqlite3.Connection, snapshot_id: int) -> None:
+    db.execute("UPDATE snapshot SET stale_reason = '', stale_check = '' WHERE id = ?", (snapshot_id,))
+    db.commit()
+
+
+def verify(db: sqlite3.Connection, root: Path, row: Optional[sqlite3.Row],
+           opener: Optional[Callable] = None, refetch: bool = False) -> tuple:
+    """Re-check one saved copy: its bytes on disk always, the page when asked.
+
+    Returns `(ok, reason)`. A mismatch marks the row stale; a match clears a
+    mark the check could have made itself -- the bytes on disk can be re-read
+    from here, a page that changed is only visible to a check that goes back
+    to the page. A local re-check therefore never erases "the page changed".
+    A page that cannot be reached proves nothing about the copy -- an outage
+    is not a changed article -- so it is reported without marking anything.
+    """
+    if row is None:
+        return False, "no saved copy yet (jester journal snapshot)"
+    reason, found_by = "", ""
+    if row["text_path"]:
+        path = Path(root) / row["text_path"]
+        try:
+            stored = path.read_bytes()
+        except OSError:
+            reason, found_by = "the saved copy is missing on disk", CHECK_COPY
+        else:
+            if hashlib.sha256(stored).hexdigest() != row["text_sha256"]:
+                reason, found_by = "the saved copy on disk changed since it was stored", CHECK_COPY
+    if refetch and not reason:
+        got = fetch(row["url"], opener=opener)
+        if got["status"] == 0:
+            return False, f"could not re-check the page: {got['error']}"
+        if got["status"] != row["status"]:
+            reason = (f"the page now answers HTTP {got['status']} "
+                      f"(the saved copy recorded HTTP {row['status']})")
+            found_by = CHECK_PAGE
+        elif row["text_path"]:
+            text = readable_text(got["body"], got["content_type"]) if 200 <= got["status"] < 300 else None
+            if text is None:
+                # The copy's words cannot be checked against the page any
+                # more (it answers 2xx but is no longer readable text), so
+                # the copy no longer proves what it was saved to prove.
+                reason, found_by = "the page no longer has readable text to compare", CHECK_PAGE
+            elif hashlib.sha256(text.encode("utf-8")).hexdigest() != row["text_sha256"]:
+                reason, found_by = "the page's text changed since the copy was saved", CHECK_PAGE
+    if reason:
+        mark_stale(db, row["id"], reason, found_by)
+        return False, reason
+    # Read the stored finding from the database, not from `row`: the caller
+    # may hand us a row read before an earlier check marked it.
+    finding = db.execute("SELECT stale_reason, stale_check FROM snapshot WHERE id = ?",
+                         (row["id"],)).fetchone()
+    if finding["stale_reason"] and not (refetch or finding["stale_check"] == CHECK_COPY):
+        return False, finding["stale_reason"]
+    clear_stale(db, row["id"])
+    if not row["text_path"] and not is_ok(row):
+        return False, describe(row)
+    return True, ""
 
 
 def read_text(root: Path, row: Optional[sqlite3.Row]) -> Optional[str]:

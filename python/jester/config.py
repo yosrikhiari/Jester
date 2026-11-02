@@ -222,6 +222,10 @@ class Thresholds:
     #: gets flagged for review. Flags only — maintenance deletes nothing.
     maintenance_null_rate_spike: float = 0.25
     maintenance_stale_days: int = 90
+    #: V3-15: how long a journal publish approval keeps vouching for an
+    #: article. Read by jester.journal from this file; after it lapses the
+    #: export and the published state both ask for a fresh decision.
+    journal_approval_ttl_days: int = 30
 
     _RANGES = {
         "max_comments_per_thread": (1, 100000),
@@ -251,6 +255,7 @@ class Thresholds:
         "specs_max_samples": (3, 50),
         "maintenance_null_rate_spike": (0.01, 1.0),
         "maintenance_stale_days": (7, 3650),
+        "journal_approval_ttl_days": (1, 3650),
     }
 
     # Keys the operator console may write back to thresholds.yaml, with the

@@ -139,6 +139,19 @@ def test_list_shows_parked_and_finished(run):
     assert "abandoned: superseded" in out and "nothing, this journal is finished" in out
 
 
+def test_retract_records_a_reason_and_needs_one(run):
+    run("new", "Withdrawn", "--kind", "note", "--question", "q")
+    db = J.open_journal(run.db)
+    j = J.get(db, "withdrawn")
+    db.execute("UPDATE journal SET state='published' WHERE id=?", (j["id"],))
+    db.commit()
+    db.close()
+    assert "say why" in run("retract", "withdrawn", ok=False)
+    out = run("retract", "withdrawn", "--reason", "the numbers were wrong")
+    assert "withdrawn is retracted" in out
+    assert "retracted: the numbers were wrong" in run("show", "withdrawn")
+
+
 def test_measure_records_numbers_and_opens_the_measured_gate(run):
     from datetime import datetime, timedelta, timezone
 

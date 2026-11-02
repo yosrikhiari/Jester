@@ -127,7 +127,7 @@ Built so far (slice J0): its own database (`data/journal.db`), articles as Markd
 
 ```
 captured -> proposed -> chosen -> researching -> experimenting -> drafting
-  -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
+  -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned, retracted)
 ```
 
 The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. The gate for the last slice (metrics) already reads its table, so until that slice lands the honest answer is "blocked", not a silent pass.
@@ -137,15 +137,15 @@ Slice J1 adds the proof checks a saved version must pass before review. Each one
 | Check | Passes when |
 |---|---|
 | `citations` | every external link has a saved copy that answered 2xx, and every quote of 5+ words is attributed to a link whose saved copy contains those words |
-| `numbers` | every number in the prose links to its proof — `[91.2%](run:12#accuracy)` (checked against that value; without `#accuracy`, against every number the run recorded), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes)` — or names go in backticks |
+| `numbers` | every number in the prose — headings and inline backticks included — links to its proof: `[91.2%](run:12#accuracy)` (checked against that value; without `#accuracy`, against every number the run recorded), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes\|timed-the-session)` (a label and a reason of at least 8 characters; a link target cannot carry spaces, so join words with hyphens). Only fenced code blocks are exempt, so `Python 3.12` needs a link like any other figure |
 | `lint` | the prose does not read as generated (Wikipedia's "signs of AI writing" list plus structure signals) and the title is not clickbait |
 | `origin` | no paragraph a tool wrote speaks in the first person, gives an opinion or claims an observation |
 
-`journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
+`journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal snapshots SLUG --verify` re-checks those copies — the stored bytes always, the page itself only with `--network` — and marks one stale when it no longer matches; a stale copy blocks the export that would have quoted it until a fresh copy is saved. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
 
 Slice J2 adds experiments. `journal plan` writes the hypothesis, metric, the threshold that will count as "yes", the baseline and the number of runs down **before** any result; the first run locks it, and every later edit is logged as a change after the lock. `journal run SLUG --code PATH -- <command>` executes a run into its own folder (stdout, stderr, `result.json`) and records the exit code, timing, a fingerprint (OS, Python, GPU and driver, the code's commit and whether it had uncommitted changes), and a sha256 of what the run produced (canonical result + stdout/stderr). Two reruns with the same fingerprint but different numbers therefore differ visibly in the record. `--code` is required, and a run from uncommitted code — or with no code record at all — does not count toward drafting. `journal attach` records a run Jester already made (a signals or pipeline ledger row) as evidence, and marks it if it happened before the plan was written. `journal table` and `journal figure` are made from runs: every value in a generated table is checked against the runs it names, and a figure is stored with its hash, so a hand-edited chart fails the number check.
 
-Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version.
+Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version — and that approval is bound to what it approved: the version, every figure the journal has drawn and every saved copy it cites are hashed into a manifest at the moment you approve, and an export whose recomputed manifest differs is refused by name ("buyers.svg", "the saved copy of https://…"). An approval also lapses: after `journal_approval_ttl_days` (30 by default) export and the move to `published` both ask you to approve again. A published article that turns out to be wrong is retracted rather than edited in place — `journal retract SLUG --reason "…"` — and a retracted article leaves the index, the feed and export.
 
 Every other platform gets a version that links back (`journal variant`): Dev.to gets the full article as an unpublished draft, Bluesky and Mastodon a short post, LinkedIn/HN/Reddit/Medium a text you post yourself and then record with `journal posted`. A version may not add a number the original does not have, must fit the platform and must pass the lint. Approving it (`journal approve SLUG post --channel X`) stores the fingerprint of the file you read; editing it afterwards blocks posting until you approve again. Credentials come from `.env` (`DEVTO_API_KEY`, `BLUESKY_HANDLE` + `BLUESKY_APP_PASSWORD`, `MASTODON_INSTANCE` + `MASTODON_TOKEN`).
 
@@ -159,6 +159,7 @@ python -m jester.cli journal approve rules-vs-a-decision-model choose
 python -m jester.cli journal state rules-vs-a-decision-model chosen
 python -m jester.cli journal save rules-vs-a-decision-model -m "first draft"
 python -m jester.cli journal snapshot rules-vs-a-decision-model   # save copies of every cited page
+python -m jester.cli journal snapshots rules-vs-a-decision-model --verify   # re-check them (--network: re-fetch)
 python -m jester.cli journal check rules-vs-a-decision-model      # citations, numbers, lint, origin
 python -m jester.cli journal fixtures                             # the checkers against labelled cases
 python -m jester.cli journal plan rules-vs-a-decision-model --hypothesis "rules lose on recall" --metric "macro F1" --threshold "+0.05" --baseline "the rule set" --runs 5
@@ -172,6 +173,7 @@ python -m jester.cli journal approve rules-vs-a-decision-model post --channel bl
 python -m jester.cli journal post rules-vs-a-decision-model bluesky
 python -m jester.cli journal posted rules-vs-a-decision-model hn --url https://news.ycombinator.com/item?id=...
 python -m jester.cli journal measure rules-vs-a-decision-model --channel hn --at 2026-11-05T09:00:00+00:00 --views 1200 --points 41
+python -m jester.cli journal retract rules-vs-a-decision-model --reason "the benchmark was wrong"   # off the site, with the reason kept
 ```
 
 ## Quick Start
