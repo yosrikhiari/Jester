@@ -19,7 +19,7 @@ pytest-cov>=7.1.0
 # The floor is the version pylock.toml proves, not a newer one: Docker and CI
 # install the lock, so a floor above it means Windows installs a tzdata the
 # tested stack never ran. scripts/check_lock_parity.py fails if this drifts.
-tzdata>=2026.4
+tzdata>=2026.6
 
 # Live Ollama backend (s37.16) - the installed SDK returns pydantic responses.
 # Same rule: 0.6.2 is what pylock.toml pins and what the Linux suite runs.
