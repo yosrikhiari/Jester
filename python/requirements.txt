@@ -5,7 +5,7 @@
 # error that says nothing about which line is at fault. A requirements file
 # has no need for a character outside ASCII, so it does not get one.
 PyYAML>=6.0.3
-qdrant-client>=1.19.1
+qdrant-client>=1.20.0
 # --- DEV ONLY below (test suite + coverage gate). Documented dev install is
 # `pip install -e .[dev]` (see pyproject.toml); these rows stay until
 # pylock.toml is regenerated on Linux, because Docker and CI install from
