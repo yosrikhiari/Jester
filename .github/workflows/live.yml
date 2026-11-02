@@ -16,6 +16,12 @@
 
 name: Live services
 
+# Least privilege (R4-10). The single job checks the code out, installs from
+# the lock and runs pytest against daemons it starts on the runner. It writes
+# nothing back to the repository, so `contents: read` is the whole grant.
+permissions:
+  contents: read
+
 on:
   schedule:
     # 04:17 UTC, after the nightly scrapers and before a working day.

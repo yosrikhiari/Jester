@@ -24,6 +24,14 @@
 
 name: CI
 
+# Least privilege (R4-10). Every job here checks out the code, runs a tool and
+# uploads an artifact. None writes to the repository, comments on a pull
+# request or creates a release, so the workflow token gets read-only contents
+# and nothing else. A job that one day genuinely needs more gets its own
+# job-level block; the default does not widen for it.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -311,6 +319,104 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run build
+
+  compose:
+    # R4-05: the two containers that write one SQLite volume must run as ONE
+    # uid, come back after a crash, and be able to read each other's rows.
+    # None of that is visible in a file, so this job starts the real stack and
+    # asks the running containers: `id -u`, a row the worker wrote read back
+    # through the console's copy of the archive, and the restart policy off
+    # `docker inspect`.
+    #
+    # No secrets and no live model. JESTER_MOCK=1 (in compose) plus the
+    # bind-mounted docker/config/thresholds.yaml pin every provider to `fake`,
+    # so nothing here reaches an external service. The single `.env` value is a
+    # throwaway console token: compose requires the env_file to exist, and the
+    # console's writes are token-gated by design.
+    name: Compose — one uid, shared archive, restart policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Before `config -q`: compose refuses to render a stack whose env_file is
+      # missing, and `.env` is gitignored, so a clean checkout has none.
+      - name: A minimal .env — a throwaway token, no keys
+        run: |
+          printf 'JESTER_CONSOLE_TOKEN=ci-token\n' > .env
+          test "$(wc -l < .env)" -eq 1
+
+      - name: docker compose config -q
+        run: docker compose config -q
+
+      - name: Build the console and the worker
+        run: docker compose build jester-console go-worker
+
+      - name: Start qdrant, the console and the worker
+        run: docker compose up -d qdrant jester-console go-worker
+
+      - name: Wait for the console's /metrics (bounded, 60s)
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose exec -T jester-console python -c \
+              "import urllib.request; urllib.request.urlopen('http://localhost:8619/metrics', timeout=3)" 2>/dev/null; then
+              echo "console answered /metrics after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the console did not answer /metrics within 60s"
+          docker compose logs --no-color --tail 120 jester-console
+          exit 1
+
+      - name: Both writers run as uid 10001
+        run: |
+          for svc in jester-console go-worker; do
+            uid=$(docker compose exec -T "$svc" id -u)
+            echo "$svc: id -u = $uid"
+            if [ "$uid" != "10001" ]; then
+              echo "::error::$svc runs as uid $uid, not 10001"
+              exit 1
+            fi
+          done
+
+      # The handoff queue is the cross-process contract: the worker enqueues
+      # its fixture batch into the shared volume and the console reads the same
+      # file. Bounded because the worker's first batch is asynchronous with
+      # respect to the console being up. The query runs in the CONSOLE, so it
+      # proves the row is readable through that container's view of the volume,
+      # not merely that it exists on disk.
+      - name: The worker's row is readable from the console's archive
+        run: |
+          q='import sqlite3,sys; d=sqlite3.connect("/app/data/jester-docker.db"); n=d.execute("select count(*) from ingest_batch").fetchone()[0]; v=d.execute("select value from meta where key=?", ("schema_version",)).fetchone(); print(f"console-read: ingest_batch={n} schema_version={v[0] if v else -1}"); sys.exit(0 if n else 1)'
+          for i in $(seq 1 60); do
+            if out=$(docker compose exec -T jester-console python -c "$q"); then
+              echo "$out"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the console could not read a worker-written row from the shared archive"
+          docker compose logs --no-color --tail 120 go-worker
+          exit 1
+
+      - name: Both restart on crash (unless-stopped)
+        run: |
+          for svc in jester-console go-worker; do
+            cid=$(docker compose ps -q "$svc")
+            policy=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid")
+            echo "$svc: RestartPolicy.Name=$policy"
+            if [ "$policy" != "unless-stopped" ]; then
+              echo "::error::$svc has restart policy '$policy', not 'unless-stopped'"
+              exit 1
+            fi
+          done
+
+      # Always, so a failed assertion above does not leave a stack behind that
+      # the next job inherits. -v removes the throwaway archive with it.
+      - name: Tear the stack down
+        if: always()
+        run: docker compose down -v --remove-orphans
 
   sonar:
     # NOT called "SonarCloud". SonarCloud's own automatic analysis posts a
