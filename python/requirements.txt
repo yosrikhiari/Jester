@@ -23,7 +23,7 @@ tzdata>=2026.4
 
 # Live Ollama backend (s37.16) - the installed SDK returns pydantic responses.
 # Same rule: 0.6.2 is what pylock.toml pins and what the Linux suite runs.
-ollama>=0.6.2
+ollama>=0.6.3
 
 # Groq needs no package: it is an OpenAI-compatible JSON POST served over
 # urllib from the standard library (see jester/llm.py). Put GROQ_API_KEY in
