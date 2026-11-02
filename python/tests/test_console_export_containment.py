@@ -51,8 +51,19 @@ def test_a_subdirectory_of_the_root_is_allowed(tmp_path, monkeypatch):
     assert got == (root / "nightly").resolve()
 
 
+def test_a_relative_out_dir_resolves_against_the_exports_root(tmp_path, monkeypatch):
+    """`nightly` means `<root>/nightly`, not `<cwd>/nightly`: the console's cwd
+    is the server's, and an export request must not depend on where it ran."""
+    root = tmp_path / "exports"
+    monkeypatch.setenv("JESTER_EXPORTS_DIR", str(root))
+    monkeypatch.chdir(tmp_path.parent)
+    assert resolve_export_dir("nightly", str(tmp_path / "j.db")) == \
+        (root / "nightly").resolve()
+
+
 def test_a_relative_parent_escape_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("JESTER_EXPORTS_DIR", str(tmp_path / "exports"))
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(ExportPathError):
         resolve_export_dir(os.path.join("..", ".."), str(tmp_path / "j.db"))
 
@@ -81,6 +92,14 @@ def test_a_symlink_pointing_outside_the_root_is_refused(tmp_path, monkeypatch):
 def test_the_error_is_a_value_error():
     """So a caller that only knows the request was wrong still catches it."""
     assert issubclass(ExportPathError, ValueError)
+
+
+def test_a_non_string_out_dir_is_refused(tmp_path, monkeypatch):
+    """A JSON list or object is a bad request, not a server fault."""
+    monkeypatch.setenv("JESTER_EXPORTS_DIR", str(tmp_path / "exports"))
+    for bad in (["nightly"], {"dir": "nightly"}, 7):
+        with pytest.raises(ExportPathError):
+            resolve_export_dir(bad, str(tmp_path / "j.db"))
 
 
 # ---- over HTTP --------------------------------------------------------------
@@ -134,6 +153,23 @@ def test_an_absolute_path_outside_the_root_is_400(console, tmp_path):
     status, payload = _export(base, tmp_path / "somewhere-else")
     assert status == 400, payload
     assert payload["ok"] is False
+
+
+def test_a_non_string_out_dir_is_400(console):
+    """Before the server branch validated the type, a list reached Path() and
+    raised TypeError, which the route reported as a 500."""
+    base, _root = console
+    for bad in (["nightly"], {"dir": "nightly"}):
+        req = urllib.request.Request(
+            base + "/api/export",
+            data=json.dumps({"out_dir": bad}).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        for key, value in AUTH.items():
+            req.add_header(key, value)
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(req, timeout=20)
+        assert exc.value.code == 400, bad
+        assert json.loads(exc.value.read())["ok"] is False
 
 
 def test_an_out_dir_inside_the_root_is_200_and_files_land_there(console):

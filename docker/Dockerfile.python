@@ -84,8 +84,10 @@ RUN groupadd --gid 10001 jester \
 # through `docker compose exec`; this container no longer schedules anything.
 COPY --from=gobuild /out/worker /usr/local/bin/worker
 
-# Launch the console. The entrypoint is a plain `exec python -m jester.console`
-# now: the cron daemon it used to start is gone with the package.
+# Launch the console. The entrypoint checks the archive volume, then execs
+# `python -m jester.console`, adding `--read-only` when JESTER_CONSOLE_TOKEN is
+# empty so the default stack boots as a read-only viewer instead of refusing
+# the non-loopback bind. A configured token is passed through unchanged.
 COPY docker/entrypoint.console.sh /usr/local/bin/console-entrypoint.sh
 RUN chmod +x /usr/local/bin/console-entrypoint.sh
 

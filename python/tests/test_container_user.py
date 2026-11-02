@@ -74,6 +74,18 @@ def test_the_entrypoint_starts_no_scheduler():
     assert "exec python -m jester.console" in joined
 
 
+def test_the_entrypoint_goes_read_only_when_no_token_is_set():
+    """The container listens on 0.0.0.0, which _bind_refusal refuses without
+    a token. The entrypoint must turn the empty compose default into an
+    explicit --read-only, or the shipped stack cannot start."""
+    text = _text(ENTRYPOINT)
+    assert "JESTER_CONSOLE_TOKEN" in text
+    assert "--read-only" in text
+    # The flag is only added on the empty branch; a configured token means
+    # the operator asked for writes.
+    assert "exec python -m jester.console \"$@\"" in text
+
+
 def test_bytecode_is_disabled_because_the_bind_mount_is_read_only_to_this_user():
     assert "PYTHONDONTWRITEBYTECODE=1" in _text(DOCKERFILE)
 
@@ -98,8 +110,9 @@ def test_the_compose_file_parses():
     assert "jester_docker_data:/app/data" in console["volumes"]
     assert "jester_docker_data" in config["volumes"]
     # The healthcheck has to keep working as a non-root user: it is a plain
-    # HTTP GET that needs nothing but the socket.
-    assert "/api/doctor" in " ".join(console["healthcheck"]["test"])
+    # HTTP GET that needs nothing but the socket. /metrics also answers a
+    # read-only console whose fresh volume has no schema yet.
+    assert "/metrics" in " ".join(console["healthcheck"]["test"])
 
 
 def test_the_healthcheck_needs_no_privilege():

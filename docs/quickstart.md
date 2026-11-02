@@ -103,7 +103,9 @@ python -m jester.console --db data/jester.db --port 8619
 
 Reads are open, but **every write needs a token**. With no
 `JESTER_CONSOLE_TOKEN` the console refuses POSTs under `/api/*` with 401, so
-it is read-only by default. To drive it:
+on the host a tokenless console is read-only in effect: GETs keep working and
+nothing mutates. `--read-only` is the explicit form and refuses every write
+before routing. To drive it:
 
 ```bash
 export JESTER_CONSOLE_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
@@ -111,11 +113,12 @@ python -m jester.console --db data/jester.db --port 8619
 ```
 
 The console's own UI asks for the token once and keeps it for the tab;
-`curl` sends `Authorization: Bearer <token>`. For a view-only session,
-`--read-only` serves without writes and needs no token. The Docker stack
-passes `JESTER_CONSOLE_TOKEN` through from `.env`, so unset means its console
-is read-only too, and binding a non-loopback `--host` without a token or
-`--read-only` is refused at startup. Details:
+`curl` sends `Authorization: Bearer <token>`. The Docker stack passes
+`JESTER_CONSOLE_TOKEN` through from `.env`; when it is empty the container
+entrypoint starts the console with `--read-only`, so the default stack boots
+read-only rather than merely refusing writes. Binding a non-loopback `--host`
+without a token or `--read-only` is refused at startup. GETs stay open unless
+you also pass `--read-auth`. Details:
 [console-security.md](console-security.md).
 
 Drop `JESTER_MOCK=1` once the Go worker is filling the queue with real

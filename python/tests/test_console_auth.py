@@ -81,6 +81,28 @@ def readonly_console(tmp_path, offline_config, monkeypatch):
         srv.Handler.args = previous
 
 
+@pytest.fixture()
+def readauth_no_token_console(tmp_path, offline_config, monkeypatch):
+    """Read auth on, no token: nothing can satisfy it, so every read is 401."""
+    monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
+    args = argparse.Namespace(db=str(tmp_path / "j.db"), config=str(offline_config),
+                              signals_db=str(tmp_path / "s.db"),
+                              host="127.0.0.1", port=0, read_only=False,
+                              read_auth=True)
+    previous = srv.Handler.args
+    srv.Handler.args = args
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        srv.Handler.args = previous
+
+
 def _post(base, path, body=b"{}", token=None):
     """POST with retries on connection setup only (Windows loopback can
     refuse a connection while a fresh server thread is still starting).
@@ -161,3 +183,16 @@ def test_no_token_still_serves_reads(open_console):
     status, payload = _get(open_console, "/api/config")
     assert status == 200
     assert payload["ok"] is True
+
+
+def test_read_auth_without_a_token_fails_closed(readauth_no_token_console):
+    """`--read-auth` asks for protected reads. With no token configured no
+    request can satisfy the check, so the archive is refused (401) rather
+    than quietly served unauthenticated."""
+    import urllib.error
+
+    for path in ("/api/config", "/metrics"):
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _get(readauth_no_token_console, path)
+        assert exc.value.code == 401, path
+        assert json.loads(exc.value.read())["ok"] is False

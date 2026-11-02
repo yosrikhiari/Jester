@@ -13,13 +13,17 @@ loopback-only and write-gated; everything else is opt-in.
   framed; a static file cannot be re-typed by the browser.
 - Every mutating POST needs `Authorization: Bearer <token>`, compared in
   constant time. With no `JESTER_CONSOLE_TOKEN` there is no credential a
-  write could present, so every POST is refused with 401: the console is
-  read-only until a token exists.
+  write could present, so every POST is refused with 401: a tokenless host
+  console is read-only in effect, and GETs stay open. The container goes
+  further: its entrypoint passes `--read-only` when the token is empty, so
+  the shipped stack refuses every write before routing (403), not only at
+  the auth check.
 - A bind to anything other than `127.0.0.1`, `localhost`, `::1` or `[::1]`
   is refused at startup (non-zero exit) unless a token is set or
   `--read-only` is passed. Docker listens on every interface inside the
-  container, which is why compose passes `JESTER_CONSOLE_TOKEN` through from
-  `.env`.
+  container, which is why the entrypoint selects `--read-only` when compose
+  passes an empty token, and why compose passes `JESTER_CONSOLE_TOKEN`
+  through from `.env` when writes are wanted.
 - A POST carrying an `Origin` header for another site is refused with 403
   before its body is read. `curl` and same-origin fetches are unaffected.
 - `/api/export` only writes inside the exports root — `JESTER_EXPORTS_DIR`
@@ -48,8 +52,10 @@ browser profile.
 
 With a token and read auth, a cross-origin page cannot read the archive: its
 fetch has no token, and preflighted writes fail because the console sends no
-CORS headers. Without a token, a same-machine browser page can make a simple
-POST; the same-origin check above is what closes that, and `--read-only` closes
-the write path entirely.
+CORS headers. Without a token, a same-machine browser page cannot make a
+write either: the POST is 401 before its body is read, and a cross-origin
+POST is refused by the same-origin check. `--read-only` (which the container
+selects when the token is empty) refuses every write even earlier. Reads
+remain open on loopback unless `--read-auth` is set.
 
 Tests: `python/tests/test_console_server.py` (`S-10` section).

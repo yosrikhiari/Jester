@@ -203,10 +203,12 @@ docker compose up
 Then open the operator console at **http://localhost:8619**.
 
 The console binds to loopback, and writes always need a token: without
-`JESTER_CONSOLE_TOKEN` every POST is refused (401) and the console is
-read-only. The Docker stack passes the token through from `.env`; set it there
-to drive the container's console. If another device can reach it, also run
-with `--read-auth` so reads need the token too:
+`JESTER_CONSOLE_TOKEN` every POST is refused (401), so a tokenless host
+console is read-only in effect while GETs stay open. The Docker stack passes
+the token through from `.env`; while it is empty the container entrypoint
+starts the console with `--read-only`, so the default stack is a read-only
+viewer. Set the token in `.env` to drive it. If another device can reach it,
+also run with `--read-auth` so reads need the token too:
 [docs/console-security.md](docs/console-security.md).
 
 The default stack runs in **mock mode** (`JESTER_MOCK=1`): the whole pipeline works offline against fixture data.

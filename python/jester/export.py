@@ -679,13 +679,24 @@ def exports_root(db_path: str) -> Path:
 def resolve_export_dir(out_dir, db_path) -> Path:
     """The export target, contained inside the exports root.
 
-    Both sides go through ``Path.resolve()`` before the comparison, so a
-    symlink that points out of the root is caught the same way as ``..`` and
-    an absolute path elsewhere: the resolved target is what the writes would
-    land on, and that is what has to be inside.
+    A relative ``out_dir`` is resolved against the exports root, not the
+    process cwd: ``"nightly"`` means ``<root>/nightly`` wherever the console
+    was started. Both sides go through ``Path.resolve()`` before the
+    comparison, so a symlink that points out of the root is caught the same
+    way as ``..`` and an absolute path elsewhere: the resolved target is what
+    the writes would land on, and that is what has to be inside.
     """
     root = exports_root(db_path)
-    target = Path(out_dir).expanduser().resolve() if out_dir else root
+    if out_dir is None:
+        return root
+    if not isinstance(out_dir, (str, os.PathLike)):
+        raise ExportPathError(
+            f"export directory must be a path string, not "
+            f"{type(out_dir).__name__}")
+    target = Path(out_dir).expanduser()
+    if not target.is_absolute():
+        target = root / target
+    target = target.resolve()
     if not target.is_relative_to(root):
         raise ExportPathError(
             f"export directory {str(out_dir)!r} resolves to {target}, which is "

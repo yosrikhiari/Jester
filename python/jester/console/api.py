@@ -1974,6 +1974,13 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         qdrant_host, qdrant_port = _host_port(
             os.environ.get("JESTER_QDRANT_URL") or "", 6333)
         go_bin = self._go_binary()
+        vectors = self._vector_state()
+        # Defense in depth: the URL never leaves the process, including when a
+        # client library echoes it back in an error message.
+        qdrant_url = os.environ.get("JESTER_QDRANT_URL") or ""
+        if qdrant_url:
+            vectors["detail"] = (vectors.get("detail") or "").replace(
+                qdrant_url, "<redacted>")
         return {
             "ok": True,
             "ollama": {"up": ollama_up, "models": ollama_models},
@@ -1983,7 +1990,7 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
             # while every write went to a 32-dimension local file, because
             # JESTER_QDRANT_URL was unset. Report what the app is CONFIGURED
             # to use, and how wide the vectors in it actually are.
-            "vectors": self._vector_state(),
+            "vectors": vectors,
             "cloakserve_9222": cloak_up,
             "worker_go_available": bool(go_bin),
             "go_bin": go_bin or "",
@@ -2008,7 +2015,9 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         collection = collection_for(self.db_path)
         state = {
             "mode": "server" if url else "local file",
-            "url": url,
+            # Presence, never the value: the URL carries credentials and this
+            # route is an open GET. `mode` uses the same presence test.
+            "url_set": bool(url),
             "collection": collection,
             "points": None,
             "dim": None,

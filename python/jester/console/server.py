@@ -198,7 +198,7 @@ def _allowed_hosts(handler) -> set:
 def _warn_if_healthcheck_host_is_missing(args) -> None:
     """Say so when JESTER_ALLOWED_HOSTS drops every loopback name.
 
-    The compose healthcheck is `http://localhost:8619/api/doctor`. Overriding
+    The compose healthcheck is `http://localhost:8619/metrics`. Overriding
     the list is supported, but doing it without `localhost` turns that request
     into a 403 and the container unhealthy, with no other symptom. A warning
     in the startup log is the cheapest way to make that failure explain
@@ -212,7 +212,7 @@ def _warn_if_healthcheck_host_is_missing(args) -> None:
     print(f"jester console WARNING: {ALLOWED_HOSTS_ENV} replaces the default "
           "host allow-list and names no loopback host (localhost, 127.0.0.1 "
           "or [::1]); the Docker healthcheck requests "
-          "http://localhost:8619/api/doctor, will receive 403, and the "
+          "http://localhost:8619/metrics, will receive 403, and the "
           "container will report unhealthy. Add localhost to the list.",
           file=sys.stderr)
 
@@ -857,8 +857,13 @@ class Handler(BaseHTTPRequestHandler):
             # Its own branch rather than an entry in `simple`: an `out_dir`
             # that resolves outside the exports root is a rejected request
             # (400 with the reason), not a 200 carrying {"ok": false}.
+            out_dir = body.get("out_dir")
+            if out_dir is not None and not isinstance(out_dir, str):
+                self._json({"ok": False,
+                            "error": "out_dir must be a path string"}, 400)
+                return
             try:
-                self._json(api.export(body.get("out_dir") or None))
+                self._json(api.export(out_dir or None))
             except ExportPathError as exc:
                 self._json({"ok": False, "error": str(exc)}, 400)
             return
@@ -930,9 +935,9 @@ def _bind_refusal(args):
     if bool(getattr(args, "read_only", False)):
         return None
     return (
-        f"jester console refuses to listen on {host!r}: it is not a loopback "
-        f"address, {TOKEN_ENV} is unset, and writes are enabled. Set "
-        f"{TOKEN_ENV} to a secret, or pass --read-only to serve without "
+        f"jester console refuses to listen on {host!r}: it is "
+        f"network-reachable, {TOKEN_ENV} is unset, so no token gates writes. "
+        f"Set {TOKEN_ENV} to a secret, or pass --read-only to serve without "
         "writes.")
 
 

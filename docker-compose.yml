@@ -81,9 +81,10 @@ services:
       - ./docker/config/thresholds.yaml:/app/config/thresholds.yaml:ro
     environment:
       JESTER_MOCK: "1"
-      # Writes need a token: with none configured the console refuses every
-      # mutating POST, so this stack is read-only unless .env sets one. The
-      # empty default is deliberate — no secret ships in the repo.
+      # Writes need a token. The image entrypoint adds `--read-only` when this
+      # is empty, so the default stack boots as a read-only viewer; set it in
+      # .env to enable writes. The empty default is deliberate — no secret
+      # ships in the repo.
       JESTER_CONSOLE_TOKEN: ${JESTER_CONSOLE_TOKEN:-}
       JESTER_QDRANT_URL: http://qdrant:6333
       # Service names, not 127.0.0.1. The repo's config/scraper.yaml is
@@ -110,15 +111,20 @@ services:
       - "host.docker.internal:host-gateway"
     env_file:
       - .env
-    # The container still listens on 0.0.0.0 (Dockerfile CMD), but the host
-    # side is loopback: the token guards POSTs, this keeps GETs off the LAN.
+    # The container listens on 0.0.0.0 (Dockerfile CMD). Without a token the
+    # entrypoint starts it with --read-only, so the reachable bind is safe;
+    # the host side stays loopback so GETs are not on the LAN either.
     ports:
       - "127.0.0.1:8619:8619"
     depends_on:
       qdrant:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8619/api/doctor'); sys.exit(0)"]
+      # /metrics answers a stale or absent archive by design (schema gauges
+      # are omitted and jester_schema_ok is 0), so it also passes when the
+      # no-token stack runs --read-only against a fresh volume. /api/doctor
+      # would answer 503 there and the container would never go healthy.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:8619/metrics'); sys.exit(0)"]
       interval: 15s
       timeout: 5s
       retries: 10

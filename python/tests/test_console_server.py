@@ -165,6 +165,39 @@ def test_read_auth_accepts_the_token_and_still_serves_the_page(read_auth_console
     assert status == 200, "the page must load so it can ask for a token"
 
 
+@pytest.fixture()
+def read_only_fresh_console(tmp_path, offline_config):
+    """The default container posture: --read-only against a fresh volume, so
+    no schema exists and /api/* would answer 503."""
+    import argparse
+
+    args = argparse.Namespace(db=str(tmp_path / "fresh.db"), config=str(offline_config),
+                              signals_db=str(tmp_path / "s.db"),
+                              host="127.0.0.1", port=0, read_only=True)
+    previous = srv.Handler.args
+    srv.Handler.args = args
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+        srv.Handler.args = previous
+
+
+def test_the_healthcheck_endpoint_answers_a_read_only_fresh_console(
+        read_only_fresh_console):
+    """compose probes /metrics, which answers before the schema preflight;
+    /api/doctor would 503 on an archive that a read-only console never
+    creates."""
+    status, _headers, body = _get(read_only_fresh_console, "/metrics")
+    assert status == 200
+    assert b"jester_schema_ok 0" in body
+
+
 def test_a_cross_origin_post_is_refused(console):
     status, _headers, body = _get(
         console, "/api/migrate", method="POST", body=b"{}",
@@ -253,6 +286,31 @@ def test_config_never_serialises_the_qdrant_url(console, monkeypatch):
     env = json.loads(text)["env"]
     assert env["JESTER_QDRANT_URL_set"] is True
     assert "JESTER_QDRANT_URL" not in env
+
+
+def test_infra_never_serialises_the_qdrant_url(console, monkeypatch):
+    """/api/infra is an open GET too: it reports presence, not the URL.
+
+    The fake client raises with the URL in the message, so this also proves
+    an error string cannot smuggle the credential out through `detail`."""
+    url = "http://user:pass@host:6333"
+    monkeypatch.setenv("JESTER_QDRANT_URL", url)
+
+    import qdrant_client
+
+    class Unreachable:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(f"cannot reach {url}")
+
+    monkeypatch.setattr(qdrant_client, "QdrantClient", Unreachable)
+    status, _headers, body = _get(console, "/api/infra")
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "user:pass" not in text
+    assert "host:6333" not in text
+    vectors = json.loads(text)["vectors"]
+    assert vectors["url_set"] is True
+    assert "url" not in vectors
 
 
 def test_head_returns_the_headers_without_the_body(console):
@@ -464,7 +522,7 @@ def test_an_allowed_hosts_list_without_loopback_warns_about_the_healthcheck(
         monkeypatch, capsys):
     """Fix round 1, Important 4: JESTER_ALLOWED_HOSTS replaces the defaults. An
     operator who adds only a LAN name silently turns the Docker healthcheck
-    (http://localhost:8619/api/doctor) into a 403, so the container goes
+    (http://localhost:8619/metrics) into a 403, so the container goes
     unhealthy with nothing in the logs saying why."""
     text = _serve_and_capture(monkeypatch, capsys, "jester.lan,192.168.1.9")
     assert "WARNING" in text
@@ -527,6 +585,8 @@ def test_a_network_bind_with_no_token_is_refused(monkeypatch):
     monkeypatch.delenv(srv.TOKEN_ENV, raising=False)
     reason = srv._bind_refusal(_args("0.0.0.0"))
     assert reason and srv.TOKEN_ENV in reason and "--read-only" in reason
+    assert "network-reachable" in reason
+    assert "writes are enabled" not in reason
 
 
 def test_a_network_bind_with_a_token_is_allowed(monkeypatch):
