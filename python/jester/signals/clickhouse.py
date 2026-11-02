@@ -15,7 +15,10 @@ from that, and are worth stating once here rather than re-deriving:
 
 * **The schema is not written here.** It is generated from `FIELDS` in
   `jester.signals`, the same map that generates the SQLite table and the CSV
-  header, so the three cannot drift apart.
+  header, so the three cannot drift apart. A field added to that map later is
+  added to the ClickHouse table by `evolve_schema` — `ADD COLUMN IF NOT
+  EXISTS`, never a drop — so widening the archive does not require anyone to
+  rebuild it by hand.
 
 * **No SDK.** One `POST` of newline-delimited JSON to the HTTP interface, over
   stdlib `urllib`, the same stance `llm.py` takes. `clickhouse-connect` pulls a
@@ -38,7 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
-from . import FIELDS, FIELD_NAMES, TABLE, clickhouse_ddl, counts
+from . import (FIELDS, FIELD_NAMES, SCHEMA_VERSION, SCHEMA_VERSION_TABLE, TABLE,
+               clickhouse_ddl, counts, schema_version_ddl)
 
 #: Rows per POST. Big enough that a full archive is a handful of requests,
 #: small enough that one failure does not cost a long upload. ClickHouse's
@@ -170,12 +174,71 @@ class Client:
                 "Start it with: docker compose --profile signals up -d clickhouse"
             ) from exc
 
-    def ensure_table(self) -> None:
-        """Create the table from the generated DDL. `IF NOT EXISTS`, so this is
-        safe on every run; the DDL comes from the field map, so the ClickHouse
-        table cannot drift away from the SQLite one."""
+    def ensure_table(self) -> dict:
+        """Create the table from the generated DDL, then bring its COLUMNS up
+        to the field map. `IF NOT EXISTS`, so this is safe on every run.
+
+        `CREATE TABLE IF NOT EXISTS` never widens a table that already
+        exists, so before this a field added to `FIELDS` was simply missing
+        from ClickHouse until somebody dropped the table by hand — and a
+        hand drop is how an archive loses rows. The column reconciliation is
+        additive only (`ADD COLUMN IF NOT EXISTS`); nothing here removes or
+        retypes a column.
+        """
         self.ensure_database()
         self.execute(clickhouse_ddl().rstrip().rstrip(";"))
+        return evolve_schema(self)
+
+
+# ---------------------------------------------------------------------------
+# Schema evolution
+# ---------------------------------------------------------------------------
+
+def table_columns(client, table: str = TABLE) -> List[str]:
+    """The columns the table really has, or [] when the answer is unreadable.
+
+    `DESCRIBE ... FORMAT TabSeparated` rather than JSONEachRow: the loader's
+    own INSERTs are recognised by that marker in the transport's call log, so
+    a schema probe that looked like a data write would make a log read as if
+    rows had been posted that never were.
+    """
+    text = client.execute(f"DESCRIBE TABLE {table} FORMAT TabSeparated")
+    return [line.split("\t", 1)[0].strip()
+            for line in text.splitlines() if line.strip()]
+
+
+def evolve_schema(client, table: str = TABLE) -> dict:
+    """Add the fields the table is missing and record the schema version.
+
+    Additive, always. A field the code writes and the table lacks is added
+    with `ADD COLUMN IF NOT EXISTS`; a column the table has and the field map
+    does not is left exactly where it is, because "the map stopped listing
+    it" is not evidence that the data in it is disposable. A rebuild is a
+    migration someone reads, not something a load does on its way past.
+
+    An empty `DESCRIBE` adds nothing: a table that cannot be described is not
+    evidence that all of its columns are missing, and a blind ALTER per field
+    against a live server is not a repair.
+    """
+    have = table_columns(client, table)
+    added = []
+    if have:
+        for name, _sqlite_type, ch_type, _doc in FIELDS:
+            if name in have:
+                continue
+            client.execute(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {name} {ch_type}")
+            added.append(name)
+    # The version row is written every load, not only when something was
+    # added: a table that has never been described by this loader is exactly
+    # what the row exists to make visible.
+    client.execute(schema_version_ddl().rstrip().rstrip(";"))
+    client.execute(
+        f"INSERT INTO {SCHEMA_VERSION_TABLE} (table_name, version, updated_at) "
+        # Constants only, and ClickHouse's HTTP interface takes no bind list.
+        f"VALUES ('{table}', {int(SCHEMA_VERSION)}, now64(3))")
+    return {"table": table, "schema_version": SCHEMA_VERSION,
+            "columns_present": len(have), "columns_added": added}
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +333,7 @@ def load(db: sqlite3.Connection, client: Client | None = None, *, mode: str = ""
     """
     client = client or Client()
     mode = _checked_mode(mode)
-    client.ensure_table()
+    schema = client.ensure_table()
 
     where, args = ("WHERE mode = ?", (mode,)) if mode else ("", ())
     cur = db.execute(
@@ -288,7 +351,7 @@ def load(db: sqlite3.Connection, client: Client | None = None, *, mode: str = ""
         client.execute(f"OPTIMIZE TABLE {TABLE} FINAL")
 
     return {"rows_sent": sent, "requests": requests, "mode_filter": mode or "all",
-            "database": client.database, "url": client.url}
+            "database": client.database, "url": client.url, "schema": schema}
 
 
 def reconcile(db: sqlite3.Connection, client: Client | None = None, *, mode: str = "") -> dict:

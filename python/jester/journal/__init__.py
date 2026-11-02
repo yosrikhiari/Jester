@@ -45,11 +45,20 @@ import hashlib
 import json
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 DEFAULT_DB = "data/journal.db"
+
+#: Where the shipped thresholds live. Read lazily by `approval_ttl_days`, so
+#: the store stays importable without the config package.
+THRESHOLDS = Path(__file__).resolve().parents[3] / "config" / "thresholds.yaml"
+#: Days a publish approval stays usable when no config says otherwise.
+DEFAULT_APPROVAL_TTL_DAYS = 30
+#: Format version of the manifest an approval records. A hash is only
+#: comparable to a hash made the same way, so the shape is versioned.
+MANIFEST_VERSION = 1
 
 #: Who may open a human gate. Anything else -- an agent role name, a script --
 #: is recorded but never counted by a gate.
@@ -119,6 +128,26 @@ ADDED_COLUMNS = (
     # clock -- re-exporting on a later day wrote new bytes and moved the
     # display date. Only the first export stamps it.
     ("journal", "first_export_at", _EMPTY_TEXT),
+    # V3-05: a publish approval covers a revision AND the figures and saved
+    # source copies that existed when it was given. The hash names that set;
+    # export recomputes it and refuses when it moved.
+    ("approval", "manifest_sha256", _EMPTY_TEXT),
+    # V3-15: a retraction is a published page taken back, and it says why.
+    ("journal", "retracted_reason", _EMPTY_TEXT),
+    # V3-15: set when a saved copy no longer matches what was stored or the
+    # page behind it changed. Freshness is a fact about the copy, so it lives
+    # on the snapshot row.
+    ("snapshot", "stale_reason", _EMPTY_TEXT),
+    # V3-15: what found the staleness -- the copy on disk or the page itself.
+    # A re-check can only clear a finding it was capable of making.
+    ("snapshot", "stale_check", _EMPTY_TEXT),
+    # V3-05: the external pages a saved version links to, recorded from its
+    # text when it is saved (or, for a version saved by an older build, when
+    # it is approved). The approval manifest names the saved copy of each one,
+    # so the manifest has to be computable from the database alone -- the
+    # published gate has no article text to read. '' means "never recorded",
+    # which is not the same fact as "cites nothing" ('[]').
+    ("revision", "cited_urls", _EMPTY_TEXT),
 )
 
 DDL = """
@@ -138,6 +167,7 @@ CREATE TABLE IF NOT EXISTS journal (
   path TEXT NOT NULL DEFAULT '',
   parked_from TEXT NOT NULL DEFAULT '',
   abandoned_reason TEXT NOT NULL DEFAULT '',
+  retracted_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   published_at TEXT NOT NULL DEFAULT '',
@@ -161,7 +191,8 @@ CREATE TABLE IF NOT EXISTS approval (
   at TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   revision_id INTEGER,
-  publication_id INTEGER
+  publication_id INTEGER,
+  manifest_sha256 TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS revision (
   id INTEGER PRIMARY KEY,
@@ -172,6 +203,7 @@ CREATE TABLE IF NOT EXISTS revision (
   path TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
+  cited_urls TEXT NOT NULL DEFAULT '',
   UNIQUE (journal_id, n)
 );
 CREATE TABLE IF NOT EXISTS check_result (
@@ -231,6 +263,8 @@ CREATE TABLE IF NOT EXISTS snapshot (
   error TEXT NOT NULL DEFAULT '',
   text_path TEXT NOT NULL DEFAULT '',
   text_sha256 TEXT NOT NULL DEFAULT '',
+  stale_reason TEXT NOT NULL DEFAULT '',
+  stale_check TEXT NOT NULL DEFAULT '',
   fetched_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshot_url ON snapshot (url);
@@ -256,6 +290,15 @@ CREATE TABLE IF NOT EXISTS generated_text (
 
 class JournalError(Exception):
     """A request the store refuses: unknown slug, bad kind, duplicate."""
+
+
+class ManifestError(JournalError):
+    """The version's cited pages were never recorded, so no manifest exists.
+
+    Distinct from a plain refusal because both the export and the `published`
+    gate turn it into the same instruction ("approve it again"), and both
+    need to tell it apart from "the manifest moved".
+    """
 
 
 def now_utc() -> str:
@@ -389,16 +432,239 @@ def history(db: sqlite3.Connection, journal_id: int) -> List[sqlite3.Row]:
 
 # ---- approvals --------------------------------------------------------------
 
+def _canonical(value) -> str:
+    """The one JSON spelling of a manifest, so its hash is the hash of it."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _cited_urls(article_text: Optional[str]) -> List[str]:
+    """Every external page the revision links to, sorted and de-fragmented."""
+    if not article_text:
+        return []
+    from jester.journal import text as T
+
+    urls = set()
+    for block in T.prose_blocks(article_text):
+        for link in T.links(block.text):
+            if link.external and not link.image:
+                urls.add(link.target.split("#", 1)[0])
+    return sorted(urls)
+
+
+def record_citations(db: sqlite3.Connection, journal_id: int, revision_id: int,
+                     article_text: str) -> None:
+    """Store the external pages this version cites, from its own text.
+
+    The approval manifest names the saved copy of each of them, and both the
+    export and the `published` gate recompute it. The gate has no article
+    text, so the citation set has to be a database fact: it is written here,
+    when the version is saved (or, for a version an older build saved without
+    it, when it is approved).
+    """
+    db.execute("UPDATE revision SET cited_urls = ? WHERE id = ? AND journal_id = ?",
+               (_canonical(_cited_urls(article_text)), revision_id, journal_id))
+    db.commit()
+
+
+def journal_manifest(db: sqlite3.Connection, journal_id: int, revision_id: int):
+    """What an approval of one version covers, and the SHA-256 of that list.
+
+    Same shape as the signals manifest: canonical JSON, sorted identity
+    lists, and a hash over the bytes, so a reader checks it by recomputing
+    instead of trusting a flag. The list is the revision's content hash,
+    every figure the journal has registered (each row, so redrawing one is
+    visible even when the bytes came out identical), and the newest saved
+    copy of every page the revision cites.
+
+    Computed from the database alone -- the cited pages come from the
+    version's recorded `cited_urls`, not from the text -- because the
+    `published` gate, which must make the same decision the export makes,
+    never sees the text. A version that never recorded its cited pages has no
+    computable manifest: that raises `ManifestError`, which both callers turn
+    into "approve it again", rather than quietly comparing a manifest with no
+    sources in it.
+    """
+    rev = db.execute("SELECT * FROM revision WHERE id = ? AND journal_id = ?",
+                     (revision_id, journal_id)).fetchone()
+    if rev is None:
+        raise JournalError(f"revision {revision_id} is not part of journal {journal_id}")
+    if not rev["cited_urls"]:
+        raise ManifestError(f"version {rev['n']} has no recorded list of the pages it cites")
+    artifacts = [
+        {"path": row["path"], "sha256": row["sha256"]}
+        for row in db.execute(
+            "SELECT path, sha256 FROM artifact WHERE journal_id = ? ORDER BY path, sha256, id",
+            (journal_id,)).fetchall()]
+    snapshots = []
+    for url in json.loads(rev["cited_urls"]):
+        row = _newest_snapshot(db, url)
+        if row is None:
+            snapshots.append({"url": url, "missing": True})
+        else:
+            snapshots.append({"url": row["url"], "status": row["status"],
+                              "text_sha256": row["text_sha256"], "fetched_at": row["fetched_at"]})
+    manifest = {
+        "version": MANIFEST_VERSION,
+        "revision": {"content_sha256": rev["content_sha256"]},
+        "artifacts": artifacts,
+        "snapshots": snapshots,
+    }
+    return manifest, hashlib.sha256(_canonical(manifest).encode("utf-8")).hexdigest()
+
+
+def _newest_snapshot(db: sqlite3.Connection, url: str) -> Optional[sqlite3.Row]:
+    return db.execute("SELECT url, status, text_sha256, fetched_at FROM snapshot WHERE url = ? "
+                      "ORDER BY id DESC LIMIT 1", (url,)).fetchone()
+
+
+def changed_since(db: sqlite3.Connection, journal_id: int, revision_id: int,
+                  approval: sqlite3.Row) -> str:
+    """The figures and saved copies that moved after the approval was given.
+
+    The manifest tells us THAT the set changed; this names what to look at.
+    A row recorded before the approval is covered by it; a later one -- or a
+    cited page with no copy at all -- is the thing to re-approve.
+    """
+    at = approval["at"]
+    names = [row["path"] for row in db.execute(
+        "SELECT path FROM artifact WHERE journal_id = ? AND created_at >= ? ORDER BY id",
+        (journal_id, at)).fetchall()]
+    rev = db.execute("SELECT cited_urls FROM revision WHERE id = ?", (revision_id,)).fetchone()
+    for url in json.loads(rev["cited_urls"] or "[]"):
+        snap = _newest_snapshot(db, url)
+        if snap is None or snap["fetched_at"] >= at:
+            names.append(f"the saved copy of {url}")
+    return "; ".join(dict.fromkeys(names)) or "the figures or saved copies changed"
+
+
+def manifest_problem(db: sqlite3.Connection, j: sqlite3.Row, rev: sqlite3.Row,
+                     approval: sqlite3.Row) -> str:
+    """Why this approval no longer covers what would ship; '' when it does.
+
+    The one comparison the export and the `published` gate both make, so the
+    two cannot drift: recompute the manifest from the database and compare it
+    with the one the approval recorded, naming what moved.
+    """
+    command = f"jester journal approve {j['slug']} publish"
+    if not approval["manifest_sha256"]:
+        return (f"your approval of publishing version {rev['n']} did not record the figures "
+                f"and saved copies it covered; approve it again ({command})")
+    try:
+        _, current = journal_manifest(db, j["id"], rev["id"])
+    except ManifestError:
+        return (f"version {rev['n']} has no recorded list of the pages it cites, so the figures "
+                f"and saved copies cannot be checked; approve it again ({command})")
+    if current == approval["manifest_sha256"]:
+        return ""
+    return (f"the figures or saved copies changed after you approved publishing version "
+            f"{rev['n']} ({changed_since(db, j['id'], rev['id'], approval)}); "
+            f"approve it again ({command})")
+
+
+def _parse_time(text: str) -> Optional[datetime]:
+    try:
+        when = datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=timezone.utc)
+
+
+#: The config directory chosen for this process by `use_config`, or None.
+_CONFIG_DIR: Optional[Path] = None
+
+
+def use_config(config: Optional[Path]) -> Optional[Path]:
+    """Read the approval TTL from this config directory for the rest of the
+    process; return the previous choice so a caller can restore it.
+
+    `--config` names a directory everywhere in this CLI, so this does too.
+    `None` clears the choice and falls back to the shipped file.
+    """
+    global _CONFIG_DIR
+    previous = _CONFIG_DIR
+    _CONFIG_DIR = Path(config) if config is not None else None
+    return previous
+
+
+def approval_ttl_days(path: Optional[Path] = None) -> int:
+    """Days a publish approval stays usable (V3-15), from the config.
+
+    An explicit path wins; otherwise the directory chosen by `use_config`;
+    otherwise the shipped file. The shipped default applies when the config
+    file is absent -- a deployed package without a checkout still needs a
+    number. A config that exists but cannot be read is not swallowed: a broken
+    file is a broken app.
+    """
+    if path is not None:
+        config = Path(path)
+    elif _CONFIG_DIR is not None:
+        config = _CONFIG_DIR / "thresholds.yaml"
+    else:
+        config = THRESHOLDS
+    if not config.exists():
+        return DEFAULT_APPROVAL_TTL_DAYS
+    from jester.config import load_thresholds
+
+    return int(load_thresholds(config).journal_approval_ttl_days)
+
+
+def approval_expiry(approval: sqlite3.Row, days: Optional[int] = None) -> Optional[str]:
+    """When this approval stops vouching for the article (ISO), or None."""
+    at = _parse_time(approval["at"])
+    if at is None:
+        return None
+    return (at + timedelta(days=approval_ttl_days() if days is None else days)).isoformat()
+
+
+def approval_expired(approval: sqlite3.Row, at: Optional[str] = None,
+                     days: Optional[int] = None) -> bool:
+    """Has the approval lapsed? An approval whose date cannot be read has."""
+    expiry = approval_expiry(approval, days)
+    if expiry is None:
+        return True
+    now = _parse_time(at) if at else _parse_time(now_utc())
+    return now is not None and now >= datetime.fromisoformat(expiry)
+
+
 def approve(db: sqlite3.Connection, journal_id: int, what: str, actor: str = HUMAN,
             note: str = "", revision_id: Optional[int] = None,
-            publication_id: Optional[int] = None, at: Optional[str] = None) -> int:
-    """Record a decision. Anyone may record one; only `actor == HUMAN` counts."""
+            publication_id: Optional[int] = None, at: Optional[str] = None,
+            article_text: Optional[str] = None) -> int:
+    """Record a decision. Anyone may record one; only `actor == HUMAN` counts.
+
+    A publish approval also records the manifest of what it approved: the
+    revision, every figure the journal has made, and every saved source copy
+    the revision cites. Export and the `published` gate recompute that
+    manifest and refuse when it has moved, so a figure redrawn after approval
+    cannot ship under it.
+
+    The manifest is computed from the database. `article_text`, when given,
+    is written onto the version first (which is how a version saved by an
+    older build gains its citation list). Without it -- and without a
+    recorded list -- the approval names no manifest at all, and both paths
+    refuse it as unapproved: an approval that never saw the text must not
+    claim to cover copies it could not check.
+    """
     if what not in APPROVALS:
         raise JournalError(f"approval must be one of {', '.join(APPROVALS)} (got {what!r})")
+    from jester.journal import states as js
+
+    journal = db.execute("SELECT * FROM journal WHERE id = ?", (journal_id,)).fetchone()
+    refuse = js.retracted_approval_refusal(journal) if journal is not None else ""
+    if refuse:
+        raise JournalError(refuse)
+    manifest_sha = ""
+    if what == "publish" and revision_id is not None:
+        if article_text is not None:
+            record_citations(db, journal_id, revision_id, article_text)
+        try:
+            _, manifest_sha = journal_manifest(db, journal_id, revision_id)
+        except ManifestError:
+            manifest_sha = ""
     cur = db.execute(
-        "INSERT INTO approval (journal_id, what, actor, at, note, revision_id, publication_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (journal_id, what, actor, at or now_utc(), note, revision_id, publication_id))
+        "INSERT INTO approval (journal_id, what, actor, at, note, revision_id, publication_id, "
+        "manifest_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (journal_id, what, actor, at or now_utc(), note, revision_id, publication_id, manifest_sha))
     db.commit()
     return cur.lastrowid
 
@@ -413,13 +679,17 @@ def human_approvals(db: sqlite3.Connection, journal_id: int, what: str) -> List[
 
 def record_revision(db: sqlite3.Connection, journal_id: int, git_sha: str,
                     content_sha256: str, path: str, note: str = "",
-                    at: Optional[str] = None) -> sqlite3.Row:
+                    at: Optional[str] = None, article_text: Optional[str] = None) -> sqlite3.Row:
+    """Save one version. With its text, its cited pages are recorded too --
+    the approval manifest names their saved copies, and it has to be
+    computable from the database alone (see `journal_manifest`)."""
     last = latest_revision(db, journal_id)
     n = (last["n"] + 1) if last else 1
+    cited = _canonical(_cited_urls(article_text)) if article_text is not None else ""
     db.execute(
-        "INSERT INTO revision (journal_id, n, git_sha, content_sha256, path, note, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (journal_id, n, git_sha, content_sha256, path, note, at or now_utc()))
+        "INSERT INTO revision (journal_id, n, git_sha, content_sha256, path, note, created_at, "
+        "cited_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (journal_id, n, git_sha, content_sha256, path, note, at or now_utc(), cited))
     db.execute("UPDATE journal SET updated_at = ? WHERE id = ?", (now_utc(), journal_id))
     db.commit()
     return latest_revision(db, journal_id)

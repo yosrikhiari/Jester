@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 TEXT_ENV = "JESTER_LLM_CALL_TEXT"
 KEEP_DAYS_ENV = "JESTER_LLM_CALLS_KEEP_DAYS"
@@ -45,21 +46,30 @@ def attach(db, run_id, *agents):
     Returns the recorder, which is also what a test can call directly. Agents
     without a recorder (the deterministic stand-ins) never reach it: they make
     no call, so there is nothing to record.
+
+    `amend` is the other half. A reply can arrive and still be refused by the
+    role's own output check, which runs AFTER the bytes are filed; that call
+    is the failed one, so its row is marked rather than a second, invented
+    call being written next to it.
     """
     def record(*, role, model, digest, prompt, response, latency_ms, error=None):
-        record_call(
+        return record_call(
             db, run_id, role=role, model=model, digest=digest, prompt=prompt,
             response=response, latency_ms=latency_ms, error=error)
 
+    def amend(call_id, error):
+        fail_call(db, call_id, error)
+
     for agent in agents:
         setattr(agent, "_recorder", record)
+        setattr(agent, "_recorder_amend", amend)
     return record
 
 
 def record_call(db, run_id, *, role, model="", digest=None, prompt="",
-                response=None, latency_ms=None, error=None) -> None:
+                response=None, latency_ms=None, error=None) -> Optional[int]:
     keep_text = os.environ.get(TEXT_ENV, "").strip().lower() not in _KEEP_FALSY
-    db.execute(
+    cur = db.execute(
         "INSERT INTO llm_calls (run_id, created_utc, role, model, digest,"
         " prompt_sha256, response_sha256, prompt_chars, response_chars,"
         " latency_ms, ok, error, prompt_text, response_text)"
@@ -80,6 +90,21 @@ def record_call(db, run_id, *, role, model="", digest=None, prompt="",
             prompt if keep_text else None,
             response if keep_text else None,
         ),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+def fail_call(db, call_id, error) -> None:
+    """Mark an already-recorded call as the failure it turned out to be.
+
+    Used for a reply that parsed and then failed the role's check: the call
+    row exists (the bytes are the evidence), so the reason is stamped on it.
+    Inserting a second row would count one call twice.
+    """
+    db.execute(
+        "UPDATE llm_calls SET ok=0, error=? WHERE id=?",
+        (str(error) if error else None, int(call_id)),
     )
     db.commit()
 

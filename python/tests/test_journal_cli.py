@@ -7,6 +7,7 @@ Jester's -- `test_root_inside_another_repo_gets_its_own` proves the commit
 never lands there.
 """
 import subprocess
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -139,6 +140,43 @@ def test_list_shows_parked_and_finished(run):
     assert "abandoned: superseded" in out and "nothing, this journal is finished" in out
 
 
+def test_retract_records_a_reason_and_needs_one(run):
+    run("new", "Withdrawn", "--kind", "note", "--question", "q")
+    db = J.open_journal(run.db)
+    j = J.get(db, "withdrawn")
+    db.execute("UPDATE journal SET state='published' WHERE id=?", (j["id"],))
+    db.commit()
+    db.close()
+    assert "say why" in run("retract", "withdrawn", ok=False)
+    out = run("retract", "withdrawn", "--reason", "the numbers were wrong")
+    assert "withdrawn is retracted" in out
+    assert "retracted: the numbers were wrong" in run("show", "withdrawn")
+
+
+def test_a_retracted_journal_says_so_in_the_list_and_cannot_be_approved(run):
+    """Minor 7: a retracted article is not a finished one -- it was published
+    and taken back. `list` called it `done`, and `approve publish` still
+    recorded a fresh approval on it, which reads as a step towards shipping a
+    page that is deliberately off the site."""
+    run("new", "Withdrawn", "--kind", "note", "--question", "q")
+    db = J.open_journal(run.db)
+    j = J.get(db, "withdrawn")
+    db.execute("UPDATE journal SET state='published' WHERE id=?", (j["id"],))
+    db.commit()
+    db.close()
+    run("retract", "withdrawn", "--reason", "the numbers were wrong")
+
+    out = run("list")
+    assert "retracted: the numbers were wrong" in out
+    assert "done" not in out, "a retracted article is not a finished one"
+
+    refused = run("approve", "withdrawn", "publish", ok=False)
+    assert "retracted" in refused and "the numbers were wrong" in refused
+    db = J.open_journal(run.db)
+    assert J.human_approvals(db, j["id"], "publish") == []
+    db.close()
+
+
 def test_measure_records_numbers_and_opens_the_measured_gate(run):
     from datetime import datetime, timedelta, timezone
 
@@ -253,3 +291,37 @@ def test_snapshots_and_site_worktrees_stay_out_of_the_articles_repo(tmp_path):
 def test_git_errors_are_reported(tmp_path):
     with pytest.raises(jfiles.GitError, match="rev-parse"):
         jfiles._git(tmp_path, "rev-parse", "--verify", "no-such-ref")
+
+
+def test_the_approval_ttl_comes_from_the_config_the_command_was_given(run, tmp_path):
+    """V3-15 says the lapse is configurable. A `--config` nobody reads is
+    not a setting, so the value has to reach the freshness gate.
+
+    The journal is put straight into `ready` (the state whose next step is
+    `published`) so that `show` prints the publish gate's verdict; everything
+    after that goes through `cli.main`, because the point is the CLI flag.
+    """
+    run("new", "Aging approval")
+    run("approve", "aging-approval", "review")
+    run("approve", "aging-approval", "publish")
+    db = J.open_journal(run.db)
+    try:
+        j = J.get(db, "aging-approval")
+        db.execute("UPDATE journal SET state = 'ready' WHERE id = ?", (j["id"],))
+        ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        db.execute("UPDATE approval SET at = ? WHERE journal_id = ? AND what = 'publish'",
+                   (ten_days_ago, j["id"]))
+        db.commit()
+    finally:
+        db.close()
+
+    # The shipped default allows 30 days: the approval still covers the version.
+    assert "expired" not in run("show", "aging-approval")
+
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "thresholds.yaml").write_text("journal_approval_ttl_days: 7\n", encoding="utf-8")
+    assert "expired" in run("show", "aging-approval", "--config", str(cfg))
+
+    # And the choice does not leak into the next command in this process.
+    assert J.approval_ttl_days() == 30

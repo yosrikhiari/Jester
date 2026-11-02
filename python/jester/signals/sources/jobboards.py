@@ -142,6 +142,10 @@ class _JobBoard:
     #: Requests a day, retries included; 0 means no ceiling. Read by
     #: `signals.limits`, which keeps the day's count across runs.
     daily_budget = 0
+    #: A board returns its whole catalogue for a query, so a complete read
+    #: decides every record with that query. (Hacker News searches a date
+    #: window instead, and says so.) `run.mark_closed` reads this.
+    windowed_reads = False
 
     def __init__(self, opener=None, sleep=time.sleep, timeout: int = 30,
                  user_agent: str = USER_AGENT):
@@ -163,7 +167,11 @@ class _JobBoard:
 
     def _note_read(self, stored_query: str, ids, *, complete: bool) -> None:
         entry = self.reads.setdefault(stored_query, {"ids": set(), "complete": False})
-        entry["ids"].update(f"{self.name}:{i}" for i in ids if i)
+        # `<platform>:<listing id>` is exactly the `source_id` a board's
+        # records carry (the alias is inside it). `mark_closed` tests the
+        # archive's record_id and source_id against this set, so both shapes
+        # are covered.
+        entry["ids"].update(f"{self.platform}:{i}" for i in ids if i)
         entry["complete"] = complete
 
     #: What `jester signals sources` prints. A plain string, because

@@ -62,6 +62,7 @@ from jester import schedule as _schedule
 from jester.fetchers.cloak import load_scraper_config
 from jester.llm import PROMPT_VERSIONS, RUBRIC_VERSION
 from jester.quota import day_key
+from jester.secrets import redact_secrets
 from jester.sources import (
     PLATFORM_KINDS,
     SUPPORTED_KINDS,
@@ -1086,18 +1087,18 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         return {"ok": True, "job": got}
 
     def jobs(self, limit: int = 10):
-        from jester.jobs import reap_stale_jobs, recent_jobs
+        """Recent jobs — a read, and nothing else.
 
-        # A daemon thread does not survive a restart; a row still saying
-        # "running" after one is a job nobody is working on.
-        #
-        # Reaping is maintenance, and a console visiting somebody else's live
-        # archive has no business doing maintenance on it: the jobs it would
-        # declare dead belong to a process it cannot see.
-        if not self.read_only:
-            reap_stale_jobs(self.db)
-        return {"ok": True, "jobs": recent_jobs(self.db, limit),
-                "reaped": not self.read_only}
+        This route is polled every few seconds, so it may not write. It used
+        to call `reap_stale_jobs` (unless --read-only), which opens with
+        `ensure_schema` — DDL — and commits an UPDATE: the exact per-poll
+        write-lock contention the read path exists to remove. Reaping is
+        maintenance and now lives in `jester.jobs.start_job`, the write path
+        that starts work.
+        """
+        from jester.jobs import recent_jobs
+
+        return {"ok": True, "jobs": recent_jobs(self.db, limit)}
 
     def cluster_run(self, threshold=None, min_size=None, min_nuggets=None,
                     limit=None, run_id="console-cluster"):
@@ -1382,11 +1383,11 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         }
 
     def doctor(self):
-        from jester.cli import pipeline_paused_notes
+        from jester.cli import journal_note, pipeline_paused_notes
 
         findings = evaluate_doctor(self.db)
         return {"ok": len(findings) == 0, "findings": findings,
-                "notes": pipeline_paused_notes()}
+                "notes": pipeline_paused_notes() + journal_note(self.db)}
 
     def eval_gate(self):
         """Run the M2.2 calibration gate over known_good/bad sets."""
@@ -1578,7 +1579,14 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
 
     def config(self):
         t = self._cfg().thresholds
-        scraper = load_scraper_config(Path(self.config_dir) / "scraper.yaml").__dict__
+        # V3-22: scraper.yaml names the CloakBrowser licence key and the
+        # residential proxy, and a proxy URL carries its own credentials.
+        # Neither is served; `secrets_set` is the only thing the Config page
+        # needs, and blanking is decided by key name so a credential added to
+        # the file later cannot leak by being forgotten here.
+        scraper, secrets_set = redact_secrets(
+            dict(load_scraper_config(Path(self.config_dir) / "scraper.yaml").__dict__)
+        )
         return {
             "ok": True,
             "config_dir": self.config_dir,
@@ -1621,6 +1629,7 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
                 if key not in ROLE_PROVIDER_KEYS
             },
             "scraper": scraper,
+            "secrets_set": secrets_set,
             "sources": [s.to_dict() for s in load_sources(self._sources_path)],
             "env": {
                 "JESTER_QDRANT_URL": os.environ.get("JESTER_QDRANT_URL", ""),

@@ -1,10 +1,13 @@
 """M1.5 archivist agent: dedup + vector embedding + corpus-model guard (R32)."""
+import logging
 from typing import List
 
 from jester.config import Thresholds
 from jester.models import Nugget
 from jester.store import exists_unique_key, insert_nugget, meta_get, meta_set, open_db
 from jester.vector import VectorStore, point_id_for
+
+log = logging.getLogger("jester.archivist")
 
 
 class ModelMismatch(RuntimeError):
@@ -44,6 +47,14 @@ class Archivist:
         #: completed. See `run` — these are NOT archived, and the caller is
         #: expected to leave their batches queued for a later pass.
         self.deferred = []
+        #: How many kept nuggets were archived WITHOUT a vector this run
+        #: (V3-07). The degradation is deliberate — the row is more valuable
+        #: than the point — but it used to be invisible: a corpus with no
+        #: vectors for a whole night of nuggets read as a clean run.
+        self.reembed_failed = 0
+        #: The first such failure, for the one warning `run` logs and for the
+        #: run summary's line beside the dedup-deferred count.
+        self.reembed_reason = None
 
     def dedup_threshold_for(self, n: Nugget) -> float:
         """The cosine bar THIS nugget is judged against: its category's value
@@ -68,6 +79,8 @@ class Archivist:
 
         self.near_misses = []
         self.deferred = []
+        self.reembed_failed = 0
+        self.reembed_reason = None
         kept: List[Nugget] = []
         for n in nuggets:
             if exists_unique_key(self.db, n.unique_key):
@@ -129,10 +142,22 @@ class Archivist:
                 self.vector.upsert(n.unique_key, n.raw_text, {"category": n.category})
                 n.embedding_id = f"emb:{point_id_for(n.unique_key)}"
                 n.needs_reembed = False
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - the row outlives the point
+                # Kept, not lost: a nugget with no vector is still evidence and
+                # is flagged for `reembed`. What it must not be is unmentioned —
+                # a night whose every upsert failed used to report a clean run.
+                self.reembed_failed += 1
+                if self.reembed_reason is None:
+                    self.reembed_reason = f"{type(exc).__name__}: {exc}"
                 n.embedding_id = None
                 n.needs_reembed = True
             insert_nugget(self.db, n)
             kept.append(n)
         self.near_misses = sorted(self.near_misses, reverse=True)[:3]
+        if self.reembed_failed:
+            # One line for the run, not one per nugget: 400 identical lines say
+            # no more than the first, and the count is what the summary reads.
+            log.warning(
+                "%d nugget(s) archived without a vector: re-embed failed (%s)",
+                self.reembed_failed, self.reembed_reason)
         return kept

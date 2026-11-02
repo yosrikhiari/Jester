@@ -1,7 +1,10 @@
 """LLM client abstraction for the agents. Fake* classes are deterministic for tests/mock."""
 import json
+import logging
 import os
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -9,6 +12,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Protocol, runtime_checkable
 
 from jester.models import Idea, Nugget
+
+log = logging.getLogger("jester.llm")
 
 
 @dataclass
@@ -271,6 +276,11 @@ def _describe(exc) -> str:
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
+#: Why a reply the model did send yielded nothing. One string, because the
+#: fallback sample and the llm_calls row have to name the same failure.
+_MALFORMED_REPLY = "malformed reply (not a JSON object)"
+
+
 class _Agent:
     """Failure accounting shared by every live agent."""
 
@@ -317,6 +327,12 @@ class _Agent:
         #: Set by `provenance.attach`. None means this agent was built by hand
         #: (tests, a one-off script) and has no run to file calls under.
         self._recorder = None
+        #: The same attachment's amend hook, for a reply that parsed and then
+        #: failed the role's own check — see `_reject`.
+        self._recorder_amend = None
+        #: The llm_calls row of the most recent answered call, while a role
+        #: check may still refuse it.
+        self._last_call_id = None
 
     @property
     def name(self):
@@ -357,7 +373,14 @@ class _Agent:
             return None
         obj = _parse_json_object(raw)
         if obj is None:
-            self._note_fallback("malformed reply (not a JSON object)")
+            # V3-07: an unparseable answer used to be filed with no error, so
+            # the row said ok=1 and a run whose every reply was garbage showed
+            # a clean provenance table. The bytes stay on the row — the
+            # question and the answer are the evidence — but the fact that
+            # nothing could be read out of them is recorded too.
+            self._note_fallback(_MALFORMED_REPLY)
+            self._record_call(prompt, raw, started, _MALFORMED_REPLY)
+            return None
         # The bytes are recorded even when they failed the role's check: the
         # question and the answer are the evidence, and a parse failure is a
         # fact about the answer rather than a missing call.
@@ -366,10 +389,11 @@ class _Agent:
 
     def _record_call(self, prompt, response, started, error=None):
         """File this call under the attached run, if there is one."""
+        self._last_call_id = None
         if self._recorder is None:
             return
         try:
-            self._recorder(
+            call_id = self._recorder(
                 role=self.ROLE,
                 model=self._model,
                 digest=self.digest,
@@ -378,15 +402,37 @@ class _Agent:
                 latency_ms=(time.monotonic() - started) * 1000.0,
                 error=error,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # Provenance is a record, not a participant: a broken recorder
-            # must not turn an answered call into a failed run.
-            pass
+            # must not turn an answered call into a failed run. It is still
+            # worth a debug line — a table that has stopped accepting rows is
+            # a fact about the run, not a reason to hide it.
+            log.debug("llm_calls recorder failed (%s); the call was not filed",
+                      _describe(exc))
+            return
+        if error is None:
+            self._last_call_id = call_id
 
     def _reject(self, reason):
         """A reply that parsed but failed the role's output check."""
         self._note_fallback(reason)
+        self._fail_last_call(reason)
         return None
+
+    def _fail_last_call(self, reason):
+        """Stamp `reason` on the row this refusal just disqualified.
+
+        The role check runs after `_obj` has filed the answer, so the row is
+        amended rather than a second row written: one call, one row.
+        """
+        call_id, self._last_call_id = self._last_call_id, None
+        if call_id is None or self._recorder_amend is None:
+            return
+        try:
+            self._recorder_amend(call_id, reason)
+        except Exception as exc:  # noqa: BLE001 - same rule as _record_call
+            log.debug("llm_calls row %s could not be marked failed (%s)",
+                      call_id, _describe(exc))
 
     def _note_fallback(self, reason):
         self.last_error = reason
@@ -707,6 +753,23 @@ def _http_error_detail(exc) -> str:
 #: Statuses worth retrying: the rate limit, and the transient 5xx family.
 _RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
 
+#: Transport failures that are worth another attempt. They are the same kind of
+#: event as a 503 — the request did not get an answer, and the next attempt may
+#: — but they used to raise on the first try while a 503 was retried three
+#: times, so a brief timeout, a DNS hiccup, a reset connection or a TLS
+#: handshake failure became a stand-in answer.
+_TRANSIENT_ERRORS = (
+    socket.timeout,        # read/connect timeout (TimeoutError on 3.10+)
+    TimeoutError,
+    urllib.error.URLError,  # DNS, connection refused, wrapped socket errors
+    ConnectionError,       # reset, aborted, refused mid-transfer
+    ssl.SSLError,          # a TLS failure the socket raised directly
+)
+
+
+def _is_transient(exc) -> bool:
+    return isinstance(exc, _TRANSIENT_ERRORS)
+
 
 class GroqRateLimited(GroqError):
     """The rate limit outlasted our retries.
@@ -803,6 +866,23 @@ def _as_chat_response(body):
     return {"message": {"content": content}}
 
 
+def _http_failure(exc, retries_used):
+    """The terminal error for a status we will not retry (any further).
+
+    `exc` wraps a one-shot file object, so the body may be read only here, on
+    the attempt that raises. A 429 becomes GroqRateLimited whatever stopped the
+    retries — the quota brake keys on it and reads `retry_after`.
+    """
+    detail = _http_error_detail(exc)
+    if exc.code == 429:
+        return GroqRateLimited(
+            "groq HTTP 429 after %d retr%s: %s"
+            % (retries_used, "y" if retries_used == 1 else "ies", detail),
+            retry_after=_reset_seconds(exc),
+        )
+    return GroqError("groq HTTP %s: %s" % (exc.code, detail))
+
+
 class GroqClient:
     """Minimal chat-completions transport.
 
@@ -812,7 +892,7 @@ class GroqClient:
     """
 
     def __init__(self, api_key=None, base_url=None, timeout=60, opener=None,
-                 max_retries=3, sleep=None, key_env="GROQ_API_KEY"):
+                 max_retries=3, sleep=None, key_env="GROQ_API_KEY", clock=None):
         #: Which variable holds the key, for the error message. None means a
         #: server that takes no key (a local OpenAI-compatible endpoint), and
         #: then no Authorization header is sent at all, so a Groq key is never
@@ -825,6 +905,9 @@ class GroqClient:
         self.max_retries = max_retries
         self._opener = opener or urllib.request.urlopen
         self._sleep = sleep or time.sleep
+        #: Monotonic clock the call's deadline is measured on. Injectable so a
+        #: test can prove the deadline rather than wait for it.
+        self._clock = clock or time.monotonic
 
     def _headers(self):
         headers = {
@@ -839,7 +922,14 @@ class GroqClient:
 
     def chat(self, model, messages, temperature=0.4, json_object=True, **extra):
         """One completion. `extra` carries optional fields (top_p, seed,
-        presence_penalty, reasoning_effort); a None value is not sent."""
+        presence_penalty, reasoning_effort); a None value is not sent.
+
+        V3-09: `timeout` bounds the WHOLE call, not one attempt. Computed once,
+        its remaining budget is what each attempt is given, so `timeout=60`
+        with `max_retries=3` can no longer hold a run open for three minutes
+        plus backoff — and a retry is not started once the budget is gone.
+        Transient transport failures are retried on the same policy as 429/5xx.
+        """
         if not self.api_key and self.key_env:
             raise GroqError(
                 f"{self.key_env} is not set - put it in .env at the repo root "
@@ -863,35 +953,73 @@ class GroqClient:
         # capped at 8,000 tokens/minute, and the critic fires once per idea.
         # Without a retry the run would quietly swap in the deterministic
         # stand-in for whichever ideas happened to land after the cap.
+        deadline = (None if self.timeout is None or float(self.timeout) <= 0
+                    else self._clock() + float(self.timeout))
+
+        def budget_left():
+            return None if deadline is None else deadline - self._clock()
+
+        def exhausted():
+            left = budget_left()
+            return left is not None and left <= 0
+
+        def affordable_delay(delay):
+            """How much of `delay` the call can still afford to sleep, or None
+            when it cannot afford to sleep at all.
+
+            Sleeping the full delay and checking afterwards is how `timeout=60`
+            became 75s: a 429 45s in with `retry-after: 30` slept 30s and only
+            then found the budget gone. The budget is re-read here because the
+            attempt that just failed spent some of it.
+            """
+            left = budget_left()
+            if left is not None and delay >= left:
+                return None
+            return delay if left is None else min(delay, left)
+
         last = None
         for attempt in range(self.max_retries + 1):
+            left = budget_left()
+            if attempt and left is not None and left <= 0:
+                # A sleep that returned late (a real one can) left no budget;
+                # the budgeted sleep below normally raises before this point. A
+                # retry is only ever scheduled after `last` is set, so this is
+                # the failure the skipped attempt would have repeated.
+                raise last
             try:
-                with self._opener(req, timeout=self.timeout) as resp:
+                with self._opener(req, timeout=self.timeout if left is None else left) as resp:
                     return _as_chat_response(json.loads(resp.read().decode("utf-8")))
             except urllib.error.HTTPError as exc:
-                if exc.code not in _RETRY_STATUS or attempt == self.max_retries:
+                if exc.code not in _RETRY_STATUS:
                     # `exc` wraps a one-shot file object, so the detail is read
                     # only on the attempt that raises — reading it per attempt
                     # left the final message with an empty body to report.
-                    detail = _http_error_detail(exc)
-                    if exc.code == 429:
-                        # Report what the server said about the reset, so the
-                        # caller can decide between "wait a moment" and "come
-                        # back when the quota rolls over" rather than guessing.
-                        raise GroqRateLimited(
-                            "groq HTTP 429 after %d retries: %s"
-                            % (self.max_retries, detail),
-                            retry_after=_reset_seconds(exc),
-                        ) from exc
-                    raise GroqError(
-                        "groq HTTP %s: %s" % (exc.code, detail)) from exc
-                last = GroqError("groq HTTP %s" % exc.code)
-                self._sleep(_retry_delay(exc, attempt))
+                    raise _http_failure(exc, attempt) from exc
+                if attempt == self.max_retries or exhausted():
+                    raise _http_failure(exc, attempt) from exc
+                # Built from the headers alone, so the body stays readable for
+                # whichever attempt ends up raising. A 429 keeps its identity
+                # here: if the deadline expires before the next attempt, this
+                # is what gets raised, and the quota brake needs it.
+                last = (GroqRateLimited("groq HTTP 429", retry_after=_reset_seconds(exc))
+                        if exc.code == 429 else GroqError("groq HTTP %s" % exc.code))
+                delay = affordable_delay(_retry_delay(exc, attempt))
+                if delay is None:
+                    raise last
+                self._sleep(delay)
             except GroqError:
                 raise
             except Exception as exc:  # noqa: BLE001 - network, DNS, TLS, bad JSON
-                raise GroqError(
-                    "groq request failed: %s: %s" % (type(exc).__name__, exc)) from exc
+                failure = GroqError(
+                    "groq request failed: %s: %s" % (type(exc).__name__, exc))
+                if (attempt == self.max_retries or not _is_transient(exc)
+                        or exhausted()):
+                    raise failure from exc
+                last = failure
+                delay = affordable_delay(_retry_delay(exc, attempt))
+                if delay is None:
+                    raise last
+                self._sleep(delay)
         raise last
 
     def list_models(self):

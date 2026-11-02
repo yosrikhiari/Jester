@@ -31,9 +31,10 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import sqlite3
 from dataclasses import dataclass, asdict, field as dc_field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -111,6 +112,34 @@ EXCERPT_CHARS = 600
 
 TABLE = "problem_signal"
 
+#: Where the row a re-read replaced is kept, so a correction is recoverable.
+#: The name is `<TABLE>_...` and the key column is `record_id` on purpose:
+#: `_related_tables` discovers it at run time, so retention takes a record's
+#: revisions with it without a second hard-coded list to keep in step.
+REVISION_TABLE = "problem_signal_revision"
+
+#: What a later observation of the same record may overwrite. Everything the
+#: collector reads, plus its own bookkeeping — and nothing that is identity
+#: (`record_id`, `mode`), history (`first_seen_utc`), a removal stamp (cleared
+#: on sight below) or a person's verdict (`outcome*`, which no collector may
+#: write, let alone overwrite).
+UPDATE_FIELDS = (
+    "source_url", "community", "kind", "author", "title", "excerpt", "text_hash",
+    "query", "match_reason", "match_confidence", "relevant", "audience",
+    "company", "buyer_intent", "created_utc",
+    "run_id", "run_status", "error", "last_seen_utc",
+)
+
+#: What counts as a revision. The text hash alone was the old test, and it
+#: missed exactly the correction that matters: a retitled post whose body did
+#: not move. Bookkeeping (`run_id`, `run_status`, `error`, `last_seen_utc`)
+#: moves on every pass by design, and `query` is which search surfaced the
+#: record rather than anything the record says; counting either would make
+#: `revisions` a measure of how often the collector ran.
+REVISION_FIELDS = tuple(
+    f for f in UPDATE_FIELDS
+    if f not in ("run_id", "run_status", "error", "last_seen_utc", "query"))
+
 
 def sqlite_ddl() -> str:
     cols = ",\n  ".join(f"{n} {t}" for n, t, _c, _d in FIELDS)
@@ -120,6 +149,83 @@ def sqlite_ddl() -> str:
         f"CREATE INDEX IF NOT EXISTS idx_{TABLE}_seen ON {TABLE} (last_seen_utc);\n"
         f"CREATE INDEX IF NOT EXISTS idx_{TABLE}_mode ON {TABLE} (mode, relevant);\n"
     )
+
+
+def revision_ddl() -> str:
+    """The snapshot table, generated from the same field map as the archive.
+
+    It carries every field the record had plus the revision number it was
+    replacing, because "the old row" means all of it: a corrected permalink or
+    company is as recoverable as a corrected title.
+    """
+    cols = ",\n  ".join(f"{n} {t}" for n, t, _c, _d in FIELDS if n != "record_id")
+    return (
+        f"CREATE TABLE IF NOT EXISTS {REVISION_TABLE} (\n"
+        f"  revision_id INTEGER PRIMARY KEY,\n"
+        f"  record_id TEXT NOT NULL,\n"
+        "  revision INTEGER NOT NULL DEFAULT 0,\n"
+        f"  {cols},\n"
+        "  snapshot_utc TEXT NOT NULL\n);\n"
+        f"CREATE INDEX IF NOT EXISTS idx_{REVISION_TABLE}_record "
+        f"ON {REVISION_TABLE} (record_id);\n"
+    )
+
+
+def _ensure_revision_table(db: sqlite3.Connection) -> None:
+    """Create the snapshot table, and widen an older one additively.
+
+    Same contract as `_catch_up_columns`: a field added to the map later must
+    not make an existing snapshot table unreadable, and nothing is ever
+    dropped or retyped here.
+    """
+    db.executescript(revision_ddl())
+    have = {r[1] for r in db.execute(f"PRAGMA table_info({REVISION_TABLE})")}
+    added = False
+    for name, sqltype, _ch, _doc in FIELDS:
+        if name in have:
+            continue
+        default = "0" if sqltype in ("INTEGER", "REAL") else "''"
+        db.execute(f"ALTER TABLE {REVISION_TABLE} ADD COLUMN {name} {sqltype} "
+                   f"NOT NULL DEFAULT {default}")
+        added = True
+    if added:
+        db.commit()
+
+
+def _same(a, b) -> bool:
+    """Equal as stored, treating NULL and '' as the same nothing.
+
+    A column added by `_catch_up_columns` is backfilled to '', an old row that
+    predates it may still read NULL, and `None == ''` is False — which would
+    count a revision on the first sighting after an upgrade for a change
+    nobody made.
+    """
+    if a is None:
+        a = ""
+    if b is None:
+        b = ""
+    if isinstance(a, (int, float)) or isinstance(b, (int, float)):
+        try:
+            return float(a) == float(b)
+        except (TypeError, ValueError):
+            return False
+    return a == b
+
+
+def _snapshot_row(db: sqlite3.Connection, row: sqlite3.Row, *, at: str) -> int:
+    """Write the row as it stands, before it is replaced.
+
+    Called only when something actually changed: a snapshot per unchanged
+    sighting would make the table a second copy of the archive and the
+    revision numbers meaningless. Returns the snapshot's `revision_id`.
+    """
+    _ensure_revision_table(db)
+    cur = db.execute(
+        f"INSERT INTO {REVISION_TABLE} ({','.join(FIELD_NAMES)}, revision, snapshot_utc) "
+        f"VALUES ({','.join('?' * len(FIELD_NAMES))}, ?, ?)",
+        [row[n] for n in FIELD_NAMES] + [int(row["revisions"] or 0), at],
+    )
+    return int(cur.lastrowid)
 
 
 def clickhouse_ddl() -> str:
@@ -142,6 +248,38 @@ def clickhouse_ddl() -> str:
         # same record lands twice the day a post is crossposted or a community
         # is renamed, which is the duplicate the M2 check exists to forbid.
         "ORDER BY record_id;\n"
+    )
+
+
+#: The ClickHouse schema's own version, recorded beside the table.
+#:
+#: 1 was `CREATE TABLE IF NOT EXISTS` and nothing else: the table was made
+#: once and a field added to `FIELDS` later was simply absent from it until
+#: someone dropped the table by hand. 2 is the first version whose columns are
+#: reconciled with the field map on every load (`ALTER TABLE ... ADD COLUMN IF
+#: NOT EXISTS`), so a new field arrives without a manual drop and no field is
+#: ever removed. Increment it when a change cannot be expressed as a plain
+#: additive column; the number itself is informational — the columns are the
+#: contract — but it dates the table without opening the DDL history.
+SCHEMA_VERSION = 2
+
+#: Where that version is written. A table rather than a `-- comment`: a
+#: comment is stripped by a dump/restore and cannot be queried by the
+#: reconciliation, and the whole point is that "which schema is this" is a
+#: question the server answers.
+SCHEMA_VERSION_TABLE = "jester_schema_version"
+
+
+def schema_version_ddl() -> str:
+    """The one-row-per-table record of the schema this loader applied."""
+    return (
+        f"CREATE TABLE IF NOT EXISTS {SCHEMA_VERSION_TABLE} (\n"
+        "  table_name String,\n"
+        "  version UInt32,\n"
+        "  updated_at DateTime64(3)\n"
+        ")\n"
+        "ENGINE = ReplacingMergeTree(updated_at)\n"
+        "ORDER BY table_name;\n"
     )
 
 
@@ -255,6 +393,7 @@ def open_signals(db_path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(sqlite_ddl())
     _catch_up_columns(db)
+    _ensure_revision_table(db)
     _relabel_synthetic(db)
     db.commit()
     return db
@@ -314,15 +453,22 @@ def upsert(db: sqlite3.Connection, signals: Iterable[Signal], *, seen_at: Option
 
     This is where "repeat import creates no duplicates" actually lives. An
     unchanged record updates `last_seen_utc` only; a changed one also stamps
-    `edited_utc` (the first time we notice) and counts a revision. Nothing is
-    ever inserted twice, and `first_seen_utc` is never overwritten — it is the
-    one date that says how long the archive has known about a problem.
+    `edited_utc` (the first time we notice), counts a revision and — before
+    the update — writes the row it is replacing to `problem_signal_revision`,
+    so a correction is recoverable rather than simply lost.
+
+    Every mutable field is refreshed, not the old subset. `title`, `company`,
+    `buyer_intent` and `source_url` used to be written once and frozen, so a
+    source that fixed a typo or a permalink was contradicted by our archive
+    for the rest of the record's life. `first_seen_utc` and the person-written
+    `outcome*` columns are deliberately absent from the update: one is the
+    record's age, the other is the only field that comes from reality.
     """
     new = seen = edited = 0
     for s in signals:
         row = s.row(seen_at)
         old = db.execute(
-            f"SELECT text_hash, revisions, edited_utc FROM {TABLE} WHERE record_id=?",
+            f"SELECT {','.join(FIELD_NAMES)} FROM {TABLE} WHERE record_id=?",
             (row["record_id"],),
         ).fetchone()
         if old is None:
@@ -333,22 +479,68 @@ def upsert(db: sqlite3.Connection, signals: Iterable[Signal], *, seen_at: Option
             )
             new += 1
             continue
-        changed = old["text_hash"] != row["text_hash"]
+        changed = [name for name in REVISION_FIELDS if not _same(old[name], row[name])]
+        if changed:
+            _snapshot_row(db, old, at=row["last_seen_utc"])
         db.execute(
-            f"UPDATE {TABLE} SET last_seen_utc=?, excerpt=?, text_hash=?, "
-            "match_reason=?, match_confidence=?, relevant=?, audience=?, run_id=?, run_status=?, error=?, "
-            "revisions=?, edited_utc=?, removed_utc='' WHERE record_id=?",
-            (row["last_seen_utc"], row["excerpt"], row["text_hash"],
-             row["match_reason"], row["match_confidence"], row["relevant"], row["audience"],
-             row["run_id"], row["run_status"], row["error"],
-             (old["revisions"] or 0) + (1 if changed else 0),
-             (old["edited_utc"] or (row["last_seen_utc"] if changed else "")),
-             row["record_id"]),
+            f"UPDATE {TABLE} SET " + ", ".join(f"{n}=?" for n in UPDATE_FIELDS) +
+            ", revisions=?, edited_utc=?, removed_utc='' WHERE record_id=?",
+            [row[n] for n in UPDATE_FIELDS] + [
+                int(old["revisions"] or 0) + (1 if changed else 0),
+                (old["edited_utc"] or (row["last_seen_utc"] if changed else "")),
+                row["record_id"],
+            ],
         )
         seen += 1
         edited += 1 if changed else 0
     db.commit()
     return {"new": new, "seen_again": seen, "edited": edited}
+
+
+def restore_revision(db: sqlite3.Connection, record_id: str, *,
+                     revision: Optional[int] = None,
+                     at: Optional[str] = None) -> dict:
+    """Put a replaced row back, and keep the one it replaces.
+
+    `revision=None` restores the most recent snapshot. The current row is
+    snapshotted first, so a restore is itself undoable — otherwise "recover a
+    correction" would mean choosing, once, which of two states to lose.
+
+    Only the mutable fields come back. The person-written outcome and the
+    first-seen date do not: those describe the record's life, not its text,
+    and a content restore must not silently un-work a lead.
+    """
+    _ensure_revision_table(db)
+    if revision is None:
+        snap = db.execute(
+            f"SELECT * FROM {REVISION_TABLE} WHERE record_id=? "
+            "ORDER BY revision_id DESC LIMIT 1", (record_id,)).fetchone()
+    else:
+        snap = db.execute(
+            f"SELECT * FROM {REVISION_TABLE} WHERE record_id=? AND revision=? "
+            "ORDER BY revision_id DESC LIMIT 1", (record_id, int(revision))).fetchone()
+    if snap is None:
+        wanted = ("the most recent revision" if revision is None
+                  else f"revision {revision!r}")
+        raise ValueError(f"no {wanted} recorded for {record_id!r}")
+    current = db.execute(
+        f"SELECT {','.join(FIELD_NAMES)} FROM {TABLE} WHERE record_id=?",
+        (record_id,)).fetchone()
+    if current is None:
+        raise ValueError(f"no record {record_id!r} in {TABLE}")
+
+    stamp = at or _now()
+    if any(not _same(current[n], snap[n]) for n in REVISION_FIELDS):
+        _snapshot_row(db, current, at=stamp)
+    db.execute(
+        f"UPDATE {TABLE} SET " + ", ".join(f"{n}=?" for n in REVISION_FIELDS) +
+        ", revisions=?, edited_utc=? WHERE record_id=?",
+        [snap[n] for n in REVISION_FIELDS] +
+        [int(current["revisions"] or 0) + 1, stamp, record_id],
+    )
+    db.commit()
+    return {"record_id": record_id, "revision": int(snap["revision"] or 0),
+            "title": snap["title"], "restored_utc": stamp}
 
 
 def mark_removed(db: sqlite3.Connection, record_ids: Iterable[str], *, at: Optional[str] = None) -> int:
@@ -469,12 +661,92 @@ def counts(db: sqlite3.Connection) -> dict:
     return out
 
 
-def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -> dict:
-    """Write the signals as one CSV plus a manifest.
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    The manifest is the reconciliation the M2 check asks for: it states how
-    many rows the database holds and how many the file carries, so "the export
-    matches the table" is a fact on disk rather than a claim in a report.
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_csv_ids(path: Path) -> tuple[list[str], int]:
+    """The record ids the written file actually carries, and its row count.
+
+    Read back from disk rather than remembered from the rows that were
+    handed to the writer: the point of the reconciliation is that it checks
+    the artifact, not the intention.
+    """
+    ids, rows = [], 0
+    with path.open(encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            rows += 1
+            rid = row.get("record_id") or ""
+            if rid:
+                ids.append(rid)
+    return sorted(set(ids)), rows
+
+
+def _fsync_dir(path: Path) -> None:
+    """Make the rename itself durable.
+
+    POSIX needs the DIRECTORY fsynced for a new name to survive a power cut.
+    Windows cannot open a directory for fsync at all — the open fails with a
+    sharing violation — so both the open and the fsync are guarded rather
+    than assuming the platform. A guard that swallows the error is the right
+    answer here and the wrong one everywhere else: failing an export because
+    this OS cannot fsync a directory would trade a durability nicety for a
+    broken command.
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except (OSError, AttributeError):
+        return
+    try:
+        os.fsync(fd)
+    except (OSError, AttributeError):
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -> dict:
+    """Write the signals as one CSV plus a manifest — or write neither.
+
+    A crash mid-write used to leave a truncated CSV with no manifest, or a
+    manifest whose `reconciles: true` was computed from a count taken after
+    the file had been "written" (that is, handed to the OS). Either artifact
+    alone is worse than nothing, because both look like an export.
+
+    So the CSV goes to `<name>.csv.tmp` in the same directory, is flushed and
+    fsynced, and is renamed into place with `os.replace`; the manifest is
+    written the same way and only after that rename succeeded. The PREVIOUS
+    manifest is removed before the CSV rename, so a hard kill (SIGKILL, power
+    loss) between the two renames — which never reaches the exception handler
+    below — leaves no manifest rather than one vouching for bytes it never
+    hashed. Any exception removes the temp files AND the final pair, so a
+    directory is either a complete export or no export at all.
+
+    The reconciliation is by identity, not count. After the rename the file
+    is re-read and the manifest carries the SHA-256 of the sorted
+    `record_id` set and of the file's own bytes, so a check can re-hash the
+    artifact instead of trusting a flag. `reconciles` is true only when the
+    database's ids equal the file's and the row counts agree.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -483,29 +755,161 @@ def export_csv(db: sqlite3.Connection, out_dir: str | Path, *, mode: str = "") -
         f"SELECT {','.join(FIELD_NAMES)} FROM {TABLE} {where} ORDER BY first_seen_utc, record_id", args
     ).fetchall()
     csv_path = out / ("signals.csv" if not mode else f"signals-{mode}.csv")
-    with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(FIELD_NAMES)
-        for r in rows:
-            w.writerow([r[n] for n in FIELD_NAMES])
-    in_db = db.execute(
-        f"SELECT COUNT(*) FROM {TABLE} {where}", args
-    ).fetchone()[0]
-    manifest = {
-        "written_at": _now(),
-        "mode_filter": mode or "all",
-        "rows_in_db": in_db,
-        "rows_in_csv": len(rows),
-        "reconciles": in_db == len(rows),
-        "counts_by_mode": counts(db),
-        "fields": FIELD_NAMES,
-        "excerpt_chars": EXCERPT_CHARS,
-        "csv": csv_path.name,
-    }
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest_path = out / "manifest.json"
+    tmp_csv = csv_path.with_name(csv_path.name + ".tmp")
+    tmp_manifest = manifest_path.with_name(manifest_path.name + ".tmp")
+
+    # Both documents come from the code, not from the archive: written first,
+    # so a failure later cannot leave a manifest describing a schema whose
+    # field map was never beside it.
     (out / "field-map.md").write_text(field_map_markdown(), encoding="utf-8")
     (out / "schema.clickhouse.sql").write_text(clickhouse_ddl(), encoding="utf-8")
-    return manifest
+
+    try:
+        with tmp_csv.open("w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(FIELD_NAMES)
+            for r in rows:
+                w.writerow([r[n] for n in FIELD_NAMES])
+            fh.flush()
+            os.fsync(fh.fileno())
+        # Invalidate the old manifest BEFORE the new CSV becomes visible. A
+        # SIGKILL between the two renames cannot run the cleanup at the
+        # bottom, and without this ordering it would leave the previous
+        # manifest beside a CSV it never hashed (possibly under a different
+        # `csv` name), which reads as a successful export. Removing it first
+        # makes the worst case "manifest absent" — detectably incomplete.
+        _unlink_quietly(manifest_path)
+        _fsync_dir(out)
+        os.replace(tmp_csv, csv_path)
+        _fsync_dir(out)
+
+        # Read the artifact back, then ask the table again. Between them this
+        # is "does the file carry exactly the records the archive holds".
+        file_ids, rows_in_csv = _read_csv_ids(csv_path)
+        db_ids = sorted(r[0] for r in db.execute(
+            f"SELECT record_id FROM {TABLE} {where}", args))
+        content_sha256 = _sha256_file(csv_path)
+        manifest = {
+            "written_at": _now(),
+            "mode_filter": mode or "all",
+            "rows_in_db": len(db_ids),
+            "rows_in_csv": rows_in_csv,
+            # Removed rows are still rows: they were real when they were
+            # collected, they carry the `removed_utc` that says so, and
+            # dropping them from the CSV would make the id-based
+            # reconciliation fail against a database that keeps them. Marked,
+            # not excluded, so a reader can count what has gone.
+            "removed_rows": sum(1 for r in rows if (r["removed_utc"] or "")),
+            # The two hashes are what a later check re-computes; `reconciles`
+            # is a summary of them and is not the evidence itself.
+            "row_ids_sha256": _sha256_text("\n".join(file_ids)),
+            "content_sha256": content_sha256,
+            "reconciles": (db_ids == file_ids and len(db_ids) == rows_in_csv),
+            "counts_by_mode": counts(db),
+            "fields": FIELD_NAMES,
+            "excerpt_chars": EXCERPT_CHARS,
+            "csv": csv_path.name,
+        }
+        with tmp_manifest.open("w", encoding="utf-8") as fh:
+            fh.write(json.dumps(manifest, indent=2))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_manifest, manifest_path)
+        _fsync_dir(out)
+        return manifest
+    except BaseException:
+        # Complete or absent. The final CSV is removed too: a crash between
+        # the two renames leaves a file that no manifest vouches for, and any
+        # earlier manifest was already removed before that rename because it
+        # describes bytes that are no longer the ones on disk. Both would
+        # read as an export.
+        _unlink_quietly(tmp_csv)
+        _unlink_quietly(tmp_manifest)
+        _unlink_quietly(csv_path)
+        _unlink_quietly(manifest_path)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Retention
+# ---------------------------------------------------------------------------
+
+def _related_tables(db: sqlite3.Connection) -> List[str]:
+    """Tables whose rows are ABOUT a signal and die with it.
+
+    Task 7 adds revision rows; retention must take them with the record
+    rather than leave orphans behind. The name is discovered at run time
+    instead of assumed, because a migration that adds a table should not
+    also have to be mirrored in a second hard-coded list — and retention
+    reads the schema, it never creates one.
+
+    Qualifying is narrow: the name is `<TABLE>_...`, and the table must have
+    a `record_id` column. A neighbour that happens to share the prefix but is
+    not keyed on the record cannot be swept by accident.
+    """
+    out = []
+    for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+        if name == TABLE or not name.startswith(TABLE + "_"):
+            continue
+        if not name.replace("_", "").isalnum():
+            continue
+        columns = {r[1] for r in db.execute(f'PRAGMA table_info("{name}")')}
+        if "record_id" in columns:
+            out.append(name)
+    return sorted(out)
+
+
+def retention(db: sqlite3.Connection, days: int, *, now: Optional[datetime] = None) -> int:
+    """Delete records the archive has not seen for `days` days. Returns the
+    number of records removed.
+
+    By `last_seen_utc`: the window is about how long a record has gone
+    unwatched, not how old the post is. A record first seen a year ago and
+    still being returned by its source every morning is current, and sweeping
+    it would delete the one thing the last_seen column exists to say.
+
+    Only records past the window go, and any table that keeps rows about a
+    record (revisions) goes with them. The reads ledger is audit data with no
+    reader left, so its rows age out by their own `read_utc` — including on a
+    run that removes no records at all, which is why the sweep below happens
+    before the early return. There is no dry-run flag: the count returned is
+    the report, and a window below one day is refused rather than read as a
+    typo that empties the archive.
+    """
+    window = int(days)
+    if window < 1:
+        # `--days 0` means "everything", and everything is not what anyone
+        # means when they type it at a prompt.
+        raise ValueError(f"retention needs a window of at least one day, got {days!r}")
+    cutoff = ((now or datetime.now(timezone.utc))
+              - timedelta(days=window)).isoformat(timespec="seconds")
+    # The table name comes from the module that writes it rather than a second
+    # literal here, and the import is deferred because `run` imports this
+    # module. An archive written before the table existed simply has none.
+    from .run import READS_TABLE
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                  (READS_TABLE,)).fetchone():
+        db.execute(f"DELETE FROM {READS_TABLE} WHERE read_utc < ?", (cutoff,))
+    # A row whose last sighting is empty has no age to judge — it comes from a
+    # table that predates the column — and an empty string compares as older
+    # than any date. Deleting on an unreadable date is the destructive guess
+    # this command must not make, so those rows are left alone.
+    old = [r[0] for r in db.execute(
+        f"SELECT record_id FROM {TABLE} "
+        "WHERE last_seen_utc != '' AND last_seen_utc < ?", (cutoff,))]
+    if not old:
+        # Committed anyway: the reads above were pruned even though no record
+        # was old enough to go.
+        db.commit()
+        return 0
+    for extra in _related_tables(db):
+        db.executemany(f'DELETE FROM "{extra}" WHERE record_id = ?',
+                       [(rid,) for rid in old])
+    db.executemany(f"DELETE FROM {TABLE} WHERE record_id = ?",
+                   [(rid,) for rid in old])
+    db.commit()
+    return len(old)
 
 
 # ---------------------------------------------------------------------------

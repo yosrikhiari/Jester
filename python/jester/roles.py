@@ -361,7 +361,10 @@ def resolve_role(cfg, role, env=None) -> RoleSettings:
         attr = _LEGACY[role][1]
         model = getattr(cfg, attr).strip()
         msrc = attr if role == "embedding" else f"models.{role}"
-    elif (role, provider) in BUILTIN_MODELS:
+    elif not roles and (role, provider) in BUILTIN_MODELS:
+        # V3-10: the built-in table is the default only for a file that says
+        # nothing. A `roles:` block is a claim to configure the jobs; a role
+        # it omits must say which model it wants, not inherit silently.
         model, msrc = BUILTIN_MODELS[(role, provider)], "built-in"
     if kind == "fake":
         model, msrc = model or "", msrc or "n/a (stand-in)"

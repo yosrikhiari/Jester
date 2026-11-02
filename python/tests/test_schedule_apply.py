@@ -21,11 +21,15 @@ DECLARED = [
     "JesterNightlyTreat",
     "JesterNightlySignals",
     "JesterNightlySignalsBrief",
+    "JesterClickHouseLoad",
+    "JesterNightlyHealth",
     "JesterNightlySignalsHiring",
     "JesterNightlySignalsSweep",
     "JesterNightlyLeadsReddit",
     "JesterNightlyBackup",
     "JesterNightlyRetention",
+    "JesterSignalsRetention",
+    "JesterNightlyBackupDrill",
 ]
 
 
@@ -85,6 +89,8 @@ class FakeSchtasks:
             kind, repeat = "Daily", "Disabled"
         elif t["sc"] == "WEEKLY":
             kind, repeat = "Weekly", "Disabled"
+        elif t["sc"] == "MONTHLY":
+            kind, repeat = "Monthly", "Disabled"
         elif t["sc"] == "HOURLY":
             kind, repeat = "One Time Only, Hourly", f"{t['mo']} Hour(s), 0 Minute(s)"
         else:
@@ -124,12 +130,15 @@ def test_the_shipped_declaration_names_every_task():
     assert [s["task"] for s in specs] == DECLARED
     assert {s["task"] for s in specs if not s["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention",
+        "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     assert cadence["JesterNightly"] == "every 30 minutes"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
     assert cadence["JesterNightlySignalsSweep"] == "weekly on SUN at 08:00"
     assert cadence["JesterNightlySignalsHiring"] == "daily at 09:30"
+    assert cadence["JesterNightlyBackupDrill"] == "monthly on day 1 at 03:00"
+    assert cadence["JesterClickHouseLoad"] == "daily at 10:30"
 
 
 def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(host):
@@ -137,16 +146,17 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert first["ok"] is True, first
     installed = {r["task"] for r in first["results"] if r["action"] == "installed"}
     assert installed == set(DECLARED)
-    assert len(host.created()) == 10
+    assert len(host.created()) == 14
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
         "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
-        "JesterNightlyRetention"}
+        "JesterNightlyRetention", "JesterSignalsRetention",
+        "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
 
     second = schedule.apply_desired()
     assert second["ok"] is True
-    assert [r["action"] for r in second["results"]] == ["unchanged"] * 10
-    assert len(host.created()) == 10, "a second apply must not re-register anything"
-    assert len(host.changes()) == 4, "nor flip the four paused tasks again"
+    assert [r["action"] for r in second["results"]] == ["unchanged"] * 14
+    assert len(host.created()) == 14, "a second apply must not re-register anything"
+    assert len(host.changes()) == 7, "nor flip the seven paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -161,7 +171,7 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     cli.main(["schedule", "apply", "--dry-run"])
     out = capsys.readouterr().out
     assert "JesterNightly" in out and "would install" in out
-    assert "10 task(s) would change" in out
+    assert "14 task(s) would change" in out
 
 
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
@@ -234,6 +244,27 @@ def test_apply_restores_a_deleted_launcher(host):
 
     assert schedule.apply_desired()["ok"] is True
     assert schedule.launcher_path("cycle").is_file()
+
+
+def test_an_older_launcher_format_is_reinstalled(host):
+    """Argv alone cannot see this: a launcher installed before Task 7 runs the
+    same command and has no rotation guard, so apply called it "unchanged" and
+    the host never received the fix."""
+    assert schedule.apply_desired()["ok"] is True
+    path = schedule.launcher_path("cycle")
+    marker = f"REM jester-launcher-version: {schedule.LAUNCHER_VERSION}"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        marker, "REM jester-launcher-version: 1"), encoding="utf-8")
+
+    notes = cli.schedule_drift_notes()
+    assert any(n.startswith("JesterNightly:") and "is older than v2" in n
+               for n in notes), notes
+
+    actions = {r["task"]: r["action"] for r in schedule.apply_desired()["results"]}
+    assert actions["JesterNightly"] == "installed"
+    assert actions["JesterNightlySignals"] == "unchanged"
+    assert schedule.read_launcher("cycle")["version"] == schedule.LAUNCHER_VERSION
+    assert [r["action"] for r in schedule.apply_desired()["results"]] == ["unchanged"] * 14
 
 
 @pytest.mark.parametrize("body", [
@@ -434,3 +465,63 @@ def test_the_declared_sweep_cadence_matches_the_code_rationale():
                  if s["command"] == "signals-sweep")
     assert sweep["cadence"] == schedule.SWEEP_CADENCE
     assert sweep["cadence"] == {"weekly": "SUN", "at": "08:00"}
+
+
+# ---- the ClickHouse mirror is declared, and paused (V3-19) ------------------
+
+def test_the_clickhouse_load_is_declared_disabled_after_the_brief():
+    """SQLite is the source of truth, so the ClickHouse copy is optional and
+    can be loaded by hand. It is declared anyway -- a load policy that only
+    exists in prose is one nobody can turn on deliberately -- and it is PAUSED
+    because a load needs a running ClickHouse. It runs after the brief, so the
+    archive it copies is the one the brief was built from."""
+    specs = schedule.load_desired()
+    load = next(s for s in specs if s["command"] == "signals-load")
+    assert load["task"] == "JesterClickHouseLoad"
+    assert load["task"] == schedule.TASK_FOR_COMMAND["signals-load"]
+    assert load["enabled"] is False
+    assert schedule.describe_cadence(load) == "daily at 10:30"
+    assert schedule.command_argv("signals-load") == ("signals", "load")
+    assert schedule.command_takes_config("signals-load") is False, (
+        "a signals sub-command has no --config; the launcher would exit 2")
+    order = [s["task"] for s in specs]
+    assert order.index("JesterClickHouseLoad") == (
+        order.index("JesterNightlySignalsBrief") + 1)
+
+
+# ---- a monthly cadence, for the restore drill (V3-23) -----------------------
+
+def test_the_restore_drill_is_declared_monthly_and_disabled():
+    """Restoring into a temp dir proves a backup opens. It is off by default
+    because it is a monthly report, not a nightly job, and the owner chooses
+    the machine that runs it."""
+    drill = next(s for s in schedule.load_desired() if s["command"] == "backup-drill")
+    assert drill["task"] == schedule.TASK_FOR_COMMAND["backup-drill"]
+    assert drill["enabled"] is False
+    assert drill["cadence"] == {"monthly": 1, "at": "03:00"}
+    assert schedule.command_argv("backup-drill") == ("backup", "drill")
+
+
+def test_a_monthly_task_registers_monthly_and_reads_back(host):
+    res = schedule.install(at="03:00", task_name="Drill", command="backup-drill",
+                           monthly=1)
+    assert res["ok"] is True, res
+    create = host.created()[-1]
+    assert create[create.index("/sc") + 1] == "MONTHLY"
+    assert create[create.index("/d") + 1] == "1"
+    assert schedule.cadence_matches(
+        schedule.status("Drill"), {"cadence": {"monthly": 1, "at": "03:00"}})
+
+
+def test_a_monthly_cadence_is_refused_out_of_range(host):
+    res = schedule.install(at="03:00", task_name="Drill", command="backup-drill",
+                           monthly=31)
+    assert res["ok"] is False
+    assert host.created() == []
+
+
+def test_a_monthly_cron_line_is_a_valid_five_field_schedule(monkeypatch, tmp_path):
+    monkeypatch.setattr(schedule, "repo_root", lambda: tmp_path)
+    line = schedule.cron_line(at="03:00", monthly=1, command="backup-drill")
+    assert line.split()[:5] == ["0", "3", "1", "*", "*"]
+    assert "jester.cli backup drill --db data/jester.db" in line

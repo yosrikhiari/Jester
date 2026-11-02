@@ -24,12 +24,15 @@ changes nothing in this file.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
 
 from . import FIELD_NAMES, Signal, TABLE, limits, mark_removed, upsert
 from .filters import apply_to, load_rules
+from .health import record_source_state
 from .sources import SourceError, get_source
 
 RUN_TABLE = "signal_run"
@@ -39,6 +42,28 @@ RUN_TABLE = "signal_run"
 #: with every outage. The prefix makes it greppable and impossible to mistake
 #: for a real post.
 FAILURE_PREFIX = "query-failure"
+
+#: What each run actually read, one row per (run, source, record). Written by
+#: `record_reads` and swept by `signals retention` on its own `read_utc`: it is
+#: audit data now, kept to answer "what did that run see" after the process that
+#: saw it has exited, and nothing reads it back to decide what is gone — the
+#: sweep in `mark_closed` uses the source's own in-memory set. Keeping it
+#: bounded is retention's job, not a reader's.
+READS_TABLE = "problem_signal_read"
+
+READS_DDL = f"""
+CREATE TABLE IF NOT EXISTS {READS_TABLE} (
+  run_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  complete INTEGER NOT NULL DEFAULT 0,
+  read_utc TEXT NOT NULL,
+  PRIMARY KEY (run_id, platform, record_id, query)
+);
+CREATE INDEX IF NOT EXISTS idx_{READS_TABLE}_record ON {READS_TABLE} (record_id);
+CREATE INDEX IF NOT EXISTS idx_{READS_TABLE}_run ON {READS_TABLE} (run_id);
+"""
 
 RUN_DDL = f"""
 CREATE TABLE IF NOT EXISTS {RUN_TABLE} (
@@ -62,6 +87,7 @@ CREATE TABLE IF NOT EXISTS {RUN_TABLE} (
   note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_{RUN_TABLE}_started ON {RUN_TABLE} (started_utc);
+{READS_DDL}
 """
 
 
@@ -81,6 +107,71 @@ def _now() -> str:
 def ensure_run_table(db: sqlite3.Connection) -> None:
     db.executescript(RUN_DDL)
     db.commit()
+
+
+def record_reads(db: sqlite3.Connection, run_id: str, source, reads, *,
+                 at: Optional[str] = None) -> int:
+    """Store what the run read, so "what did that run see" is a SELECT.
+
+    The source keeps the set in memory during the run (`source.reads`); this is
+    what makes it a fact afterwards, and the sweep that decides what is gone
+    uses the same set in the same process. Ids are the archive's `record_id`,
+    so the rows are comparable across sources without knowing each id shape.
+
+    Nothing prunes these rows but `signals retention`, which ages them out by
+    `read_utc` — they are audit data, not state anything reads back.
+    """
+    ensure_run_table(db)
+    stamp = at or _now()
+    rows = []
+    for query, entry in (reads or {}).items():
+        complete = 1 if entry.get("complete") else 0
+        for rid in entry.get("ids") or ():
+            rows.append((run_id, source.platform, rid, query, complete, stamp))
+    db.executemany(
+        f"INSERT OR REPLACE INTO {READS_TABLE} "
+        "(run_id, platform, record_id, query, complete, read_utc) "
+        "VALUES (?, ?, ?, ?, ?, ?)", rows)
+    db.commit()
+    return len(rows)
+
+
+def _as_datetime(value) -> datetime:
+    """An ISO stamp or a datetime, in UTC. Our own stamps always are."""
+    if not value:
+        return datetime.now(timezone.utc)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _window_start(since: str, at=None) -> Optional[str]:
+    """The oldest stamp a `since` read could have returned, as an ISO string.
+
+    A Hacker News search with `since` is complete FOR ITS WINDOW: a record
+    created before the window is outside it, not deleted. The sweep compares
+    this stamp against the record's `created_utc`, which the source wrote in its
+    own format, so the comparison is done by SQLite's `julianday` rather than as
+    a string one.
+    """
+    text = (since or "").strip()
+    if not text:
+        return None
+    now = _as_datetime(at).astimezone(timezone.utc)
+    m = re.fullmatch(r"(\d+)([dh])", text, re.I)
+    if m:
+        amount = int(m.group(1))
+        start = now - (timedelta(days=amount) if m.group(2).lower() == "d"
+                       else timedelta(hours=amount))
+    else:
+        try:
+            start = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+    return start.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def _failure_record(source, query: str, message: str, run_id: str, mode: str) -> Signal:
@@ -165,10 +256,17 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         note = f"limit reached: {limit_hit}; sits out until {until}"
 
     counts = upsert(db, signals, seen_at=seen_at)
-    closed = mark_closed(db, source, mode=mode, at=seen_at)
+    # Persist the read set before judging it: "what this run saw" has to survive
+    # the process, and the sweep reads the same ids the source handed over.
+    record_reads(db, run_id, source, getattr(source, "reads", None), at=seen_at)
+    closed = mark_closed(db, source, mode=mode, at=seen_at, since=since)
     if closed["marked"]:
-        note = "; ".join(filter(None, [note, f"{closed['marked']} listing(s) gone from the "
-                                             "board; marked closed"]))
+        if getattr(source, "windowed_reads", False):
+            note = "; ".join(filter(None, [note, f"{closed['marked']} posting(s) gone from "
+                                                 "the source; marked deleted at source"]))
+        else:
+            note = "; ".join(filter(None, [note, f"{closed['marked']} listing(s) gone from the "
+                                                 "board; marked closed"]))
     elif closed["held"]:
         note = "; ".join(filter(None, [note, closed["held"]]))
     elif closed["judged"]:
@@ -203,6 +301,19 @@ def collect(db: sqlite3.Connection, *, source_name: str = "hackernews",
         "note": note,
     }
     _save_run(db, row)
+    # The ledger holds what this run did; the streak holds what the source has
+    # been doing. Written beside the run, not instead of it: existing callers
+    # read `status` exactly as before, and "collected 0" stays a valid run.
+    #
+    # Best-effort, because `_save_run` has already committed: the run happened
+    # and is on record, and a bookkeeping failure in the streak must not turn
+    # a successful collection into a raised run. The warning is the log line,
+    # which the schedule launcher redirects into the run's log.
+    try:
+        record_source_state(db, source.name, row)
+    except sqlite3.Error as exc:
+        print(f"warning: streak not recorded for {source.name}: {exc}",
+              file=sys.stderr)
     # Not a column: the recovery pass needs to know WHICH queries failed on
     # this pass, and it cannot read that back off the table — the previous
     # failure's row is still there, marked error, which is exactly the point
@@ -219,7 +330,7 @@ CLOSE_FLOOR = 20
 
 
 def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
-                at: Optional[str] = None) -> dict:
+                at: Optional[str] = None, since: str = "") -> dict:
     """Mark the listings a board no longer shows as removed at source.
 
     A job advert closes when the role is filled, and until now nothing
@@ -228,9 +339,25 @@ def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
 
     Only COMPLETE reads decide. A listing missing from a search read to the
     end is gone; one missing from a partial read may simply be further down.
-    The comparison is against every listing the board returned, kept or
-    filtered, so a record the rules now reject is not mistaken for a closed
-    one. A record seen again later is reopened by `upsert`.
+    The comparison is against every id the board returned, kept or filtered,
+    so a record the rules now reject is not mistaken for a closed one. A
+    record seen again later is reopened by `upsert`.
+
+    Two shapes of source, two guards:
+
+    * a board read is its whole catalogue, so everything with a matching query
+      is judged;
+    * a search read is complete only for its `since` window -- the fetch asks
+      for postings CREATED inside it -- so only records created inside that
+      window are judged. Without this a seven-day Hacker News read would delete
+      the entire older archive, which is the difference between "deleted" and
+      "not in this week's search". `last_seen_utc` is the wrong side of that
+      comparison: a posting created last month that yesterday's run saw is
+      outside the window and simply was not asked for.
+
+    The comparison is on `record_id`, which both shapes write into `reads`;
+    comparing the archive's bare `source_id` against prefixed ids would have
+    matched nothing and marked everything gone.
     """
     reads = getattr(source, "reads", None) or {}
     complete = {q: r["ids"] for q, r in reads.items() if r.get("complete") and r.get("ids")}
@@ -238,12 +365,37 @@ def mark_closed(db: sqlite3.Connection, source, *, mode: str = "live",
         return {"marked": 0, "held": "", "judged": 0}
     seen = set().union(*complete.values())
     marks = ",".join("?" * len(complete))
+    where = (f"platform = ? AND mode = ? AND COALESCE(removed_utc, '') = '' "
+             f"AND query IN ({marks}) AND source_id NOT LIKE ?")
+    args = [source.platform, mode, *complete, f"{FAILURE_PREFIX}:%"]
+    if getattr(source, "windowed_reads", False):
+        cutoff = _window_start(since, at)
+        if cutoff is None:
+            # No window, no judgement: the read cannot say which records it
+            # could have returned.
+            return {"marked": 0, "held": "", "judged": 0}
+        # The predicate the FETCH used, not last_seen_utc. The search asks for
+        # `created_at_i > since`, so a posting created before the window was
+        # never a candidate for this read: judging it removed deleted the older
+        # archive, one routine run at a time, and `upsert` reopens only on a
+        # re-sighting. `julianday` parses both sides natively because they are
+        # formatted differently -- HN's `created_at` (`...T10:00:00Z`, sometimes
+        # with milliseconds) and `_window_start`'s `...+00:00`. Strict `>`
+        # mirrors `created_at_i > epoch(since)`: equality was a posting the
+        # fetch excluded.
+        where += (" AND COALESCE(created_utc, '') != '' "
+                  "AND julianday(created_utc) > julianday(?)")
+        args.append(cutoff)
     rows = db.execute(
-        f"SELECT record_id, source_id FROM {TABLE} WHERE platform = ? AND mode = ? "
-        f"AND COALESCE(removed_utc, '') = '' AND query IN ({marks}) "
-        "AND source_id NOT LIKE ?",
-        (source.platform, mode, *complete, f"{FAILURE_PREFIX}:%")).fetchall()
-    gone = [r[0] for r in rows if r[1] not in seen]
+        f"SELECT record_id, source_id FROM {TABLE} WHERE {where}", args).fetchall()
+    # Two id shapes live in the archive: `record_id` is always
+    # `<platform>:<source_id>`, and for a job board `source_id` already
+    # carries the source alias (`jobicy:42`), while Hacker News' is bare
+    # (`42`). Test both, because comparing one shape against a set of the
+    # other marks every record gone — which is exactly what a first attempt
+    # at this did.
+    gone = [r["record_id"] for r in rows
+            if r["record_id"] not in seen and r["source_id"] not in seen]
     if len(gone) > CLOSE_FLOOR and len(gone) > CLOSE_AT_MOST * len(rows):
         return {"marked": 0, "judged": len(rows),
                 "held": f"{len(gone)} of {len(rows)} listing(s) missing from the board -- "

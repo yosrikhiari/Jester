@@ -57,6 +57,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      # V3-24: Windows installs requirements.txt while this job installs the
+      # Linux lock. This checker fails if the two name different direct
+      # dependencies, an unpinned row, or a bumped exact pin. It is stdlib
+      # only, so it runs before anything is installed.
+      - name: requirements.txt and pylock.toml agree
+        run: python scripts/check_lock_parity.py
+
       # Deliberately no pip cache. A cache is a previous run's state, and
       # previous-run state is the thing this job exists to not have.
       - name: Install from the lock, exactly
@@ -182,6 +189,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # V3-24: same check as the Linux job, on the platform that installs
+      # requirements.txt. Windows is where a drift between the two files
+      # would show up first.
+      - name: requirements.txt and pylock.toml agree
+        run: python scripts/check_lock_parity.py
+
       # Not the lock. pylock.toml says in its own header that it is Linux-only
       # and that Windows should install requirements.txt; the first run of this
       # job ignored that and died at packages[3] with "No wheel found matching
@@ -244,6 +257,10 @@ jobs:
           cache-dependency-path: go/go.sum
       - run: go build ./...
       - run: go test ./... -coverprofile=coverage.out -covermode=count
+      # V3-11: vulnerabilities in the module graph fail the build. Advisory
+      # audits were how a known-vulnerable dependency could ship green.
+      - name: govulncheck (blocking)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       # F-12: the cross-language contract test is gated on JESTER_CONTRACT_DB
       # (a Python-created database), so the default `go test ./...` skips it.
       # This step creates that database with the stdlib sqlite3 through the
@@ -281,6 +298,10 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --ignore-scripts
+      # V3-11: a high-severity advisory in the lock fails the build. The
+      # scaffold is not shipped to operators, but it is what the console UI
+      # becomes, so "audit later" is not a policy.
+      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run build
 

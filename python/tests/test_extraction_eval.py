@@ -268,6 +268,60 @@ def test_kappa_perfect_and_chance_agreement():
     assert cohens_kappa(chance) == pytest.approx(0.0)
 
 
+def _doubled(pairs):
+    """Two rater rows per comment, one per verdict pair, so κ is measurable.
+
+    The first row of each comment carries the gold and the prediction, which
+    `evaluate` counts once per `unique_key`: the repeat is only the second
+    opinion on `keep`.
+    """
+    rows = []
+    for i, (a, b) in enumerate(pairs):
+        key = f"reddit:b:{i}"
+        for rater, keep in (("owner", bool(a)), ("second", bool(b))):
+            rows.append(_labels(unique_key=key, rater=rater, keep=keep))
+    return rows
+
+
+# ---- κ is a published floor, and only when it is measurable -------------------
+
+def test_perfect_double_labelling_gives_kappa_one_and_passes_every_floor():
+    report = evaluate(_doubled([(1, 1)] * 10 + [(0, 0)] * 10))
+
+    assert report["double_labelled"] == 20
+    assert report["kappa"] == pytest.approx(1.0)
+    assert gate_failures(report) == []
+
+
+def test_a_zero_kappa_label_set_fails_the_kappa_floor_and_nothing_else():
+    # po = 0.5, pe = 0.5 -> κ = 0 while every other aggregate is perfect;
+    # the failure must name κ alone, with its denominator.
+    report = evaluate(
+        _doubled([(1, 1)] * 5 + [(1, 0)] * 5 + [(0, 1)] * 5 + [(0, 0)] * 5))
+    assert report["kappa"] == pytest.approx(0.0)
+
+    assert gate_failures(report) == [
+        "kappa 0.000 is below the 0.60 floor (20 double-labelled)"]
+
+
+def test_single_labelled_labels_raise_no_kappa_failure():
+    # No doubled rows means κ is unavailable, not zero: the floor cannot apply.
+    report = evaluate([_labels()])
+
+    assert report["kappa"] is None and report["double_labelled"] == 0
+    assert not any("kappa" in f for f in gate_failures(report))
+
+
+def test_a_kappa_message_without_a_denominator_says_unavailable():
+    # A hand-built report can carry κ without the denominator it came from.
+    # Printing 0 there would assert a count the report does not have.
+    failures = gate_failures({"kappa": 0.0})
+
+    assert failures[0] == ("kappa 0.000 is below the 0.60 floor "
+                           "(denominator unavailable)")
+    assert "(0 double-labelled)" not in " ".join(failures)
+
+
 # ---- fabrication: an assertion the comment does not support is counted ---------
 
 def test_fabrication_counts_unmatched_assertions():
@@ -375,3 +429,42 @@ def test_eval_extract_exits_nonzero_when_the_gate_fails(tmp_path):
                                    fabrication_ceiling=0.05,
                                    max_nuggets_per_comment=1.2))
     assert exc.value.code == 1
+
+
+def test_eval_extract_exits_nonzero_on_kappa_alone_and_prints_its_denominator(
+        tmp_path, capsys):
+    from argparse import Namespace
+    from jester.cli_review import cmd_eval_extract
+
+    path = tmp_path / "labels.jsonl"
+    rows = _doubled([(1, 1)] * 5 + [(1, 0)] * 5 + [(0, 1)] * 5 + [(0, 0)] * 5)
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    # No `min_kappa` on this Namespace: the command's default (0.6) applies.
+    with pytest.raises(SystemExit) as exc:
+        cmd_eval_extract(Namespace(labels=str(path), seed=7, floor=0.70,
+                                   fabrication_ceiling=0.05,
+                                   max_nuggets_per_comment=1.2))
+
+    out = capsys.readouterr().out
+    assert exc.value.code == 1
+    assert "kappa = 0.000 (20 double-labelled)" in out
+    assert "GATE: kappa 0.000 is below the 0.60 floor (20 double-labelled)" in out
+    assert "GATE: F1" not in out and "GATE: fabrication" not in out
+
+
+def test_eval_extract_honours_a_lowered_kappa_floor(tmp_path, capsys):
+    from argparse import Namespace
+    from jester.cli_review import cmd_eval_extract
+
+    path = tmp_path / "labels.jsonl"
+    rows = _doubled([(1, 1)] * 5 + [(1, 0)] * 5 + [(0, 1)] * 5 + [(0, 0)] * 5)
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n",
+                    encoding="utf-8")
+    res = cmd_eval_extract(Namespace(labels=str(path), seed=7, floor=0.70,
+                                     fabrication_ceiling=0.05,
+                                     max_nuggets_per_comment=1.2,
+                                     min_kappa=-1.0))
+
+    assert res["ok"] is True
+    assert "GATE" not in capsys.readouterr().out

@@ -46,8 +46,8 @@ def test_blocks_kinds_lines_and_backing():
 
 
 def test_a_byte_order_mark_does_not_hide_the_title():
-    md = "﻿# What PEP 20 says\n\nBody."
-    assert T.title_of(md) == "What PEP 20 says"
+    md = "﻿# What the PEP says\n\nBody."
+    assert T.title_of(md) == "What the PEP says"
     assert C.check_lint(md).ok
     assert C.check_numbers(None, None, 0, md).ok
 
@@ -132,6 +132,95 @@ def test_read_text_of_a_deleted_file(db, tmp_path):
     assert S.read_text(tmp_path, row) is None
 
 
+def test_verify_checks_the_saved_bytes_and_the_page_behind_them(db, tmp_path):
+    web = F.FakeWeb({URL: _page("numbers live here")})
+    row = S.take(db, tmp_path, URL, opener=web)
+    assert S.verify(db, tmp_path, row) == (True, "")
+
+    (tmp_path / row["text_path"]).write_text("changed on disk", encoding="utf-8")
+    ok, why = S.verify(db, tmp_path, row)
+    assert not ok and "changed" in why
+    assert "changed" in S.latest(db, URL)["stale_reason"]
+
+    # A matching copy clears the mark again: a stale page is a fact about
+    # the copy, not a permanent sentence.
+    (tmp_path / row["text_path"]).write_text("numbers live here", encoding="utf-8")
+    assert S.verify(db, tmp_path, row)[0]
+    assert S.latest(db, URL)["stale_reason"] == ""
+
+    # Network re-checks only when asked; a page that now says something else
+    # makes the stored copy stale.
+    moved = F.FakeWeb({URL: _page("totally different words")})
+    assert S.verify(db, tmp_path, row)[0], "no network re-check without the explicit flag"
+    ok, why = S.verify(db, tmp_path, row, opener=moved, refetch=True)
+    assert not ok and "text changed" in why
+    assert "text changed" in S.latest(db, URL)["stale_reason"]
+
+    # A page that still answers 2xx but no longer has readable text (it
+    # became a PDF) cannot back the copy's words either.
+    pdf = F.FakeWeb({URL: {"status": 200, "content_type": "application/pdf",
+                           "body": "<p>not text any more</p>"}})
+    ok, why = S.verify(db, tmp_path, row, opener=pdf, refetch=True)
+    assert not ok and "no longer has readable text" in why
+    assert "readable text" in S.latest(db, URL)["stale_reason"]
+
+    # A page that cannot be reached proves nothing about the copy, so it is
+    # reported but not marked stale -- an outage is not a changed article.
+    other = "https://other.example/x"
+    fresh = S.take(db, tmp_path, other, opener=F.FakeWeb({other: _page("words")}))
+    ok, why = S.verify(db, tmp_path, fresh, opener=F.FakeWeb({}), refetch=True)
+    assert not ok and "could not re-check" in why
+    assert S.latest(db, other)["stale_reason"] == ""
+
+
+def test_a_check_that_never_read_the_page_cannot_clear_a_page_finding(db, tmp_path):
+    """Staleness remembers what found it. A local re-check proves the bytes on
+    disk are the bytes that were stored; it says nothing about a page that has
+    changed since, so it must not erase that finding and let the article ship
+    around it (the default `--verify` does not touch the network)."""
+    web = F.FakeWeb({URL: _page("numbers live here")})
+    row = S.take(db, tmp_path, URL, opener=web)
+    moved = F.FakeWeb({URL: _page("the page was rewritten")})
+    assert not S.verify(db, tmp_path, row, opener=moved, refetch=True)[0]
+
+    ok, why = S.verify(db, tmp_path, row)
+    assert not ok and "text changed" in why
+    assert "text changed" in S.latest(db, URL)["stale_reason"]
+
+    # Only a re-check that reads the page again can clear it, and only when
+    # the page agrees with the copy once more.
+    assert not S.verify(db, tmp_path, row, opener=moved, refetch=True)[0]
+    restored = F.FakeWeb({URL: _page("numbers live here")})
+    assert S.verify(db, tmp_path, row, opener=restored, refetch=True) == (True, "")
+    assert S.latest(db, URL)["stale_reason"] == ""
+
+
+def test_a_manual_copy_is_checked_on_disk_and_never_re_fetched(db, tmp_path):
+    """Minor 4: a copy supplied by hand -- a login-walled page, text pulled out
+    of a PDF -- can never hash-match the live page: it is the author's extract,
+    not the site's HTML-to-text. A `--verify --network` therefore marked it
+    stale every time and blocked the export of an article whose copy was
+    exactly what the author vouched for. The network comparison is skipped for
+    a manual copy (its provenance is recorded and shown); its bytes on disk
+    are still checked, because that part can be checked."""
+    src = tmp_path / "extracted.txt"
+    src.write_text("The PDF says 40 minutes of labelling.", encoding="utf-8")
+    row = S.take(db, tmp_path, URL, from_file=src)
+    assert row["method"] == "manual"
+
+    def no_network(req, timeout=None):
+        raise AssertionError("a manual copy must not be re-fetched")
+
+    assert S.verify(db, tmp_path, row, opener=no_network, refetch=True) == (True, "")
+    assert S.latest(db, URL)["stale_reason"] == ""
+
+    # The bytes on disk are still the part a check can prove.
+    (tmp_path / row["text_path"]).write_text("edited by hand", encoding="utf-8")
+    ok, why = S.verify(db, tmp_path, row, opener=no_network, refetch=True)
+    assert not ok and "changed" in why
+    assert "changed" in S.latest(db, URL)["stale_reason"]
+
+
 # ---- the checks -----------------------------------------------------------------
 
 def test_lint_title_rules():
@@ -156,6 +245,24 @@ def test_lint_counts_structure_signals():
     assert not outcome.ok
 
 
+def test_heading_words_do_not_dilute_the_lint_density():
+    """Minor 8: a heading's number is checked like any other (5b), but a
+    heading is a label, not prose: counting its words in the lint's per-100
+    denominator lets a long heading buy room for extra em dashes and bold.
+    The two kinds are now separate lists -- nothing is exempt from the number
+    check."""
+    sentence = "A plain sentence of prose that says one thing only. "
+    para = sentence * 15 + "It ended — twice — here."     # 154 words, 2 em dashes
+    md = "# Title\n\n## " + " ".join(["context"] * 60) + "\n\n" + para + "\n"
+    score, findings, stats = C.lint_prose(md)
+    messages = " | ".join(f["message"] for f in findings)
+    assert stats["words"] == 154, "a heading's words are not prose words"
+    assert "2 em dashes in 154 words" in messages, messages
+    assert score > 0
+    # And the heading is still checked for its numbers.
+    assert not C.check_numbers(None, None, 0, "## Results from 3 runs\n\nAll good.").ok
+
+
 def test_lint_warnings_below_the_threshold_do_not_fail():
     outcome = C.check_lint("# A plain title\n\nAdditionally, the cache halved the misses.")
     assert outcome.ok and outcome.findings
@@ -165,7 +272,7 @@ def test_origin_check(db):
     jid = J.create_journal(db, "Origin")["id"]
     setup = "The test ran on one laptop with the default settings."
     voiced = "We think this result should hold in general."
-    observed = "Labelling took [4 hours](obs:log)."
+    observed = "Labelling took [4 hours](obs:log|timed-the-session)."
     for para in (setup, voiced, observed):
         J.register_generated(db, jid, para, role="data-writer")
     md = f"# T\n\n{setup}\n\n{voiced}\n\n{observed}\n\nI wrote this one myself and I stand by it."
@@ -173,7 +280,8 @@ def test_origin_check(db):
     messages = " | ".join(f["message"] for f in out.findings)
     assert not out.ok
     assert "first person" in messages and "gives an opinion" in messages and "observation" in messages
-    assert out.stats == {"paragraphs": 4, "generated": 3}
+    # The title is a block too: headings are read as prose, so it counts.
+    assert out.stats == {"paragraphs": 5, "generated": 3}
     assert C.check_origin(db, jid, f"# T\n\n{setup}\n\nMine.").ok
 
 
@@ -225,6 +333,46 @@ def test_check_saved_refuses_unsaved_or_missing(db, tmp_path):
     path.unlink()
     with pytest.raises(J.JournalError, match="nothing saved"):
         C.check_saved(db, tmp_path, j["slug"])
+
+
+def test_a_number_in_a_heading_is_checked(tmp_path):
+    """A heading is rendered as `<h2>` and read as a claim, so a figure in
+    one needs the same proof a figure in a paragraph does. The checked kinds
+    used to exclude headings, which made `## Results from 3 runs` free."""
+    out = C.check_numbers(None, tmp_path, 0, "## Results from 3 runs\n\nAll good.")
+    assert not out.ok
+    assert "3 has no proof" in out.findings[0]["message"]
+
+
+def test_a_backticked_number_is_checked(db, tmp_path):
+    """Backticks used to mask a number before the check ran, so `0.87` was
+    exempt from proof just by being written in code style. Only fenced code
+    blocks are not prose; inline code is still read."""
+    jid = J.create_journal(db, "Backticks")["id"]
+    bare = C.check_numbers(db, tmp_path, jid, "The threshold was `0.87`.")
+    assert not bare.ok and "0.87 has no proof" in bare.findings[0]["message"]
+
+    run = J.add_run(db, J.add_experiment(db, jid), result={"threshold": 0.87})
+    linked = C.check_numbers(db, tmp_path, jid, f"The threshold was [`0.87`](run:{run}#threshold).")
+    assert linked.ok, linked.findings
+
+
+def test_an_observation_needs_a_reason(db, tmp_path):
+    """`obs:` said "a person vouched for this" without saying what the person
+    saw. Requiring `obs:<label>|<reason>` keeps the label as the evidence
+    anchor and makes the reason the thing an approval binds."""
+    jid = J.create_journal(db, "Observation")["id"]
+    for article in ("I spent [6 hours](obs:notes) labelling.",
+                    "I spent [6 hours](obs:notes|timed) labelling.",
+                    "I spent [6 hours](obs:|timed-the-session) labelling."):
+        out = C.check_numbers(db, tmp_path, jid, article)
+        assert not out.ok, article
+        assert "say what you observed" in out.findings[0]["message"], out.findings
+
+    good = C.check_numbers(db, tmp_path, jid,
+                           "I spent [6 hours](obs:notes|timed-the-labelling) labelling.")
+    assert good.ok, good.findings
+    assert good.stats["observation"] == 1
 
 
 def test_numbers_in_run_results_can_be_nested_lists(db, tmp_path):
@@ -434,7 +582,7 @@ def test_cli_snapshot_and_check(run, tmp_path, monkeypatch):
     out = run("check", "cn", ok=False)
     assert "ok    citations" in out and "FAIL  numbers" in out
 
-    path.write_text(path.read_text(encoding="utf-8").replace("3 days", "[3 days](obs:diary)"),
+    path.write_text(path.read_text(encoding="utf-8").replace("3 days", "[3 days](obs:diary|kept-a-diary)"),
                     encoding="utf-8")
     assert "unsaved changes" in run("check", "cn", ok=False)
     run("save", "cn")
@@ -470,6 +618,41 @@ def test_cli_snapshot_reports_a_page_without_text(run, monkeypatch):
         {URL: {"status": 200, "content_type": "application/pdf", "body": "%PDF"}}))
     out = run("snapshot", "pdf", "--url", URL)
     assert "saved" in out and "no readable text" in out
+
+
+def test_cli_snapshot_verify_marks_a_tampered_copy_and_fails(run, tmp_path, monkeypatch):
+    run("new", "Verify", "--kind", "note", "--slug", "vf")
+    path = tmp_path / "articles" / "vf" / "index.md"
+    path.write_text(f"# Verify\n\nThe [post]({URL}) says readers trust numbers.\n", encoding="utf-8")
+    run("save", "vf")
+    monkeypatch.setattr(S.urllib.request, "urlopen", F.FakeWeb({URL: _page("readers trust numbers")}))
+    run("snapshot", "vf")
+    # The brief spells it `journal snapshots --verify`; the plural is an alias.
+    out = run("snapshots", "vf", "--verify")
+    assert f"ok    {URL}" in out and "stale" not in out.lower()
+
+    db = J.open_journal(run.db)
+    row = S.latest(db, URL)
+    db.close()
+    (tmp_path / "articles" / row["text_path"]).write_text("edited on disk", encoding="utf-8")
+    out = run("snapshot", "vf", "--verify", ok=False)
+    assert "STALE" in out and "changed" in out
+    db = J.open_journal(run.db)
+    assert "changed" in S.latest(db, URL)["stale_reason"]
+    db.close()
+
+
+def test_cli_snapshot_verify_only_goes_to_the_network_when_asked(run, tmp_path, monkeypatch):
+    run("new", "Verify net", "--kind", "note", "--slug", "vn")
+    path = tmp_path / "articles" / "vn" / "index.md"
+    path.write_text(f"# Verify net\n\nThe [post]({URL}) says readers trust numbers.\n", encoding="utf-8")
+    run("save", "vn")
+    monkeypatch.setattr(S.urllib.request, "urlopen", F.FakeWeb({URL: _page("readers trust numbers")}))
+    run("snapshot", "vn")
+    monkeypatch.setattr(S.urllib.request, "urlopen", F.FakeWeb({URL: _page("a different page now")}))
+    assert "ok" in run("snapshot", "vn", "--verify")
+    out = run("snapshot", "vn", "--verify", "--network", ok=False)
+    assert "STALE" in out and "text changed" in out
 
 
 def test_cli_fixtures_reports_a_broken_set(run, monkeypatch, tmp_path):

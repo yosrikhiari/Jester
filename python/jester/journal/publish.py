@@ -68,23 +68,65 @@ def ready_to_export(db: sqlite3.Connection, root: Path, j: sqlite3.Row) -> List[
     from jester.journal import files as F
 
     out = []
-    if j["state"] not in ("ready",) + PUBLISHED_STATES:
+    if j["state"] == "retracted":
+        out.append(f"it was retracted ({j['retracted_reason'] or 'no reason recorded'}); "
+                   "a retracted page stays off the site")
+    elif j["state"] not in ("ready",) + PUBLISHED_STATES:
         out.append(f"it is {j['state']}; it must be ready (reviewed and approved) first")
     rev = J.latest_revision(db, j["id"])
     if rev is None:
         return out + ["nothing saved yet"]
     path = Path(root) / j["path"]
+    md = ""
     if not path.exists():
         out.append(f"the article file is missing: {path}")
     elif F.content_sha256(path) != rev["content_sha256"]:
         out.append("the file has unsaved changes")
+    else:
+        md = path.read_text(encoding="utf-8")
     checks = J.latest_checks(db, rev["id"])
     failing = [k for k in J.REQUIRED_CHECKS if not checks.get(k)]
     if failing:
         out.append(f"version {rev['n']} has not passed: {', '.join(failing)} (journal check)")
-    approved = {a["revision_id"] for a in J.human_approvals(db, j["id"], "publish")}
-    if rev["id"] not in approved:
+    approval = None
+    for candidate in J.human_approvals(db, j["id"], "publish"):
+        if candidate["revision_id"] == rev["id"]:
+            approval = candidate
+    if approval is None:
         out.append(f"you have not approved publishing version {rev['n']} (approve publish)")
+    else:
+        # One reading of the TTL for the whole decision, so the date shown and
+        # the verdict cannot disagree about when it lapsed.
+        days = J.approval_ttl_days()
+        expiry = J.approval_expiry(approval, days)
+        if expiry is None:
+            out.append(f"the approval of publishing version {rev['n']} has no readable "
+                       "timestamp; approve it again")
+        elif J.approval_expired(approval, days=days):
+            out.append(f"your approval of publishing version {rev['n']} expired on "
+                       f"{expiry[:10]}; approve it again "
+                       f"(jester journal approve {j['slug']} publish)")
+        else:
+            # The approval covers a revision AND the figures and saved copies
+            # that existed when it was given (V3-05). The file was proved to
+            # be this revision above, so the comparison is one recomputed
+            # manifest against the recorded one -- the same helper, and the
+            # same sentence, the `published` gate uses.
+            problem = J.manifest_problem(db, j, rev, approval)
+            if problem:
+                out.append(problem)
+    if md:
+        # A cited page whose copy is dead, missing or stale cannot back the
+        # article any more. The page itself must not ship around it.
+        for url in sorted(_referenced(md)["sources"]):
+            snap = S.latest(db, url)
+            if snap is None:
+                out.append(f"no saved copy of {url} (journal snapshot)")
+            elif not S.is_ok(snap):
+                out.append(f"{url}: {S.describe(snap)}")
+            elif snap["stale_reason"]:
+                out.append(f"{url}: the saved copy is stale - {snap['stale_reason']} "
+                           "(journal snapshot --verify)")
     if not j["disclosure"].strip():
         out.append("say how AI was used in it (set --disclosure)")
     return out
@@ -180,13 +222,25 @@ def evidence_html(db: sqlite3.Connection, j: sqlite3.Row, md: str) -> str:
         for url in sorted(refs["sources"]):
             snap = S.latest(db, url)
             when = snap["fetched_at"] if snap is not None else "not saved"
-            how = " (copy supplied by the author)" if snap is not None and snap["method"] == "manual" else ""
-            rows.append(f'<li><a href="{_esc(url)}" rel="noopener">{_esc(url)}</a> — copy saved {_esc(when)}{how}</li>')
+            how = " (copy supplied by the author)" if snap is not None and snap["method"] == S.MANUAL else ""
+            trouble = ""
+            if snap is None or not S.is_ok(snap) or snap["stale_reason"]:
+                why = snap["stale_reason"] if snap is not None and snap["stale_reason"] else S.describe(snap)
+                trouble = f' <span class="warn">- {_esc(why)}</span>'
+            rows.append(f'<li><a href="{_esc(url)}" rel="noopener">{_esc(url)}</a> — copy saved '
+                        f'{_esc(when)}{how}{trouble}</li>')
         parts.append(f"<h3>Sources</h3><ul>{''.join(rows)}</ul>")
     if refs["obs"]:
-        rows = "".join(f'<li id="evidence-obs-{R.anchor(o)}">{_esc(o)}: the author’s own observation</li>'
-                       for o in sorted(refs["obs"]))
-        parts.append(f"<h3>Observations</h3><ul>{rows}</ul>")
+        rows = []
+        for obs in sorted(refs["obs"]):
+            # `obs:<label>|<reason>` is a link target, not prose. On the page
+            # the label anchors the item and the reason IS the evidence, so
+            # neither the pipe nor the reason is hidden.
+            label, _, reason = obs.partition("|")
+            shown = f"{label} — {reason}" if reason else label
+            rows.append(f'<li id="evidence-obs-{R.anchor(obs)}">{_esc(shown)}: '
+                        "the author’s own observation</li>")
+        parts.append(f"<h3>Observations</h3><ul>{''.join(rows)}</ul>")
     parts.append(f'<h3>How this was written</h3><p>{_esc(j["disclosure"])}</p></section>')
     return "".join(parts)
 

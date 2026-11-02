@@ -30,7 +30,7 @@ Jester crawls community forums — Reddit, Hacker News, Discourse, Lemmy, Stack 
                                                         ↓
 Operator console  ←  Python pipeline  ←────────  LLM agent chain
    (:8619)                  ↓                           ↓
-                   ClickHouse + CSV            Qdrant (vectors + dedup)
+              CSV + optional ClickHouse          Qdrant (vectors + dedup)
 ```
 
 **Numbers from the working archive** (measured read-only on 2026-10-31): 133,402 comments, 115,185 nuggets, 2,627 ideas. Counts move; the console and [`docs/reports/2026-10-31-next-development-strategy.md`](docs/reports/2026-10-31-next-development-strategy.md) carry the dated detail.
@@ -39,7 +39,7 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 
 **The generative pipeline is paused since 2026-10-02.** All three scheduled tasks (`JesterNightly`, `JesterNightlyScrape`, `JesterNightlyTreat`) are registered but disabled; their last run exited 0 because they were switched off, not because the work succeeded. `jester doctor` prints them as notes.
 
-**The problem-signal collector is running daily** (five separate tasks), and its fixture gate was last green on 2026-10-31.
+**The problem-signal collector is running (six scheduled tasks: five daily, the weekly sweep), and its fixture gate is green — 21/21 on 2026-11-02.**
 
 Resume the generative loop only after the B1 gate in the [2026-10-31 strategy report](docs/reports/2026-10-31-next-development-strategy.md): one unattended day must end with an honest `quota_stopped` status, no overlapping ticks, and a score backlog that falls.
 
@@ -51,9 +51,20 @@ Resume the generative loop only after the B1 gate in the [2026-10-31 strategy re
 |-------|-------|------|
 | **Ingestion** | Go, CloakBrowser (stealth Chromium) | Scrapes via documented APIs or a headless browser; deposits raw comments into a SQLite handoff queue |
 | **Processing** | Python, Ollama / Groq / any OpenAI-compatible server | Seven model jobs (extractor, synthesizer, critic, labeller, embedding, chat, specifier), each with its own provider, model and generation settings in one `roles:` block |
-| **Storage** | SQLite, Qdrant, ClickHouse | SQLite for pipeline state; Qdrant for semantic dedup (0.87 cosine) and cluster search; ClickHouse for the queryable problem-signal archive |
+| **Storage** | SQLite, Qdrant, ClickHouse | **SQLite is the source of truth** for every product: pipeline state, the problem-signal archive and the journal. Qdrant holds vectors for semantic dedup (0.87 cosine) and cluster search. ClickHouse is an **optional, manually loaded mirror** of the signals archive — the same rows, loaded on demand, never read back as truth |
 | **Console** | Python stdlib HTTP, vanilla JS | The operator UI at `:8619` — no build step, ships inside the Python package |
 | **Orchestration** | Docker Compose | One command for the stack; profiles add the scraping browser, local models and the archive |
+
+**Where the data lives, and what "optional" means here.** SQLite is the source
+of truth for every product; a count, a verdict or an export is computed from
+it. ClickHouse holds a copy of the signals archive and nothing else: it is
+loaded by hand with `jester signals load`, or by the `JesterClickHouseLoad`
+task in `config/schedule.yaml`, which is declared and **paused** because a load
+needs a running ClickHouse (the compose `clickhouse` service starts only under
+the `signals` profile). Nothing in the pipeline waits for it. `jester signals
+evidence` is how the three copies are compared: it reconciles SQLite against
+ClickHouse against the CSV export and exits non-zero if they disagree, so a
+stale mirror is a reported fact rather than a silent second opinion.
 
 ## Model jobs
 
@@ -99,7 +110,7 @@ The idea pipeline is generative and probabilistic. Sitting beside it is a **prob
 
 > **Scope, fields and access status: [docs/scope-and-access.md](docs/scope-and-access.md)** — what each source collects and has produced, the 30-field map, and the open Reddit access decision. Regenerate it with `python -m jester.cli signals scope --db data/signals-live.db --out docs/`.
 >
-> **W1 evidence: [docs/w1-pack/](docs/w1-pack/README.md)** — a fresh clone, one command run twice (5 rows, then 0 new), the field map and the 20/20 fixture gate, captured to files.
+> **W1 evidence: [docs/w1-pack/](docs/w1-pack/README.md)** — a fresh clone, one command run twice (5 rows, then 0 new), the field map and the fixture gate as captured then (20/20), captured to files.
 
 - **No model in the acceptance path.** Classification is rules over text — same input, same verdict, no network and no quota. A model may one day propose new phrases; it never decides one.
 - **Search, not listing walks.** Measured: reading a community's `/new/` returns a 0.65% buyer rate, because what a community posts today is mostly not a buyer. Searching for the sentences a buyer actually writes is the same number of requests at a far higher hit rate.
@@ -127,7 +138,7 @@ Built so far (slice J0): its own database (`data/journal.db`), articles as Markd
 
 ```
 captured -> proposed -> chosen -> researching -> experimenting -> drafting
-  -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned)
+  -> in_review -> ready -> published -> shared -> measured      (+ parked, abandoned, retracted)
 ```
 
 The decisions — choosing a topic, approving an experiment plan, approving a version, publishing, approving each post — are gates only a person can open: approvals from any other actor are recorded and never counted. The gate for the last slice (metrics) already reads its table, so until that slice lands the honest answer is "blocked", not a silent pass.
@@ -137,17 +148,19 @@ Slice J1 adds the proof checks a saved version must pass before review. Each one
 | Check | Passes when |
 |---|---|
 | `citations` | every external link has a saved copy that answered 2xx, and every quote of 5+ words is attributed to a link whose saved copy contains those words |
-| `numbers` | every number in the prose links to its proof — `[91.2%](run:12#accuracy)` (checked against that value; without `#accuracy`, against every number the run recorded), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes)` — or names go in backticks |
+| `numbers` | every number in the prose — headings and inline backticks included — links to its proof: `[91.2%](run:12#accuracy)` (checked against that value; without `#accuracy`, against every number the run recorded), `[3.5%](https://…)` (must appear in the saved copy), `[4 hours](obs:notes\|timed-the-session)` (a label and a reason of at least 8 characters; a link target cannot carry spaces, so join words with hyphens). Only fenced code blocks are exempt, so `Python 3.12` needs a link like any other figure |
 | `lint` | the prose does not read as generated (Wikipedia's "signs of AI writing" list plus structure signals) and the title is not clickbait |
 | `origin` | no paragraph a tool wrote speaks in the first person, gives an opinion or claims an observation |
 
-`journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
+`journal snapshot` is the only network step: it saves a copy of each cited page (status, final URL, text), so a page that later disappears still has its words on file. `journal snapshots SLUG --verify` re-checks those copies — the stored bytes always, the page itself only with `--network` — and marks one stale when it no longer matches; a stale copy blocks the export that would have quoted it until a fresh copy is saved. `journal fixtures` runs the checkers against labelled cases: 31 citation cases, a clean draft plus 12 planted unbacked numbers, and 15 + 15 lint paragraphs (local-model output vs. public-domain PEP prose), plus a held-out set the rules never saw — 10/15 AI paragraphs flagged, 0/15 human.
 
 Slice J2 adds experiments. `journal plan` writes the hypothesis, metric, the threshold that will count as "yes", the baseline and the number of runs down **before** any result; the first run locks it, and every later edit is logged as a change after the lock. `journal run SLUG --code PATH -- <command>` executes a run into its own folder (stdout, stderr, `result.json`) and records the exit code, timing, a fingerprint (OS, Python, GPU and driver, the code's commit and whether it had uncommitted changes), and a sha256 of what the run produced (canonical result + stdout/stderr). Two reruns with the same fingerprint but different numbers therefore differ visibly in the record. `--code` is required, and a run from uncommitted code — or with no code record at all — does not count toward drafting. `journal attach` records a run Jester already made (a signals or pipeline ledger row) as evidence, and marks it if it happened before the plan was written. `journal table` and `journal figure` are made from runs: every value in a generated table is checked against the runs it names, and a figure is stored with its hash, so a hand-edited chart fails the number check.
 
-Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version.
+Slice J3 publishes. The original lives on your own site: `journal export SLUG --site <checkout>` renders the article (a dependency-free Markdown renderer; raw HTML is escaped) into `/journal/<slug>/` with an **Evidence** section — the plan as written before the results, every run with its machine and code, every source with the date its copy was saved, every observation, and how AI was used — plus the journal index, an Atom feed and the stylesheet. It writes into a git worktree of the site on branch `journal/<slug>`, never into your working copy; `--push` opens the pull request, and merging it is publishing. It is refused unless the article is `ready`, the latest version passed every check and you approved publishing exactly that version — and that approval is bound to what it approved: the version, every figure the journal has drawn and every saved copy it cites are hashed into a manifest at the moment you approve, and an export whose recomputed manifest differs is refused by name ("buyers.svg", "the saved copy of https://…"). An approval also lapses: after `journal_approval_ttl_days` (30 by default) export and the move to `published` both ask you to approve again. A published article that turns out to be wrong is retracted rather than edited in place — `journal retract SLUG --reason "…"` — and a retracted article leaves the index, the feed and export.
 
 Every other platform gets a version that links back (`journal variant`): Dev.to gets the full article as an unpublished draft, Bluesky and Mastodon a short post, LinkedIn/HN/Reddit/Medium a text you post yourself and then record with `journal posted`. A version may not add a number the original does not have, must fit the platform and must pass the lint. Approving it (`journal approve SLUG post --channel X`) stores the fingerprint of the file you read; editing it afterwards blocks posting until you approve again. Credentials come from `.env` (`DEVTO_API_KEY`, `BLUESKY_HANDLE` + `BLUESKY_APP_PASSWORD`, `MASTODON_INSTANCE` + `MASTODON_TOKEN`).
+
+Approvals recorded before the manifest binding described above were hashed over the earlier, text-derived manifest and no longer match: they are refused, not silently honoured, until the same approval is taken once more with `jester journal approve SLUG publish`.
 
 `journal measure` records a dated reading of a posted article: one `channel_metric` row on that channel's latest posted version. The timestamp must carry a timezone, and at least one of `--views`, `--points`, `--comments` is required. The journal reaches `measured` only after both the 7-day and 30-day readings exist for every channel it was posted on; the command prints the next blocked reason.
 
@@ -159,6 +172,7 @@ python -m jester.cli journal approve rules-vs-a-decision-model choose
 python -m jester.cli journal state rules-vs-a-decision-model chosen
 python -m jester.cli journal save rules-vs-a-decision-model -m "first draft"
 python -m jester.cli journal snapshot rules-vs-a-decision-model   # save copies of every cited page
+python -m jester.cli journal snapshots rules-vs-a-decision-model --verify   # re-check them (--network: re-fetch)
 python -m jester.cli journal check rules-vs-a-decision-model      # citations, numbers, lint, origin
 python -m jester.cli journal fixtures                             # the checkers against labelled cases
 python -m jester.cli journal plan rules-vs-a-decision-model --hypothesis "rules lose on recall" --metric "macro F1" --threshold "+0.05" --baseline "the rule set" --runs 5
@@ -172,6 +186,7 @@ python -m jester.cli journal approve rules-vs-a-decision-model post --channel bl
 python -m jester.cli journal post rules-vs-a-decision-model bluesky
 python -m jester.cli journal posted rules-vs-a-decision-model hn --url https://news.ycombinator.com/item?id=...
 python -m jester.cli journal measure rules-vs-a-decision-model --channel hn --at 2026-11-05T09:00:00+00:00 --views 1200 --points 41
+python -m jester.cli journal retract rules-vs-a-decision-model --reason "the benchmark was wrong"   # off the site, with the reason kept
 ```
 
 ## Quick Start
@@ -256,13 +271,13 @@ Operating notes: **[docs/config-promotion.md](docs/config-promotion.md)** — ho
 PYTHONPATH=python python -m pytest python/tests -q
 ```
 
-The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-10-31: 1,926 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
+The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-11-02: 2,239 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
 ## Tech Stack
 
 **Languages:** Python 3.11+, Go 1.22+
 
-**Data:** SQLite (handoff queue + pipeline state), Qdrant (vectors), ClickHouse (signal archive)
+**Data:** SQLite (the source of truth: handoff queue, pipeline state, signal archive, journal), Qdrant (vectors), ClickHouse (optional manual mirror of the signal archive)
 
 **Models:** Ollama (local), Groq (cloud, OpenAI-compatible)
 

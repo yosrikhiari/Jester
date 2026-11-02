@@ -16,6 +16,7 @@
 #   every: 30          -- every N minutes
 #   at: "09:00"        -- daily at HH:MM local time
 #   weekly: SUN        -- weekly on that day (add `at:` for the time)
+#   monthly: 1         -- monthly on day 1-28 (add `at:` for the time)
 # `options` are the scrape ceilings (`only`, `max_posts`, `max_comments`,
 # `max_ideas`) passed to the command; ignored for `treat`, which takes none.
 
@@ -46,6 +47,26 @@ tasks:
   - task: JesterNightlySignalsBrief
     command: signals-brief
     cadence: {at: "10:00"}
+    enabled: true
+  # The ClickHouse mirror of the signals archive: `signals load` copies the
+  # records into ClickHouse and then reconciles the two stores. It is declared
+  # and PAUSED for two reasons. SQLite is the source of truth, so the mirror is
+  # optional and can be loaded by hand (`jester signals load`) at any time; and
+  # a load needs a running ClickHouse, which the shipped stack starts only
+  # under the `signals` profile. Flipping `enabled: true` is the owner's
+  # decision, not an install side effect.
+  - task: JesterClickHouseLoad
+    command: signals-load
+    cadence: {at: "10:30"}
+    enabled: false
+  # The morning verdict on the collector itself. A source that returned zero
+  # rows three runs running is BARREN, one that has not been read in 36 hours
+  # is STALE, and a week with no run at all fails too -- `jester health` exits
+  # 1 for all of them, and the launcher turns that non-zero exit into a
+  # JESTER_NOTIFY_CMD call. 10:15, after the chain and the brief it judges.
+  - task: JesterNightlyHealth
+    command: health
+    cadence: {at: "10:15"}
     enabled: true
   - task: JesterNightlySignalsHiring
     command: signals-hiring
@@ -79,4 +100,24 @@ tasks:
   - task: JesterNightlyRetention
     command: retention
     cadence: {weekly: SUN, at: "03:30"}
+    enabled: false
+  # A DIFFERENT sweep, on a different database: `signals-retention` DELETES
+  # signal records whose last sighting is older than the window (365 days,
+  # passed in argv by COMMAND_SPEC). The excerpts are the only copy of what
+  # those posts said, and the record is what the buyer counts are computed
+  # from, so it stays PAUSED until the owner chooses a TTL. Flipping
+  # `enabled: true` is that decision, not an install side effect.
+  - task: JesterSignalsRetention
+    command: signals-retention
+    cadence: {weekly: SUN, at: "04:00"}
+    enabled: false
+  # The monthly restore drill: it restores the newest backup into a throwaway
+  # temp directory, runs PRAGMA integrity_check and compares row counts with
+  # the backup's manifest, then removes the directory. A backup nobody has
+  # restored is a backup nobody knows works, so this is the proof -- but it is
+  # a report, not a nightly job, and it stays PAUSED until the owner picks the
+  # machine that runs it.
+  - task: JesterNightlyBackupDrill
+    command: backup-drill
+    cadence: {monthly: 1, at: "03:00"}
     enabled: false

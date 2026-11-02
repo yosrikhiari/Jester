@@ -8,12 +8,16 @@ could not prove it had asked the same question.
 The hashes are the evidence; the text itself is opt-in (`JESTER_LLM_CALL_TEXT`)
 because a full prompt carries a scraped comment into the archive twice.
 """
+import json
+import logging
 import sqlite3
+from pathlib import Path
 
 from jester import llm, provenance
 from jester.store import open_db
 
 RUN = "run-2026-10-31T10:00:00Z"
+REPO_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
 
 class StubAgent(llm._ExtractorRole, llm._Agent):
@@ -143,12 +147,122 @@ def test_calls_for_is_scoped_to_one_run():
     assert len(provenance.calls_for(db, "run-b")) == 1
 
 
-def test_a_recorder_that_raises_never_breaks_the_call():
+def test_a_recorder_that_raises_never_breaks_the_call(caplog):
     db = _db()
     agent = StubAgent()
     provenance.attach(db, RUN, agent)
     agent._recorder = lambda **kw: (_ for _ in ()).throw(sqlite3.OperationalError("db gone"))
 
-    draft = agent.extract("still works")
+    with caplog.at_level(logging.DEBUG, logger="jester.llm"):
+        draft = agent.extract("still works")
 
     assert draft.extracted_insight == "x"
+    # V3-07: swallowed on purpose, but not invisibly — a provenance table that
+    # has stopped accepting rows is a fact about the run.
+    assert "OperationalError" in caplog.text
+
+
+# ---- a failure is a fact on the row (V3-07) -------------------------------
+
+def test_a_malformed_reply_is_filed_as_a_failure():
+    """A reply that is not a JSON object was recorded with no error, so the
+    row said ok=1. A run whose every answer was garbage reported a clean
+    provenance table."""
+    db = _db()
+    agent = StubAgent(reply="not json at all")
+    provenance.attach(db, RUN, agent)
+
+    agent.extract("my CI is slow")
+
+    (row,) = provenance.calls_for(db, RUN)
+    assert row["ok"] == 0
+    assert "malformed" in row["error"]
+    assert len(row["response_sha256"]) == 64, "the bytes are still the evidence"
+
+
+def test_a_reply_the_role_check_refuses_is_filed_as_a_failure():
+    """This answer parses but fails the role's own check (here: a batch reply
+    that is not an N-item list). The bytes are already on the row, so the
+    refusal is stamped on THAT row rather than written as a second call."""
+    db = _db()
+    agent = StubAgent(reply=json.dumps({"items": []}))
+    provenance.attach(db, RUN, agent)
+
+    agent.extract_batch(["one", "two"])
+
+    rows = provenance.calls_for(db, RUN)
+    assert len(rows) == 3, "one refused batch call, then two per-comment retries"
+    assert rows[0]["ok"] == 0
+    assert "N-item list" in rows[0]["error"]
+    assert rows[1]["ok"] == 1 and rows[2]["ok"] == 1
+
+
+# ---- a re-score files its calls too (V3-07) -------------------------------
+
+def test_a_rescore_is_filed_under_the_run_that_owns_the_archive(
+        tmp_path, offline_config, monkeypatch):
+    """`jester rescore --pending` called the critic and attached nothing, so
+    its calls left no llm_calls row: a score written by a re-score could not
+    be traced to the question that produced it."""
+    import jester.cli as cli
+    from jester.llm import GroqCriticLLM
+    from jester.models import Idea, IdeaScores
+    from jester.store import insert_idea, start_run
+
+    path = str(tmp_path / "j.db")
+    db = open_db(path)
+    start_run(db, RUN)  # a run is still live: the re-score belongs to it
+    insert_idea(db, Idea(
+        title="Backup Sentinel", problem_statement="p", proposed_solution="s",
+        supporting_nuggets=["k1"], status="new", needs_score=True,
+        scores=IdeaScores(demand_signal=None, feasibility=None,
+                          competition=None, overall=None)))
+    db.close()
+
+    class _Client:
+        def chat(self, **kw):
+            return {"message": {"content": json.dumps(
+                {"demand_signal": 8, "feasibility": 7, "competition": None})}}
+
+    critic = GroqCriticLLM(client=_Client())
+    monkeypatch.setattr(cli, "select_critic_llm", lambda cfg: critic)
+    cli.main(["rescore", "--pending", "--limit", "1", "--db", path,
+              "--config", str(offline_config)])
+
+    db = open_db(path)
+    (row,) = provenance.calls_for(db, RUN)
+    assert row["role"] == "critic"
+    assert row["ok"] == 1
+    assert row["model"] == critic.name, "the model that actually ran, not config/"
+
+
+def test_a_rescore_with_no_run_in_flight_records_nothing(tmp_path, offline_config,
+                                                         monkeypatch):
+    """No run to file under, so no row — provenance is per run, not a log."""
+    import jester.cli as cli
+    from jester.llm import GroqCriticLLM
+    from jester.models import Idea, IdeaScores
+    from jester.store import insert_idea
+
+    path = str(tmp_path / "j.db")
+    db = open_db(path)
+    insert_idea(db, Idea(
+        title="Backup Sentinel", problem_statement="p", proposed_solution="s",
+        supporting_nuggets=["k1"], status="new", needs_score=True,
+        scores=IdeaScores(demand_signal=None, feasibility=None,
+                          competition=None, overall=None)))
+    db.close()
+
+    class _Client:
+        def chat(self, **kw):
+            return {"message": {"content": json.dumps(
+                {"demand_signal": 8, "feasibility": 7, "competition": None})}}
+
+    monkeypatch.setattr(cli, "select_critic_llm",
+                        lambda cfg: GroqCriticLLM(client=_Client()))
+    cli.main(["rescore", "--pending", "--limit", "1", "--db", path,
+              "--config", str(offline_config)])
+
+    db = open_db(path)
+    assert db.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 0
+    assert db.execute("SELECT demand_signal FROM ideas").fetchone()[0] == 8

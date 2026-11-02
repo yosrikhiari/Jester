@@ -351,3 +351,99 @@ def test_a_merge_after_the_critic_ran_out_flags_without_asking_again(tmp_path, m
     assert row["needs_score"] == 1
     assert row["overall"] == 6.7, "the old score is kept until a real re-score"
     assert syn.stopped_on_quota
+
+
+# ---- V3-02: one worker scores an idea at a time ---------------------------
+
+def _waiting_idea(db):
+    """One idea in the re-score queue, as a failed critic leaves it."""
+    Synthesizer(db, _cfg()).run(
+        FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    assert pending_scores(db) == 1
+    return _rows(db)[0]["id"]
+
+
+def _set_claim(db, when):
+    db.execute("UPDATE ideas SET rescore_claimed_utc=?", (when,))
+    db.commit()
+
+
+def _stamp(seconds_ago):
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc)
+            - timedelta(seconds=seconds_ago)).isoformat()
+
+
+def test_a_fresh_claim_makes_a_second_worker_skip_the_idea(tmp_path):
+    db = _db(tmp_path, groups=1)
+    _waiting_idea(db)
+    _set_claim(db, _stamp(5))
+
+    critic = _critic(GOOD)
+    res = rescore_pending(db, _cfg(), critic, limit=5)
+    assert res["scored"] == 0
+    assert critic._client.calls == 0, "the model was never asked"
+    assert pending_scores(db) == 1, "still waiting for the worker that owns it"
+
+
+def test_a_claim_abandoned_by_a_crashed_worker_is_reclaimed(tmp_path):
+    from jester.agents.critic import RESCORE_CLAIM_STALE_SECONDS
+
+    db = _db(tmp_path, groups=1)
+    idea_id = _waiting_idea(db)
+    _set_claim(db, _stamp(RESCORE_CLAIM_STALE_SECONDS + 60))
+
+    res = rescore_pending(db, _cfg(), _critic(GOOD), limit=5)
+    assert res["scored"] == 1
+    row = get_idea(db, idea_id)
+    assert row["needs_score"] == 0
+    assert row["rescore_claimed_utc"] is None, "a successful score releases the claim"
+
+
+def test_a_failed_score_releases_the_claim_for_the_next_worker(tmp_path):
+    db = _db(tmp_path, groups=1)
+    idea_id = _waiting_idea(db)
+
+    rescore_pending(db, _cfg(), _critic("not json"), limit=1)
+    row = get_idea(db, idea_id)
+    assert row["needs_score"] == 1
+    assert row["rescore_attempts"] == 1
+    assert row["rescore_claimed_utc"] is None
+
+    # So the next run can pick it up immediately rather than waiting out the
+    # stale window.
+    assert rescore_pending(db, _cfg(), _critic(GOOD), limit=1)["scored"] == 1
+
+
+def test_two_workers_score_each_idea_once(tmp_path, monkeypatch):
+    """The second worker runs while the first is waiting on the model."""
+    db = _db(tmp_path, groups=2)
+    Synthesizer(db, _cfg()).run(
+        FakeSynthesizerLLM(), _critic("not json"), run_id="r")
+    assert pending_scores(db) == 2
+
+    path = str(tmp_path / "j.db")
+    inner = _critic(GOOD)
+    real_score = inner.score
+    rival = {}
+    entered = {"done": False}
+
+    def score_with_a_rival_worker_in_the_room(idea):
+        if not entered["done"]:
+            entered["done"] = True
+            other = open_db(path, migrate=False)
+            try:
+                rival["result"] = rescore_pending(
+                    other, _cfg(), _critic(GOOD), limit=5)
+            finally:
+                other.close()
+        return real_score(idea)
+
+    monkeypatch.setattr(inner, "score", score_with_a_rival_worker_in_the_room)
+
+    res = rescore_pending(db, _cfg(), inner, limit=5)
+    assert res["scored"] + rival["result"]["scored"] == 2, (res, rival)
+    assert pending_scores(db) == 0
+    for row in _rows(db):
+        assert row["rescore_claimed_utc"] is None

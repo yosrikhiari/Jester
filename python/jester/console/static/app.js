@@ -2638,8 +2638,14 @@ async function loadConfig() {
   $('#cfg-knobs').classList.remove('knobgrid');
   $$('#cfg-knobs [data-knob], #cfg-knobs [data-map-key], #cfg-knobs [data-map-val]').forEach(el => { el.oninput = syncSavebar; el.onchange = syncSavebar; });
   syncSavebar();
+  // Secrets are decided server-side and their values never arrive: the
+  // response carries `secrets_set` ({key: bool}). Reading "value is non-empty"
+  // here was the N22 bug — an unset ${VAR} stayed literal, so the page said
+  // "set" for a licence key the worker did not have.
+  const secrets = res.secrets_set || {};
   $('#cfg-scraper').innerHTML = Object.entries(res.scraper).map(([k, v]) => {
-    const shown = /license|proxy|secret|key/i.test(k) ? (v ? '•••• set' : 'not set') : (v || '—');
+    const isSecret = Object.prototype.hasOwnProperty.call(secrets, k);
+    const shown = isSecret ? (secrets[k] ? '•••• set' : 'not set') : (v || '—');
     return `<dt>${esc(k)}</dt><dd class="mono">${esc(shown)}</dd>`;
   }).join('');
   $('#cfg-env').innerHTML = Object.entries(res.env).map(([k, v]) =>
@@ -3836,10 +3842,19 @@ function scraperLastRunWords(d) {
 // and the 09:30 run did a fraction of the work, exit 0, for days.
 function scraperLauncherWords(l) {
   if (!l?.stale) return '';
+  const fix = ' <button class="btn btn--sm" type="button" data-scraper-refresh>update the launcher</button>';
+  // `stale` also means "the command is current and the file is old": the
+  // launcher predates the log rotation guard this code writes. Claiming it
+  // "runs an older command" there reads "It runs X; it should run X".
+  if (l.format_only) {
+    return '<span class="bad"><b>The launcher file is an older format than this code writes.</b></span>'
+      + ' It lacks the log rotation guard, so its log grows without bound.'
+      + fix;
+  }
   return '<span class="bad"><b>The scheduled task runs an older command than run now.</b></span>'
     + ' It runs <span class="mono">' + esc(l.runs) + '</span>;'
     + ' it should run <span class="mono">' + esc(l.should) + '</span>.'
-    + ' <button class="btn btn--sm" type="button" data-scraper-refresh>update the launcher</button>';
+    + fix;
 }
 
 function renderScraper() {

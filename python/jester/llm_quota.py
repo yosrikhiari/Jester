@@ -36,6 +36,25 @@ CREATE TABLE IF NOT EXISTS llm_quota (
 #: in seconds; the daily one does not.
 LONG_BLOCK_SECONDS = 120
 
+#: How long a row with an unreadable `blocked_until` blocks for.
+#:
+#: The value cannot be trusted, so neither "it expires now" nor "it expires
+#: next year" can be derived from it. Before this, corruption read as 0.0
+#: seconds — the same answer as "no row" — so `blocked_for` said "not blocked"
+#: and treatment ran straight back into the quota it had already been refused
+#: by. A brake that reads a damaged row as "go" is not a brake. An hour is
+#: long enough that a broken row cannot burn a day's quota, short enough that
+#: an operator who fixes the row is not waiting forever; `clear_block` (a
+#: successful call) and `record_block` both replace it immediately.
+#:
+#: The hour is measured from `noticed_at`, not from every read: it is a
+#: deadline, so the reported wait counts down and the block expires on its own.
+CORRUPT_BLOCK_SECONDS = 3600
+
+#: Stamped into the reason `status()` reports when `blocked_until` could not
+#: be parsed. Kept as a constant so the sentence is one thing in one place.
+CORRUPT_REASON_PREFIX = "blocked_until is corrupt"
+
 #: The key blocks used to be filed under, for every model at once.
 #:
 #: Groq's free tier counts each MODEL separately, so one model running out
@@ -100,8 +119,13 @@ def clear_block(db, provider: str) -> None:
 
 
 def active_blocks(db) -> list:
-    """Every block still in force, longest first, as `status` dicts."""
-    ensure_schema(db)
+    """Every block still in force, longest first, as `status` dicts.
+
+    A read (the console polls it): no schema creation, no DML. "No table" is
+    "no blocks", which is the truth on an archive that never recorded one.
+    """
+    if not _schema_present(db):
+        return []
     keys = [r[0] for r in db.execute(
         "SELECT provider FROM llm_quota WHERE blocked_until IS NOT NULL")]
     out = [status(db, k) for k in keys]
@@ -158,45 +182,136 @@ def blocked_for(db, provider: str) -> float:
     to schedule frequently. A `provider/model` key is also blocked by an
     old provider-wide row (see TREATMENT_PROVIDER).
     """
-    own = _remaining(db, provider)
-    if "/" in provider:
-        return max(own, _remaining(db, provider.split("/", 1)[0]))
-    return own
+    waits = [_remaining_from_row(row) for row in _rows_for(db, provider)]
+    return max(waits) if waits else 0.0
 
 
 def _remaining(db, provider: str) -> float:
-    ensure_schema(db)
-    db.row_factory = sqlite3.Row
-    row = db.execute(
-        "SELECT blocked_until FROM llm_quota WHERE provider=?", (provider,)
-    ).fetchone()
-    if row is None or not row["blocked_until"]:
+    """Seconds left on this exact key's own row (no provider-wide fallback)."""
+    row = _row(db, provider)
+    return _remaining_from_row(row) if row is not None else 0.0
+
+
+def _remaining_from_row(row) -> float:
+    value = row["blocked_until"]
+    if not value:
+        # No row, or a cleared one: nothing was ever recorded against this
+        # provider, which is not the same fact as a row we cannot read.
         return 0.0
+    until = _parse_stamp(value)
+    if until is None:
+        # V3-02. The row exists and says "blocked"; only the instant is
+        # unreadable. Fail CLOSED for a fixed window, measured from when the
+        # row was noticed so the wait counts down and the block expires.
+        return _corrupt_remaining(row["noticed_at"])
+    return max(0.0, (until - _now()).total_seconds())
+
+
+def _corrupt_remaining(noticed_at) -> float:
+    """The rest of the corrupt-block window, counting down from `noticed_at`.
+
+    With no readable `noticed_at` there is nothing to count from, so the full
+    window is reported: a row we cannot date must not read as "go".
+    """
+    noticed = _parse_stamp(noticed_at) if noticed_at else None
+    if noticed is None:
+        return float(CORRUPT_BLOCK_SECONDS)
+    return max(0.0, CORRUPT_BLOCK_SECONDS - (_now() - noticed).total_seconds())
+
+
+def _parse_stamp(value):
+    """An ISO-8601/SQLite stamp in UTC, or None when it cannot be read.
+
+    SQLite's `datetime('now')` default writes a naive UTC stamp, so a value
+    with no offset is read as UTC — the same clock every writer here uses.
+    """
     try:
-        until = datetime.fromisoformat(row["blocked_until"])
+        stamp = datetime.fromisoformat(value)
     except (TypeError, ValueError):
-        return 0.0
-    if until.tzinfo is None:
-        until = until.replace(tzinfo=timezone.utc)
-    remaining = (until - _now()).total_seconds()
-    return max(0.0, remaining)
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp
+
+
+def _is_corrupt(row) -> bool:
+    value = row["blocked_until"]
+    return bool(value) and _parse_stamp(value) is None
+
+
+def _schema_present(db) -> bool:
+    """Whether `llm_quota` exists, WITHOUT creating it.
+
+    The read path must not write — `status()` is served by the console on a
+    timer and the viewer opens the archive read-only — so the reads below ask
+    the catalogue instead of calling `ensure_schema`.
+    """
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_quota'"
+    ).fetchone()
+    return row is not None
+
+
+def _row(db, provider: str):
+    """This key's row, or None. Read-only (see `_schema_present`)."""
+    db.row_factory = sqlite3.Row
+    if not _schema_present(db):
+        return None
+    return db.execute(
+        "SELECT * FROM llm_quota WHERE provider=?", (provider,)
+    ).fetchone()
+
+
+def _rows_for(db, provider: str) -> list:
+    """The rows that can block `provider`: its own, then a provider-wide one."""
+    keys = [provider]
+    if "/" in provider:
+        keys.append(provider.split("/", 1)[0])
+    rows = []
+    for key in keys:
+        row = _row(db, key)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _corrupt_reason(row) -> str:
+    """The explanation `status()` reports for an unreadable stamp.
+
+    Computed from the raw row every time and never written back: a read that
+    mutates the row it is describing is not a read, and the console alone
+    would have been rewriting this on every poll.
+    """
+    note = (f"{CORRUPT_REASON_PREFIX} ({row['blocked_until']!r}); treated as "
+            f"blocked for up to {CORRUPT_BLOCK_SECONDS}s from noticed_at")
+    existing = (row["reason"] or "").strip()
+    if existing and CORRUPT_REASON_PREFIX not in existing:
+        note += f"; was: {existing}"
+    return note
 
 
 def status(db, provider: str) -> dict:
-    """Everything the console needs to explain the current state."""
-    ensure_schema(db)
-    db.row_factory = sqlite3.Row
-    row = db.execute(
-        "SELECT * FROM llm_quota WHERE provider=?", (provider,)
-    ).fetchone()
-    remaining = blocked_for(db, provider)
+    """Everything the console needs to explain the current state.
+
+    Pure read (V3-02): a corrupt `blocked_until` is explained in the returned
+    `reason`, from the raw row, and nothing is written. The winner is the row
+    that actually blocks — own first, then the old provider-wide one.
+    """
+    row, remaining = None, 0.0
+    for candidate in _rows_for(db, provider):
+        wait = _remaining_from_row(candidate)
+        if row is None or wait > remaining:
+            row, remaining = candidate, wait
+    reason = (row["reason"] if row is not None else "") or ""
+    if row is not None and _is_corrupt(row):
+        reason = _corrupt_reason(row)
     return {
         "provider": provider,
         "blocked": remaining > 0,
         "seconds_remaining": round(remaining, 1),
-        "blocked_until": (row["blocked_until"] if row else None) or None,
-        "reason": (row["reason"] if row else "") or "",
-        "noticed_at": (row["noticed_at"] if row else None),
+        "blocked_until": (row["blocked_until"] if row is not None else None) or None,
+        "reason": reason,
+        "noticed_at": (row["noticed_at"] if row is not None else None),
     }
 
 

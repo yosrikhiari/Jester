@@ -8,7 +8,7 @@ per R30's reset convention; usage persists across process restarts.
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from jester.store import quota_add, quota_used
+from jester.store import quota_used
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -36,10 +36,36 @@ def quota_remaining(db, platform: str, daily_budget: int, now=None) -> int:
 
 def spend(db, platform: str, units: int, *, daily_budget: int, now=None) -> int:
     """Charge units against today's budget; returns units remaining after.
-    Raises QuotaExceeded (spending nothing) when the request doesn't fit."""
+    Raises QuotaExceeded (spending nothing) when the request doesn't fit.
+
+    ONE STATEMENT DECIDES. This used to read the total, compare it, and then
+    write, which is a race whenever two processes hold the same budget: both
+    read "0 used", both pass the check, both charge. The statement below only
+    inserts or accumulates when the result still fits, and its rowcount is the
+    verdict — 0 means "it did not fit" and nothing was written. SQLite
+    serialises the writes, so the decision is serialised with them.
+
+    The `INSERT ... SELECT ... WHERE` form is what keeps the first charge
+    honest: on a conflict the DO UPDATE's WHERE guards the accumulation, but a
+    plain VALUES insert would ignore the budget for a day with no row yet.
+    """
     key = day_key(now)
+    own_txn = not db.in_transaction
+    cur = db.execute(
+        "INSERT INTO quota(platform, day_key, used) SELECT ?,?,? WHERE ? <= ? "
+        "ON CONFLICT(platform, day_key) DO UPDATE SET used = used + excluded.used "
+        "WHERE quota.used + excluded.used <= ?",
+        (platform, key, int(units), int(units), int(daily_budget), int(daily_budget)),
+    )
+    if cur.rowcount != 1:
+        # Nothing was charged (the statement matched no row). Ending the empty
+        # transaction is ours to do only when the caller did not have one.
+        if own_txn:
+            db.rollback()
+        used = quota_used(db, platform, key)
+        raise QuotaExceeded(max(0, int(daily_budget) - used))
+    # Read the new total inside the same transaction, so the number returned
+    # is the one this call produced rather than a later writer's.
     used = quota_used(db, platform, key)
-    if used + units > daily_budget:
-        raise QuotaExceeded(max(0, daily_budget - used))
-    quota_add(db, platform, key, units)
-    return daily_budget - used - units
+    db.commit()
+    return max(0, int(daily_budget) - used)

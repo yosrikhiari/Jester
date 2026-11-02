@@ -144,6 +144,130 @@ def test_a_recent_running_job_is_not_reaped(tmp_path):
     assert reap_stale_jobs(db, older_than_minutes=120) == 0
 
 
+def test_reading_jobs_does_not_create_the_table(tmp_path):
+    """V3-08: a poll is a read. `get_job`/`recent_jobs` used to call
+    `ensure_schema`, so the console's /api/jobs poll wrote DDL to the archive
+    on every tick — the exact write-lock contention the read path is meant to
+    avoid. A fresh archive answers "no jobs" without creating anything."""
+    path = str(tmp_path / "j.db")
+    db = open_db(path)  # core schema only; `jobs` has never been created
+    statements = []
+    db.set_trace_callback(statements.append)
+    try:
+        assert get_job(db, 1) is None
+        assert recent_jobs(db) == []
+        assert not [s for s in statements if "CREATE" in s.upper()], statements
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+        ).fetchone() is None, "a read created the jobs table"
+    finally:
+        db.close()
+
+
+def test_a_console_jobs_poll_does_not_reap(tmp_path, offline_config):
+    """Fix round 1, Important 2: the reap lived on the GET. `reap_stale_jobs`
+    opens with `ensure_schema` and commits an UPDATE, so every jobs poll was a
+    write — DDL included — against the archive the read path exists to leave
+    alone. A poll must report a stale row, not repair it."""
+    from jester.console.api import ConsoleAPI
+    from jester.jobs import ensure_schema
+
+    path = str(tmp_path / "poll.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('cluster','running', datetime('now','-300 minutes'))"
+    )
+    db.commit()
+    db.close()
+
+    api = ConsoleAPI(db_path=path, config_dir=str(offline_config))
+    statements = []
+    api.db.set_trace_callback(statements.append)
+    payload = api.jobs()
+
+    assert payload["jobs"][0]["status"] == "running", "a GET reaped a job"
+    writes = [s for s in statements
+              if s.strip().upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE"))]
+    assert not writes, writes
+
+
+def test_the_job_write_path_reaps_rows_left_by_a_dead_process(tmp_path):
+    """Fix round 1, Important 2: reaping is maintenance, so it moved to the
+    write path that starts work — `start_job`. A console that starts a job is
+    demonstrably alive, so any 'running' row older than the window belongs to
+    a process that is gone."""
+    from jester.jobs import ensure_schema
+
+    path = str(tmp_path / "w.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('stale','running', datetime('now','-300 minutes'))"
+    )
+    db.commit()
+    db.close()
+
+    res = start_job(path, "demo", lambda progress: {})
+    assert res["ok"] is True
+    _wait(path, res["job_id"])
+
+    db = open_db(path)
+    try:
+        stale = db.execute(
+            "SELECT status, error FROM jobs WHERE kind='stale'"
+        ).fetchone()
+    finally:
+        db.close()
+    assert stale[0] == "error", stale[0]
+    assert "process exited" in stale[1]
+
+
+def test_the_scheduler_tick_reaps_a_job_no_browser_will_ask_about(tmp_path, capsys):
+    """Reaping left the GET (V3-08) and landed on `start_job`, which only heals
+    when somebody presses a console button. The tick runs on a clock with
+    nobody watching, so it is where an orphan heals itself — and a poll still
+    only reads."""
+    import os
+
+    from jester import cli
+    from jester.jobs import ensure_schema
+    from jester.store import start_run
+
+    path = str(tmp_path / "tick.db")
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('cluster','running', datetime('now','-300 minutes'))"
+    )
+    # A run that really is in progress: the tick stands down on it, which is
+    # what proves the heal happens even on a tick that does no work.
+    start_run(db, "cycle-alive", models_used={})
+    db.commit()
+    db.close()
+
+    before = os.environ.copy()
+    try:
+        cli.main(["cycle", "--db", path, "--no-timestamps"])
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
+
+    out = capsys.readouterr().out
+    assert "skipping this tick" in out, out
+    assert "reaped 1 job(s) left 'running'" in out, out
+    db = open_db(path)
+    try:
+        status = db.execute(
+            "SELECT status FROM jobs WHERE kind='cluster'").fetchone()[0]
+    finally:
+        db.close()
+    assert status == "error", "the orphaned job still reads as running"
+
+
 def test_a_job_gets_its_own_database_connection(tmp_path):
     """sqlite3 connections belong to the thread that opened them. The first
     async regroup died instantly with "SQLite objects created in a thread can

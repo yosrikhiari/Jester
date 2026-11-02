@@ -1,0 +1,5 @@
+# Shell scripts that run inside the Linux containers must not be checked out
+# with CRLF. `core.autocrlf=true` is normal on a Windows checkout, and a file
+# whose first line is `#!/bin/sh\r` is not a script the kernel can exec: the
+# image builds, then dies on start with "exec: ... no such file or directory".
+docker/*.sh text eol=lf

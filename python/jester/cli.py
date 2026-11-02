@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import sys
@@ -83,6 +84,7 @@ from jester.cli_review import (
     _parse_eval_line,
     _score,
     cmd_eval,
+    cmd_eval_agreement,
     cmd_eval_extract,
     cmd_eval_sample,
     cmd_list,
@@ -93,11 +95,14 @@ from jester.cli_review import (
 
 
 def _cmd_eval(args):
-    """`jester eval` keeps its scoring default; `extract` is S-06 and `sample`
-    is the NB4 draw that must happen before retention."""
+    """`jester eval` keeps its scoring default; `extract` is S-06, `sample`
+    is the NB4 draw that must happen before retention, and `agreement` is the
+    human-vs-model scoring comparison (V3-13)."""
     mode = getattr(args, "mode", "score")
     if mode == "extract":
         return cmd_eval_extract(args)
+    if mode == "agreement":
+        return cmd_eval_agreement(args)
     if mode == "sample":
         return cmd_eval_sample(args)
     return cmd_eval(args)
@@ -296,6 +301,7 @@ def stopped_early_line(synthesizer, max_ideas):
 
 
 def cmd_run(args):
+    global _OWNED_RUN_ID
     cfg = load_config(args.config)
     db = open_db(args.db)
 
@@ -379,6 +385,10 @@ def cmd_run(args):
     except ConcurrentRunError as exc:
         print(f"refusing to start run '{args.run}': {exc}")
         sys.exit(1)
+
+    # V3-17: this row is OURS. The catch-all in `main` may close exactly this
+    # run and no other, however many rows are still 'running'.
+    _OWNED_RUN_ID = args.run
 
     # S-08: every model call from here on is filed under this run, with a hash
     # of the exact prompt and reply. Attached after the row exists so no call
@@ -696,6 +706,15 @@ def cmd_run(args):
         )
         update_run_summary(db, args.run, n_dedup_deferred=len(archivist.deferred))
 
+    # Nuggets kept WITHOUT a vector because the upsert failed. The row is more
+    # valuable than the point, so the degradation stays — but a run that kept
+    # material with no vectors is not a clean run, and says so here.
+    if archivist.reembed_failed:
+        print(
+            f"{archivist.reembed_failed} nugget(s) archived without a vector: "
+            f"re-embed failed ({archivist.reembed_reason})"
+        )
+
     for r, payload in readable:
         if r["id"] in degraded_batches:
             # Leave it queued, and leave its comments OUT of the skip-list:
@@ -775,8 +794,11 @@ def cmd_run(args):
     # R44 merges did real work but archived nothing new — say so, or the run
     # reads as "0 ideas" on a night that grew the evidence behind several.
     for m in synthesizer.merged:
+        # V3-01: a merge can come from the archive's supported set rather than
+        # from a vector compare (Qdrant down), so the parenthetical says which.
+        how = "same evidence" if m.score >= 1.0 else f"cosine {m.score:.2f}"
         print(
-            f"merged into idea #{m.duplicate_of} (cosine {m.score:.2f}): "
+            f"merged into idea #{m.duplicate_of} ({how}): "
             f"+{len(m.added)} nugget(s){' — re-scored' if m.grew else ''}"
         )
     # R40/R55: a provider that answered for some ideas and silently swapped in
@@ -784,6 +806,15 @@ def cmd_run(args):
     # rows nobody flagged.
     for line in fallback_report(llm, synth_llm, critic_llm):
         print("degraded: " + line)
+    if synthesizer.claimed_elsewhere:
+        # V3-01: a group whose evidence another writer had already claimed is
+        # left alone rather than archived twice. Its unclaimed remainder stays
+        # queued, and "0 ideas" must not read as "nothing qualified".
+        print(
+            f"skipped {synthesizer.claimed_elsewhere} group(s) whose evidence "
+            "another writer had already claimed; the rest of their nuggets "
+            "stay queued"
+        )
     if synthesizer.stopped_early:
         # No silent caps: without this line "synthesized 3 idea(s)" reads as
         # "the archive had only 3 to give" on a run that stopped at a goal.
@@ -919,6 +950,9 @@ def cmd_run(args):
         phase_checkpoints=checkpoints,
         **durations,
     )
+    # V3-17: the run is closed, so this process no longer owns a row. Anything
+    # that fails from here on (an export, say) must not re-open the epitaph.
+    _OWNED_RUN_ID = None
     if flags:
         print("floor flags: " + ", ".join(flags))
 
@@ -997,22 +1031,35 @@ def cmd_retention(args):
     )
 
 
+#: The run row THIS process opened, or None (V3-17). Set by `cmd_run` once
+#: `start_run` succeeds, cleared when the run is closed. Crash attribution
+#: reads it: a command that never opened a run has nothing to close.
+_OWNED_RUN_ID = None
+
+
 def _record_run_crash(args, exc) -> None:
-    """Best-effort: write `exc` onto whichever run row is still 'running'.
+    """Best-effort: write `exc` onto the run row THIS process opened.
+
+    V3-17: this used to write to `active_run(db)` — the one row still marked
+    'running', whoever opened it — so a failing `export` while a live run
+    existed stamped that run `error` with a traceback it never raised, and the
+    run that actually crashed was not the one corrected. Ownership is the only
+    thing that makes the epitaph truthful: no owned run, nothing written.
 
     Every failure here is swallowed. This runs while the process is already
     dying, and an error-reporting path that raises would replace the real
     traceback with its own — the exact failure it exists to prevent.
     """
+    global _OWNED_RUN_ID
+    run_id, _OWNED_RUN_ID = _OWNED_RUN_ID, None
+    if not run_id:
+        return
     db_path = getattr(args, "db", None)
     if not db_path:
         return
     try:
         db = open_db(db_path)
         try:
-            run_id = active_run(db)
-            if run_id is None:
-                return
             finish_run(
                 db,
                 run_id,
@@ -1298,6 +1345,24 @@ def _export_csvs(args, cfg=None, db=None):
         print(f"export skipped: {exc}")
 
 
+def _reap_stale_jobs(db) -> int:
+    """Mark console jobs a dead process left at 'running'.
+
+    The console used to repair these on GET /api/jobs, which made a READ write
+    DDL and an UPDATE against the archive (V3-08). Reaping then moved to
+    `start_job` — correct, but only heals when somebody presses a button. The
+    scheduler tick is the narrowest path that already writes and already runs
+    on a clock, so the console heals itself with no browser open, and a poll
+    still only reads.
+    """
+    from jester.jobs import reap_stale_jobs
+
+    reaped = reap_stale_jobs(db)
+    if reaped:
+        print(f"reaped {reaped} job(s) left 'running' by a dead process")
+    return reaped
+
+
 def cmd_cycle(args):
     """One full turn of the loop: fetch, then process what was fetched.
 
@@ -1320,6 +1385,7 @@ def cmd_cycle(args):
     reaped = reap_running(db, older_than_minutes=stale)
     if reaped:
         print(f"reaped {reaped} run(s) stuck 'running' for over {stale}m")
+    _reap_stale_jobs(db)
     busy = active_run(db)
     if busy:
         # Exit 0: a skipped tick is the guard working, not a failure. A
@@ -1453,25 +1519,73 @@ def cmd_identify(args):
     }
 
 
+def _counts_text(counts) -> str:
+    return ", ".join(f"{k}={v}" for k, v in (counts or {}).items()) or "no tables"
+
+
 def cmd_backup(args):
     """Snapshot the archive, verify the snapshot, prune old ones.
 
     Verification is not optional here: a backup nobody has opened is a hope,
     not a backup, and a mid-write filesystem copy produces a file that opens
     fine and is corrupt.
+
+    Three verbs share this command because they are one story: take the
+    snapshot, prove a snapshot opens (`restore`, `drill`), and say what a
+    snapshot covers. A backup nobody has ever restored is an assumption, and
+    the restore is the only thing that turns it into a fact — which is why the
+    file it writes is checked twice (integrity, then counts against the
+    manifest) and never overwrites anything.
     """
-    from jester.backup import backup_db, prune_backups, verify_backup
+    from jester.backup import (
+        backup_set,
+        prune_backup_sets,
+        restore_backup,
+        restore_drill,
+        verify_backup,
+    )
+
+    action = getattr(args, "action", "") or ""
+    if action == "restore":
+        if not args.backup or not args.dest:
+            print("usage: jester backup restore <backup> <new path>")
+            sys.exit(2)
+        got = restore_backup(args.backup, args.dest)
+        if not got["ok"]:
+            print(f"restore refused: {got['error']}")
+            sys.exit(1)
+        print(f"restored {got['path']} — integrity {got['integrity']}, "
+              f"{_counts_text(got['counts'])}")
+        print(f"  {got['note']}")
+        print("  put it in place by hand: this command never overwrites the "
+              "archive it was taken from")
+        return got
+    if action == "drill":
+        got = restore_drill(args.backup or "", db_path=args.db,
+                            out_dir=args.out or "")
+        if not got["ok"]:
+            print(f"restore drill FAILED: {got['error']}")
+            sys.exit(1)
+        print(f"drill OK: restored {got['backup']} into a temp directory in "
+              f"{got['seconds']}s")
+        print(f"  integrity {got['integrity']}, {_counts_text(got['counts'])}")
+        print(f"  {got['note']}")
+        print("  the temp directory was removed; nothing was written beside "
+              "the archive")
+        return got
 
     if args.verify:
         got = verify_backup(args.verify)
         if not got["ok"]:
             print(f"backup UNUSABLE: {got['error']}")
             sys.exit(1)
-        counts = ", ".join(f"{k}={v}" for k, v in got["counts"].items())
+        counts = _counts_text(got["counts"])
         print(f"backup OK (integrity {got['integrity']}) — {counts}")
         return got
 
-    res = backup_db(args.db, args.out or "", compress=not args.no_compress)
+    res = backup_set(args.db, args.out or "", compress=not args.no_compress,
+                     also_to=getattr(args, "also_to", "") or "",
+                     env_root=getattr(args, "env_root", None) or None)
     if not res["ok"]:
         print(f"backup failed: {res['error']}")
         sys.exit(1)
@@ -1486,14 +1600,27 @@ def cmd_backup(args):
         # protection and is not.
         print(f"  VERIFY FAILED: {check['error']}")
         sys.exit(1)
-    counts = ", ".join(f"{k}={v}" for k, v in check["counts"].items())
+    counts = _counts_text(check["counts"])
     print(f"  verified: integrity {check['integrity']}, {counts}")
+    # What else the set covers is part of the report: a backup that silently
+    # stopped including the journal is a backup the owner believes covers it.
+    companions = [n for n in res["files"] if n != Path(res["path"]).name]
+    if companions:
+        print(f"  also wrote: {', '.join(companions)}")
+    if res["absent"]:
+        print(f"  not present: {', '.join(res['absent'])}")
+    if res["failed"]:
+        print("  companion FAILED: " + ", ".join(
+            f"{k} ({v})" for k, v in res["failed"].items()))
+    if getattr(args, "also_to", ""):
+        print(f"  second copy: {len(res['copied_to_second'])} file(s) in "
+              f"{res['also_to']}")
+    print(f"  manifest: {res['manifest']}")
     print(f"  note: {res['detail']}")
 
-    removed = prune_backups(
+    removed = prune_backup_sets(
         args.out or str(Path(args.db).parent / "backups"),
         keep=args.keep,
-        stem=Path(args.db).stem,
     )
     if removed:
         print(f"  pruned {len(removed)} old backup(s), keeping {args.keep}")
@@ -1533,6 +1660,8 @@ def cmd_treat(args):
     reaped = reap_running(db, older_than_minutes=stale)
     if reaped:
         print(f"reaped {reaped} run(s) stuck 'running' for over {stale}m")
+    # Before the stand-down, so a tick that skips still heals the console.
+    _reap_stale_jobs(db)
     busy = active_run(db)
     if busy:
         print(f"skipping this tick — run '{busy}' is still in progress")
@@ -1669,9 +1798,21 @@ def cmd_schedule(args):
             print("  depth  : " + (", ".join(depth) if depth else "no ceiling"))
             drift = _schedule.launcher_drift(_cmd)
             if drift and drift["stale"]:
-                print("  WARNING: the launcher runs an old command, written by older code:")
-                print(f"    runs  : jester {drift['argv']}")
-                print(f"    should: jester {drift['want']}")
+                if drift["argv"] != drift["want"]:
+                    print("  WARNING: the launcher runs an old command, written by older code:")
+                    print(f"    runs  : jester {drift['argv']}")
+                    print(f"    should: jester {drift['want']}")
+                else:
+                    # `stale` is also true when the command is current and only
+                    # the file format is old (it predates the rotation guard).
+                    # Saying "runs an old command" there is false and sends the
+                    # operator looking for a difference in the argv that is not
+                    # there; the format is what moved, and the fix is the same.
+                    print("  WARNING: the launcher file is an older format, "
+                          "written by older code:")
+                    print(f"    format: v{drift['version'] or 'none'}, this code "
+                          f"writes v{drift['want_version']}")
+                    print(f"    file  : {drift['path']}")
                 print("    fix   : jester schedule refresh")
         else:
             print(f"scrape job NOT installed ({st['scheduler']} has no jester entry)")
@@ -1700,6 +1841,8 @@ def cmd_schedule(args):
             extra=flags,
             command=command,
             weekly=getattr(args, "weekly", None),
+            monthly=getattr(args, "monthly", None),
+            run_as=getattr(args, "run_as", "") or "",
         )
     elif args.action == "remove":
         res = _schedule.remove(_task)
@@ -1757,20 +1900,89 @@ def cmd_requeue(args):
     print(f"requeue: reset {n} failed batch(es) to pending")
 
 
+def _notify_hook(argv) -> list:
+    """The hook to run: an explicit argv, else JESTER_NOTIFY_CMD, else nothing.
+
+    Windows paths keep their backslashes, so posix-mode shlex (which treats
+    `\\` as an escape and eats it) would turn C:\\Python312\\python.exe into
+    C:Python312python.exe; on Windows quotes are stripped after a plain split
+    instead.
+    """
+    if argv:
+        return list(argv)
+    raw = os.environ.get("JESTER_NOTIFY_CMD", "").strip()
+    if not raw:
+        return []
+    if os.name == "nt":
+        return [part.strip('"') for part in shlex.split(raw, posix=False)]
+    return shlex.split(raw)
+
+
 def cmd_notify(args):
     """R55 failure-hook runner. Best-effort: always exits 0 so it can never
-    mask the nightly wrapper's real exit code."""
+    mask the nightly wrapper's real exit code.
+
+    A scheduled task that fails invokes this before exiting with its own code
+    (`schedule.launcher_script`). Exit 0 is not news and an unset
+    JESTER_NOTIFY_CMD means no hook, so both are silent no-ops: a task that
+    succeeded must not send a "failure" message, and a machine with no hook
+    must not print noise into a log every night.
+    """
+    code = int(args.exit_code)
+    if code == 0:
+        return
+    hook = _notify_hook(getattr(args, "cmd", None))
+    if not hook:
+        return
+    task = getattr(args, "task", "") or ""
     reason = "hard_error"
     if getattr(args, "db", None):
         runs = get_runs(open_db(args.db), limit=1)
         if runs:
             flags = json.loads(runs[0]["floor_flags"] or "[]")
             reason = "FAILED_BATCHES" if "FAILED_BATCHES" in flags else "hard_error"
-    run_id = getattr(args, "run_id", None) or "nightly"
+    run_id = getattr(args, "run_id", None) or task or "nightly"
+    # The hook gets the two facts every operator message needs, without having
+    # to know this project's flags. It also sees the exit code as {exit_code}.
+    env = {**os.environ, "JESTER_TASK": task, "JESTER_EXIT_CODE": str(code)}
     ok, _out = dispatch_notify(
-        list(args.cmd), exit_code=args.exit_code, run_id=run_id, reason=reason
+        hook, exit_code=code, run_id=run_id, reason=reason, task=task, env=env
     )
-    print(f"notify {'OK' if ok else 'FAILED'} ({' '.join(list(args.cmd))})")
+    print(f"notify {'OK' if ok else 'FAILED'} ({' '.join(hook)})")
+
+
+def cmd_health(args):
+    """Is the collector alive? One verdict, one exit code.
+
+    `signals runs` lists what each run did; this answers the other question:
+    a source that keeps returning zero rows is quiet, and after three of them
+    it is barren -- and a barren, stale or erroring source, or a week with no
+    run at all, exits 1 so the schedule can turn it into a notification.
+    """
+    from jester.signals import health as sighealth
+
+    result = sighealth.report(args.db, days=args.days)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"health: last {result['days']} day(s) to "
+              f"{result['window']['to'][:19]} ({result['db']})")
+        if result["sources"]:
+            # Gated on the sources, not the run count: an archive whose runs
+            # all predate the window still has per-source rows to show, and
+            # that is exactly the "which source went quiet" case.
+            print(f"{'source':<24}{'last run':<21}{'rows':>6}{'zero':>6}"
+                  f"{'error':>7}  status")
+            for s in result["sources"]:
+                print(f"{s['source']:<24}{(s['last_run_utc'] or '-')[:19]:<21}"
+                      f"{s['rows']:>6}{s['consecutive_zero']:>6}"
+                      f"{s['consecutive_error']:>7}  {s['status']}")
+        for warning in result["warnings"]:
+            print(f"warning: {warning}")
+        print(f"verdict: {result['verdict']} "
+              f"({result['runs']} run(s) in {result['days']} day(s))")
+    if result["exit_code"]:
+        sys.exit(1)
 
 
 def evaluate_smoke(db):
@@ -2010,6 +2222,89 @@ def _db_path_of(db) -> str:
     return ":memory:"
 
 
+#: V3-08: WAL is an owner decision, so Doctor only names it. DELETE is correct
+#: on a Windows bind mount (WAL's sidecars cannot be arbitrated there); on a
+#: local disk it makes every reader take the writer's lock.
+JOURNAL_NOTE = (
+    "archive journal mode is DELETE on a local disk; readers take the writer's "
+    "lock. Set JESTER_SQLITE_JOURNAL_MODE=wal to opt in, and roll back with "
+    "JESTER_SQLITE_JOURNAL_MODE=delete after a checkpoint"
+)
+
+#: Filesystems whose mounts are not "local" for the WAL advice. The sidecars
+#: are the reason: a network mount arbitrates them differently from a local
+#: disk, which is exactly where the DELETE default is right.
+_NETWORK_FSTYPES = {"cifs", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "nfs"}
+
+
+def _posix_local_disk(target, mounts_path="/proc/mounts") -> bool:
+    """Whether `target` is on a local (non-network) mount, from a mount table.
+
+    The longest mount point that covers the path wins. When no line covers it
+    the filesystem cannot be identified, and the answer is False: the sentinel
+    "unknown" is not evidence of a local disk. A host with no mount table at
+    all (macOS has no /proc/mounts) is the same case.
+    """
+    mount_point, fstype, identified = "/", "unknown", False
+    try:
+        with open(mounts_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mnt = parts[1].replace("\\040", " ")
+                prefix = mnt.rstrip("/") or "/"
+                matches = mnt == "/" or target == mnt or target.startswith(prefix + "/")
+                if matches and len(mnt) >= len(mount_point):
+                    mount_point, fstype = mnt, parts[2].lower()
+                    identified = True
+    except OSError:
+        return False
+    if not identified:
+        return False
+    return not (fstype.startswith("nfs") or fstype in _NETWORK_FSTYPES)
+
+
+def _on_local_disk(path) -> bool:
+    """Whether `path` lives on a local fixed disk.
+
+    Windows asks the kernel for the drive type; POSIX reads /proc/mounts and
+    rejects network filesystems. When the filesystem cannot be identified the
+    answer is False: the note is advice, and advising a WAL switch on a mount
+    we cannot classify is how a Windows bind mount broke before.
+    """
+    if not path or path == ":memory:":
+        return False
+    if os.name == "nt":
+        drive = os.path.splitdrive(os.path.abspath(path))[0]
+        if not drive:
+            return False
+        try:
+            import ctypes
+
+            # DRIVE_FIXED == 3. A UNC path and a mapped network drive are not
+            # fixed, so neither earns the note.
+            return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 3
+        except Exception:  # noqa: BLE001 - the note is optional
+            return False
+    return _posix_local_disk(os.path.abspath(path))
+
+
+def journal_note(db) -> list:
+    """A Doctor note when a local archive is still on the rollback journal."""
+    try:
+        row = db.execute("PRAGMA journal_mode").fetchone()
+    except Exception:  # noqa: BLE001 - a diagnostic must not crash on a lock
+        return []
+    value = row[0] if row else ""
+    mode = str(value or "").lower()
+    if mode == "wal":
+        return []
+    if not _on_local_disk(_db_path_of(db)):
+        return []
+    return [JOURNAL_NOTE]
+
+
 def _qdrant_point_count(url, collection=None):
     """§33 #4 parity probe; overridable in tests via monkeypatch."""
     from jester.vector import VectorStore
@@ -2123,11 +2418,22 @@ def evaluate_doctor(db):
 
 
 def launcher_findings() -> list:
-    """A scheduled task whose launcher runs an older command than this code
-    would write: it keeps exiting 0 while doing less than it should."""
-    return [f"scheduled {d['command']} runs an old command (jester {d['argv']}); "
-            "fix: jester schedule refresh"
-            for d in _schedule.stale_launchers()]
+    """A scheduled task whose launcher this code would rewrite: one that runs an
+    older command (it keeps exiting 0 while doing less than it should), or --
+    since the file carries a format marker -- an older launcher file whose
+    command is still current. The format case is named as such: reporting a
+    changed command that did not change is a false finding, and the operator
+    cannot act on it."""
+    out = []
+    for d in _schedule.stale_launchers():
+        if d["argv"] != d["want"]:
+            out.append(f"scheduled {d['command']} runs an old command "
+                       f"(jester {d['argv']}); fix: jester schedule refresh")
+        else:
+            out.append(f"scheduled {d['command']} has a launcher in an older format "
+                       f"(v{d['version'] or 'none'}, this code writes "
+                       f"v{d['want_version']}); fix: jester schedule refresh")
+    return out
 
 
 #: The three tasks that together are the generative loop. Signals has its own
@@ -2222,7 +2528,7 @@ def cmd_doctor(args):
                   + ", ".join(unused))
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
-    for note in pipeline_paused_notes() + schedule_drift_notes():
+    for note in pipeline_paused_notes() + schedule_drift_notes() + journal_note(db):
         print(f"doctor note: {note}")
     if findings:
         for f in findings:
@@ -2547,12 +2853,19 @@ def _rescore_standin(args):
 
 
 def _rescore_pending_now(args):
-    from jester import llm_quota
+    from jester import llm_quota, provenance
     from jester.agents.critic import rescore_pending
 
     cfg = load_config(args.config)
     db = open_db(args.db)
     critic_llm = select_critic_llm(cfg.thresholds)
+    # V3-07: these are model calls like any other, and they used to leave no
+    # llm_calls row at all, so a score written here could not be traced to the
+    # question that produced it. Filed under the run in flight, if there is
+    # one; with no run there is nothing to file under.
+    live_run = active_run(db)
+    if live_run:
+        provenance.attach(db, live_run, critic_llm)
     # The same per-model block treat honours: a quota known to be gone costs
     # one read. None for a critic with no quota (Ollama, fake).
     key = llm_quota.quota_key(getattr(critic_llm, "settings", None))
@@ -2679,6 +2992,11 @@ def cmd_resynth(args):
         select_critic_llm(cfg.thresholds),
         run_id=f"resynth-{args.id}",
         rows=rows or [nugget_by_key(db, k) for k in keys],
+        # D-16/R56: this hatch exists to derive a SECOND idea from evidence
+        # one already rests on, which the automatic path must never do. Say so
+        # rather than let the V3-01 duplicate guard quietly turn it into a
+        # merge.
+        reuse_claimed_evidence=True,
     )
     if not created:
         print(
@@ -2719,6 +3037,7 @@ def cmd_signals(args):
         load      copy SQLite -> ClickHouse and reconcile the counts (M2)
         queries   run the saved SQL and print each answer
         evidence  load, reconcile, run every query, write the review pack
+        retention delete records last seen more than --days days ago
 
     There is no live action. Live collection needs approved commercial Reddit
     API access, which is somebody else's decision, and a path that cannot
@@ -2998,6 +3317,58 @@ def cmd_signals(args):
         finally:
             db.close()
 
+    if action == "revisions":
+        # The snapshot table is what makes a correction recoverable; without a
+        # command, "recoverable" would mean "editable from a Python prompt".
+        db = sig.open_signals(args.db)
+        try:
+            if not args.record:
+                print("which record? pass --record <record_id> "
+                      "(the last column of leads.csv)")
+                sys.exit(1)
+            rows = db.execute(
+                f"SELECT revision, snapshot_utc, title FROM {sig.REVISION_TABLE} "
+                "WHERE record_id=? ORDER BY revision_id", (args.record,)).fetchall()
+            if not rows:
+                print(f"no revision recorded for {args.record} — nothing has "
+                      "replaced that row since it was collected")
+                if args.restore:
+                    sys.exit(1)
+                return
+            if args.restore:
+                try:
+                    res = sig.restore_revision(db, args.record,
+                                               revision=args.revision)
+                except ValueError as exc:
+                    print(f"revisions: {exc}")
+                    sys.exit(1)
+                print(f"restored {res['record_id']} to revision {res['revision']} "
+                      f"({res['restored_utc']})")
+                return
+            print(f"{len(rows)} revision(s) of {args.record}, oldest first:")
+            for r in rows:
+                print(f"  r{r['revision']}  {r['snapshot_utc']}  {r['title'][:70]}")
+        finally:
+            db.close()
+        return
+
+    if action == "retention":
+        # The archive's own window, separate from `jester retention` (which
+        # is the idea pipeline's sweep). Off by default: the schedule entry
+        # ships paused, and a command that deletes archived signals is not
+        # something an install should turn on. The count is the report.
+        db = sig.open_signals(args.db)
+        try:
+            deleted = sig.retention(db, args.days)
+        except ValueError as exc:
+            print(f"retention: {exc}")
+            sys.exit(1)
+        finally:
+            db.close()
+        print(f"deleted {deleted} record(s) last seen more than "
+              f"{args.days} day(s) ago")
+        return
+
     if action in ("digest", "reclassify"):
         from jester.signals import digest as sigdigest
         from jester.signals import run as sigrun
@@ -3166,6 +3537,14 @@ def cmd_signals(args):
                 rec = ch.reconcile(db, client, mode=args.only_mode)
                 print(f"loaded {res['rows_sent']} row(s) in {res['requests']} request(s) "
                       f"into {res['database']} at {res['url']}")
+                # Said out loud because this used to require a manual DROP:
+                # a field added to the field map now reaches ClickHouse on the
+                # next load, and the log is where someone sees that happen.
+                sch = res.get("schema") or {}
+                added = sch.get("columns_added") or []
+                print(f"schema: v{sch.get('schema_version', '?')} · "
+                      f"{sch.get('columns_present', '?')} column(s) described · "
+                      + (f"added {', '.join(added)}" if added else "nothing to add"))
                 print(f"sqlite {rec['sqlite_rows']} · clickhouse {rec['clickhouse_rows_final']} "
                       f"(final) · distinct ids {rec['clickhouse_unique_ids']}")
                 # The M2 check in one line. Duplicates are the failure the
@@ -3252,6 +3631,8 @@ def _print_journal(db, root, j):
         print(f"  parked from: {j['parked_from']}")
     if j["state"] == js.ABANDONED:
         print(f"  abandoned: {j['abandoned_reason']}")
+    if j["state"] == js.RETRACTED:
+        print(f"  retracted: {j['retracted_reason']}")
     path = _journal_file(root, j)
     file_sha = _journal_file_sha(root, j)
     revs = J.revisions(db, j["id"])
@@ -3424,6 +3805,36 @@ def _journal_snapshot(db, root, j, args, sleep=None, opener=None):
         md = path.read_text(encoding="utf-8")
         urls = list(dict.fromkeys(S.strip_fragment(ln.target)
                                   for b in T.prose_blocks(md) for ln in T.links(b.text) if ln.external))
+    if args.verify:
+        if args.from_file or args.refresh:
+            raise J.JournalError("--verify re-checks saved copies; it does not store one "
+                                 "(use --network to re-fetch, or snapshot without --verify)")
+        stale = 0
+        checked = 0
+        for url in urls:
+            row = S.latest(db, url)
+            if row is None:
+                print(f"  missing  {url} (jester journal snapshot)")
+                stale += 1
+                continue
+            if checked and args.network:
+                sleep(1.0)  # one request a second, as when taking a copy
+            ok, why = S.verify(db, root, row, opener=opener, refetch=args.network)
+            checked += 1
+            marked = S.latest(db, url)["stale_reason"]
+            if ok:
+                print(f"  ok    {url} (saved {row['fetched_at']})")
+            elif marked:
+                print(f"  STALE  {url} - {marked}")
+                stale += 1
+            else:
+                print(f"  FAIL   {url} - {why}")
+                stale += 1
+        if not urls:
+            print("no links to verify")
+        if stale:
+            sys.exit(1)
+        return
     if args.from_file and len(urls) != 1:
         raise J.JournalError("--from-file needs exactly one --url")
     if not urls:
@@ -3563,6 +3974,8 @@ def cmd_journal(args):
         save      commit the article file as a new version
         approve   record YOUR decision (choose | plan | review | publish)
         state     move to a state; refused with reasons if a gate fails
+        retract   take a published article back, with the reason
+        snapshot  save copies of the pages it links to; --verify re-checks them
 
     Approvals made here are recorded as `human`. That is the only actor the
     gates count, so nothing an agent does can open a human gate.
@@ -3571,9 +3984,11 @@ def cmd_journal(args):
     from jester.journal import files as jfiles
     from jester.journal import states as js
 
-    db = J.open_journal(args.db)
+    previous_config = J.use_config(args.config)
+    db = None
     root = Path(args.root)
     try:
+        db = J.open_journal(args.db)
         if args.action == "new":
             slug = args.slug or J.slugify(args.title)
             if J.find(db, slug) is not None:
@@ -3585,7 +4000,8 @@ def cmd_journal(args):
             j = J.create_journal(db, args.title, kind=args.kind, slug=slug,
                                  question=args.question, path=rel)
             sha = jfiles.commit(root, path, f"{slug}: start")
-            J.record_revision(db, j["id"], sha, jfiles.content_sha256(path), rel, note="start")
+            J.record_revision(db, j["id"], sha, jfiles.content_sha256(path), rel, note="start",
+                              article_text=path.read_text(encoding="utf-8"))
             print(f"created {slug} ({args.kind}, captured)")
             print(f"  file: {path}")
             print(f"  next: jester journal show {slug}")
@@ -3627,7 +4043,11 @@ def cmd_journal(args):
                 return
             for j in rows:
                 to, reasons = js.next_step(db, j, file_sha256=_journal_file_sha(root, j))
-                if to is None:
+                if j["state"] == js.RETRACTED:
+                    # Not "done": the page was published and taken back, and
+                    # the reason is the thing an operator needs to see.
+                    nxt = "retracted: " + (j["retracted_reason"] or "no reason recorded")
+                elif to is None:
                     nxt = "done"
                 elif reasons:
                     nxt = f"-> {to}: {len(reasons)} thing(s) to do"
@@ -3665,12 +4085,17 @@ def cmd_journal(args):
             n = (last["n"] + 1) if last else 1
             sha = jfiles.commit(root, path, f"{args.slug}: version {n}"
                                 + (f" - {args.message}" if args.message else ""))
-            rev = J.record_revision(db, j["id"], sha, digest, j["path"], note=args.message)
+            rev = J.record_revision(db, j["id"], sha, digest, j["path"], note=args.message,
+                                    article_text=path.read_text(encoding="utf-8"))
             print(f"saved {args.slug} version {rev['n']} (commit {sha[:8]})")
             return
 
         if args.action == "approve":
+            refuse = js.retracted_approval_refusal(j)
+            if refuse:
+                raise J.JournalError(refuse)
             revision_id = None
+            article_text = None
             if args.what in ("review", "publish"):
                 last = J.latest_revision(db, j["id"])
                 if last is None:
@@ -3680,6 +4105,11 @@ def cmd_journal(args):
                     raise J.JournalError("the file has unsaved changes; save first, so you "
                                          "approve what you actually read")
                 revision_id = last["id"]
+                if args.what == "publish":
+                    # The manifest covers the pages the text cites, so the
+                    # approval is taken against the text that was verified.
+                    path = _journal_file(root, j)
+                    article_text = path.read_text(encoding="utf-8") if path is not None and path.exists() else None
             if args.what == "post":
                 from jester.journal import channels as CH
 
@@ -3690,10 +4120,16 @@ def cmd_journal(args):
                       f"(file {pub['approved_sha256'][:8]}); editing it means approving again")
                 return
             J.approve(db, j["id"], args.what, actor=J.HUMAN, note=args.note,
-                      revision_id=revision_id)
+                      revision_id=revision_id, article_text=article_text)
             what = f"{args.what} on version {J.latest_revision(db, j['id'])['n']}" \
                 if revision_id else args.what
             print(f"recorded your approval: {args.slug} {what}")
+            return
+
+        if args.action == "retract":
+            j = js.move(db, args.slug, js.RETRACTED, actor=J.HUMAN, note=args.note,
+                        reason=args.reason)
+            print(f"{args.slug} is retracted: {j['retracted_reason']}")
             return
 
         if args.action == "state":
@@ -3702,7 +4138,7 @@ def cmd_journal(args):
             print(f"{args.slug} is now {j['state']}")
             return
 
-        if args.action == "snapshot":
+        if args.action in ("snapshot", "snapshots"):
             _journal_snapshot(db, root, j, args)
             return
 
@@ -3734,7 +4170,7 @@ def cmd_journal(args):
                 sys.exit(1)
             return
     except js.MoveRefused as exc:
-        print(f"{args.slug} cannot move to {args.to}:")
+        print(f"{args.slug} cannot move to {exc.to}:")
         for r in exc.reasons:
             print(f"  - {r}")
         sys.exit(1)
@@ -3742,7 +4178,9 @@ def cmd_journal(args):
         print(f"journal: {exc}")
         sys.exit(1)
     finally:
-        db.close()
+        if db is not None:
+            db.close()
+        J.use_config(previous_config)
 
 
 def _add_journal_parser(sub):
@@ -3759,6 +4197,7 @@ def _add_journal_parser(sub):
         p.add_argument("--db", default=DEFAULT_DB)
         p.add_argument("--root", default=DEFAULT_ROOT,
                        help="folder holding the article files; its own git repository")
+        p.add_argument("--config", default=DEFAULT_CONFIG_DIR)
         p.set_defaults(func=cmd_journal)
         return p
 
@@ -3792,15 +4231,25 @@ def _add_journal_parser(sub):
     p.add_argument("slug")
     p.add_argument("to", choices=STATES)
     p.add_argument("--note", default="")
-    p.add_argument("--reason", default="", help="why it is abandoned")
+    p.add_argument("--reason", default="", help="why it is abandoned or retracted")
 
-    p = common(jsub.add_parser("snapshot", help="save copies of the pages the article links to"))
+    p = common(jsub.add_parser("retract", help="take a published article back, with the reason"))
+    p.add_argument("slug")
+    p.add_argument("--reason", default="", help="why it is retracted (required)")
+    p.add_argument("--note", default="")
+
+    p = common(jsub.add_parser("snapshot", aliases=["snapshots"],
+                               help="save copies of the pages the article links to, or verify them"))
     p.add_argument("slug")
     p.add_argument("--url", default="", help="save just this one")
     p.add_argument("--from-file", default="",
                    help="with --url: store this text file as the copy (a PDF you extracted, "
                         "a page behind a login); recorded as manual")
     p.add_argument("--refresh", action="store_true", help="fetch again even if a good copy exists")
+    p.add_argument("--verify", action="store_true",
+                   help="re-check saved copies: their bytes on disk always, the page only with --network")
+    p.add_argument("--network", action="store_true",
+                   help="with --verify: re-fetch the page and compare it to the saved copy")
 
     common(jsub.add_parser("check", help="run the proof checks on the saved version")).add_argument("slug")
 
@@ -3939,11 +4388,13 @@ def main(argv=None):
     l.set_defaults(func=cmd_list)
 
     e = sub.add_parser("eval")
-    e.add_argument("mode", nargs="?", choices=("score", "extract", "sample"),
+    e.add_argument("mode", nargs="?",
+                   choices=("score", "extract", "sample", "agreement"),
                    default="score",
                    help="score (default) checks scoring arithmetic; extract runs "
                         "the S-06 extraction-quality harness over labels; sample "
-                        "draws the committed 150-comment evaluation sample")
+                        "draws the committed 150-comment evaluation sample; "
+                        "agreement compares the owner's scores with the model's")
     e.add_argument(
         "--good",
         default=str(Path(__file__).resolve().parents[2] / "eval" / "known_good.md"),
@@ -3955,9 +4406,18 @@ def main(argv=None):
     e.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     e.add_argument(
         "--labels",
-        default=str(Path(__file__).resolve().parents[2] / "eval" / "extraction"
-                    / "labels.jsonl"),
-        help="JSONL labels for `eval extract`",
+        default=None,
+        help="with `extract`: JSONL labels (default "
+             "eval/extraction/labels.jsonl); with `agreement`: JSONL human and "
+             "model scores (default eval/scoring/agreement.jsonl)",
+    )
+    e.add_argument(
+        "--min",
+        type=int,
+        default=30,
+        dest="min",
+        help="with `agreement`: compared ideas required before the MAE is "
+             "treated as measurable (default 30)",
     )
     e.add_argument("--db", default="data/jester.db")
     e.add_argument(
@@ -3974,6 +4434,9 @@ def main(argv=None):
     e.add_argument("--seed", type=int, default=20261031,
                    help="sample seed recorded in the report")
     e.add_argument("--floor", type=float, default=0.70, help="minimum F1")
+    e.add_argument("--min-kappa", type=float, default=0.6,
+                   help="with `extract`: minimum Cohen's kappa over the "
+                        "double-labelled rows (default 0.6)")
     e.add_argument("--fabrication-ceiling", type=float, default=0.05)
     e.add_argument("--max-nuggets-per-comment", type=float, default=1.2)
     e.set_defaults(func=_cmd_eval)
@@ -3993,23 +4456,37 @@ def main(argv=None):
     rs.add_argument("--db", default="data/jester.db")
     rs.set_defaults(func=cmd_runs)
 
+    hl = sub.add_parser(
+        "health",
+        help="is the collector alive? per-source streaks, a verdict and an "
+             "exit code (1 when a source is barren, stale or erroring, or "
+             "when no run happened in the window)")
+    hl.add_argument("--db", default="data/jester.db")
+    hl.add_argument("--days", type=int, default=7,
+                    help="window to judge, in days (default 7)")
+    hl.add_argument("--json", action="store_true",
+                    help="print the same data as machine-readable JSON")
+    hl.set_defaults(func=cmd_health)
+
     sg = sub.add_parser(
         "signals",
         help="the collector problem-signal collector: fixtures -> classifier -> SQLite -> CSV",
     )
     sg.add_argument("action", nargs="?", default="export",
                     choices=["export", "check", "scope", "rules", "field-map",
-                             "load", "queries", "evidence",
+                             "load", "queries", "evidence", "retention",
                              "run", "recover", "runs", "sources",
                              "digest", "reclassify", "leads", "outcome",
-                             "from-archive", "brief"],
+                             "revisions", "from-archive", "brief"],
                     help="export (default) | check fixtures | write the scope doc | "
                          "print rules | print the field map | load into ClickHouse | "
                          "run the saved SQL | write the evidence pack | "
+                         "delete records past the retention window | "
                          "run a live collection | recover failed queries | "
                          "list runs | list sources | write the weekly digest | "
                          "re-score the archive against the rules | "
                          "write the handover list | record what came of a lead | "
+                         "list or restore a record's corrections | "
                          "score the stored Reddit rooms | write the buyer brief page")
     sg.add_argument("--db", default="data/jester.db")
     sg.add_argument("--out", default=None,
@@ -4058,7 +4535,13 @@ def main(argv=None):
                          "(default: the problem-signal set). A second rule set "
                          "needs a second set of cases, or it has no gate.")
     sg.add_argument("--record", default="",
-                    help="outcome: which record_id to mark (last column of leads.csv)")
+                    help="outcome/revisions: which record_id to mark or inspect "
+                         "(last column of leads.csv)")
+    sg.add_argument("--restore", action="store_true",
+                    help="revisions: put the most recent (or --revision) row back")
+    sg.add_argument("--revision", type=int, default=None,
+                    help="revisions: which revision number to restore "
+                         "(default: the most recent)")
     sg.add_argument("--set", default="", dest="set",
                     help="outcome: picked | contacted | replied | meeting | won | no | unfit, "
                          "or empty to clear it")
@@ -4079,6 +4562,12 @@ def main(argv=None):
     # rows out of an archive is how a count stops reconciling.
     sg.add_argument("--only-mode", default="", choices=["", "live", "synthetic"],
                     help="load/export only rows of this mode (default: all)")
+    # Separately defaulted well above the nugget TTL on purpose: this deletes
+    # archived signals outright, and a year is long enough that anyone running
+    # it has asked for it rather than inherited it.
+    sg.add_argument("--days", type=int, default=365,
+                    help="retention: delete records last seen more than this many "
+                         "days ago (default 365; 0 is refused)")
     sg.set_defaults(func=cmd_signals)
 
     _add_journal_parser(sub)
@@ -4226,6 +4715,24 @@ def main(argv=None):
         metavar="DAY",
         help="run once a week on DAY (MON..SUN) at --at, instead of daily",
     )
+    sc.add_argument(
+        "--monthly",
+        type=int,
+        default=None,
+        metavar="DAY",
+        help="run once a month on DAY (1-28) at --at, instead of daily",
+    )
+    # Windows only, and never defaulted. `schtasks` would happily accept
+    # /ru SYSTEM, and a nightly scrape holding a SYSTEM token is a privilege
+    # escalation nobody asked for; naming an account makes schtasks prompt for
+    # its password, so it stays an explicit act.
+    sc.add_argument(
+        "--run-as",
+        default="",
+        metavar="ACCOUNT",
+        help="Windows: register the task to run as ACCOUNT (/ru). Omitted, the "
+             "task runs as the account that installed it — never SYSTEM",
+    )
     # What each tick fetches and how deep. Without these a scheduled run always
     # means "every enabled source, no ceiling", which is the last thing you
     # want firing every half hour.
@@ -4304,7 +4811,14 @@ def main(argv=None):
     nt = sub.add_parser("notify")
     nt.add_argument("--db", default=None)
     nt.add_argument("--run-id", default=None, dest="run_id")
-    nt.add_argument("--exit-code", type=int, required=True, dest="exit_code")
+    nt.add_argument("--task", default="",
+                    help="the scheduled task that failed; the hook also sees it "
+                         "as JESTER_TASK")
+    # Two spellings of one fact: scripts/nightly.sh has always passed
+    # --exit-code, and the generated launcher passes --exit. Accepting both
+    # means neither caller had to change.
+    nt.add_argument("--exit-code", "--exit", type=int, required=True,
+                    dest="exit_code")
     nt.add_argument("cmd", nargs=argparse.REMAINDER)
     nt.set_defaults(func=cmd_notify)
 
@@ -4422,14 +4936,40 @@ def main(argv=None):
     tr.set_defaults(func=cmd_treat)
 
     bk = sub.add_parser(
-        "backup", help="snapshot the archive and verify the snapshot"
+        "backup", help="snapshot the archive, verify it, restore it into a new file"
+    )
+    # The verbs come first so `jester backup restore <backup> <dest>` reads the
+    # way an operator says it. No verb (the default) is the snapshot, which is
+    # what the schedule's `backup` task runs.
+    bk.add_argument(
+        "action", nargs="?", default="", choices=["", "restore", "drill"],
+        help="(default) take a snapshot | restore <backup> <new path> | drill "
+             "(restore the newest backup into a temp dir and report)",
+    )
+    bk.add_argument(
+        "backup", nargs="?", default="",
+        help="restore: the backup file to read. drill: the backup to rehearse "
+             "(default: the newest one in --out)",
+    )
+    bk.add_argument(
+        "dest", nargs="?", default="",
+        help="restore: the NEW path to write; an existing file is refused",
     )
     bk.add_argument("--db", default="data/jester.db")
     bk.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     bk.add_argument("--out", default=None, help="directory (default: data/backups)")
     bk.add_argument(
+        "--also-to", default="",
+        help="write a second copy of the whole set to this directory (the "
+             "other disk). Nothing is written when it is not supplied.",
+    )
+    bk.add_argument(
+        "--env-root", default="",
+        help="where to look for the dotenv (default: this checkout)",
+    )
+    bk.add_argument(
         "--keep", type=int, default=14,
-        help="how many backups to retain (default 14)",
+        help="how many backup sets to retain (default 14)",
     )
     bk.add_argument("--no-compress", action="store_true")
     bk.add_argument(

@@ -32,6 +32,16 @@ def _age(command, old_argv):
     path.write_text(text.replace(schedule.argv_text(command), old_argv), encoding="utf-8")
 
 
+def _age_format(command, version=1):
+    """Make an installed launcher an older format, with the right command."""
+    path = schedule.launcher_path(command)
+    marker = f"REM jester-launcher-version: {schedule.LAUNCHER_VERSION}"
+    text = path.read_text(encoding="utf-8")
+    assert marker in text, text
+    path.write_text(text.replace(marker, f"REM jester-launcher-version: {version}"),
+                    encoding="utf-8")
+
+
 def test_a_launcher_is_read_back_with_its_settings():
     schedule.write_launcher("data/jester.db", "config", PY, command="ingest",
                             extra=["--only", "forhire,techjobs", "--max-posts", "5"])
@@ -47,6 +57,32 @@ def test_a_launcher_this_code_wrote_is_not_stale():
     for command in ("signals-hiring", "signals-sweep", "signals-brief"):
         schedule.write_launcher("data/signals-live.db", "config", PY, command=command)
         assert schedule.launcher_drift(command)["stale"] is False, command
+
+
+def test_a_launcher_written_before_the_rotation_guard_is_rewritten():
+    """A launcher installed before Task 7 has the same argv as one written now
+    but no rotation guard, and nothing compared the two: `schedule apply` said
+    "unchanged" and `refresh` skipped it, so an installed host never received
+    the fix. The format marker is what an unchanged-from-outside file carries."""
+    schedule.write_launcher("data/jester.db", "config", PY, command="cycle")
+    path = schedule.launcher_path("cycle")
+    marker = f"REM jester-launcher-version: {schedule.LAUNCHER_VERSION}"
+    text = path.read_text(encoding="utf-8")
+    assert marker in text
+    path.write_text(text.replace(marker, "REM jester-launcher-version: 1"),
+                    encoding="utf-8")
+
+    drift = schedule.launcher_drift("cycle")
+    assert drift["argv"] == drift["want"], "the command is identical; only the format moved"
+    assert drift["stale"] is True
+    assert drift["version"] == 1
+    assert drift["want_version"] == schedule.LAUNCHER_VERSION
+    assert schedule.read_launcher("cycle")["version"] == 1
+
+    done = schedule.refresh_launchers(["cycle"])
+    assert [d["command"] for d in done] == ["cycle"]
+    assert schedule.read_launcher("cycle")["version"] == schedule.LAUNCHER_VERSION
+    assert schedule.launcher_drift("cycle")["stale"] is False
 
 
 def test_the_launcher_that_missed_the_boards_is_caught():
@@ -109,6 +145,26 @@ def test_status_warns_and_says_how_to_fix(capsys):
     assert "fix   : jester schedule refresh" in out
 
 
+def test_status_does_not_claim_the_command_changed_when_only_the_format_did(capsys):
+    """`stale` is true for a format-only drift too, and the warning still said
+    "runs an old command": false, and it sends the operator looking for a
+    difference in the argv that is not there. The format is what moved; the fix
+    is the same command."""
+    from jester import cli
+    schedule.write_launcher("data/signals-live.db", "config", PY, command="signals-hiring")
+    _age_format("signals-hiring")
+    assert (schedule.launcher_drift("signals-hiring")["argv"]
+            == schedule.argv_text("signals-hiring")), "only the format moved"
+
+    cli.main(["schedule", "status", "--command", "signals-hiring"])
+    out = capsys.readouterr().out
+    assert "old command" not in out
+    assert "older format" in out, out
+    assert "format: v1" in out, out
+    assert f"writes v{schedule.LAUNCHER_VERSION}" in out, out
+    assert "fix   : jester schedule refresh" in out
+
+
 def test_the_refresh_command_reports_what_it_rewrote(capsys):
     from jester import cli
     schedule.write_launcher("data/signals-live.db", "config", PY, command="signals-hiring")
@@ -126,6 +182,18 @@ def test_doctor_lists_a_stale_launcher():
     findings = cli.launcher_findings()
     assert len(findings) == 1
     assert "scheduled signals-hiring runs an old command" in findings[0]
+
+
+def test_doctor_names_the_format_when_the_command_did_not_change():
+    from jester import cli
+    schedule.write_launcher("data/signals-live.db", "config", PY, command="signals-hiring")
+    _age_format("signals-hiring")
+    findings = cli.launcher_findings()
+    assert len(findings) == 1
+    assert "old command" not in findings[0], findings[0]
+    assert "older format" in findings[0], findings[0]
+    assert "v1" in findings[0] and f"v{schedule.LAUNCHER_VERSION}" in findings[0]
+    assert "jester schedule refresh" in findings[0]
 
 
 def test_the_console_card_shows_it_and_can_fix_it(tmp_path):

@@ -94,20 +94,37 @@ def test_rows_come_back_addressable_by_name_either_way(tmp_path):
 
 # ---- what a read-only console refuses to do --------------------------------
 
-def test_a_read_only_console_does_not_reap_other_peoples_jobs(tmp_path,
-                                                              offline_config):
+def test_no_console_get_reaps_other_peoples_jobs(tmp_path, offline_config):
     """Reaping declares a job dead. A console visiting a live archive cannot
-    see the process that owns that job, so it is in no position to say."""
+    see the process that owns that job, so it is in no position to say.
+
+    Fix round 1, Important 2: this used to be true only of --read-only. The
+    writing console reaped on the same GET, which meant running DDL and an
+    UPDATE on every poll. Reaping now belongs to the write path that starts a
+    job (`jester.jobs.start_job`), so neither console repairs anything from a
+    poll."""
+    from jester.jobs import ensure_schema
+
     path = str(tmp_path / "c.db")
-    open_db(path).close()
+    db = open_db(path)
+    ensure_schema(db)
+    db.execute(
+        "INSERT INTO jobs(kind, status, started_at) "
+        "VALUES('cluster','running', datetime('now','-300 minutes'))"
+    )
+    db.commit()
+    db.close()
+
+    def stale_statuses(api):
+        return [job["status"] for job in api.jobs()["jobs"]]
 
     api = ConsoleAPI(db_path=path, config_dir=str(offline_config), read_only=True)
     assert api.read_only is True
-    assert api.jobs()["reaped"] is False
+    assert stale_statuses(api) == ["running"]
 
     writer = ConsoleAPI(db_path=path, config_dir=str(offline_config))
     assert writer.read_only is False
-    assert writer.jobs()["reaped"] is True
+    assert stale_statuses(writer) == ["running"], "a poll reaped a job"
 
 
 def test_the_flag_reaches_the_api_from_the_command_line(monkeypatch):

@@ -1,4 +1,5 @@
 """TDD tests for the M1.5 archivist agent: dedup, R32 model-refuse, needs_reembed."""
+import logging
 import tempfile
 
 import pytest
@@ -65,6 +66,30 @@ def test_needs_reembed_on_upsert_failure():
     ).fetchone()
     assert row is not None
     assert row[0] == 1
+
+
+def test_a_failed_upsert_is_counted_and_the_nugget_is_kept(caplog):
+    """V3-07: the upsert failure was swallowed with no count and no log, so a
+    corpus with no vectors for a night of nuggets looked like a clean run."""
+    db = _db()
+    arch = Archivist(db, _vector(force_fail=True),
+                     Thresholds(embedding_model="nomic-embed-text"))
+    nuggets = _nuggets()
+
+    with caplog.at_level(logging.WARNING, logger="jester.archivist"):
+        kept = arch.run([nuggets[0]])
+
+    assert len(kept) == 1, "the degradation stays: the nugget is archived"
+    assert arch.reembed_failed == 1
+    assert len(caplog.records) == 1, "one warning for the run, not a flood"
+    assert "RuntimeError" in caplog.text, "the exception type is the diagnosis"
+
+
+def test_a_clean_run_reports_no_reembed_failures():
+    db = _db()
+    arch = Archivist(db, _vector(), Thresholds(embedding_model="nomic-embed-text"))
+    arch.run(_nuggets())
+    assert arch.reembed_failed == 0
 
 
 def test_idempotent_unique_key_skip():
@@ -301,3 +326,42 @@ def test_one_real_duplicate_refusal_survives_the_ghost_guard():
     assert db.execute(
         "SELECT COUNT(*) FROM nuggets WHERE unique_key=?", (n2.unique_key,)
     ).fetchone()[0] == 0
+
+
+# ---- the count reaches the run summary (V3-07) -----------------------------
+
+def test_cmd_run_reports_nuggets_archived_without_a_vector(
+        tmp_path, offline_config, monkeypatch, capsys):
+    """The counter existed but nothing read it, so a night of failed upserts
+    still read as a clean run. The summary now names the count beside the
+    dedup-deferred line — and says nothing when the count is zero."""
+    import jester.cli as cli
+
+    def _ns(**kw):
+        class NS:
+            pass
+
+        ns = NS()
+        for k, v in kw.items():
+            setattr(ns, k, v)
+        return ns
+
+    cli.cmd_run(_ns(config=str(offline_config), db=str(tmp_path / "clean.db"),
+                    run="clean-run"))
+    assert "archived without a vector" not in capsys.readouterr().out
+
+    class _UpsertFails:
+        def search_scored(self, *_a, **_kw):
+            return []
+
+        def upsert(self, *_a, **_kw):
+            raise RuntimeError("qdrant refused the point")
+
+    monkeypatch.setattr(
+        cli, "_vector_for", lambda cfg, db, check_dimension=True: _UpsertFails())
+    cli.cmd_run(_ns(config=str(offline_config), db=str(tmp_path / "j.db"),
+                    run="rv-run"))
+
+    out = capsys.readouterr().out
+    assert "archived without a vector" in out
+    assert "RuntimeError: qdrant refused the point" in out
