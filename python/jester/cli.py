@@ -2122,6 +2122,76 @@ def _db_path_of(db) -> str:
     return ":memory:"
 
 
+#: V3-08: WAL is an owner decision, so Doctor only names it. DELETE is correct
+#: on a Windows bind mount (WAL's sidecars cannot be arbitrated there); on a
+#: local disk it makes every reader take the writer's lock.
+JOURNAL_NOTE = (
+    "archive journal mode is DELETE on a local disk; readers take the writer's "
+    "lock. Set JESTER_SQLITE_JOURNAL_MODE=wal to opt in, and roll back with "
+    "JESTER_SQLITE_JOURNAL_MODE=delete after a checkpoint"
+)
+
+#: Filesystems whose mounts are not "local" for the WAL advice. The sidecars
+#: are the reason: a network mount arbitrates them differently from a local
+#: disk, which is exactly where the DELETE default is right.
+_NETWORK_FSTYPES = {"cifs", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "nfs"}
+
+
+def _on_local_disk(path) -> bool:
+    """Whether `path` lives on a local fixed disk.
+
+    Windows asks the kernel for the drive type; POSIX reads /proc/mounts and
+    rejects network filesystems. When the filesystem cannot be identified the
+    answer is False: the note is advice, and advising a WAL switch on a mount
+    we cannot classify is how a Windows bind mount broke before.
+    """
+    if not path or path == ":memory:":
+        return False
+    if os.name == "nt":
+        drive = os.path.splitdrive(os.path.abspath(path))[0]
+        if not drive:
+            return False
+        try:
+            import ctypes
+
+            # DRIVE_FIXED == 3. A UNC path and a mapped network drive are not
+            # fixed, so neither earns the note.
+            return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 3
+        except Exception:  # noqa: BLE001 - the note is optional
+            return False
+    mount_point, fstype = "/", "unknown"
+    target = os.path.abspath(path)
+    try:
+        with open("/proc/mounts", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mnt = parts[1].replace("\\040", " ")
+                prefix = mnt.rstrip("/") or "/"
+                matches = mnt == "/" or target == mnt or target.startswith(prefix + "/")
+                if matches and len(mnt) >= len(mount_point):
+                    mount_point, fstype = mnt, parts[2].lower()
+    except OSError:
+        return False
+    return not (fstype.startswith("nfs") or fstype in _NETWORK_FSTYPES)
+
+
+def journal_note(db) -> list:
+    """A Doctor note when a local archive is still on the rollback journal."""
+    try:
+        row = db.execute("PRAGMA journal_mode").fetchone()
+    except Exception:  # noqa: BLE001 - a diagnostic must not crash on a lock
+        return []
+    value = row[0] if row else ""
+    mode = str(value or "").lower()
+    if mode == "wal":
+        return []
+    if not _on_local_disk(_db_path_of(db)):
+        return []
+    return [JOURNAL_NOTE]
+
+
 def _qdrant_point_count(url, collection=None):
     """§33 #4 parity probe; overridable in tests via monkeypatch."""
     from jester.vector import VectorStore
@@ -2334,7 +2404,7 @@ def cmd_doctor(args):
                   + ", ".join(unused))
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
-    for note in pipeline_paused_notes() + schedule_drift_notes():
+    for note in pipeline_paused_notes() + schedule_drift_notes() + journal_note(db):
         print(f"doctor note: {note}")
     if findings:
         for f in findings:

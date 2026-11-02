@@ -23,3 +23,8 @@ updates:
     directory: "/frontend"
     schedule:
       interval: "weekly"
+  # V3-11: the Go module graph had no update PRs at all.
+  - package-ecosystem: "gomod"
+    directory: "/go"
+    schedule:
+      interval: "weekly"

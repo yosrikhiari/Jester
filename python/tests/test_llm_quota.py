@@ -35,6 +35,22 @@ def test_an_unseen_provider_is_not_blocked(db):
     assert llm_quota.status(db, "groq")["blocked"] is False
 
 
+def test_reading_quota_state_does_not_create_the_table(db):
+    """V3-08: the console polls `status()`/`active_blocks()` on a timer. A read
+    must answer "not blocked" from the catalogue, not install the schema."""
+    statements = []
+    db.set_trace_callback(statements.append)
+    try:
+        assert llm_quota.status(db, "groq/model")["blocked"] is False
+        assert llm_quota.active_blocks(db) == []
+        assert not [s for s in statements if "CREATE" in s.upper()], statements
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_quota'"
+        ).fetchone() is None, "a read created the llm_quota table"
+    finally:
+        db.set_trace_callback(None)
+
+
 def test_a_block_is_remembered_and_expires(db):
     llm_quota.record_block(db, "groq", 300, reason="tokens per day")
     remaining = llm_quota.blocked_for(db, "groq")

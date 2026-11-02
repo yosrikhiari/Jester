@@ -418,6 +418,18 @@ _warned = set()
 
 def load_thresholds(path) -> Thresholds:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    # V3-10: a misspelt top-level key used to be warned about and dropped, so
+    # `temprature: 0.2` looked configured and did nothing. Refuse the file and
+    # name the key. `models.*` stays a warning: that block is read by Go too,
+    # and a model name Python does not read is a documented possibility.
+    known_top = set(Thresholds.__dataclass_fields__) | GO_ONLY_KEYS
+    unknown = sorted((k for k in data if k not in known_top), key=str)
+    if unknown:
+        raise ConfigError(
+            f"{path}: unknown top-level key(s): "
+            + ", ".join(str(k) for k in unknown)
+            + "; a misspelt setting would silently do nothing"
+        )
     for line in unused_settings(data):
         # Once per file and key: the console reloads config on every request.
         if (str(path), line) not in _warned:

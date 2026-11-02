@@ -144,6 +144,26 @@ def test_a_recent_running_job_is_not_reaped(tmp_path):
     assert reap_stale_jobs(db, older_than_minutes=120) == 0
 
 
+def test_reading_jobs_does_not_create_the_table(tmp_path):
+    """V3-08: a poll is a read. `get_job`/`recent_jobs` used to call
+    `ensure_schema`, so the console's /api/jobs poll wrote DDL to the archive
+    on every tick — the exact write-lock contention the read path is meant to
+    avoid. A fresh archive answers "no jobs" without creating anything."""
+    path = str(tmp_path / "j.db")
+    db = open_db(path)  # core schema only; `jobs` has never been created
+    statements = []
+    db.set_trace_callback(statements.append)
+    try:
+        assert get_job(db, 1) is None
+        assert recent_jobs(db) == []
+        assert not [s for s in statements if "CREATE" in s.upper()], statements
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+        ).fetchone() is None, "a read created the jobs table"
+    finally:
+        db.close()
+
+
 def test_a_job_gets_its_own_database_connection(tmp_path):
     """sqlite3 connections belong to the thread that opened them. The first
     async regroup died instantly with "SQLite objects created in a thread can

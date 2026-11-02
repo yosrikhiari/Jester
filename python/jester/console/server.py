@@ -54,12 +54,28 @@ _THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 #: without holding a secret; writes are what need the guard. Compared with
 #: hmac.compare_digest so the check itself does not leak the token bytewise.
 TOKEN_ENV = "JESTER_CONSOLE_TOKEN"
+#: V3-12: the console's own requests are small JSON objects. A body above
+#: this is refused with 413 before a byte of it is parsed or buffered: an
+#: unauthenticated POST is not a place to spend memory.
+MAX_BODY_BYTES = 1 << 20
+#: V3-12: every request gets a socket timeout, so a client that declares a
+#: body and then stops sending cannot hold a worker forever. A local
+#: dashboard's patience is short; a streaming endpoint's is not.
+REQUEST_TIMEOUT = 30.0
+#: V3-12: a Host header outside this list is refused with 403. DNS rebinding
+#: needs the request's Host to name an attacker domain; a closed list makes
+#: that domain unroutable here. `localhost` stays allowed because the Docker
+#: healthcheck calls http://localhost:8619/api/doctor.
+ALLOWED_HOSTS_ENV = "JESTER_ALLOWED_HOSTS"
+DEFAULT_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 #: A refused POST is answered before its body is parsed. Closing the connection
 #: with unread bytes makes Winsock send a reset instead of a FIN, and the
 #: client then loses the 403 that was already written. Drain up to this much
 #: of the declared body (after the response is on the wire) so the close is
-#: clean; a body larger than this is abusive and may still be reset.
-_BODY_DRAIN_LIMIT = 1 << 20
+#: clean; a body larger than this is abusive and may still be reset. The
+#: bound is a little above MAX_BODY_BYTES so a body refused with 413 is
+#: drained in full and its response is not lost to a reset.
+_BODY_DRAIN_LIMIT = MAX_BODY_BYTES + (1 << 16)
 #: How long a drain will wait for a body the client declared but is slow to
 #: send. The console is a loopback dashboard, so a short bound is enough.
 _BODY_DRAIN_TIMEOUT = 0.5
@@ -121,6 +137,55 @@ def _cross_origin(handler) -> bool:
     host = (handler.headers.get("Host") or "").strip().lower()
     netloc = urlsplit(origin).netloc.lower()
     return not host or netloc != host
+
+
+def _normalize_host(value: str) -> str:
+    """A Host header or allow-list entry without its port, lowercased.
+
+    IPv6 hosts arrive bracketed (`[::1]:8619`); the brackets are part of the
+    name, so they stay. A bare `::1` from an allow-list entry is returned as
+    written; the caller adds the bracketed form too.
+    """
+    value = (value or "").strip().lower()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[: end + 1] if end != -1 else value
+    if value.count(":") == 1:
+        return value.rsplit(":", 1)[0]
+    return value
+
+
+def _allowed_hosts(handler) -> set:
+    """The Host names this console answers to.
+
+    Defaults cover loopback and the address the server was told to bind. An
+    operator who sets JESTER_ALLOWED_HOSTS replaces the list wholesale: the
+    variable exists for the deliberate case (a reverse proxy on another name),
+    and silently adding names to an explicit list would defeat it.
+    """
+    raw = os.environ.get(ALLOWED_HOSTS_ENV, "").strip()
+    if raw:
+        return {_normalize_host(h) for h in raw.split(",") if h.strip()}
+    hosts = {_normalize_host(h) for h in DEFAULT_ALLOWED_HOSTS}
+    bound = _normalize_host(getattr(getattr(handler, "args", None), "host", "") or "")
+    if bound:
+        hosts.add(bound)
+        if bound == "::":
+            hosts.add("[::]")
+    return hosts
+
+
+def _host_allowed(handler) -> bool:
+    """A foreign Host is refused before routing (V3-12).
+
+    A missing Host is allowed: HTTP/1.0 clients and health probes may omit it,
+    and it cannot be a DNS-rebinding request because a browser always sends
+    one. Mutating requests without a Host are still refused by _cross_origin.
+    """
+    host = (handler.headers.get("Host") or "").strip()
+    if not host:
+        return True
+    return _normalize_host(host) in _allowed_hosts(handler)
 
 
 def _api(args):
@@ -252,6 +317,10 @@ def _static_path(url_path: str):
     return candidate
 
 
+class _BodyTooLarge(ValueError):
+    """A declared body above MAX_BODY_BYTES: answer 413, do not parse it."""
+
+
 class Handler(BaseHTTPRequestHandler):
     args: argparse.Namespace = None  # injected by serve()
     server_version = "jester-console"
@@ -338,6 +407,22 @@ class Handler(BaseHTTPRequestHandler):
         is the only surface the operator has, and a dead fetch says nothing."""
         self._t0 = time.time()
         try:
+            # V3-12: bound every request, including the body read below. A
+            # keep-alive connection that goes idle is closed by the handler's
+            # own socket.timeout path after this same interval.
+            self.connection.settimeout(REQUEST_TIMEOUT)
+        except OSError:
+            self.close_connection = True
+        try:
+            # V3-12: before routing. A DNS-rebinding request carries the
+            # attacker's name in Host; nothing behind this line may see it.
+            if not _host_allowed(self):
+                self._refuse({
+                    "ok": False,
+                    "error": (f"host not allowed; set {ALLOWED_HOSTS_ENV} "
+                              "to a comma-separated list to permit it"),
+                }, 403)
+                return
             route()
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
@@ -559,6 +644,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
         try:
             body = self._read_json()
+        except _BodyTooLarge as exc:
+            # V3-12: refuse before parsing or buffering. The drain above is
+            # bounded slightly higher than the cap so a body just over it is
+            # consumed and the 413 is not lost to a reset on Windows.
+            self._refuse({"ok": False, "error": f"request body too large: {exc}"}, 413)
+            self.close_connection = True
+            return
+        except TimeoutError:
+            # The socket timeout in _guard fired while the client was still
+            # sending the body it declared. Nothing was parsed.
+            self.close_connection = True
+            self._json({"ok": False, "error": "request timed out"}, 408)
+            return
         except ValueError as exc:
             self._json({"ok": False, "error": f"bad JSON body: {exc}"}, 400)
             return
@@ -688,6 +786,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
+        if length < 0:
+            length = 0
+        if length > MAX_BODY_BYTES:
+            # V3-12: checked before rfile.read, so an oversized body is never
+            # buffered, decoded or parsed.
+            raise _BodyTooLarge(f"{length} bytes exceeds the {MAX_BODY_BYTES} byte limit")
         if not length:
             return {}
         raw = self.rfile.read(length).decode("utf-8")

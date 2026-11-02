@@ -82,7 +82,7 @@ def test_offline_profiles_resolve_the_stand_in(offline_config):
 
 
 def test_chat_role_rolls_a_block_like_every_job():
-    t = Thresholds(roles={"chat": {"provider": "ollama"}}).validate()
+    t = Thresholds(roles={"chat": {"provider": "ollama", "model": "qwen3:8b"}}).validate()
     r = resolve_role(t, "chat")
     assert (r.provider, r.model, r.timeout_s) == ("ollama", "qwen3:8b", 600.0)
 

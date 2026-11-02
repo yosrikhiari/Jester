@@ -280,6 +280,50 @@ def test_a_traversal_attempt_over_real_http_gets_nothing(console):
         assert status != 200, f"{attempt} was served"
 
 
+# ---- V3-12: bounded request, Host allow-list --------------------------------
+
+def test_an_oversized_body_is_refused_with_413_before_parsing(console):
+    body = b"x" * (srv.MAX_BODY_BYTES + 1)
+    status, _headers, payload = _get(console, "/api/run", method="POST", body=body)
+    assert status == 413
+    assert "too large" in json.loads(payload)["error"].lower()
+
+
+def test_a_foreign_host_header_is_refused_with_403(console):
+    status, _headers, body = _get(
+        console, "/api/config", headers={"Host": "evil.example"})
+    assert status == 403
+    assert "host" in json.loads(body)["error"].lower()
+
+
+def test_localhost_is_still_allowed_for_the_docker_healthcheck(console):
+    status, _headers, body = _get(console, "/api/doctor", headers={"Host": "localhost"})
+    assert status == 200
+    assert json.loads(body)["ok"] is True
+
+
+def test_a_slow_body_hits_the_request_timeout(console, monkeypatch):
+    monkeypatch.setattr(srv, "REQUEST_TIMEOUT", 0.2)
+    host, port = console.removeprefix("http://").rsplit(":", 1)
+    with socket.create_connection((host, int(port)), timeout=10) as sock:
+        sock.sendall(
+            b"POST /api/migrate HTTP/1.1\r\n"
+            b"Host: " + host.encode() + b"\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 100\r\n\r\n"
+            b"{"
+        )
+        sock.settimeout(5)
+        raw = b""
+        while b"\r\n\r\n" not in raw:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            raw += chunk
+    assert raw.startswith(b"HTTP/1."), raw[:80]
+    assert b" 408 " in raw.split(b"\r\n", 1)[0], raw[:120]
+
+
 # ---- wiring ----------------------------------------------------------------
 
 def test_serve_binds_what_it_was_told_and_says_where(capsys, tmp_path, monkeypatch):

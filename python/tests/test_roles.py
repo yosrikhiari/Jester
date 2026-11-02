@@ -93,6 +93,26 @@ def test_the_offline_profile_resolves_everything_to_the_stand_ins():
     assert {r.kind for r in resolve_all(_profile("docker/config")).values()} == {"fake"}
 
 
+# ---- V3-10: a roles block is an explicit decision, not a partial one --------
+
+def test_a_role_missing_from_a_roles_block_does_not_fall_back_to_the_builtin_model():
+    """The old table below rung 6 is for a file that says nothing. Once a
+    `roles:` block exists, an unlisted job resolving to a built-in model is a
+    configuration gap pretending to be a default."""
+    with pytest.raises(ConfigError) as exc:
+        _t(llm_provider="ollama",
+           roles={"critic": {"provider": "ollama", "model": "qwen3:8b"}})
+    assert "extractor" in str(exc.value)
+    assert "model" in str(exc.value)
+
+
+def test_without_a_roles_block_the_builtin_model_is_still_the_default():
+    t = _t(llm_provider="ollama")
+    r = resolve_role(t, "extractor")
+    assert r.model == "qwen3:8b"
+    assert r.source["model"] == "built-in"
+
+
 # ---- S-18: a model name is not an identity --------------------------------------
 
 def test_a_role_digest_is_stable_and_moves_with_its_settings():
@@ -246,9 +266,15 @@ def test_roles_beat_the_old_keys_and_say_so():
 
 
 def test_defaults_sit_between_a_role_and_its_provider():
-    t = _t(llm_provider="ollama", roles={"defaults": {"temperature": 0.5, "think": False},
-                                         "critic": {"temperature": 0.1}},
-           providers={"ollama": {"temperature": 0.9, "num_ctx": 4096}})
+    t = _t(llm_provider="fake", roles={
+        "defaults": {"temperature": 0.5, "think": False},
+        "critic": {"temperature": 0.1, "provider": "ollama", "model": "qwen3:8b"},
+        "synthesizer": {"provider": "ollama", "model": "qwen3:8b"},
+        "labeller": {"provider": "ollama", "model": "qwen3:8b"},
+        "extractor": {"provider": "ollama", "model": "qwen3:8b"},
+        "chat": {"provider": "ollama", "model": "qwen3:8b"},
+        "specifier": {"provider": "ollama", "model": "qwen3:8b"},
+    }, providers={"ollama": {"temperature": 0.9, "num_ctx": 4096}})
     critic, synth = resolve_role(t, "critic"), resolve_role(t, "synthesizer")
     assert critic.temperature == 0.1 and synth.temperature == 0.5
     assert synth.think is False and synth.num_ctx == 4096
@@ -282,7 +308,8 @@ def test_the_labeller_follows_the_synthesizer_until_given_its_own():
     t = _t(llm_provider="fake", roles={"synthesizer": {"provider": "groq",
                                                        "model": "qwen/qwen3.6-27b"}})
     assert resolve_role(t, "labeller").model == "qwen/qwen3.6-27b"
-    t = _t(llm_provider="fake", roles={"synthesizer": {"provider": "groq"},
+    t = _t(llm_provider="fake", roles={"synthesizer": {"provider": "groq",
+                                                       "model": "qwen/qwen3.6-27b"},
                                        "labeller": {"provider": "ollama", "model": "phi4-mini"}})
     lab = select_labeller(t)
     assert isinstance(lab, OllamaLabeller) and lab.name == "phi4-mini"

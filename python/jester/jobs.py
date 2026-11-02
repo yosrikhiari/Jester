@@ -19,6 +19,7 @@ indistinguishable from a job that never started, which is exactly the ambiguity
 """
 
 import json
+import sqlite3
 import threading
 import traceback
 from typing import Callable, Optional
@@ -127,9 +128,24 @@ def start_job(db_path: str, kind: str, fn: Callable[[Callable[[str], None]], dic
         return {"ok": True, "job_id": job_id, "kind": kind}
 
 
+def _schema_present(db) -> bool:
+    """Whether `jobs` exists, WITHOUT creating it.
+
+    V3-08: `get_job`/`recent_jobs` are polled by the console. Installing the
+    table from a read made every poll a write, competing for the one lock the
+    pipeline is already using. "No table" is the documented default: no jobs
+    have ever been recorded.
+    """
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
+    ).fetchone()
+    return row is not None
+
+
 def get_job(db, job_id: int):
-    ensure_schema(db)
-    db.row_factory = __import__("sqlite3").Row
+    if not _schema_present(db):
+        return None
+    db.row_factory = sqlite3.Row
     row = db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     if row is None:
         return None
@@ -143,8 +159,9 @@ def get_job(db, job_id: int):
 
 
 def recent_jobs(db, limit: int = 10):
-    ensure_schema(db)
-    db.row_factory = __import__("sqlite3").Row
+    if not _schema_present(db):
+        return []
+    db.row_factory = sqlite3.Row
     rows = db.execute(
         "SELECT id, kind, status, started_at, finished_at, progress, error "
         "FROM jobs ORDER BY id DESC LIMIT ?",

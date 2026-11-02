@@ -359,3 +359,43 @@ def test_silence_reaches_the_doctor_findings(tmp_path):
     res = evaluate_doctor(db)
     findings = res["findings"] if isinstance(res, dict) else res
     assert any("no run in" in str(f) for f in findings)
+
+
+# ---- V3-08: the WAL note is advice, not a mode change ------------------------
+
+def test_doctor_notes_delete_journal_on_a_local_disk(tmp_path, monkeypatch, capsys):
+    """WAL stays opt-in. Doctor may point at it, but must not switch it: the
+    note names the variable and the rollback so an operator can decide."""
+    import jester.cli as cli
+
+    monkeypatch.setattr(cli, "_on_local_disk", lambda path: True)
+    p = tmp_path / "j.db"
+    _seed_healthy(open_db(str(p)))
+
+    cli.cmd_doctor(_ns(db=str(p)))
+
+    out = capsys.readouterr().out
+    assert "JESTER_SQLITE_JOURNAL_MODE=wal" in out
+    assert "delete" in out.lower() and "checkpoint" in out.lower()
+
+
+def test_doctor_does_not_advise_wal_on_a_network_path(tmp_path, monkeypatch, capsys):
+    import jester.cli as cli
+
+    monkeypatch.setattr(cli, "_on_local_disk", lambda path: False)
+    p = tmp_path / "j.db"
+    _seed_healthy(open_db(str(p)))
+
+    cli.cmd_doctor(_ns(db=str(p)))
+
+    assert "JESTER_SQLITE_JOURNAL_MODE" not in capsys.readouterr().out
+
+
+def test_doctor_does_not_advise_wal_when_the_archive_is_already_wal(tmp_path, monkeypatch):
+    import jester.cli as cli
+
+    monkeypatch.setattr(cli, "_on_local_disk", lambda path: True)
+    db = open_db(str(tmp_path / "j.db"))
+    db.execute("PRAGMA journal_mode=wal")
+
+    assert cli.journal_note(db) == []
