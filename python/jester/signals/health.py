@@ -7,7 +7,7 @@ both print "collected 0", and the run's own status is `ok` in both cases --
 zero results is a valid run by design, which is exactly what makes the two look
 alike.
 
-So every run leaves a per-source streak in `source_state`, and this module
+So every run leaves a per-source streak in `signals_source_state`, and this module
 turns the streaks and the run ledger into one verdict with an exit code:
 
   HEALTHY  the last read yielded rows
@@ -42,7 +42,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-SOURCE_STATE_TABLE = "source_state"
+SOURCE_STATE_TABLE = "signals_source_state"
+#: What this table was called before the signals archive got its own file. The
+#: Go worker owns a `source_state` of its own in the nuggets archive (keyed by
+#: `name`, with visit counters); the two shapes shared a name and no columns,
+#: so one archive could not serve both. Read-only reference: the legacy table is
+#: never dropped or altered.
+LEGACY_SOURCE_STATE_TABLE = "source_state"
 RUN_TABLE = "signal_run"
 SIGNAL_TABLE = "problem_signal"
 
@@ -98,11 +104,50 @@ def _iso(when: datetime) -> str:
     return when.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
-def ensure_source_state_table(db: sqlite3.Connection) -> None:
+#: The streak table's columns, in DDL order -- also the order the legacy rows
+#: are copied in, so the copy names them rather than trusting `SELECT *`.
+STATE_COLUMNS = ("source", "consecutive_zero", "consecutive_error",
+                 "last_ok_utc", "last_rows", "last_error", "updated_utc")
+
+
+def _columns_of(db: sqlite3.Connection, table: str) -> set:
+    """The table's column names, or an empty set when it does not exist."""
+    return {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _adopt_legacy_streaks(db: sqlite3.Connection) -> int:
+    """Move rows out of a legacy Python-shaped `source_state`, once.
+
+    Additive on purpose: `INSERT OR IGNORE` keyed on `source` means a second
+    call copies nothing, and the old table keeps every row it had. Dropping it
+    to rename it would be a destructive act on live state performed by a
+    migration nobody asked for.
+
+    A `source_state` without `consecutive_zero` is the GO table -- same name, a
+    different question (visit counters for the nuggets archive). It is left
+    entirely alone: copying its integers into a streak column would invent a
+    verdict out of a number that means something else.
+    """
+    columns = _columns_of(db, LEGACY_SOURCE_STATE_TABLE)
+    if "consecutive_zero" not in columns:
+        return 0
+    names = ", ".join(STATE_COLUMNS)
+    moved = db.execute(
+        f"INSERT OR IGNORE INTO {SOURCE_STATE_TABLE} ({names}) "
+        f"SELECT {names} FROM {LEGACY_SOURCE_STATE_TABLE}")
+    return moved.rowcount
+
+
+def ensure_source_state_table(db: sqlite3.Connection) -> int:
     """The additive migration. Called by the WRITE path only (`run.collect`),
-    never by `report`, so a diagnostic cannot reshape what it diagnoses."""
+    never by `report`, so a diagnostic cannot reshape what it diagnoses.
+
+    Returns how many legacy rows were adopted; 0 when there was nothing to take.
+    """
     db.executescript(SOURCE_STATE_DDL)
+    moved = _adopt_legacy_streaks(db)
     db.commit()
+    return moved
 
 
 def _have_state_table(db: sqlite3.Connection) -> bool:
@@ -238,7 +283,7 @@ def _parse(text: str) -> Optional[datetime]:
 def _streak_from_runs(reads: list) -> tuple:
     """(zero, error) read straight off the ledger, newest first.
 
-    Used when `source_state` does not exist yet (an un-migrated archive) or the
+    Used when the streak table does not exist yet (an un-migrated archive) or the
     source has never been written to since the migration. It cannot recover
     `last_ok_utc`, but it can still tell a barren source from a healthy one --
     which is the question the command exists to answer.

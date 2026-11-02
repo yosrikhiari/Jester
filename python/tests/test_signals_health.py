@@ -46,7 +46,9 @@ def _write_run(db, source, **kw):
 
 
 def _state(db, source):
-    row = db.execute("SELECT * FROM source_state WHERE source = ?", (source,)).fetchone()
+    row = db.execute(
+        f"SELECT * FROM {sighealth.SOURCE_STATE_TABLE} WHERE source = ?",
+        (source,)).fetchone()
     return dict(row) if row is not None else None
 
 
