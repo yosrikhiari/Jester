@@ -224,6 +224,42 @@ def test_the_cli_passes_the_signals_archive_through(host, capsys):
     assert "data/collector.db" in out
 
 
+def test_a_non_default_launcher_archive_is_not_moved_silently(host):
+    """A host installed with its own `schedule install --db` keeps that path in
+    the launcher. Applying the declaration without naming an archive must say
+    it is moving it, not just do it -- the operator's choice is still overridden
+    (apply makes the machine match the file), but it is not silent."""
+    assert schedule.apply_desired(db="data/mine.db")["ok"] is True
+
+    res = schedule.apply_desired()
+    warned = {r["task"]: r.get("warning") for r in res["results"]
+              if r.get("warning")}
+    assert warned, res
+    assert all("data/mine.db" in w for w in warned.values()), warned
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+
+    # Naming the archive on this run is consent: no warning.
+    res = schedule.apply_desired(db="data/mine.db")
+    assert not any(r.get("warning") for r in res["results"]), res
+
+
+def test_the_cli_prints_the_archive_warning(host, capsys):
+    assert schedule.apply_desired(db="data/mine.db")["ok"] is True
+    cli.main(["schedule", "apply", "--dry-run"])
+    out = capsys.readouterr().out
+    assert "warning:" in out and "data/mine.db" in out, out
+
+
+def test_drift_compares_the_archive_doctor_was_given(host):
+    """Doctor diagnoses one archive; the launcher records the one it was
+    installed with. Comparing against this code's defaults reported every task
+    as drifted on a host that had passed a non-default --db."""
+    assert schedule.apply_desired(db="data/moved.db")["ok"] is True
+
+    assert any("launcher writes" in n for n in cli.schedule_drift_notes())
+    assert cli.schedule_drift_notes("data/moved.db") == []
+
+
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
     path = tmp_path / "week.yaml"
     path.write_text(

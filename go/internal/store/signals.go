@@ -6,10 +6,12 @@ package store
 // collector's, which Go never opens.
 //
 // The rule it enforces is the one a shared `source_state` name broke: the
-// Python streak table is `signals_source_state`, and if a `source_state`
-// table exists in that file it must be the Go one (keyed by `name`, holding
-// visit counters). A Python-shaped `source_state` in the signals archive is
-// the collision, not a legacy detail.
+// Python streak table is `signals_source_state`, and a `source_state` may sit
+// beside it only as one of the two known shapes -- the Go table (keyed by
+// `name`, holding visit counters) or the Python table's pre-rename legacy
+// shape. The Python shape is tolerated only because the new table has already
+// been verified present and exact; on its own, with no `signals_source_state`,
+// it is the collision and nothing else.
 
 import (
 	"database/sql"
@@ -73,8 +75,10 @@ func contains(list []string, want string) bool {
 }
 
 // CheckSignalsSchema verifies a database created by the Python signals
-// collector: the streak table is present with its exact shape, and no
-// Python-shaped `source_state` has crept back in beside the Go one.
+// collector: the streak table is present with its exact shape, and any
+// `source_state` beside it is a known shape. An unmigrated file that holds a
+// Python-shaped `source_state` INSTEAD of the new table fails at the
+// missing-table check, which is the case this guard exists for.
 //
 // It opens the file with a plain connection rather than store.Open, because
 // Open runs the GO schema -- which would create a `source_state` table in the
@@ -114,10 +118,17 @@ func CheckSignalsSchema(path string) error {
 		// does not, there is nothing to disagree with.
 		return nil
 	}
-	if !contains(legacy, "name") || contains(legacy, "consecutive_zero") {
-		return fmt.Errorf("source_state in this file has columns [%s]; "+
-			"that is the Python shape, and the collector's streaks belong in %s",
-			strings.Join(legacy, ", "), SignalsStateTable)
+	// A `source_state` beside an exact `signals_source_state` is no longer
+	// standing in for the streak table: Python reads and writes the new name,
+	// so both the Go shape and the Python legacy shape are harmless. A file
+	// that carried only the Python shape already failed above, when the new
+	// table was missing -- the shape is rejected only when it is being used
+	// INSTEAD of `signals_source_state`.
+	if contains(legacy, "name") || contains(legacy, "consecutive_zero") {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("source_state in this file has columns [%s]; "+
+		"that is neither the Go table (keyed by name) nor the Python legacy "+
+		"shape (with consecutive_zero), so it is not a table this system writes",
+		strings.Join(legacy, ", "))
 }

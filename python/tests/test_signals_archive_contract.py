@@ -181,13 +181,20 @@ def test_a_legacy_go_shaped_table_yields_no_streaks(tmp_path):
 # --- R4-02: one archive per component ---------------------------------------
 
 def test_each_command_declares_the_archive_it_writes():
-    """The role is a fact about the command, not a guess made by the launcher."""
+    """The role is a fact about the command, not a guess made by the launcher.
+    Every entry must carry one: a spec that forgot it would inherit the `main`
+    fallback and quietly point a collector at the nuggets archive again."""
+    roles = {command: spec.get("db")
+             for command, spec in schedule.COMMAND_SPEC.items()}
+    missing = [c for c, role in roles.items() if role not in ("main", "signals")]
+    assert not missing, f"commands with no valid db role: {missing}"
+
     for command in ("signals", "signals-hiring", "signals-sweep", "signals-brief",
                     "signals-retention", "signals-load", "health", "leads-reddit"):
-        assert schedule.command_db_role(command) == "signals", command
+        assert roles[command] == "signals", command
     for command in ("cycle", "ingest", "treat", "retention", "backup",
                     "backup-drill"):
-        assert schedule.command_db_role(command) == "main", command
+        assert roles[command] == "main", command
 
 
 def test_the_resolver_gives_the_signals_tasks_the_signals_archive():
@@ -271,8 +278,21 @@ def test_the_diagnostics_default_to_the_signals_archive(monkeypatch):
     assert seen["signals"] == "data/signals-live.db"
 
 
-def test_the_reddit_archive_default_is_unchanged():
-    """`--archive` names the nuggets database, whatever `--db` became."""
-    source = (Path(__file__).resolve().parents[2] / "python" / "jester"
-              / "cli.py").read_text(encoding="utf-8")
-    assert 'sg.add_argument("--archive", default="data/jester.db"' in source
+def test_the_reddit_archive_default_is_unchanged(monkeypatch):
+    """`--archive` names the nuggets database, whatever `--db` became.
+
+    Asserted on the parsed arguments, not the source text: a string grep passes
+    even if the option is registered on the wrong parser or the handler reads a
+    different attribute.
+    """
+    from jester import cli
+
+    seen = {}
+    monkeypatch.setattr(
+        cli, "cmd_signals",
+        lambda args: seen.update(archive=args.archive, db=args.db))
+
+    cli.main(["signals"])
+
+    assert seen["archive"] == "data/jester.db"
+    assert seen["db"] == "data/signals-live.db"

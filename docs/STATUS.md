@@ -51,7 +51,7 @@ words above are about `main`; the words below are about the branch only:
 | V3-01 | T1 | Idea claim and insert in one `BEGIN IMMEDIATE`; a deterministic `ideas.support_key` plus index stops a second idea on the same evidence; fault-injection tests | On branch |
 | V3-02 | T1 | A corrupt `blocked_until` fails closed with a named window; quota spend is one conditional statement whose rowcount is the verdict; the rescore queue takes a per-idea claim | On branch |
 | V3-03 | — | Nothing. Chat history still returns the oldest 24 messages. | **Open** (not in this plan) |
-| V3-04 | T3 | `source_state` streak table; `jester health --days 7` exits 1 on a barren, stale or erroring source; the launcher turns a non-zero exit into a notify | On branch |
+| V3-04 | T3 | `signals_source_state` streak table; `jester health --days 7` exits 1 on a barren, stale or erroring source; the launcher turns a non-zero exit into a notify | On branch |
 | V3-05 | T5 | An approval records a manifest over revision, figures and saved copies, and export and publish recompute it; `obs:<label>\|<reason>`; headings and inline code are prose | On branch |
 | V3-06 | T4 | CSV export is atomic and reconciled by id and content hash; ClickHouse schema v2 with additive `ALTER`; `signals retention --days 365`, declared paused | On branch |
 | V3-07 | T2 | A malformed or refused reply is filed `ok=0`; the rescore path files `llm_calls`; archivist failures are counted and logged once per run | On branch |

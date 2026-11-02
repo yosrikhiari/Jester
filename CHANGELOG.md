@@ -59,9 +59,9 @@ not merged; `main` is `5a4bd36`, one docs-only commit after the `v0.1.0` tag
   `--min 30` rows are comparable.
 
 ### Problem signals
-- Each source has a streak row (`source_state`): consecutive zero-result and
-  error runs, the last read, the last error. `jester health --days 7` prints it
-  per source, exits 1 on a barren (3 zero runs), stale (silent past its own
+- Each source has a streak row (`signals_source_state`): consecutive zero-result
+  and error runs, the last read, the last error. `jester health --days 7` prints
+  it per source, exits 1 on a barren (3 zero runs), stale (silent past its own
   cadence: 36 h for a daily source, 10.5 d when the ledger shows only one read)
   or erroring source, and prints JSON with `--json`.
 - A scheduled run that fails now reaches the operator: the Windows launcher and

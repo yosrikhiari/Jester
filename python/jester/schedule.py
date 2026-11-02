@@ -1660,9 +1660,26 @@ def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
                 "detail": "schedule apply needs Windows Task Scheduler; cron "
                           "has no per-task enabled state"}
     results = []
+    # Whether the operator named an archive on this run. `db` defaults to the
+    # shipped path, so an unchanged default is the honest signal that no
+    # `--db` was passed; `signals_db` has no default at all.
+    explicit_archive = db != DEFAULT_DB or bool(signals_db)
     for spec in load_desired(path):
         task = spec["task"]
         task_db = resolve_task_db(spec, main_db=db, signals_db=signals_db)
+        # A host installed with `schedule install --db <mine>` keeps that
+        # archive in its launcher. Applying a declaration that names no archive
+        # would move it back without saying so: the operator's choice, silently
+        # undone. The declaration still wins -- apply's contract is to make the
+        # machine match the file -- but it tells them first.
+        existing_db = (read_launcher(spec["command"]) or {}).get("db") or ""
+        warning = ""
+        if (existing_db and existing_db != task_db and not explicit_archive
+                and not (spec.get("db") or "").strip()):
+            warning = (f"launcher writes {existing_db!r}; this apply moves it "
+                       f"to {task_db!r} -- pass --db or --signals-db to keep a "
+                       "non-default archive")
+        notes = {"warning": warning} if warning else {}
         st = status(task)
         cadence_changed = bool(st.get("installed")) and not cadence_matches(st, spec)
         needs_create = (
@@ -1679,10 +1696,12 @@ def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
                            f"{describe_cadence(spec)} on an enabled task; "
                            "re-run with --force"),
                 "db": task_db,
+                **notes,
             })
             continue
         if not needs_create and not needs_state:
-            results.append({"task": task, "action": "unchanged", "db": task_db})
+            results.append({"task": task, "action": "unchanged", "db": task_db,
+                            **notes})
             continue
         if dry_run:
             what = []
@@ -1693,7 +1712,7 @@ def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
                 what.append("enable" if spec["enabled"] else "disable")
             results.append({"task": task,
                             "action": "would " + ", ".join(what),
-                            "db": task_db})
+                            "db": task_db, **notes})
             continue
 
         if needs_create:
@@ -1708,18 +1727,20 @@ def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
             )
             if not res.get("ok"):
                 results.append({"task": task, "action": "failed",
-                                "detail": res.get("detail", ""), "db": task_db})
+                                "detail": res.get("detail", ""), "db": task_db,
+                                **notes})
                 continue
         current = status(task)
         if bool(current.get("enabled", True)) != spec["enabled"]:
             res = set_enabled(task, spec["enabled"])
             if not res.get("ok"):
                 results.append({"task": task, "action": "failed",
-                                "detail": res.get("detail", ""), "db": task_db})
+                                "detail": res.get("detail", ""), "db": task_db,
+                                **notes})
                 continue
         results.append({"task": task,
                         "action": "installed" if needs_create else
                                   ("enabled" if spec["enabled"] else "disabled"),
-                        "db": task_db})
+                        "db": task_db, **notes})
     return {"ok": all(r["action"] not in ("failed", "refused") for r in results),
             "results": results}

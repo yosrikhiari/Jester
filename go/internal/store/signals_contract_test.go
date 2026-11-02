@@ -78,17 +78,29 @@ func TestSignalsCheckAcceptsTheGoTableBesideIt(t *testing.T) {
 	}
 }
 
-func TestSignalsCheckRejectsAPythonShapedSourceState(t *testing.T) {
-	// The collision itself: a Python streak table under the Go name.
+func TestSignalsCheckAcceptsThePythonLegacyTableBesideTheNewOne(t *testing.T) {
+	// A migrated archive keeps the old Python-shaped `source_state` next to
+	// the new table: Python's migration is additive and never drops it. With
+	// an exact `signals_source_state` present, the legacy shape is history,
+	// not the collision -- reads and writes target the new name.
 	path := makeSignalsDB(t, pythonSignalsStateDDL, pythonLegacyStateDDL)
+
+	if err := CheckSignalsSchema(path); err != nil {
+		t.Fatalf("a migrated archive that kept its legacy Python table must pass: %v", err)
+	}
+}
+
+func TestSignalsCheckRejectsAnArchiveWithOnlyTheLegacyPythonTable(t *testing.T) {
+	// The collision: a Python streak table under the Go name and no
+	// `signals_source_state`. This is a file the migration never ran on, so
+	// the collector's streaks are living in the wrong table.
+	path := makeSignalsDB(t, pythonLegacyStateDDL)
 
 	err := CheckSignalsSchema(path)
 
-	if err == nil {
-		t.Fatal("a Python-shaped source_state must fail the check")
-	}
-	if !strings.Contains(err.Error(), "source_state") {
-		t.Fatalf("the failure must name the table: %v", err)
+	if err == nil || !strings.Contains(err.Error(), SignalsStateTable) {
+		t.Fatalf("want a missing-new-table failure naming %s, got %v",
+			SignalsStateTable, err)
 	}
 }
 

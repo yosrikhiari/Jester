@@ -1759,6 +1759,8 @@ def cmd_schedule(args):
             if r.get("detail"):
                 line += f" — {r['detail']}"
             print(line)
+            if r.get("warning"):
+                print(f"    warning: {r['warning']}")
         if res.get("detail"):
             print(res["detail"])
         if not res["ok"]:
@@ -2466,7 +2468,7 @@ def pipeline_paused_notes() -> list:
     return notes
 
 
-def schedule_drift_notes() -> list:
+def schedule_drift_notes(main_db=None, signals_db=None) -> list:
     """Tasks whose live registration disagrees with config/schedule.yaml (S-20).
 
     A note rather than a finding: Doctor's findings are about the archive, and
@@ -2474,9 +2476,15 @@ def schedule_drift_notes() -> list:
     installed at all is the one case the declaration cannot see -- the disabled
     generative tasks are absent on a box that never installed them, and that is
     still paused, not drifted.
+
+    `main_db` and `signals_db` are the archives the caller is diagnosing with.
+    The launcher records a `--db`, so comparing it against this function's own
+    defaults would report a host that moved its archive with `--db` as drifted
+    on every run. Pass the same paths Doctor was given.
     """
     try:
-        drift = _schedule.desired_drift()
+        drift = _schedule.desired_drift(main_db=main_db or _schedule.DEFAULT_DB,
+                                        signals_db=signals_db or None)
     except _schedule.ScheduleError as exc:
         return [f"config/schedule.yaml: {exc}"]
     return [f"{d['task']}: " + "; ".join(d["problems"]) for d in drift]
@@ -2534,7 +2542,9 @@ def cmd_doctor(args):
                   + ", ".join(unused))
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
-    for note in pipeline_paused_notes() + schedule_drift_notes() + journal_note(db):
+    for note in (pipeline_paused_notes()
+                 + schedule_drift_notes(args.db, getattr(args, "signals_db", None))
+                 + journal_note(db)):
         print(f"doctor note: {note}")
     if findings:
         for f in findings:
@@ -4849,6 +4859,14 @@ def main(argv=None):
 
     dc = sub.add_parser("doctor")
     dc.add_argument("--db", default="data/jester.db")
+    dc.add_argument(
+        "--signals-db",
+        default=None,
+        metavar="PATH",
+        help="the collector's archive, when the scheduled tasks were installed "
+             "with a non-default --signals-db (default: signals-live.db beside "
+             "--db). Used only to compare the launchers against the declaration",
+    )
     dc.add_argument(
         "--no-migrate",
         action="store_true",
