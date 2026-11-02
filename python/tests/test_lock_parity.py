@@ -122,3 +122,48 @@ def test_a_requirement_missing_from_the_lock_fails(tmp_path):
 
     assert res.returncode == 1
     assert "qdrant-client" in res.stderr
+
+
+# --- R4-01: a failure says how to fix it, not only what is wrong -------------
+
+def test_a_failure_prints_the_regeneration_command(tmp_path):
+    """A red lock-parity gate used to name the drift and stop there. The fix is
+    one command, and it has to run on Linux (the lock pins Linux wheels), so it
+    belongs in the message rather than in someone's memory."""
+    req = tmp_path / "requirements.txt"
+    lock = tmp_path / "pylock.toml"
+    req.write_text("PyYAML>=6.0.4\n", encoding="utf-8")
+    lock.write_text(LOCK, encoding="utf-8")
+
+    res = _run("--requirements", str(req), "--lock", str(lock))
+
+    assert res.returncode == 1
+    assert "python:3.12-slim" in res.stderr, res.stderr
+    assert "pip lock" in res.stderr, res.stderr
+    assert "python/requirements.txt" in res.stderr
+    assert "scripts/refresh_lock.sh" in res.stderr, res.stderr
+
+
+def test_an_unreadable_file_prints_the_regeneration_command_too(tmp_path):
+    """Every failure path, not just the drift one: a missing requirements file
+    is also a state the operator has to be told how to recover from."""
+    res = _run("--requirements", str(tmp_path / "absent.txt"),
+               "--lock", str(tmp_path / "absent.toml"))
+
+    assert res.returncode == 2
+    assert "python:3.12-slim" in res.stderr, res.stderr
+    assert "scripts/refresh_lock.sh" in res.stderr, res.stderr
+
+
+def test_the_refresh_script_exists_and_is_posix_sh():
+    path = ROOT / "scripts" / "refresh_lock.sh"
+    text = path.read_text(encoding="utf-8")
+
+    assert text.startswith("#!"), "a script needs an interpreter line"
+    assert "sh" in text.splitlines()[0]
+    assert "set -eu" in text
+    assert "python:3.12-slim" in text
+    assert "pip lock" in text
+    assert "docker" in text, "it must say so when docker is missing"
+    assert "\r\n" not in text, "a CRLF shebang does not run under sh"
+

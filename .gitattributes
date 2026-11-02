@@ -3,3 +3,6 @@
 # whose first line is `#!/bin/sh\r` is not a script the kernel can exec: the
 # image builds, then dies on start with "exec: ... no such file or directory".
 docker/*.sh text eol=lf
+# Same reason for the refresh script a developer runs from a Windows checkout:
+# `set -eu\r` is not `set -eu`, so a CRLF checkout makes it fail before Docker.
+scripts/refresh_lock.sh text eol=lf

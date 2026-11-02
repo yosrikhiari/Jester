@@ -32,6 +32,24 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REQUIREMENTS = ROOT / "python" / "requirements.txt"
 DEFAULT_LOCK = ROOT / "python" / "pylock.toml"
 
+#: The one command that regenerates the lock, printed on EVERY failure.
+#:
+#: It runs in the image the Docker build uses, because the lock pins Linux
+#: wheels: resolving it on a Windows host names wheels the Linux jobs cannot
+#: install, and the mismatch surfaces much later as "no matching distribution".
+#: A gate that says only what is wrong leaves the operator to rediscover the
+#: command, so the command travels with the failure.
+REGENERATE_COMMAND = (
+    'docker run --rm -v "$PWD:/src" -w /src python:3.12-slim sh -c '
+    "'pip install -q -U pip; pip lock -q -r python/requirements.txt "
+    "-o /dev/stdout' > python/pylock.toml"
+)
+
+REGENERATE_HINT = f"""\
+regenerate python/pylock.toml on Linux, from the repo root:
+  {REGENERATE_COMMAND}
+or run scripts/refresh_lock.sh, which does exactly that and keeps the header."""
+
 _NAME = re.compile(r"^([A-Za-z0-9_.-]+)\s*(?:\[[^\]]*\])?\s*(.*)$")
 _SPEC = re.compile(r"(===|==|~=|!=|<=|>=|<|>)\s*([A-Za-z0-9_.*+-]+)")
 
@@ -186,6 +204,11 @@ def check(requirements_path, lock_path):
     return errors, sorted(locked)
 
 
+def _print_hint():
+    """Every failure path ends with the fix, not only with the finding."""
+    print(REGENERATE_HINT, file=sys.stderr)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--requirements", type=Path, default=DEFAULT_REQUIREMENTS)
@@ -195,10 +218,12 @@ def main(argv=None):
         errors, locked = check(args.requirements, args.lock)
     except (OSError, ValueError) as exc:
         print(f"lock parity: {exc}", file=sys.stderr)
+        _print_hint()
         return 2
     if errors:
         for error in errors:
             print(f"lock parity: {error}", file=sys.stderr)
+        _print_hint()
         return 1
     print(
         f"lock parity: {len(read_requirements(args.requirements))} direct "
