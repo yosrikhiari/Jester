@@ -1,4 +1,4 @@
-"""Every relative link in a tracked Markdown file must resolve (V3-21).
+"""Every relative path in a tracked Markdown file must resolve (V3-21).
 
 `docs/STATUS.md` is the one index, and a plan is only useful while the pages it
 points at exist. A moved file used to leave the link behind, and nothing in the
@@ -14,8 +14,11 @@ Deliberately narrow, so it stays a test rather than a Markdown parser:
 - a target with a URI scheme is skipped (the docs cite `https://` pages and
   local `file:///D:/...` ones);
 - a target that is empty or names only a fragment is skipped;
-- `#anchor` and `?query` suffixes are dropped before the path is resolved,
-  because the anchor is checked by reading the page, not by stat-ing it.
+- `#anchor` and `?query` suffixes are removed before the path is resolved, so
+  the file the anchor lives in is what gets checked. The `#anchor` part itself
+  is **not** validated in this cycle: nothing here reads a heading or derives
+  a slug. A link to `page.md#no-such-heading` passes as long as `page.md` is
+  on disk.
 
 Underscores are not emphasis here, so `snake_case.md` links are left alone; the
 test only looks at the inside of `](...)` and an HTML `src=`/`href=`.

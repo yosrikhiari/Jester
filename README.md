@@ -39,7 +39,7 @@ Operator console  ←  Python pipeline  ←────────  LLM agent c
 
 **The generative pipeline is paused since 2026-10-02.** All three scheduled tasks (`JesterNightly`, `JesterNightlyScrape`, `JesterNightlyTreat`) are registered but disabled; their last run exited 0 because they were switched off, not because the work succeeded. `jester doctor` prints them as notes.
 
-**The problem-signal collector is running daily** (five separate tasks), and its fixture gate was last green on 2026-10-31.
+**The problem-signal collector is running daily** (six separate tasks), and its fixture gate was last green on 2026-10-31.
 
 Resume the generative loop only after the B1 gate in the [2026-10-31 strategy report](docs/reports/2026-10-31-next-development-strategy.md): one unattended day must end with an honest `quota_stopped` status, no overlapping ticks, and a score backlog that falls.
 

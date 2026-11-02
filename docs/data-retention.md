@@ -86,8 +86,9 @@ The problem-signal archive is a separate database (`data/signals-*.db`) and it
 has its own sweep, `jester signals retention`, which is a different command
 from the 30-day sweep above. What it does:
 
-- **One window: 365 days**, fixed in `schedule.COMMAND_SPEC` as
-  `signals retention --days 365` rather than defaulted at the call site. It is
+- **One window: 365 days**, set in `schedule.COMMAND_SPEC` as
+  `signals retention --days 365`; the command's own `--days` default is the
+  same 365, so a hand run and a scheduled run agree. It is
   measured from each record's **last sighting**, not its first: a posting still
   being returned every morning is current, and the window is "nobody has seen
   this for a year".

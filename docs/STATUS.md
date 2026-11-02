@@ -68,7 +68,7 @@ words above are about `main`; the words below are about the branch only:
 | V3-18 | T3 | The Windows launcher and the POSIX cron line run `jester notify` only on a non-zero exit and keep the run's code | On branch |
 | V3-19 | T9 | README names SQLite the source of truth and ClickHouse an optional manual mirror; `JesterClickHouseLoad` is declared after the brief, paused | On branch |
 | V3-20 | — | No frontend change. | **Ruling** (below) |
-| V3-21 | T9 | `docs/plans/archive/README.md` states the archive rule and records that no plan qualifies; `python/tests/test_doc_links.py` checks every tracked `.md` link; one broken link repaired | On branch |
+| V3-21 | T9 | `docs/plans/archive/README.md` states the archive rule and records that no plan qualifies; `python/tests/test_doc_links.py` checks every relative path in the tracked `.md` files; one broken link repaired | On branch |
 | V3-22 | T1 | `GET /api/config` blanks any secret-named value and returns a `secrets_set` map; the UI reads that map | On branch |
 | V3-23 | T7 | Backup covers `journal.db`, `chat.db` and `.env`, verifies the snapshot, restores into a new file (`backup restore`), supports `--also-to`, and a monthly drill | On branch, owner half named: choose and provide the second volume |
 | V3-24 | T6 | `scripts/check_lock_parity.py` runs in both Python CI jobs and fails on unpinned, missing or older-than-floor requirements | On branch, partial: Windows still installs `requirements.txt`, and `pyproject.toml` is not read |
@@ -100,7 +100,7 @@ There is no CI run to cite: the branch was never pushed.
 | Command | Where | Result |
 |---|---|---|
 | `python -m pytest python/tests -q` (with `PYTHONPATH=python JESTER_MOCK=1`, `TMP`/`TEMP` set) | tree committed as `69f2353` | `2220 passed, 12 skipped, 13 deselected, 41 warnings in 463.58s (0:07:43)` |
-| the same command | tree of this commit | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
+| the same command | tree of this commit (four prose-only edits followed the run; `test_doc_links` and `test_schedule_apply` were re-run green) | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2237` / `go test functions: 299` |
 | `go vet ./...` | `go/`, this commit | no output (clean); no Go file changed after `5f66917` |
 | `go test ./...` | `go/`, this commit | every package `ok`; the `cmd/*` probe packages have no test files |
@@ -148,7 +148,7 @@ All of these were parked in the task ledger; none is a surprise.
 | Product | Status | Evidence |
 |---|---|---|
 | Idea pipeline | **Paused since 2026-10-02.** Three scheduled tasks registered and disabled; last exit 0 means "switched off", not "succeeded". | [README §Operating state](../README.md#operating-state); `jester schedule status` |
-| Problem signals | **Live**, five scheduled tasks; fixture gate green 2026-10-31. | `.github/workflows/ci.yml` (`signals check`); `config/schedule.yaml` |
+| Problem signals | **Live**, six scheduled tasks; fixture gate green 2026-10-31. | `.github/workflows/ci.yml` (`signals check`); `config/schedule.yaml` |
 | Journal | **Built through J3; 0 publications.** | [README §Journal](../README.md#journal--research-experiment-publish-in-progress); `data/journal.db` |
 | Console chat | **Built; 0 sessions.** `chat_enabled: false`. | `python/jester/chat/`; `config/thresholds.yaml` |
 
