@@ -476,13 +476,20 @@ def restore_backup(backup_path: str, dest: str) -> dict:
         return {"ok": False,
                 "error": f"refusing to overwrite {dst}; choose a new path"}
 
-    manifest = _read_manifest(src)
-    entry = ((manifest or {}).get("files") or {}).get(src.name) or {}
-    want_hash = entry.get("sha256")
-    if want_hash and _sha256_file(src) != want_hash:
-        return {"ok": False,
-                "error": f"{src.name} does not match its manifest hash; refusing "
-                         "to restore it"}
+    try:
+        manifest = _read_manifest(src)
+        entry = ((manifest or {}).get("files") or {}).get(src.name) or {}
+        want_hash = entry.get("sha256")
+        if want_hash and _sha256_file(src) != want_hash:
+            return {"ok": False,
+                    "error": f"{src.name} does not match its manifest hash; refusing "
+                             "to restore it"}
+    except OSError as exc:
+        # A backup the process cannot open -- locked on Windows, a permission
+        # bit on POSIX -- used to raise out of the restore: the caller reads
+        # `ok`/`error`, and a traceback here is a crash in the one command
+        # someone runs when the archive is already gone.
+        return {"ok": False, "error": f"unreadable: {exc}"}
 
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)

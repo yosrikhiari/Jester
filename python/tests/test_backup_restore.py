@@ -224,6 +224,25 @@ def test_an_unwritable_destination_is_reported_not_raised(archive, tmp_path):
     assert got["error"]
 
 
+def test_a_backup_whose_hash_cannot_be_read_is_reported_not_raised(archive, tmp_path, monkeypatch):
+    """The manifest read, hash and comparison ran outside any try, so a backup
+    the process cannot open (locked on Windows, a permission bit on POSIX)
+    raised out of the restore instead of answering. That is the same crash
+    class the unwritable-destination fix removed, one step earlier."""
+    res = _set(archive, compress=False)
+
+    def locked(path):
+        raise PermissionError(13, "The process cannot access the file: locked", str(path))
+
+    monkeypatch.setattr(backup, "_sha256_file", locked)
+
+    dest = tmp_path / "restored.db"
+    got = backup.restore_backup(res["path"], str(dest))
+    assert got["ok"] is False
+    assert "unreadable" in got["error"]
+    assert not dest.exists(), "nothing was written, so nothing may look restored"
+
+
 # -- the drill --------------------------------------------------------------
 
 def test_the_drill_restores_into_a_temporary_directory_and_reports(archive, monkeypatch):

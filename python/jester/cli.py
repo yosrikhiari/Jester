@@ -1794,9 +1794,21 @@ def cmd_schedule(args):
             print("  depth  : " + (", ".join(depth) if depth else "no ceiling"))
             drift = _schedule.launcher_drift(_cmd)
             if drift and drift["stale"]:
-                print("  WARNING: the launcher runs an old command, written by older code:")
-                print(f"    runs  : jester {drift['argv']}")
-                print(f"    should: jester {drift['want']}")
+                if drift["argv"] != drift["want"]:
+                    print("  WARNING: the launcher runs an old command, written by older code:")
+                    print(f"    runs  : jester {drift['argv']}")
+                    print(f"    should: jester {drift['want']}")
+                else:
+                    # `stale` is also true when the command is current and only
+                    # the file format is old (it predates the rotation guard).
+                    # Saying "runs an old command" there is false and sends the
+                    # operator looking for a difference in the argv that is not
+                    # there; the format is what moved, and the fix is the same.
+                    print("  WARNING: the launcher file is an older format, "
+                          "written by older code:")
+                    print(f"    format: v{drift['version'] or 'none'}, this code "
+                          f"writes v{drift['want_version']}")
+                    print(f"    file  : {drift['path']}")
                 print("    fix   : jester schedule refresh")
         else:
             print(f"scrape job NOT installed ({st['scheduler']} has no jester entry)")
@@ -2402,11 +2414,22 @@ def evaluate_doctor(db):
 
 
 def launcher_findings() -> list:
-    """A scheduled task whose launcher runs an older command than this code
-    would write: it keeps exiting 0 while doing less than it should."""
-    return [f"scheduled {d['command']} runs an old command (jester {d['argv']}); "
-            "fix: jester schedule refresh"
-            for d in _schedule.stale_launchers()]
+    """A scheduled task whose launcher this code would rewrite: one that runs an
+    older command (it keeps exiting 0 while doing less than it should), or --
+    since the file carries a format marker -- an older launcher file whose
+    command is still current. The format case is named as such: reporting a
+    changed command that did not change is a false finding, and the operator
+    cannot act on it."""
+    out = []
+    for d in _schedule.stale_launchers():
+        if d["argv"] != d["want"]:
+            out.append(f"scheduled {d['command']} runs an old command "
+                       f"(jester {d['argv']}); fix: jester schedule refresh")
+        else:
+            out.append(f"scheduled {d['command']} has a launcher in an older format "
+                       f"(v{d['version'] or 'none'}, this code writes "
+                       f"v{d['want_version']}); fix: jester schedule refresh")
+    return out
 
 
 #: The three tasks that together are the generative loop. Signals has its own

@@ -255,8 +255,14 @@ def test_the_revisions_command_lists_and_restores(tmp_path, capsys):
 # -- 7a: deletions, decided only by a complete read --------------------------
 
 def test_a_posting_gone_from_a_complete_read_is_marked_removed(db, rules):
+    # The sweep judges records CREATED inside the seven-day window, so the
+    # first read's hits have to be created inside it relative to the clock the
+    # run uses. The default `_hit` stamp is a fixed date: inside the window
+    # when this was written, outside it a week later, and this test would have
+    # gone red with no code change.
     sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
-        {"hits": [_hit("1"), _hit("2")], "nbPages": 1}])))
+        {"hits": [_hit("1", created_at=_ago(1)), _hit("2", created_at=_ago(1))],
+         "nbPages": 1}])))
     row = sigrun.collect(db, rules=rules, queries=["q"], source=_hn(FakeHTTP([
         {"hits": [_hit("1")], "nbPages": 1}])))
 
