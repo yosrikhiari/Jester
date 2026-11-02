@@ -273,6 +273,18 @@ PYTHONPATH=python python -m pytest python/tests -q
 
 The suite is about two thousand Python tests and three hundred Go test functions; `python scripts/counts.py` prints the current numbers from the checkout (on 2026-11-02: 2,239 and 299) and CI runs both on every push. `.github/workflows/ci.yml` runs it on Linux and Windows; `.github/workflows/live.yml` is the nightly lane that runs the eleven `live_*` tests against real Ollama and Qdrant (first green run: [`41302659108`](https://github.com/yosrikhiari/Jester/actions/runs/41302659108)). They lean towards the things that can be quietly wrong rather than the things that are obviously wrong: that a repeat import creates no duplicates, that a failed fetch is counted rather than dropped, that a fixture row cannot be read as a live one, that a counting query says `FINAL`, and that the fixture gate itself fails when a category goes missing.
 
+### Dependency updates
+
+`python/requirements.txt` is what people write; `python/pylock.toml` (PEP 751) is what CI and machines install, and it is pinned to Linux binary wheels. The two must describe the same set, so **a pip bump must pair with a regenerated lock** — change both in one commit. `python scripts/check_lock_parity.py` is the check CI runs, and it prints the fix when it fails:
+
+```bash
+scripts/refresh_lock.sh              # regenerates the lock inside python:3.12-slim, keeps the header
+# or, equivalently, by hand:
+docker run --rm -v "$PWD:/src" -w /src python:3.12-slim sh -c 'pip install -q -U pip; pip lock -q -r python/requirements.txt -o /dev/stdout' > python/pylock.toml
+```
+
+Regenerate inside that container, not on the host: the lock records Linux wheels (grpcio and friends), so a Windows or macOS run produces a lock the CI cannot install. `scripts/refresh_lock.sh` fails loudly when Docker is absent rather than writing a host-shaped lock.
+
 ## Tech Stack
 
 **Languages:** Python 3.11+, Go 1.22+
