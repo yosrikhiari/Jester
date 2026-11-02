@@ -95,23 +95,27 @@ words above are about `main`; the words below are about the branch only:
 ### Verification evidence
 
 Only what was run on this branch is listed, with the commit it was run against.
-There is no CI run to cite: the branch was never pushed.
+The branch was pushed for PR #79, so the CI run that gates the merge is cited
+beside the local runs.
 
 | Command | Where | Result |
 |---|---|---|
 | `python -m pytest python/tests -q` (with `PYTHONPATH=python JESTER_MOCK=1`, `TMP`/`TEMP` set) | tree committed as `69f2353` | `2220 passed, 12 skipped, 13 deselected, 41 warnings in 463.58s (0:07:43)` |
 | the same command | tree committed as `d4ecc28` (four prose-only edits followed the Task 9 run; `test_doc_links` and `test_schedule_apply` were re-run green) | `2225 passed, 12 skipped, 13 deselected, 41 warnings in 466.21s (0:07:46)` |
 | the same command | tree of the final fix commit (the whole-branch review's two Importants and the re-review's notes; two tests added, three edited; this row is the only edit made after the run, and `test_doc_links` was re-run green) | `2227 passed, 12 skipped, 13 deselected, 41 warnings in 480.63s (0:08:00)` |
+| the same command | tree of the CI fix commit `94ba3f2` (two platform-fragile assertions corrected: sorted directory names, a 50 ms tolerance on the whole-call budget timeout; no test count change) | `2227 passed, 12 skipped, 13 deselected, 41 warnings in 508.10s (0:08:28)` |
+| GitHub Actions CI run `41508062030` (Python job) | `94ba3f2` | `2225 passed, 14 skipped, 13 deselected, 41 warnings in 322.00s (0:05:22)`; coverage 89.85% (gate 86%); the Go, Frontend, Windows and Sonar checks also succeeded |
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2239` / `go test functions: 299` |
 | `go vet ./...` | `go/`, this commit | no output (clean); no Go file changed after `5f66917` |
 | `go test ./...` | `go/`, this commit | every package `ok`; the `cmd/*` probe packages have no test files |
 | `python scripts/check_lock_parity.py` | this commit | `lock parity: 6 direct requirement(s) agree with 30 locked package(s)` |
 | the focused suites named in the task reports | throughout the cycle | `test_idea_atomic_write`, `test_signals_health`, `test_signals_archive`, `test_journal_publish`, `test_journal_checks`, `test_config_strictness`, `test_console_server`, `test_dependency_gates`, `test_backup_restore`, `test_container_user`, `test_schedule_apply`, `test_doctor`, `test_scoring_eval`, `test_extraction_eval`, `test_doc_links` |
 
-`npm` and the frontend gates were not re-run for this task: `node_modules` is
-absent in this worktree and Task 9 changed no frontend file. The only frontend
-gate output on the branch is Task 6's `npm audit` at `ffcb072` (0
-vulnerabilities), recorded in that task's report.
+CI's frontend job (lint and build) ran at `94ba3f2` and succeeded. Locally the
+frontend gates were not re-run for this task: `node_modules` is absent in this
+worktree and Task 9 changed no frontend file. The only local frontend gate
+output on the branch is Task 6's `npm audit` at `ffcb072` (0 vulnerabilities),
+recorded in that task's report.
 
 ### Owner actions outstanding
 
