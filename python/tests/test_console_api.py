@@ -494,3 +494,55 @@ def test_provenance_survives_a_round_trip_through_the_archive(api):
     api.db.commit()
     row = next(r for r in list_nuggets(api.db) if r["unique_key"] == "reddit:t1:c1")
     assert row["extractor_model"] == "openai/gpt-oss-20b"
+
+
+# ── the scraper launcher card: a stale command vs a stale format ─────────────
+# `launcher_drift` reports `stale` for two reasons — the argv differs, or the
+# file's format marker is older than this code's. The card has to carry which
+# one, because the console says "runs an older command" for a stale launcher
+# and that is false when the command is identical.
+
+def _installed_task(monkeypatch):
+    from jester import schedule
+
+    monkeypatch.setattr(schedule, "status", lambda *a, **kw: {"installed": True})
+
+
+def _launcher_drift(monkeypatch, argv, want):
+    from jester import schedule
+
+    monkeypatch.setattr(schedule, "launcher_drift", lambda command: {
+        "stale": True, "argv": argv, "want": want,
+        "want_version": schedule.LAUNCHER_VERSION})
+
+
+def test_the_card_marks_a_format_only_drift(api, monkeypatch):
+    _installed_task(monkeypatch)
+    _launcher_drift(monkeypatch, "cycle", "cycle")
+    card = api.jobs_scraper()["launcher"]
+    assert card["stale"] is True
+    assert card["runs"] == card["should"], "the wording defect is only possible when these match"
+    assert card["format_only"] is True
+
+
+def test_the_card_does_not_call_a_changed_command_a_format_drift(api, monkeypatch):
+    _installed_task(monkeypatch)
+    _launcher_drift(monkeypatch, "cycle --old", "cycle")
+    card = api.jobs_scraper()["launcher"]
+    assert card["stale"] is True
+    assert card["runs"] != card["should"]
+    assert card["format_only"] is False
+
+
+def test_the_launcher_wording_branches_on_format_only():
+    """app.js has no runner (see the static-id note above): this pins that the
+    branch the payload was added for exists, that the command wording is kept
+    for the argv case, and that the refresh button is still offered."""
+    js = _static("app.js")
+    head = js.split("function scraperLauncherWords")[1].split("\nfunction ")[0]
+    assert "if (l.format_only)" in head
+    assert "older format than this code writes" in head
+    assert "runs an older command than run now" in head
+    format_branch = head.split("if (l.format_only) {")[1].split("}")[0]
+    assert "+ fix" in format_branch, "the format branch must keep the refresh button"
+    assert "data-scraper-refresh" in head

@@ -249,7 +249,11 @@ class ApiSignalsMixin:
         if not st.get("installed") or not drift:
             return {"stale": False}
         return {"stale": drift["stale"], "runs": CLI + drift["argv"],
-                "should": CLI + drift["want"]}
+                "should": CLI + drift["want"],
+                # `stale` is also true when the command is current and only the
+                # launcher's file format is old; the console must not claim the
+                # command changed when the two strings are identical.
+                "format_only": drift["argv"] == drift["want"]}
 
     def schedule_refresh(self):
         """Rewrite every stale launcher from the current code, keeping its
