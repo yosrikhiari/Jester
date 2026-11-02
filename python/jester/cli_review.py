@@ -82,6 +82,13 @@ _LABEL_EXAMPLE = (
     '"verdict": "supported|fabricated|unchecked"}]}'
 )
 
+#: The eval files are committed at the repo root, not under the package: they
+#: are substrate for a human, and `--labels` defaults to them so `jester eval`
+#: with no flags reads the same file CI does.
+_EVAL_ROOT = Path(__file__).resolve().parents[2] / "eval"
+DEFAULT_LABELS_PATH = _EVAL_ROOT / "extraction" / "labels.jsonl"
+DEFAULT_AGREEMENT_PATH = _EVAL_ROOT / "scoring" / "agreement.jsonl"
+
 
 def cmd_eval_sample(args):
     """NB4: draw the evaluation sample, before any retention sweep.
@@ -149,7 +156,7 @@ def cmd_eval_extract(args):
     from jester.extraction_eval import (evaluate, format_report, gate_failures,
                                         load_labels)
 
-    path = Path(args.labels)
+    path = Path(getattr(args, "labels", None) or DEFAULT_LABELS_PATH)
     if not path.exists():
         print(f"no labels yet at {path}")
         print(f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}")
@@ -164,7 +171,8 @@ def cmd_eval_extract(args):
     print(format_report(report, seed=args.seed, labels_path=path))
     failures = gate_failures(report, min_f1=args.floor,
                              max_fabrication=args.fabrication_ceiling,
-                             max_nuggets_per_comment=args.max_nuggets_per_comment)
+                             max_nuggets_per_comment=args.max_nuggets_per_comment,
+                             min_kappa=getattr(args, "min_kappa", 0.6))
     for failure in failures:
         print(f"GATE: {failure}")
     if failures:
@@ -172,6 +180,41 @@ def cmd_eval_extract(args):
         sys.exit(1)
     print("extraction eval OK: every published floor holds")
     return {"ok": True, "report": report}
+
+
+def cmd_eval_agreement(args):
+    """V3-13: the owner's scores against the model's, per axis.
+
+    Only the measurement exists: the human column is the owner's to write.
+    No file (or an empty one) is the pause before that scoring, so the command
+    says what to write and exits 0; fewer compared ideas than `--min` prints
+    the report and says it is not yet measurable rather than gating on a
+    number taken from too few ideas.
+    """
+    from jester.scoring_eval import (evaluate_agreement, example_row,
+                                     format_report as format_agreement,
+                                     load_rows)
+
+    minimum = getattr(args, "min", 30)
+    path = Path(getattr(args, "labels", None) or DEFAULT_AGREEMENT_PATH)
+    rows = load_rows(path) if path.exists() else []
+    if not rows:
+        if path.exists():
+            print(f"no agreement scores yet at {path} (the file is empty)")
+        else:
+            print(f"no agreement scores yet at {path}")
+        print(f"add JSONL rows, one idea per line: {example_row()}")
+        return {"ok": True, "labels": 0}
+
+    report = evaluate_agreement(rows, min_rows=minimum)
+    print(format_agreement(report, labels_path=path))
+    if report["measurable"]:
+        print(f"measurable: {report['n_compared']} compared of "
+              f"{report['min_rows']} required")
+    else:
+        print(f"not yet measurable: {report['n_compared']} compared of "
+              f"{report['min_rows']} required")
+    return {"ok": True, **report}
 
 
 def cmd_mark(args):

@@ -321,9 +321,19 @@ def format_report(report, *, seed: int, labels_path) -> str:
 
 
 def gate_failures(report, *, min_f1=0.70, max_fabrication=0.05,
-                  max_nuggets_per_comment=1.2):
-    """The published floors. An absent metric is a failure, not a pass."""
+                  max_nuggets_per_comment=1.2, min_kappa=0.6):
+    """The published floors. An absent metric is a failure, not a pass.
+
+    κ is the exception the rule bends for: it is None when no comment carries
+    two ratings, or when every rating is one class (chance agreement is 1, so
+    κ is undefined). Neither is evidence of disagreement, so the floor applies
+    only when κ was measurable.
+    """
     out = []
+    kappa = report.get("kappa")
+    if kappa is not None and kappa < min_kappa:
+        out.append(f"kappa {kappa:.3f} is below the {min_kappa:.2f} floor "
+                   f"({report.get('double_labelled', 0)} double-labelled)")
     f1 = report.get("f1")
     if f1 is None:
         out.append("F1 is unavailable: the label set has no supported predictions "

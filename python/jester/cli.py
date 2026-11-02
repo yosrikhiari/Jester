@@ -84,6 +84,7 @@ from jester.cli_review import (
     _parse_eval_line,
     _score,
     cmd_eval,
+    cmd_eval_agreement,
     cmd_eval_extract,
     cmd_eval_sample,
     cmd_list,
@@ -94,11 +95,14 @@ from jester.cli_review import (
 
 
 def _cmd_eval(args):
-    """`jester eval` keeps its scoring default; `extract` is S-06 and `sample`
-    is the NB4 draw that must happen before retention."""
+    """`jester eval` keeps its scoring default; `extract` is S-06, `sample`
+    is the NB4 draw that must happen before retention, and `agreement` is the
+    human-vs-model scoring comparison (V3-13)."""
     mode = getattr(args, "mode", "score")
     if mode == "extract":
         return cmd_eval_extract(args)
+    if mode == "agreement":
+        return cmd_eval_agreement(args)
     if mode == "sample":
         return cmd_eval_sample(args)
     return cmd_eval(args)
@@ -4379,11 +4383,13 @@ def main(argv=None):
     l.set_defaults(func=cmd_list)
 
     e = sub.add_parser("eval")
-    e.add_argument("mode", nargs="?", choices=("score", "extract", "sample"),
+    e.add_argument("mode", nargs="?",
+                   choices=("score", "extract", "sample", "agreement"),
                    default="score",
                    help="score (default) checks scoring arithmetic; extract runs "
                         "the S-06 extraction-quality harness over labels; sample "
-                        "draws the committed 150-comment evaluation sample")
+                        "draws the committed 150-comment evaluation sample; "
+                        "agreement compares the owner's scores with the model's")
     e.add_argument(
         "--good",
         default=str(Path(__file__).resolve().parents[2] / "eval" / "known_good.md"),
@@ -4395,9 +4401,18 @@ def main(argv=None):
     e.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     e.add_argument(
         "--labels",
-        default=str(Path(__file__).resolve().parents[2] / "eval" / "extraction"
-                    / "labels.jsonl"),
-        help="JSONL labels for `eval extract`",
+        default=None,
+        help="with `extract`: JSONL labels (default "
+             "eval/extraction/labels.jsonl); with `agreement`: JSONL human and "
+             "model scores (default eval/scoring/agreement.jsonl)",
+    )
+    e.add_argument(
+        "--min",
+        type=int,
+        default=30,
+        dest="min",
+        help="with `agreement`: compared ideas required before the MAE is "
+             "treated as measurable (default 30)",
     )
     e.add_argument("--db", default="data/jester.db")
     e.add_argument(
@@ -4414,6 +4429,9 @@ def main(argv=None):
     e.add_argument("--seed", type=int, default=20261031,
                    help="sample seed recorded in the report")
     e.add_argument("--floor", type=float, default=0.70, help="minimum F1")
+    e.add_argument("--min-kappa", type=float, default=0.6,
+                   help="with `extract`: minimum Cohen's kappa over the "
+                        "double-labelled rows (default 0.6)")
     e.add_argument("--fabrication-ceiling", type=float, default=0.05)
     e.add_argument("--max-nuggets-per-comment", type=float, default=1.2)
     e.set_defaults(func=_cmd_eval)
