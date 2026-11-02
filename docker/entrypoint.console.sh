@@ -26,8 +26,34 @@ fi
 # needing a secret. When a token IS set, the operator asked for writes, so the
 # flag is omitted. Extra flags from the command (--read-auth, --port, ...) pass
 # through untouched.
+#
+# A read-only ConsoleAPI never creates the schema (POST /api/migrate is refused
+# too), so on a fresh `jester_docker_data` volume every page would answer 503
+# forever while /metrics stayed green. Bootstrap the archive here, once, before
+# the console starts. This is the container's own archive setup, not an HTTP
+# write path -- the server still refuses writes, including /api/migrate.
+#
+# The archive is whatever the console was told via --db VALUE or --db=VALUE;
+# the image CMD passes /app/data/jester-docker.db, which is also the fallback.
+db=/app/data/jester-docker.db
+previous=
+for arg in "$@"; do
+    case $arg in
+        --db=*) db=${arg#--db=} ;;
+    esac
+    if [ "$previous" = "--db" ]; then
+        db=$arg
+    fi
+    previous=$arg
+done
+
 if [ -z "${JESTER_CONSOLE_TOKEN:-}" ]; then
-    echo "console-entrypoint: JESTER_CONSOLE_TOKEN is unset; starting the console read-only." >&2
+    echo "console-entrypoint: JESTER_CONSOLE_TOKEN is unset; migrating $db, then starting the console read-only." >&2
+    # Fail loudly: with no schema every route answers 503, which /metrics hides.
+    if ! python -m jester.cli migrate --db "$db"; then
+        echo "console-entrypoint: migration of $db failed; refusing to start a console with no schema." >&2
+        exit 1
+    fi
     set -- "$@" --read-only
 fi
 
