@@ -262,16 +262,72 @@ def test_chat_store_never_issues_update_or_delete_statements():
 
 
 def test_history_window_caps_the_model_view(ctx, chat_db):
+    """R4-11 (filed as V3-03): the window must hold the NEWEST turns.
+
+    The store used to return the OLDEST `limit` rows, so a transcript longer
+    than the window fed the model the first 24 fillers forever and the current
+    turn survived only while the transcript was short — the wrong-answer trap
+    ran invisibly because chat was never enabled. The window is applied at the
+    source: `ChatStore.messages` returns the newest `limit`, chronological.
+    """
     db_path, store = chat_db
     sid = store.begin_session("greeting")
-    for i in range(HISTORY_WINDOW + 6):
+    for i in range(HISTORY_WINDOW + 6):          # 30 messages, seqs 1..30
         store.add_message(sid, "user", f"filler {i}")
     from jester.chat.session import SessionRunner
     runner = SessionRunner(ctx, _client_cli_class([{"text": "done"}])(),
                            chat_db=db_path, session_id=sid)
     history = runner._model_history()
-    assert len(history) == HISTORY_WINDOW
-    assert history[0]["content"].startswith("filler")
+    assert [m["content"] for m in history] == [
+        f"filler {i}" for i in range(6, 30)]
+
+
+def test_the_store_answers_the_newest_turn_and_the_list_stays_chronological(chat_db):
+    """A 30-message session, asked for the newest 24: seqs 7..30, in order."""
+    _, store = chat_db
+    sid = store.begin_session("greeting")
+    for i in range(1, 31):
+        store.add_message(sid, "user", f"message {i}")
+
+    got = store.messages(sid, limit=24)
+
+    assert [m["seq"] for m in got] == list(range(7, 31))
+    assert got[-1]["content"] == "message 30"
+    assert got[0]["content"] == "message 7"
+
+
+def _recording_client_class(seen, script):
+    """A fake that snapshots the history the runner hands it, per call."""
+
+    class Rec(_client_cli_class(script=script)):
+        def chat(self, message, history, tools):
+            seen.append(list(history))
+            return super().chat(message, history, tools)
+
+    return Rec
+
+
+def test_a_long_session_builds_history_from_the_current_turn_backwards(
+        ctx, chat_db):
+    """The register's case: 30 stored messages, then a real turn — the history
+    the client receives contains message 30 AND the current user's words, and
+    never the transcript's oldest filler."""
+    db_path, store = chat_db
+    sid = store.begin_session("greeting")
+    for i in range(1, 31):
+        store.add_message(sid, "user", f"filler {i}")
+    seen = []
+    from jester.chat.session import SessionRunner
+    runner = SessionRunner(
+        ctx, _recording_client_class(seen, [{"text": GROUNDED}])(),
+        chat_db=db_path, session_id=sid)
+    turn = runner.run_turn("hello")
+
+    model_history = seen[0]
+    assert turn.ok
+    assert model_history[-1]["content"] == "hello", "the current turn is in"
+    assert "filler 30" in [m["content"] for m in model_history]
+    assert "filler 1" not in [m["content"] for m in model_history]
 
 
 # ---- registry rows are real, not just declared ---------------------------------

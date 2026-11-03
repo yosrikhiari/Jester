@@ -246,7 +246,10 @@ class SessionRunner:
         """
         if self.store is None:
             return []
-        msgs = self.store.messages(self.session_id)[:HISTORY_WINDOW]
+        # The window is applied at the source: the store returns the MOST
+        # RECENT `limit` messages (R4-11), so a 30-turn transcript keeps the
+        # 24 turns that touch today's question, not the 24 that came first.
+        msgs = self.store.messages(self.session_id, limit=HISTORY_WINDOW)
         return [
             {"role": m["role"] if m["role"] in ("user", "assistant", "tool")
              else ("assistant" if m["role"] == "chat" else "user"),
