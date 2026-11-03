@@ -20,19 +20,41 @@ import (
 // detailPerPage bounds the optional second fetch per result page. Zero leaves
 // it off, which is the default: it is one request per listing on top of the
 // result page.
-func FetchListingList(ctx context.Context, src config.Source, delay time.Duration, perSource int, configDir string, detailPerPage int) ([]store.Listing, error) {
+// Stats is what one portal walk produced and cost: the per-run facts the
+// drift ledger records beside the source's row in run_outcome. Pages are
+// counted per attempted URL; latency wraps the fetch call whole, so a page
+// that stumbles into its bounded retry lands the retry's backoff inside its
+// own clock — that is a fair cost of that page, but it is not one request's
+// latency, and the trend cards should read it that way.
+type Stats struct {
+	Pages     int                    `json:"pages"`      // URLs attempted (planned pages × seeds)
+	PagesOK   int                    `json:"pages_ok"`   // fetched and parsed
+	PagesErr  int                    `json:"pages_err"`  // fetch or parse failed
+	Bytes     int                    `json:"bytes"`      // successful response bodies
+	LatencyMS int64                  `json:"latency_ms"` // time inside fetch calls only, pacing excluded
+	FetchMode string                 `json:"fetch_mode"` // "http" | "browser"
+	Parse     siteprofile.ParseStats `json:"parse"`      // siteprofile counters, summed over pages
+}
+
+func FetchListingList(ctx context.Context, src config.Source, delay time.Duration, perSource int, configDir string, detailPerPage int) ([]store.Listing, Stats, error) {
+	var st Stats
 	profilePath := filepath.Join(configDir, "profiles", src.Name+".yaml")
 	profileBytes, err := os.ReadFile(profilePath)
 	if err != nil {
-		return nil, fmt.Errorf("load profile %s: %w", profilePath, err)
+		return nil, st, fmt.Errorf("load profile %s: %w", profilePath, err)
 	}
 	profile, err := siteprofile.Load(profileBytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse profile %s: %w", src.Name, err)
+		return nil, st, fmt.Errorf("parse profile %s: %w", src.Name, err)
 	}
 
 	pages := pagePlan(profile.List, perSource)
 	overHTTP := strings.EqualFold(profile.Fetch, "http")
+	st.FetchMode = "browser"
+	if overHTTP {
+		st.FetchMode = "http"
+	}
+	st.Pages = len(pages)
 
 	var allListings []store.Listing
 	// The first failure is kept so that a run which fetches nothing can say
@@ -43,27 +65,34 @@ func FetchListingList(ctx context.Context, src config.Source, delay time.Duratio
 	for i, pageURL := range pages {
 		var body string
 		var err error
+		startAt := time.Now()
 		if overHTTP {
 			body, err = FetchPageHTTP(ctx, pageURL)
 		} else {
 			body, err = FetchRenderedPage(ctx, pageURL, delay, 0)
 		}
+		st.LatencyMS += time.Since(startAt).Milliseconds()
 		if err != nil {
+			st.PagesErr++
 			fmt.Printf("[live]   realestate page %d failed: %v\n", i+1, err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("fetch page %d: %w", i+1, err)
 			}
 			continue
 		}
+		st.Bytes += len(body)
 
-		listings, _, err := profile.Parse(body)
+		listings, ps, err := profile.Parse(body)
+		st.Parse.Add(ps)
 		if err != nil {
+			st.PagesErr++
 			fmt.Printf("[live]   realestate page %d parse failed: %v\n", i+1, err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("parse page %d: %w", i+1, err)
 			}
 			continue
 		}
+		st.PagesOK++
 
 		// Fields that only exist on a listing's own page, when asked for. Houni
 		// publishes no price on its tiles at all, so without this its listings
@@ -81,11 +110,11 @@ func FetchListingList(ctx context.Context, src config.Source, delay time.Duratio
 
 	if len(allListings) == 0 {
 		if firstErr != nil {
-			return nil, fmt.Errorf("no listings for %s, every page failed: %w", src.Name, firstErr)
+			return nil, st, fmt.Errorf("no listings for %s, every page failed: %w", src.Name, firstErr)
 		}
-		return nil, fmt.Errorf("no listings found for %s: %d page(s) parsed clean and held nothing", src.Name, len(pages))
+		return nil, st, fmt.Errorf("no listings found for %s: %d page(s) parsed clean and held nothing", src.Name, len(pages))
 	}
-	return allListings, nil
+	return allListings, st, nil
 }
 
 // pagePlan returns the page URLs to walk for one run, in order.

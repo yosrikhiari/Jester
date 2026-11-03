@@ -488,11 +488,11 @@ type ParseStats struct {
 	Fields     map[string]int `json:"fields"`     // profile field -> kept rows where it was filled
 }
 
-// add accumulates one page's stats into s, so a portal's run stat is the sum
+// Add accumulates one page's stats into s, so a portal's run stat is the sum
 // of its pages. Field names agree across pages of one portal; a field that
 // only exists on some pages just accumulates fewer covered rows in its
 // denominator (which is the fact we are trying to see).
-func (s *ParseStats) add(o ParseStats) {
+func (s *ParseStats) Add(o ParseStats) {
 	s.Anchors += o.Anchors
 	s.Tiles += o.Tiles
 	s.Blocks += o.Blocks

@@ -852,7 +852,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 
 	case src.Platform == "realestate" && kind == "listing":
 		fmt.Printf("[live] realestate listing %s (portal: %s)\n", src.URL, src.Name)
-		listings, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir, cfg.Thresholds.RealestateDetailPerPage)
+		listings, _, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir, cfg.Thresholds.RealestateDetailPerPage)
 		if err != nil {
 			return 0, err
 		}
