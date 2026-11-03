@@ -5,7 +5,9 @@
 container was a second scheduler beside the host's. These are static checks on
 the text and on the compose file, because the properties that matter (who the
 process is, what it can write, whether a scheduler lives in it) are all
-decided in the image.
+decided in the image — and the one uid for both writers (R4-05) is stated
+twice on purpose, in each image's `USER` and in compose's `user:` for the
+service, with a test that those two statements agree.
 
 The live proof — `docker build` and `id` inside the container — is run
 separately and recorded in the task report; a static check here means a pull
@@ -31,8 +33,12 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO / "docker" / "Dockerfile.python"
+GO_DOCKERFILE = REPO / "docker" / "go.Dockerfile"
 ENTRYPOINT = REPO / "docker" / "entrypoint.console.sh"
 COMPOSE = REPO / "docker-compose.yml"
+#: Which compose service each container image powers. The uid agreement test
+#: reads the image's `USER` and compose's `user:` for the same writer.
+SERVICE = {"console": "jester-console", "worker": "go-worker"}
 
 # The entrypoint is a POSIX sh script, so exercising it needs a real sh. The
 # Linux CI job has one; a Windows dev box has one when pytest is launched from
@@ -396,8 +402,25 @@ def test_the_healthcheck_timeout_fits_inside_the_docker_timeout():
     assert 0 < int(probe.group(1)) < int(docker.group(1))
 
 
-def test_compose_still_overrides_through_the_image_user():
-    """`user:` in compose would be a second place to change the uid. The image
-    owns it; this test fails if someone adds the override without thinking."""
+def test_compose_pins_the_same_uid_the_images_choose():
+    """One uid for both writers (R4-05), and it is stated twice on purpose.
+
+    `docker/Dockerfile.python` and `docker/go.Dockerfile` each FIX the uid the
+    image runs as, and compose pins `user:` for both services so a
+    `docker compose run` override or an image rebuilt from a different base
+    cannot quietly reintroduce a second writer on the shared SQLite volume.
+    This test used to assert the opposite — that `user:` never appears in
+    compose, because the image alone owned the identity — and cd46208 made
+    that choice deliberately wrong: both places must now agree.
+    """
     config = yaml.safe_load(_text(COMPOSE))
-    assert "user" not in config["services"]["jester-console"]
+    console_uid = _user_lines(_text(DOCKERFILE))[-1][1]
+    worker_uid = _user_lines(_text(GO_DOCKERFILE))[-1][1]
+    for label, image_uid in (("console", console_uid), ("worker", worker_uid)):
+        first = int(str(image_uid).split(":")[0])
+        assert first != 0, f"the {label} image runs as root ({image_uid!r})"
+        pinned = str(config["services"][SERVICE[label]].get("user") or "")
+        got = int(pinned.split(":")[0]) if pinned else -1
+        assert got == first, (
+            f"compose runs the {label} service as uid {got}; "
+            f"the image runs as {first}")
