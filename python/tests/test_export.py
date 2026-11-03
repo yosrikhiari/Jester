@@ -1,6 +1,7 @@
 """CSV export: content split by type and origin, and §14 retention over it."""
 import csv
 import json
+import jester.export
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -245,6 +246,130 @@ def test_manifest_records_what_was_written_and_the_retention_caveat(db, tmp_path
     assert all("\\" not in name for name in manifest["files"])
     assert "retention" in manifest["retention_note"].lower()
     assert manifest["exported_at"]
+
+
+# ---- the export is atomic (R4-09) ------------------------------------------
+
+
+def test_a_killed_export_leaves_nothing_visible(db, tmp_path, monkeypatch):
+    out = tmp_path / "exports"
+    stage = tmp_path / "exports.staging"
+    real_write_shards = jester.export._write_shards
+    calls = []
+
+    def killed_after_first_shard(*args, **kwargs):
+        # The first shard group lands in staging; the second call dies, the
+        # way a crash or a kill would interrupt the run.
+        calls.append(args)
+        if len(calls) > 1:
+            raise OSError("killed mid-export")
+        return real_write_shards(*args, **kwargs)
+
+    monkeypatch.setattr(jester.export, "_write_shards", killed_after_first_shard)
+    with pytest.raises(OSError):
+        export_csv(db, out)
+
+    # No half export anywhere: the target never appeared and the staging tree
+    # — the only place anything was written — is removed on the way out.
+    assert not out.exists()
+    assert not stage.exists()
+
+    # A healthy run cleans up after the crash and produces a complete export.
+    monkeypatch.undo()
+    manifest = export_csv(db, out)
+    assert (out / MANIFEST).exists()
+    assert (out / "comments" / "reddit" / "reddit-001.csv").exists()
+    assert manifest["counts"]["comments"] == 3
+
+
+def test_a_kill_over_a_good_export_keeps_the_old_export_exactly(db, tmp_path, monkeypatch):
+    out = tmp_path / "exports"
+    export_csv(db, out)
+    old_manifest = (out / MANIFEST).read_text(encoding="utf-8")
+    old_files = sorted(str(p.relative_to(out)) for p in out.rglob("*.csv"))
+
+    real_write_shards = jester.export._write_shards
+    calls = []
+
+    def killed_after_first_shard(*args, **kwargs):
+        calls.append(args)
+        if len(calls) > 1:
+            raise OSError("killed mid-export")
+        return real_write_shards(*args, **kwargs)
+
+    monkeypatch.setattr(jester.export, "_write_shards", killed_after_first_shard)
+    with pytest.raises(OSError):
+        export_csv(db, out)
+
+    # The old export never describes bytes it does not hold: manifest and
+    # files are exactly what they were, and no half state sits beside it.
+    assert (out / MANIFEST).read_text(encoding="utf-8") == old_manifest
+    assert sorted(str(p.relative_to(out)) for p in out.rglob("*.csv")) == old_files
+    assert not (tmp_path / "exports.staging").exists()
+
+    # A clean re-export swaps the old tree out wholesale.
+    monkeypatch.undo()
+    manifest = export_csv(db, out)
+    assert json.loads((out / MANIFEST).read_text(encoding="utf-8")) == manifest
+    assert manifest["files"]["comments/reddit/reddit-001.csv"] == 2
+
+
+def test_a_reexport_swaps_out_the_previous_export_wholesale(db, tmp_path):
+    out = tmp_path / "exports"
+    export_csv(db, out)
+    ghost = out / "comments" / "ghost"
+    ghost.mkdir()
+    (ghost / "ghost-001.csv").write_text("stale", encoding="utf-8")
+
+    manifest = export_csv(db, out)
+    assert manifest["files"]["comments/reddit/reddit-001.csv"] == 2
+    # Nothing from the previous tree survives the swap, and no temp manifest
+    # is ever left under a reader-visible name.
+    assert not ghost.exists()
+    assert not list(out.glob("*.tmp"))
+    leftovers = [p.name for p in tmp_path.iterdir()
+                 if ".staging" in p.name or ".retired-" in p.name]
+    assert leftovers == []
+
+
+def test_a_historic_unmanifested_tree_is_replaced_by_the_next_export(db, tmp_path):
+    out = tmp_path / "exports"
+    out.mkdir()
+    (out / "old.csv").write_text("a previous tool's partial output", encoding="utf-8")
+
+    export_csv(db, out)
+    # jester was asked to own this directory: an unmanifested tree cannot be
+    # merged with a tree of another schema, so the swap replaces it whole.
+    assert (out / MANIFEST).exists()
+    assert not (out / "old.csv").exists()
+
+
+def test_prune_removes_jester_named_leftovers(tmp_path):
+    d = open_db(str(tmp_path / "r.db"))
+    out = tmp_path / "exports"
+    now = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    export_csv(d, out, now=now)
+    # Two leftovers only a hard kill can produce (the exporter's exit path
+    # removes both): a staging tree and a retired officer awaiting deletion.
+    (tmp_path / "exports.staging").mkdir()
+    (tmp_path / "exports.staging" / "half.csv").write_text(",", encoding="utf-8")
+    retired = tmp_path / "exports.retired-20260201T000000Z"
+    retired.mkdir()
+    (retired / MANIFEST).write_text("{}", encoding="utf-8")
+
+    # A fresh export survives its TTL window; jester's own leftovers do not.
+    assert prune_exports(out, ttl_days=30, now=now + timedelta(days=5)) == 2
+    assert not (tmp_path / "exports.staging").exists()
+    assert not retired.exists()
+    assert out.exists()
+
+    # The sweep runs even when the target itself is gone: a hard kill can
+    # leave staging beside nothing, and the stale export is still pruned.
+    assert prune_exports(out, ttl_days=30, now=datetime(2026, 4, 10, tzinfo=timezone.utc)) == 1
+    assert not out.exists()
+    (tmp_path / "exports.staging").mkdir()
+    assert prune_exports(out, ttl_days=30, now=datetime(2026, 4, 10, tzinfo=timezone.utc)) == 1
+    assert not (tmp_path / "exports.staging").exists()
 
 
 # ---- console + defaults ----------------------------------------------------
