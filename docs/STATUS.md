@@ -5,23 +5,23 @@ ID to its evidence; this page says which of them is current and where the
 remaining work sits. **If this page and another document disagree about a
 status, this page wins** — fix the other document in the same change.
 
-> **Branch `v3-hardening` (base `5a4bd36`).** The V3 hardening cycle lives on
-> the branch `v3-hardening`, which is **not pushed and not merged**. `main` is
-> `5a4bd36` — one docs-only commit after the `v0.1.0` tag (`d2da8de`);
-> nothing in [V3 hardening cycle](#v3-hardening-cycle-branch) below is a claim
-> about `main`, and it becomes one only after review and merge. The live
-> archive was **not** modified by this work: no command here opened
-> `data/jester.db` for writing.
+> **Branch `v4-strategy-batches` (base `b01349e`).** The V3 hardening cycle is
+> **merged**: PR #79 landed as squash `7005078` on `main` (2026-11-02), and
+> the section below describes `main`'s state. `main` is `4c1773c`, holding
+> one red run (`41511125479`, lock parity — Dependabot's pip bump recurred
+> without its paired lock regeneration); the green, unmerged fix is PR #85
+> (`b01349e`), which the owner merges first. The 2026-11-02 v4 work —
+> batches B1–B5 of [the 2026-11-02 report](reports/2026-11-02-next-development-strategy.md) —
+> lives on `v4-strategy-batches` as local commits and does not touch the
+> live archive: no command here opened `data/jester.db` for writing.
+> [The R4 register](#r4-register-2026-11-02-report) below maps every item to
+> its wave and its remaining owner half.
 
-**As of 2026-11-01.** Code status is against `main` at `d2da8de`, which is
-tagged `v0.1.0` (annotated tag object `45d755c`). Push CI `41305838637` is
-green in all six checks, `SonarCloud Code Analysis` reports success on the
-same commit, and `main` now requires the four PR-visible checks (C.8). Earlier
-in the day the Sonar gate cleared at `a8be9c0` (`41300116727`), the scheduled
-live lane's first run failed one test at `acd424e` (`41300973142`), and the
-dispatched lane `41302659108` passed 11 live tests with none skipped after the
-fix (C.7). Four frontend dependency PRs were merged; three are held with
-reasons (C.8). The live archive was **not** modified by this cycle.
+**As of 2026-11-03.** `main` is `4c1773c` and red on the lock-parity run
+`41511125479`; PR #85 (`b01349e`) is green in all six checks and unmerged;
+`v4-strategy-batches` carries B1–B4 (commits `1fb7afc…b473d8b`) plus B5
+(`4b1e830…5236fab` and this commit), green locally — verification is in the
+R4 register. The live archive was **not** modified by any of this work.
 
 **Extraction quality is NOT MEASURED (stated 2026-11-02).** No
 `eval/extraction/labels.jsonl` is committed, so `jester eval extract` exits 0
@@ -36,55 +36,57 @@ a real gate and the first measured number can be printed with its denominator.
 
 Status words:
 
+- **Merged** — the V3 cycle's code, tests and docs are on `main` via PR #79
+  (squash `7005078`, 2026-11-02); the evidence is that cycle's green CI run
+  (`41508062030` at `94ba3f2`), and no merged row was re-proven by a
+  dedicated post-merge run.
 - **Shipped** — code, tests and docs are on `main` and the named suite passes.
 - **Owner-gated** — the code side is ready; the next step needs your machine,
   your data, your credentials, your labels, or your judgement.
 - **Not started** — no work done.
 - **Not this cycle** — deliberately deferred.
 
-## V3 hardening cycle (branch)
+## V3 hardening cycle (merged on main)
 
 The register is the 2026-11-01 V3 strategy report (`V3-01` … `V3-26`), which is
-not in this tree. The per-row evidence is the task brief and report under
-`.superpowers/sdd/v3-hardening/`, and the code is on this branch. The status
-words above are about `main`; the words below are about the branch only:
+still not in this tree; the per-row evidence is the task briefs and reports
+under `.superpowers/sdd/v3-hardening/`, and the code is on `main` via PR #79
+(squash `7005078`). The word is **Merged**, defined in the list above; row
+extras say what each merged row still owes:
 
-- **On branch** — code, tests and docs are on `v3-hardening`; the full Python
-  suite is green at `69f2353` (this task's parent), and each focused suite
-  passed at the commit named in its task report.
-- **On branch, owner half named** — the mechanism exists; the remaining half
+- **Merged, owner half named** — the mechanism is merged; the remaining half
   needs the owner's machine, data, labels or judgement.
-- **Ruling** — decided this cycle, with no code change.
-- **Open** — not done on this branch.
+- **Ruling** — decided that cycle, with no code change.
+- **Open** — not done (or, for V3-03, fixed only on the newer branch).
 
-| ID | Task | What is on the branch | Status |
+| ID | Task | What is merged | Status |
 |---|---|---|---|
-| V3-01 | T1 | Idea claim and insert in one `BEGIN IMMEDIATE`; a deterministic `ideas.support_key` plus index stops a second idea on the same evidence; fault-injection tests | On branch |
-| V3-02 | T1 | A corrupt `blocked_until` fails closed with a named window; quota spend is one conditional statement whose rowcount is the verdict; the rescore queue takes a per-idea claim | On branch |
-| V3-03 | — | Nothing. Chat history still returns the oldest 24 messages. | **Open** (not in this plan) |
-| V3-04 | T3 | `signals_source_state` streak table; `jester health --days 7` exits 1 on a barren, stale or erroring source; the launcher turns a non-zero exit into a notify | On branch |
-| V3-05 | T5 | An approval records a manifest over revision, figures and saved copies, and export and publish recompute it; `obs:<label>\|<reason>`; headings and inline code are prose | On branch |
-| V3-06 | T4 | CSV export is atomic and reconciled by id and content hash; ClickHouse schema v2 with additive `ALTER`; `signals retention --days 365`, declared paused | On branch |
-| V3-07 | T2 | A malformed or refused reply is filed `ok=0`; the rescore path files `llm_calls`; archivist failures are counted and logged once per run | On branch |
-| V3-08 | T6 | No DDL on read paths; `jester doctor` adds an advisory WAL note and still never changes the mode | On branch, owner half named: enable WAL on the live archive after the benchmark-backed decision |
-| V3-09 | T2 | One retry policy (socket, DNS, TLS and 5xx alike) with one deadline per call | On branch |
-| V3-10 | T6 | Unknown top-level config keys are refused; a `roles:` block must name a model for each role it lists | On branch |
-| V3-11 | T6 | Dependabot gains `gomod`; `govulncheck` and `npm audit --audit-level=high` are blocking CI steps | On branch; CI did not run on this branch |
-| V3-12 | T6 | 1 MiB body cap answered 413, Host allow-list answered 403, 30 s per-connection timeout | On branch |
-| V3-13 | T8 | κ is a gate at 0.6 with its denominator printed; `jester eval agreement` reports per-axis MAE with denominators and `--min 30` | On branch, owner half named: label the 150 extraction rows and the 30 scorer-agreement ideas |
-| V3-14 | T7 | Every mutable signal field is refreshed; a correction keeps its replaced row; `problem_signal_read` makes an HN removal visible instead of guessed | On branch |
-| V3-15 | T5 | Approvals expire after 30 days; `journal snapshots --verify` re-checks stored copies and only re-fetches with `--network`; a retracted article leaves the index, feed and export | On branch |
+| V3-01 | T1 | Idea claim and insert in one `BEGIN IMMEDIATE`; a deterministic `ideas.support_key` plus index stops a second idea on the same evidence; fault-injection tests | Merged |
+| V3-02 | T1 | A corrupt `blocked_until` fails closed with a named window; quota spend is one conditional statement whose rowcount is the verdict; the rescore queue takes a per-idea claim | Merged |
+| V3-03 | — | On `main`, nothing: history still returns the oldest 24 messages. | **Open**; fixed in code on `v4-strategy-batches` (R4-11: newest-24) |
+| V3-04 | T3 | `signals_source_state` streak table; `jester health --days 7` exits 1 on a barren, stale or erroring source; the launcher turns a non-zero exit into a notify | Merged |
+| V3-05 | T5 | An approval records a manifest over revision, figures and saved copies, and export and publish recompute it; `obs:<label>\|<reason>`; headings and inline code are prose | Merged |
+| V3-06 | T4 | CSV export is atomic and reconciled by id and content hash; ClickHouse schema v2 with additive `ALTER`; `signals retention --days 365`, declared paused | Merged |
+| V3-07 | T2 | A malformed or refused reply is filed `ok=0`; the rescore path files `llm_calls`; archivist failures are counted and logged once per run | Merged |
+| V3-08 | T6 | No DDL on read paths; `jester doctor` adds an advisory WAL note and still never changes the mode | Merged, owner half named: enable WAL on the live archive after the benchmark-backed decision |
+| V3-09 | T2 | One retry policy (socket, DNS, TLS and 5xx alike) with one deadline per call | Merged |
+| V3-10 | T6 | Unknown top-level config keys are refused; a `roles:` block must name a model for each role it lists | Merged |
+| V3-11 | T6 | Dependabot gains `gomod`; `govulncheck` and `npm audit --audit-level=high` are blocking CI steps | Merged (the cycle's PR run `41508062030` is green) |
+| V3-12 | T6 | 1 MiB body cap answered 413, Host allow-list answered 403, 30 s per-connection timeout | Merged |
+| V3-13 | T8 | κ is a gate at 0.6 with its denominator printed; `jester eval agreement` reports per-axis MAE with denominators and `--min 30` | Merged, owner half named: label the 150 extraction rows and the 30 scorer-agreement ideas |
+| V3-14 | T7 | Every mutable signal field is refreshed; a correction keeps its replaced row; `problem_signal_read` makes an HN removal visible instead of guessed | Merged |
+| V3-15 | T5 | Approvals expire after 30 days; `journal snapshots --verify` re-checks stored copies and only re-fetches with `--network`; a retracted article leaves the index, feed and export | Merged |
 | V3-16 | — | Nothing extracted. | **Ruling** (below) |
-| V3-17 | T2 | Crash recording is scoped to the run the process started; a failing subcommand no longer brands a live run as errored | On branch; the register's other half (moving the decoy databases) is not done |
-| V3-18 | T3 | The Windows launcher and the POSIX cron line run `jester notify` only on a non-zero exit and keep the run's code | On branch |
-| V3-19 | T9 | README names SQLite the source of truth and ClickHouse an optional manual mirror; `JesterClickHouseLoad` is declared after the brief, paused | On branch |
+| V3-17 | T2 | Crash recording is scoped to the run the process started; a failing subcommand no longer brands a live run as errored | Merged; the register's other half (moving the decoy databases) is not done |
+| V3-18 | T3 | The Windows launcher and the POSIX cron line run `jester notify` only on a non-zero exit and keep the run's code | Merged |
+| V3-19 | T9 | README names SQLite the source of truth and ClickHouse an optional manual mirror; `JesterClickHouseLoad` is declared after the brief, paused | Merged |
 | V3-20 | — | No frontend change. | **Ruling** (below) |
-| V3-21 | T9 | `docs/plans/archive/README.md` states the archive rule and records that no plan qualifies; `python/tests/test_doc_links.py` checks every relative path in the tracked `.md` files; one broken link repaired | On branch |
-| V3-22 | T1 | `GET /api/config` blanks any secret-named value and returns a `secrets_set` map; the UI reads that map | On branch |
-| V3-23 | T7 | Backup covers `journal.db`, `chat.db` and `.env`, verifies the snapshot, restores into a new file (`backup restore`), supports `--also-to`, and a monthly drill | On branch, owner half named: choose and provide the second volume |
-| V3-24 | T6 | `scripts/check_lock_parity.py` runs in both Python CI jobs and fails on unpinned, missing or older-than-floor requirements | On branch, partial: Windows still installs `requirements.txt`, and `pyproject.toml` is not read |
-| V3-25 | T7 | The console image runs as uid 10001 with cron removed; the built image reports `uid=10001(jester)`, no `cron`, and a writable `/app/data` | On branch; the compose stack was not started (no second writer against a live archive) |
-| V3-26 | T7 | `/rl LIMITED` on every task, `--run-as` for an account, 5 MB x 3 log rotation, launcher format marker v2 | On branch, owner half named: choose the Windows task account before `schedule apply` |
+| V3-21 | T9 | `docs/plans/archive/README.md` states the archive rule and records that no plan qualifies; `python/tests/test_doc_links.py` checks every relative path in the tracked `.md` files; one broken link repaired | Merged |
+| V3-22 | T1 | `GET /api/config` blanks any secret-named value and returns a `secrets_set` map; the UI reads that map | Merged |
+| V3-23 | T7 | Backup covers `journal.db`, `chat.db` and `.env`, verifies the snapshot, restores into a new file (`backup restore`), supports `--also-to`, and a monthly drill | Merged, owner half named: choose and provide the second volume |
+| V3-24 | T6 | `scripts/check_lock_parity.py` runs in both Python CI jobs and fails on unpinned, missing or older-than-floor requirements | Merged, partial: Windows still installs `requirements.txt`, and `pyproject.toml` is not read |
+| V3-25 | T7 | The console image runs as uid 10001 with cron removed; the built image reports `uid=10001(jester)`, no `cron`, and a writable `/app/data` | Merged; the compose stack was not started by that cycle (no second writer against a live archive) |
+| V3-26 | T7 | `/rl LIMITED` on every task, `--run-as` for an account, 5 MB x 3 log rotation, launcher format marker v2 | Merged, owner half named: choose the Windows task account before `schedule apply` |
 
 ### Rulings
 
@@ -130,17 +132,62 @@ recorded in that task's report.
 
 ### Owner actions outstanding
 
-- Label the 150 extraction rows (50 doubled) and the 30 scorer-agreement ideas;
-  the gates are wired and cannot report until the labels exist.
-- Enable WAL on the live archive after the benchmark-backed decision, on local
-  disk only.
-- Choose and provide a second backup volume; `backup --also-to` needs a path.
-- Choose the Windows task account before `jester schedule apply`, then apply.
+In the order the R4 register (and then the merged V3 leftovers) requires:
+
+- Merge PR #85 (`b01349e`) — the green lock-parity fix — before anything
+  else, then make the Windows job a required context and set `strict=true`
+  (deciding `enforce_admins`) (R4-01).
+- Label the 150 extraction rows (50 doubled) and the 30 scorer-agreement
+  ideas; the gates are wired and print NOT MEASURED until the labels exist
+  (R4-06).
+- `schedule apply --dry-run` and then apply, choosing the Windows task
+  account before `apply` (R4-02's host half and R4-12; closes V3-26's owner
+  half).
+- Enable WAL on the live archive after the benchmark-backed decision, on
+  local disk only (V3-08 / R4-12).
+- Choose and provide a second backup volume for `backup --also-to`, then
+  take the restore drill on a copy (R4-07; closes V3-23's owner half).
 - Re-approve any live journal approval once after merge: approvals recorded
   before the manifest binding are refused until taken again.
 - Flip `JesterNightlyRetention`, `JesterSignalsRetention`,
-  `JesterNightlyBackupDrill` and `JesterClickHouseLoad` only by owner decision;
-  each is declared and disabled for a stated reason.
+  `JesterNightlyBackupDrill` and `JesterClickHouseLoad` only by owner
+  decision; each is declared and disabled for a stated reason.
+- Then the R4-12 lane: migrate and drain the rescore queue in bounded
+  windows, and read one week of scheduled runs (`jester health`,
+  `jester evidence`, zero `SQLITE_BUSY`, one restore drill).
+
+## R4 register (2026-11-02 report)
+
+The register is §9 of [the 2026-11-02 strategy report](reports/2026-11-02-next-development-strategy.md):
+items `R4-01` … `R4-12`, batched B1–B5 and executed as waves W1–W5 (W1 = B1,
+…, W5 = B5) on `v4-strategy-batches`. The first two columns come from the
+tree's commit history; the last column is the owner lane.
+
+| ID | Wave (commits) | What exists on `v4-strategy-batches` | What remains (owner unless stated) |
+|---|---|---|---|
+| R4-01 | W1 (`9f89e95`, `0e60328`, `a853a64`) | The parity failure prints the exact regeneration command (`9f89e95`); `docs/` states that a pip bump must pair with a regenerated lock (`0e60328`); both survived the W1 review fixes (`a853a64`) | Merge PR #85 first; Windows required context; `strict=true` with the `enforce_admins` decision; choose the lock-refresh shape (a `lock-refresh` workflow, or a paired Dependabot policy) and prove a seeded pip PR is refused or auto-fixed |
+| R4-02 | W1 (`1fb7afc`, `10f5263`, `2af9574`, `a853a64`) | Archive roles and a per-task DB override: every scheduled task names the archive it writes; CLI defaults `signals`/`health` to the signals archive; `signals_source_state` rename with a re-runnable additive migration; `contractcheck -signals` | `schedule apply --dry-run`, then apply on the host (with R4-12) |
+| R4-03 | W2 (`8524c94`, `b4a8dea`, `d6b4e69`, `378f87f`) | POST requires a token by default; non-loopback bindings refused without one; export `out_dir` contained to the exports root; `JESTER_QDRANT_URL` redacted to set/not-set | Provide the generated token to the compose stack's environment (a boot without one stays read-only by design) |
+| R4-04 | W2 (`c54d553`) | `config-live/` is a CI-checked overlay: identical non-model key sets asserted, an explicit intentional-defaults allowlist, and the promotion doc corrected; `update_thresholds` keeps writing only the patched keys (ruling) | — |
+| R4-05 | W3 (`cd46208`, `b56378e`) | Both shipped images run uid 10001, `user:` pins it in compose, `restart: unless-stopped` on console and worker; CI builds the images, starts the stack and asserts the worker row is readable | The one-time chown for a volume created by root-era images (documented in the quickstart) |
+| R4-06 | W4 (`c987052`) | `eval extract` and `eval agreement` print the NOT MEASURED block with `measured: false` and exit 0; STATUS carries the standing paragraph below | Commit the labels, then publish the first measured numbers |
+| R4-07 | W4 (`7c2b578`, `b473d8b`) | A failed second copy is reported as a partial set (`failed:` listed) instead of losing the first; backup args are declared; `.env` is kept by default with the ACL requirement documented and `--exclude-secrets` as the opt-out | Provide the second volume path, add it to the scheduled backup, `schedule apply`, and take the restore drill on a copy |
+| R4-08 | W5 (`faa344f`, `5236fab`, and this commit) | STATUS describes the tree again (this page); quickstart is OS-split with `jester doctor` as step 0 and per-OS paths; one Python floor (3.11) and one Go floor (1.26) — `pyproject.toml`, README, `go.mod`, `ci.yml` agree; the report itself is in the tree | — |
+| R4-09 | W5 (`f64ec08`) | The export tree is built in jester-owned staging, the manifest lands last through temp-file + replace, and the swap retires the previous export (restoring it if the replace fails); a kill leaves no visible export; `prune_exports` removes jester-named leftovers and never an unmanifested dir it did not write | — |
+| R4-10 | W3 (`b56378e`) | `permissions:` on both workflows (least-privilege); the frontend base image is digest-pinned | `pip-audit` stays advisory; making it blocking needs the triage decision |
+| R4-11 | W5 (`4b1e830`) | `ChatStore.messages` returns the newest N chronologically; the window applies at the store; a 30-turn test asserts seqs 7..30 plus the current turn (V3-03 closed in code) | Enabling chat (`chat_enabled`) is an owner decision |
+| R4-12 | — | The ordered owner lane is defined in the report's own row; no host-side step ran here (hard constraint of this work) | Fix R4-02's apply dry-run; account; `schedule apply`; WAL; migrate and drain bounded windows; one backup; journal re-approval; one week of scheduled runs; `jester health` and `jester evidence` |
+
+### Verification on `v4-strategy-batches`
+
+| Command | Where | Result |
+|---|---|---|
+| `python -m pytest python/tests -q` (with `PYTHONPATH=python`, `JESTER_MOCK=1`, `TMP`/`TEMP` set) | B1–B4 complete, tree at `b473d8b` | `2303 passed, 28 skipped, 13 deselected, 41 warnings in 561.06s` |
+| the same command | B5 complete, tree at `5236fab` | `2315 passed, 28 skipped, 13 deselected, 41 warnings in 535.22s (0:08:55)` |
+| `python scripts/counts.py --no-archive` | this commit | `python tests: 2343` / `go test functions: 306` |
+| focused suites re-run at B5 | chat files (57), export (49), doc contracts + doc links (9) | all green |
+
+## The products
 
 ### Known limits carried from this branch
 
@@ -176,7 +223,8 @@ All of these were parked in the task ledger; none is a surprise.
 | **ND-01 … ND-14** | 2026-11-01 follow-up items | [2026-11-01 report §2.2](reports/2026-11-01-next-development-strategy-v2.md); status below |
 | **F-01 … F-17** | 2026-10-29 codebase findings | [Master roadmap §1.5](plans/2026-10-29-project-assessment-and-master-roadmap.md); F-04/F-07/F-12/F-13/F-15 remain known issues |
 | **DD-M4/M5/M6, J0–J3** | Dedup and journal slices | [2026-10-29 final report](reports/2026-10-29-final-implementation-report.md) |
-| **V3-01 … V3-26** | 2026-11-01 V3 register, on branch `v3-hardening` | [V3 hardening cycle](#v3-hardening-cycle-branch) above; the register report itself is not in this tree |
+| **V3-01 … V3-26** | 2026-11-01 V3 register, merged as `7005078` | [V3 hardening cycle](#v3-hardening-cycle-merged-on-main) above; the register report itself is still not in this tree |
+| **R4-01 … R4-12** | 2026-11-02 strategy review, executed as batches B1–B5 | [the 2026-11-02 report §9](reports/2026-11-02-next-development-strategy.md); status in [the R4 register](#r4-register-2026-11-02-report) below |
 
 ## ND register
 
@@ -228,3 +276,10 @@ the previous cycle's is [Appendix A of the 2026-10-31 report](reports/2026-10-31
 A status is not "done" because the code exists. It is done when a named
 command in the register has been run and its output pasted somewhere a
 reader can open.
+
+The 2026-11-02 implementations cycle (R4 waves W1–W5) is verified per commit
+and per wave: [the R4 register](#r4-register-2026-11-02-report) above carries
+its full-suite and counts evidence, and this cycle's verification lands with
+the branch work rather than in a report appendix — the work itself is what
+[the 2026-11-02 report](reports/2026-11-02-next-development-strategy.md)
+specified.
