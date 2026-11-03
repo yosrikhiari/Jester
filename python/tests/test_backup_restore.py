@@ -102,6 +102,117 @@ def test_also_to_writes_a_second_copy_off_disk(archive, tmp_path):
     assert (second / Path(res["path"]).name).read_bytes() == Path(res["path"]).read_bytes()
 
 
+# -- a second copy that fails must not cost the first ------------------------
+#
+# The primary set (archive + companions + manifest) is the product. Before
+# this, `also_to` was an unguarded mkdir plus an unguarded copy loop: one
+# unreadable file on the other volume raised AFTER the primary set and its
+# manifest had been written, so the command exited nonzero having in fact
+# succeeded at the thing that matters.
+
+def _fail_second_copy_for(monkeypatch, prefix):
+    """Make the copy to the second volume fail for files named `prefix*`."""
+    real = backup.shutil.copy2
+    seen = []
+
+    def flaky(src, dst, *a, **kw):
+        seen.append(Path(dst).name)
+        if Path(dst).name.startswith(prefix):
+            raise OSError(5, "The device is not ready", str(dst))
+        return real(src, dst, *a, **kw)
+
+    monkeypatch.setattr(backup.shutil, "copy2", flaky)
+    return seen
+
+
+def test_a_failed_second_copy_is_reported_and_the_primary_set_survives(
+        archive, tmp_path, monkeypatch):
+    second = tmp_path / "other-disk"
+    _fail_second_copy_for(monkeypatch, "journal-")
+
+    res = _set(archive, also_to=str(second))
+
+    assert res["ok"] is True, "the primary set is the product; it must not fail"
+    doomed = next(n for n in res["files"] if n.startswith("journal-"))
+    assert doomed in res["failed"]
+    assert res["failed"][doomed].startswith("second copy:")
+    assert all(not str(p).endswith(doomed) for p in res["copied_to_second"])
+    # The other files still reached the second volume, and the loop continued.
+    assert (second / Path(res["path"]).name).is_file()
+    assert not (second / doomed).exists()
+    # The primary set and its manifest are intact and unchanged.
+    primary = Path(res["path"]).parent
+    for name in res["files"]:
+        assert (primary / name).is_file(), name
+    manifest = _manifest(res)
+    assert doomed in manifest["files"], "the manifest was written before the copy"
+    assert "second copy:" not in json.dumps(manifest["failed"])
+
+
+def test_a_second_destination_that_cannot_be_made_is_reported_not_raised(
+        archive, tmp_path):
+    """`mkdir` on a path that is an existing FILE raises FileExistsError, and it
+    used to come straight out of `backup_set` after the archive was written."""
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("a file, not a volume", encoding="utf-8")
+
+    res = _set(archive, also_to=str(blocked))
+
+    assert res["ok"] is True
+    assert res["copied_to_second"] == []
+    assert res["failed"]["also_to"].startswith("second copy:")
+    assert Path(res["manifest"]).is_file()
+
+
+# -- secrets at rest: kept by default, excludable on purpose -----------------
+
+def test_exclude_secrets_leaves_the_dotenv_out_and_says_why(archive):
+    res = _set(archive, include_secrets=False)
+
+    assert res["ok"] is True, res.get("error")
+    manifest = _manifest(res)
+    assert "env" not in {entry["role"] for entry in manifest["files"].values()}
+    assert ".env" not in manifest["absent"], "excluded is not the same as missing"
+    assert ".env" in manifest["not_included"]
+    assert "--exclude-secrets" in manifest["not_included"][".env"]
+    assert "password manager" in manifest["not_included"][".env"]
+    assert not list(Path(res["path"]).parent.glob("dotenv-*"))
+    assert res["excluded"] == [".env"]
+
+
+def test_the_dotenv_is_kept_by_default(archive):
+    """The prior ruling: a restore needs the keys, so .env is in the set unless
+    the operator says otherwise. This is the default this batch must not flip."""
+    res = _set(archive)
+    assert "env" in {entry["role"] for entry in _manifest(res)["files"].values()}
+    assert res["excluded"] == []
+
+
+def test_the_cli_prints_the_excluded_dotenv(archive, tmp_path, monkeypatch, capsys):
+    out = tmp_path / "cmd-backups"
+    _run_backup(archive, out, monkeypatch, "--exclude-secrets")
+    printed = capsys.readouterr().out
+    assert "not copied: .env (--exclude-secrets)" in printed
+    assert not list(out.glob("dotenv-*"))
+
+
+def test_the_cli_prints_a_failed_second_copy_and_still_exits_zero(
+        archive, tmp_path, monkeypatch, capsys):
+    out, second = tmp_path / "cmd-backups", tmp_path / "elsewhere"
+    _fail_second_copy_for(monkeypatch, "journal-")
+
+    # No SystemExit: the archive backup succeeded, so the exit code is 0.
+    _run_backup(archive, out, monkeypatch, "--also-to", str(second))
+
+    printed = capsys.readouterr().out
+    assert "second copy FAILED:" in printed and "journal-" in printed
+    # No success count: `second copy: N file(s)` would claim files that did not
+    # arrive. The FAILED line does not contain that colon-terminated phrase.
+    assert "second copy:" not in printed
+    assert "wrote " in printed and "manifest:" in printed
+    assert _newest(out).is_file()
+
+
 def test_the_single_db_api_still_behaves_as_before(archive):
     res = backup.backup_db(str(archive["db"]), str(archive["root"] / "plain"))
     assert res["ok"] is True and Path(res["path"]).is_file()

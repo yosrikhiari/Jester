@@ -1538,10 +1538,12 @@ def cmd_backup(args):
     manifest) and never overwrites anything.
     """
     from jester.backup import (
+        SECOND_COPY_PREFIX,
         backup_set,
         prune_backup_sets,
         restore_backup,
         restore_drill,
+        second_copy_reason,
         verify_backup,
     )
 
@@ -1585,7 +1587,8 @@ def cmd_backup(args):
 
     res = backup_set(args.db, args.out or "", compress=not args.no_compress,
                      also_to=getattr(args, "also_to", "") or "",
-                     env_root=getattr(args, "env_root", None) or None)
+                     env_root=getattr(args, "env_root", None) or None,
+                     include_secrets=not getattr(args, "exclude_secrets", False))
     if not res["ok"]:
         print(f"backup failed: {res['error']}")
         sys.exit(1)
@@ -1609,12 +1612,31 @@ def cmd_backup(args):
         print(f"  also wrote: {', '.join(companions)}")
     if res["absent"]:
         print(f"  not present: {', '.join(res['absent'])}")
-    if res["failed"]:
+    for name in res.get("excluded") or []:
+        print(f"  not copied: {name} (--exclude-secrets)")
+    # The primary set's failures and the other volume's misses are different
+    # facts, so they get different lines. A second-copy failure never fails the
+    # command: the archive backup succeeded, and it is the one that matters.
+    primary_failed = {k: v for k, v in res["failed"].items()
+                      if not str(v).startswith(SECOND_COPY_PREFIX)}
+    second_failed = {k: v for k, v in res["failed"].items()
+                     if str(v).startswith(SECOND_COPY_PREFIX)}
+    if primary_failed:
         print("  companion FAILED: " + ", ".join(
-            f"{k} ({v})" for k, v in res["failed"].items()))
+            f"{k} ({v})" for k, v in primary_failed.items()))
+    # The count and the FAILED line are different postings of the same fact:
+    # a partial `N file(s)` next to named misses would be read as a pass. When
+    # anything missed the other volume, the misses are the line; what did not
+    # come back is still listed one name at a time and in `copied_to_second`.
     if getattr(args, "also_to", ""):
-        print(f"  second copy: {len(res['copied_to_second'])} file(s) in "
-              f"{res['also_to']}")
+        if second_failed:
+            print("  second copy FAILED: " + ", ".join(
+                f"{k} ({second_copy_reason(v)})"
+                for k, v in second_failed.items()))
+        else:
+            copied = res["copied_to_second"]
+            if copied:
+                print(f"  second copy: {len(copied)} file(s) in {res['also_to']}")
     print(f"  manifest: {res['manifest']}")
     print(f"  note: {res['detail']}")
 
@@ -5003,6 +5025,13 @@ def main(argv=None):
     bk.add_argument(
         "--env-root", default="",
         help="where to look for the dotenv (default: this checkout)",
+    )
+    bk.add_argument(
+        "--exclude-secrets", dest="exclude_secrets", action="store_true",
+        help="leave .env out of the set (snapshot only). The default KEEPS it: "
+             "a restore needs the keys. Use this for a copy that leaves the "
+             "owner-only boundary -- restore the dotenv from the password "
+             "manager instead.",
     )
     bk.add_argument(
         "--keep", type=int, default=14,

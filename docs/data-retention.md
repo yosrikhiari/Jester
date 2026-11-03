@@ -141,11 +141,37 @@ sweep deletes the only copy of a record's excerpt, so it waits for a chosen
 TTL; and the restore drill is a monthly report whose machine the owner picks —
 a backup nobody has restored is a backup nobody knows works.
 
+A set covers the `data/` companions and `.env` **by default, on purpose**: a
+restore needs the keys, and a backup that restored everything except the
+credentials is not a restore. That makes the storage the secret keeper. The
+backup directory — and any `--also-to` second volume — must stay inside an
+owner-only boundary (an NTFS ACL, an encrypted volume, or a `chmod 700`
+directory on POSIX); the `0600` mode on the copied dotenv is best-effort and a
+no-op on Windows, so it is never the boundary itself. When a copy leaves that
+boundary, `jester backup --exclude-secrets` (snapshot only) leaves the dotenv
+out: the manifest lists it under `not_included` as deliberately excluded, not
+under `absent` as missing, and the copy is restored without keys that the
+owner re-provides from the password manager or another secret store.
+
 `jester schedule apply` installs what the file says; `jester schedule status`
 prints the disabled task as PAUSED. It refuses, and exits non-zero, when the
 file moves the cadence of a task that is enabled right now — that is a change
 to live request volume, so it takes `--force` to say so deliberately. Paused
 tasks and scope changes move freely.
+
+A declared task can also carry an optional `args:` list — extra CLI flags
+passed verbatim after the task's own argv, its `--db`/`--config` and any
+`options:` scope. One list item is one argv token: there is no shell to expand
+a wildcard or split a path, so a path containing spaces is quoted as one item,
+and the tokens are quoted when the launcher is generated. Because these flags
+run unattended, they are the operator's declaration — `apply` writes them and
+drift detection reports a launcher whose extra arguments no longer match the
+file, so changing `args:` never reads as "unchanged".
+
+The second backup copy uses this mechanism. `JesterNightlyBackup` carries no
+`args:` today because no second volume has been chosen; `config/schedule.yaml`
+carries a commented `--also-to` example under the task, and the copy becomes
+scheduled only when the owner provides the path and re-runs `schedule apply`.
 
 Either command still runs by hand:
 

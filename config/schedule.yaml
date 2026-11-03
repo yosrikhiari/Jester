@@ -20,6 +20,13 @@
 # `options` are the scrape ceilings (`only`, `max_posts`, `max_comments`,
 # `max_ideas`) passed to the command; ignored for `treat`, which takes none.
 #
+# `args` is OPTIONAL: extra CLI flags appended verbatim after the task's own
+# argv, its `--db`/`--config` and any `options:` flags. ONE LIST ITEM IS ONE
+# ARGV TOKEN -- there is no shell here to expand a wildcard or split a path, so
+# quote a path that contains spaces as a single item. It is the operator's
+# declaration and apply makes the machine match it: anything typed here runs
+# unattended, so declare only flags whose effect you have chosen.
+#
 # `db` is OPTIONAL and normally absent: each command already declares which
 # archive it writes (the `db` role in `COMMAND_SPEC`, jester/schedule.py). The
 # signals collector and the Reddit hiring step WRITE the collector's archive --
@@ -101,6 +108,13 @@ tasks:
   # Backup runs BEFORE the morning chain and verifies the snapshot it wrote,
   # so the newest copy is never older than the last write. `--keep` stays at
   # its default of 14, one per day for a fortnight.
+  #
+  # A SECOND COPY is NOT scheduled yet: no second volume has been chosen, so
+  # this task carries no `args`. It becomes scheduled only when the owner
+  # provides the path -- uncomment the block below and re-run `schedule apply`:
+  #   args:
+  #     - --also-to
+  #     - "D:/backups/jester"      # the owner's second volume; enable when it exists
   - task: JesterNightlyBackup
     command: backup
     cadence: {at: "02:30"}

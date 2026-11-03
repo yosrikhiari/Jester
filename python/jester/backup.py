@@ -35,6 +35,23 @@ from pathlib import Path
 #: ago and nobody noticed", which a single rolling backup does not.
 DEFAULT_KEEP = 14
 
+#: How a second-copy failure is labelled inside `failed`. The primary set is the
+#: product; a miss on the other volume is a different fact, and a reader who
+#: sees the same dict for both would think a companion never reached the backup
+#: at all. The CLI partitions on this prefix.
+SECOND_COPY_PREFIX = "second copy:"
+
+
+def second_copy_reason(value) -> str:
+    """One second-copy failure's reason, without the `failed` marker prefix.
+
+    The marker exists so a reader of the dict cannot confuse the two facts; a
+    line that already says "second copy FAILED" does not need it twice.
+    """
+    text = str(value or "")
+    return (text[len(SECOND_COPY_PREFIX):].strip()
+            if text.startswith(SECOND_COPY_PREFIX) else text)
+
 
 def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -334,13 +351,14 @@ def companion_paths(db_path: str | Path, env_root: str | Path | None = None) -> 
 
 def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
                also_to: str = "", env_root: str | Path | None = None,
-               stamp: str = "") -> dict:
+               stamp: str = "", include_secrets: bool = True) -> dict:
     """Back up the archive AND what sits beside it, with a manifest.
 
     `backup_db` still backs up one database and keeps its exact shape; this is
     the command's view. It returns the same keys (`ok`, `path`, `bytes`,
     `source_bytes`, `detail`) so existing callers keep working, plus
-    `manifest`, `files`, `absent` and `also_to`.
+    `manifest`, `files`, `absent`, `failed`, `also_to`, `copied_to_second` and
+    `excluded`.
 
     Companions are copied only when present, and an absent one is named rather
     than invented: a backup that claims to cover a file it never saw is worse
@@ -350,6 +368,20 @@ def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
     No companion failure fails the archive snapshot: `data/jester.db` is the
     product, and losing the whole backup because a chat store was locked would
     trade the important thing for the peripheral one. Failures are reported.
+
+    The SECOND COPY (`also_to`) is best-effort by the same rule, one step
+    further: once the primary set and its manifest exist, nothing here raises.
+    A second volume that is full, unplugged or read-only must not lose the
+    first copy, so each copy is attempted on its own, successes only land in
+    `copied_to_second`, and every miss is reported in `failed` with a value
+    that begins `second copy:` so it cannot be read as a primary companion
+    failure. If the destination directory itself cannot be made, the entry is
+    keyed `also_to`. The manifest was already written and is left untouched.
+
+    `include_secrets=False` (`--exclude-secrets`) leaves the dotenv out even
+    when it is present: the file is not listed as absent (it was found and
+    deliberately skipped) and `not_included` carries the reason, so a restore
+    from this set knows to fetch the keys from a secret store instead.
     """
     from .journal import DEFAULT_DB as JOURNAL_DB
 
@@ -369,8 +401,14 @@ def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
         }
     }
     failed = {}
+    excluded = []
     for role, companion in companion_paths(src, env_root):
         if role == "env":
+            if not include_secrets:
+                # Found and deliberately skipped: the keys are the owner's, and
+                # a copy that leaves this boundary is the operator's call.
+                excluded.append(companion.name)
+                continue
             # The dotenv is a text file, and it holds secrets: copy the bytes,
             # record only the hash, and keep the copy owner-readable.
             name = f"dotenv-{shared_stamp}.env"
@@ -403,13 +441,25 @@ def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
 
     # Name what was not there, so "covered when present" is visible rather than
     # assumed. The chat store's name is fixed by `chat_db_path`; the dotenv is
-    # one of the loader's candidates or it is missing.
+    # one of the loader's candidates or it is missing. An excluded dotenv is
+    # never "absent": the difference is the operator's flag, not the disk.
     absent = []
     for role, name in (("journal", Path(JOURNAL_DB).name),
                        ("chat", "chat.db"), ("env", ".env")):
+        if role == "env" and not include_secrets:
+            continue
         if not any(entry["role"] == role for entry in files.values()):
             absent.append(name)
 
+    not_included = {
+        "config-live/": CONFIG_LIVE_NOTE,
+        "vectors": ("Qdrant vectors are derived; rebuild them with "
+                    "`jester reembed --all`"),
+    }
+    if excluded:
+        not_included[".env"] = (
+            "excluded by --exclude-secrets; restore it from the password "
+            "manager or another secret store")
     manifest = {
         "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": str(src),
@@ -418,23 +468,30 @@ def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
         "files": files,
         "absent": absent,
         "failed": failed,
-        "not_included": {
-            "config-live/": CONFIG_LIVE_NOTE,
-            "vectors": ("Qdrant vectors are derived; rebuild them with "
-                        "`jester reembed --all`"),
-        },
+        "not_included": not_included,
         "restore": f"jester backup restore <{Path(main['path']).name}> <new path>",
     }
     manifest_file = _manifest_path(Path(main["path"]))
     _write_json_atomic(manifest_file, manifest)
 
     copied = []
+    second_failed = {}
     if also_to:
         second = Path(also_to)
-        second.mkdir(parents=True, exist_ok=True)
-        for name in list(files) + [manifest_file.name]:
-            shutil.copy2(target / name, second / name)
-            copied.append(str(second / name))
+        try:
+            second.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            second_failed["also_to"] = f"{SECOND_COPY_PREFIX} {exc}"
+        else:
+            for name in list(files) + [manifest_file.name]:
+                try:
+                    shutil.copy2(target / name, second / name)
+                except OSError as exc:
+                    # One unreadable file must not cost the other copies, and
+                    # it must not take the command down after it succeeded.
+                    second_failed[name] = f"{SECOND_COPY_PREFIX} {exc}"
+                    continue
+                copied.append(str(second / name))
 
     return {
         "ok": True,
@@ -445,7 +502,8 @@ def backup_set(db_path: str, out_dir: str = "", *, compress: bool = True,
         "manifest": str(manifest_file),
         "files": sorted(files),
         "absent": absent,
-        "failed": failed,
+        "failed": {**failed, **second_failed},
+        "excluded": excluded,
         "also_to": str(Path(also_to)) if also_to else "",
         "copied_to_second": copied,
         "stamp": shared_stamp,

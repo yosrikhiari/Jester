@@ -1503,6 +1503,35 @@ def load_desired(path=None) -> list:
                 f"{path}: task {task!r}: `db` must be a path, got {db!r}")
         else:
             db = str(db).strip()
+        # Optional extra argv, one list item per token. This is the operator's
+        # declaration, passed verbatim: there is no shell here to expand a
+        # wildcard or split a path, so a token with a space stays one token.
+        # Numbers and booleans are refused rather than stringified -- `- 5`
+        # silently becoming "--max-posts 5" style truth is how a declaration
+        # ends up meaning something the author never wrote.
+        args = raw.get("args")
+        if args is None:
+            args = []
+        elif not isinstance(args, list):
+            raise ScheduleError(
+                f"{path}: task {task!r}: `args` must be a list of strings, one "
+                f"item per argv token, got {type(args).__name__}")
+        else:
+            for item in args:
+                if not isinstance(item, str):
+                    raise ScheduleError(
+                        f"{path}: task {task!r}: every `args` item must be a "
+                        f"string, got {type(item).__name__} ({item!r})")
+                if not item.strip():
+                    raise ScheduleError(
+                        f"{path}: task {task!r}: an `args` item is empty")
+                if '"' in item or "\n" in item or "\r" in item:
+                    # The launcher quotes each token with `"..."`; a quote or a
+                    # line break inside one would write a different command.
+                    raise ScheduleError(
+                        f"{path}: task {task!r}: an `args` item may not contain "
+                        f"a quote or a line break: {item!r}")
+            args = list(args)
         out.append({
             "task": task,
             "command": command,
@@ -1510,6 +1539,7 @@ def load_desired(path=None) -> list:
             "enabled": bool(raw.get("enabled", True)),
             "options": options,
             "db": db,
+            "args": args,
         })
     return out
 
@@ -1548,6 +1578,30 @@ def cadence_matches(st: dict, spec: dict) -> bool:
         st.get("start_time") or "", cadence["at"])
 
 
+def _non_scrape_tokens(argv) -> list:
+    """The launcher tail with its scrape scope removed.
+
+    What is left is the declared `args` — the operator's extra flags. The
+    scrape flags are compared on their own (as a parsed scope dict), so leaving
+    them in here would make every `options:` change look like an `args:` change
+    and every unchanged task look drifted.
+    """
+    flags = {flag for _key, flag in SCRAPE_OPTION_FLAGS}
+    out, tokens, i = [], list(argv or []), 0
+    while i < len(tokens):
+        tok = str(tokens[i]).strip().strip('"')
+        if tok in flags:
+            i += 2          # the flag and its value
+            continue
+        out.append(tok)
+        i += 1
+    return out
+
+
+def _args_text(args) -> str:
+    return " ".join(str(a) for a in args) if args else "none"
+
+
 def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
                        signals_db: str | None = None) -> list:
     """What the generated launcher says versus what the declaration asks.
@@ -1557,6 +1611,13 @@ def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
     apply printed "unchanged" while the task kept scraping the old scope. The
     launcher is the file the scheduler runs, so it is the honest thing to
     compare. `treat` takes no scrape scope, so its options are not a fact.
+
+    The declared `args:` ARE a fact for every command, `treat` and `backup`
+    included: they are the operator's extra flags (a second backup volume, a
+    tightened interval), and a changed declaration that still reads
+    "unchanged" would never reach the machine. The scrape scope is compared as
+    a parsed dict; the remaining tail is compared token for token against
+    `args`.
 
     The `--db` is compared for the same reason. If it were not, every host that
     already applied the declaration would keep a launcher naming
@@ -1570,9 +1631,6 @@ def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
     version = launcher.get("version")
     name = launcher_path(spec["command"]).name
     if version is None or version < LAUNCHER_VERSION:
-        # Checked before the `treat` shortcut: that command's options are not a
-        # fact, but its FILE is out of date, and a launcher missing the log
-        # rotation is exactly what this test exists to catch.
         return [f"launcher format v{version if version is not None else 'none'} "
                 f"is older than v{LAUNCHER_VERSION}; apply would rewrite {name}"]
     if version > LAUNCHER_VERSION:
@@ -1582,17 +1640,21 @@ def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
     if (launcher.get("db") or "") != want_db:
         return [f"launcher writes {(launcher.get('db') or 'no database')!r}; "
                 f"should be {want_db!r}"]
-    if spec["command"] == "treat":
-        return []
     # Where the scope sits depends on the command: with a --config it is in
     # `argv` (before --db), without one it follows --db into `extra`. Reading
     # either field alone compared nothing for one of the two shapes.
     tokens = (shlex.split(launcher.get("argv") or "", posix=False)
               + list(launcher.get("extra") or []))
     have = parse_scrape_flags(tokens)
-    if scrape_flags(have) != scrape_flags(spec["options"]):
+    want_scope = {} if spec["command"] == "treat" else spec["options"]
+    if scrape_flags(have) != scrape_flags(want_scope):
         return [f"scrape options are {have or 'none'}; "
-                f"should be {spec['options'] or 'none'}"]
+                f"should be {want_scope or 'none'}"]
+    have_args = _non_scrape_tokens(launcher.get("extra") or [])
+    want_args = list(spec.get("args") or [])
+    if have_args != want_args:
+        return [f"extra arguments are {_args_text(have_args)}; "
+                f"should be {_args_text(want_args)}"]
     return []
 
 
@@ -1721,7 +1783,12 @@ def apply_desired(path=None, *, db=DEFAULT_DB, config="config",
                 at=cadence.get("at", DEFAULT_TIME),
                 db=task_db, config=config, task_name=task, python=python,
                 every=cadence.get("every"),
-                extra=scrape_flags({} if spec["command"] == "treat" else spec["options"]),
+                # The scrape scope first, then the declared `args` verbatim:
+                # one list item is one argv token, and a task's own flags are
+                # never reordered by what the declaration adds.
+                extra=(scrape_flags({} if spec["command"] == "treat"
+                                    else spec["options"])
+                       + list(spec.get("args") or [])),
                 command=spec["command"], weekly=cadence.get("weekly"),
                 monthly=cadence.get("monthly"),
             )
