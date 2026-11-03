@@ -5,23 +5,29 @@ ID to its evidence; this page says which of them is current and where the
 remaining work sits. **If this page and another document disagree about a
 status, this page wins** — fix the other document in the same change.
 
-> **`main` at `a2c6104`.** Everything implementable without the owner's
+> **`main` at `1f774a2`.** Everything implementable without the owner's
 > credentials is merged: PR #85 landed the lock-parity fix (`b01349e`, in the
-> merge `baafcb7`), and PR #86 merged the 2026-11-02 v4 work — batches B1–B5
-> of [the report](reports/2026-11-02-next-development-strategy.md) — as a
-> merge commit (`a2c6104`) that preserves every wave commit the register
-> cites. The live archive was **not** modified by any of this work: no
-> command here opened `data/jester.db` for writing.
+> merge `baafcb7`), PR #86 merged the 2026-11-02 v4 work — batches B1–B5 of
+> [the report](reports/2026-11-02-next-development-strategy.md) — as a merge
+> commit (`a2c6104`) that preserves every wave commit the register cites,
+> and PR #87 parameterized the signals schema probe's pragma read (fix
+> `324bbb4`, merge `1f774a2`), closing the one finding that SonarCloud's
+> quality-gate check held red. The live archive was **not** modified by any
+> of this work: no command here opened `data/jester.db` for writing.
 > [The R4 register](#r4-register-2026-11-02-report) below maps every item to
 > its wave and its remaining owner half.
 
-**As of 2026-11-03.** PR #85's merge run (`41623777580`) and the merge
-commit's own run (`41625000419`) are green on `main`, and PR #86's run
-(`41623876275`) passed all six checks on its first CI pass — Python, Go,
-Frontend, Sonar, and the Windows and Compose jobs that branch protection
-does not require yet. `main` is green and holds everything except the owner
-lane: the protection decisions, the extraction/agreement labels, the Windows
-task account + `schedule apply`, WAL and the second backup volume.
+**As of 2026-11-03.** PR #85's merge run (`41623777580`), PR #86's merge
+run (`41625000419`) and PR #87's merge run (`41640812411`) are green on
+`main`; PR #86 (`41623876275`) and PR #87 (`41639855372`) passed all of
+their checks on the first CI pass — Python, Go, Frontend, Sonar, and the
+Windows and Compose jobs that branch protection does not require yet.
+PR #87 also returned SonarCloud's quality-gate check to green: main's
+analysis now reads `new_vulnerabilities` 0 and new-code Security Rating
+A, where the failing condition had been exactly one medium-impact
+`go:S2077` finding. `main` is green and holds everything except the owner
+lane: the protection decisions, the extraction/agreement labels, the
+Windows task account + `schedule apply`, WAL and the second backup volume.
 
 **Extraction quality is NOT MEASURED (stated 2026-11-02).** No
 `eval/extraction/labels.jsonl` is committed, so `jester eval extract` exits 0
