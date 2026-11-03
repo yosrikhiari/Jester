@@ -40,21 +40,15 @@ var signalsStateColumns = []string{
 // tableColumns returns the column names of a table, or nil when it does not
 // exist. It reads the schema and nothing else: no DDL, no PRAGMA that writes.
 func tableColumns(db *sql.DB, table string) ([]string, error) {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	rows, err := db.Query("SELECT name FROM pragma_table_info(?)", table)
 	if err != nil {
 		return nil, fmt.Errorf("read %s schema: %w", table, err)
 	}
 	defer rows.Close()
 	var columns []string
 	for rows.Next() {
-		var (
-			cid        int
-			name, kind string
-			notNull    int
-			defaultVal any
-			pk         int
-		)
-		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultVal, &pk); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return nil, fmt.Errorf("read %s schema: %w", table, err)
 		}
 		columns = append(columns, name)
