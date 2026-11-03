@@ -68,11 +68,41 @@ Provider keys go in `.env`; every variable is documented in `.env.example`.
 
 ## The native path: Python only
 
-Requires Python 3.11+. Everything below runs from the repository root.
+Requires Python 3.11+ (3.12 is what CI and the container run — the tested
+matrix, not a higher floor). Everything below runs from the repository root.
+
+### Step 0: `jester doctor`
+
+Before installing anything or touching an archive, prove the interpreter and
+the database layer:
 
 ```bash
-python -m pip install --only-binary :all: -r python/pylock.toml
-export PYTHONPATH=python          # Windows PowerShell: $env:PYTHONPATH="python"
+python -m jester.cli doctor
+```
+
+### Installing the dependencies: the file depends on the OS
+
+**Native — Windows PowerShell and macOS/Linux — install
+`python/requirements.txt`. The PEP 751 lock (`python/pylock.toml`) belongs to
+the Linux containers and CI.** The lock's own header says why: it was
+generated inside `python:3.12-slim`, so it resolves Linux glibc wheels
+(grpcio and friends) that a Windows or macOS pip cannot install. The compose
+image installs from the lock inside Linux, where it belongs; a native machine
+installs from `requirements.txt` and gets the same packages resolved for its
+own platform.
+
+**Windows PowerShell:**
+
+```powershell
+python -m pip install --only-binary :all: -r python/requirements.txt
+$env:PYTHONPATH = "python"
+```
+
+**macOS / Linux:**
+
+```bash
+python -m pip install --only-binary :all: -r python/requirements.txt
+export PYTHONPATH=python
 ```
 
 ### 1. The deterministic pipeline (no model, no network)
@@ -80,7 +110,14 @@ export PYTHONPATH=python          # Windows PowerShell: $env:PYTHONPATH="python"
 The problem-signal collector is rule-based and fixture-backed, so it is the
 fastest proof that the code and the database layer work:
 
+```powershell
+# Windows PowerShell (cmd.exe: %TEMP%)
+python -m jester.cli signals export --db "$env:TEMP\signals.db" --out "$env:TEMP\signals-out"
+python -m jester.cli signals export --db "$env:TEMP\signals.db" --out "$env:TEMP\signals-out"  # again
+```
+
 ```bash
+# macOS / Linux
 python -m jester.cli signals export --db /tmp/signals.db --out /tmp/signals-out
 python -m jester.cli signals export --db /tmp/signals.db --out /tmp/signals-out  # again
 ```

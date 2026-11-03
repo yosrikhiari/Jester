@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "jester"
 version = "0.1.0"
 description = "Jester intelligence agents: scraping, real-estate listings, property analytics."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "PyYAML>=6.0",
     "qdrant-client>=1.10",

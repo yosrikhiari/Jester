@@ -292,7 +292,7 @@ Regenerate inside that container, not on the host: the lock records Linux wheels
 
 ## Tech Stack
 
-**Languages:** Python 3.11+, Go 1.22+
+**Languages:** Python 3.11+, Go 1.26+
 
 **Data:** SQLite (the source of truth: handoff queue, pipeline state, signal archive, journal), Qdrant (vectors), ClickHouse (optional manual mirror of the signal archive)
 
