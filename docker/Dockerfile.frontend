@@ -1,7 +1,15 @@
 # React + Vite dev server for the new Jester frontend.
 # Source is bind-mounted at runtime; node_modules is kept in an anonymous
 # volume so the bind mount does not shadow the installed packages.
-FROM node:24-slim
+#
+# F-07/R4-10: the base carries a digest like every other image this repo pulls
+# from the network. Pinned 2026-11-02 through the Docker Hub registry HTTP API
+# (token from auth.docker.io, then GET
+# registry-1.docker.io/v2/library/node/manifests/24-slim, whose
+# Docker-Content-Digest header is this digest). The tag stays so Dependabot has
+# a runnable reference; the digest is what actually runs, so a retagged
+# node:24-slim cannot change the bytes under a build nobody decided on.
+FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
 
 WORKDIR /app
 

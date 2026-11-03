@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from jester.console.api import ConsoleAPI
 from jester.env import load_env_once
+from jester.export import ExportPathError
 from jester.ops import SCORE_STALL_ATTEMPTS
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -50,8 +51,10 @@ _THREAD_ID_RE = re.compile(r"[A-Za-z0-9._:-]{1,120}")
 
 #: Environment variable carrying the operator token. When set (non-empty),
 #: every mutating POST under /api/* must present it as
-#: `Authorization: Bearer <token>`. GETs stay open so a dashboard can poll
-#: without holding a secret; writes are what need the guard. Compared with
+#: `Authorization: Bearer <token>`. When unset there is no credential a write
+#: could present, so every write is refused (401): the console is read-only
+#: until a token exists. GETs stay open so a dashboard can poll without
+#: holding a secret; writes are what need the guard. Compared with
 #: hmac.compare_digest so the check itself does not leak the token bytewise.
 TOKEN_ENV = "JESTER_CONSOLE_TOKEN"
 #: V3-12: the console's own requests are small JSON objects. A body above
@@ -85,6 +88,11 @@ _BODY_DRAIN_TIMEOUT = 0.5
 #: on whenever another device can reach the port.
 READ_AUTH_ENV = "JESTER_READ_AUTH"
 
+#: Addresses only this machine can reach. A console bound to one of these may
+#: serve without a token; anything else is reachable from the network and must
+#: have its writes gated (a token) or turned off (`--read-only`).
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
 #: On every response, not only JSON: a browser that guesses the type of a
 #: static file is exactly the mistake nosniff prevents. The CSP keeps the
 #: console same-origin; inline `style=` attributes need the style exception.
@@ -105,10 +113,14 @@ def _console_token() -> str:
 
 
 def _is_authorized(handler: BaseHTTPRequestHandler) -> bool:
-    """True when no token is configured, or the request presents it."""
+    """True only when the request presents the configured token.
+
+    A console with no token has no way to authenticate a write, so every
+    write is refused: the default posture is read-only until a token exists.
+    """
     want = _console_token()
     if not want:
-        return True
+        return False
     got = (handler.headers.get("Authorization") or "").strip()
     scheme, _, credential = got.partition(" ")
     if scheme.lower() != "bearer" or not credential:
@@ -186,7 +198,7 @@ def _allowed_hosts(handler) -> set:
 def _warn_if_healthcheck_host_is_missing(args) -> None:
     """Say so when JESTER_ALLOWED_HOSTS drops every loopback name.
 
-    The compose healthcheck is `http://localhost:8619/api/doctor`. Overriding
+    The compose healthcheck is `http://localhost:8619/metrics`. Overriding
     the list is supported, but doing it without `localhost` turns that request
     into a 403 and the container unhealthy, with no other symptom. A warning
     in the startup log is the cheapest way to make that failure explain
@@ -200,7 +212,7 @@ def _warn_if_healthcheck_host_is_missing(args) -> None:
     print(f"jester console WARNING: {ALLOWED_HOSTS_ENV} replaces the default "
           "host allow-list and names no loopback host (localhost, 127.0.0.1 "
           "or [::1]); the Docker healthcheck requests "
-          "http://localhost:8619/api/doctor, will receive 403, and the "
+          "http://localhost:8619/metrics, will receive 403, and the "
           "container will report unhealthy. Add localhost to the list.",
           file=sys.stderr)
 
@@ -504,6 +516,9 @@ class Handler(BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         # S-10: when read auth is on, the archive is not readable without the
         # token. Static UI files stay open so the page can load and ask for it.
+        # With no token configured nothing can satisfy that, so reads are
+        # refused too: the operator asked for protected reads and the
+        # fail-closed answer is 401, not an unguarded archive.
         if (path == "/metrics" or path.startswith("/api/")):
             if _read_auth_enabled(self) and not _is_authorized(self):
                 self._json({"ok": False,
@@ -682,7 +697,11 @@ class Handler(BaseHTTPRequestHandler):
             self._refuse({"ok": False, "error": "this console is read-only"}, 403)
             return
         if not _is_authorized(self):
-            self._refuse({"ok": False, "error": "missing or invalid console token"}, 401)
+            self._refuse({"ok": False, "error": (
+                "writes require the console token: set "
+                f"{TOKEN_ENV} and send Authorization: Bearer <token>, or "
+                "start the console with --read-only for a view-only "
+                "session")}, 401)
             return
 
         api = _api(self.args)
@@ -741,7 +760,6 @@ class Handler(BaseHTTPRequestHandler):
                 max_comments=body.get("max_comments"),
                 max_posts=body.get("max_posts"),
             ),
-            "/api/export": lambda: api.export(body.get("out_dir") or None),
             # Regroup the archive by meaning. Same call the CLI makes.
             # Async by default: the synchronous pass holds one request for
             # ~577s on this archive and the browser gives up first.
@@ -835,6 +853,20 @@ class Handler(BaseHTTPRequestHandler):
                 str(body.get("edit_id", "")),
                 reason=str(body.get("reason", ""))),
         }
+        if path == "/api/export":
+            # Its own branch rather than an entry in `simple`: an `out_dir`
+            # that resolves outside the exports root is a rejected request
+            # (400 with the reason), not a 200 carrying {"ok": false}.
+            out_dir = body.get("out_dir")
+            if out_dir is not None and not isinstance(out_dir, str):
+                self._json({"ok": False,
+                            "error": "out_dir must be a path string"}, 400)
+                return
+            try:
+                self._json(api.export(out_dir or None))
+            except ExportPathError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+            return
         if path in simple:
             self._json(simple[path]())
             return
@@ -887,19 +919,35 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def _bind_refusal(args):
+    """Why this bind must be refused, or None when it may serve.
+
+    Loopback is private to the machine, so it may serve with no token. Any
+    other address is reachable from the network; serving there without a
+    token would hand every peer an unauthenticated control plane, so the
+    only accepted forms are a token-gated console or `--read-only`.
+    """
+    host = str(getattr(args, "host", "") or "").strip().lower()
+    if host in LOOPBACK_HOSTS:
+        return None
+    if _console_token():
+        return None
+    if bool(getattr(args, "read_only", False)):
+        return None
+    return (
+        f"jester console refuses to listen on {host!r}: it is "
+        f"network-reachable, {TOKEN_ENV} is unset, so no token gates writes. "
+        f"Set {TOKEN_ENV} to a secret, or pass --read-only to serve without "
+        "writes.")
+
+
 def serve(args):
     Handler.args = args
     _warn_if_healthcheck_host_is_missing(args)
-    if (str(getattr(args, "host", "")) == "0.0.0.0"
-            and not _console_token()
-            and not bool(getattr(args, "read_only", False))):
-        # Binding every interface with open writes is how a local-operator
-        # console becomes somebody else's scheduler. This stays a warning
-        # rather than a refusal so existing Docker setups keep booting; set
-        # JESTER_CONSOLE_TOKEN (or --read-only for viewing) to silence it.
-        print("jester console WARNING: listening on 0.0.0.0 with no "
-              f"{TOKEN_ENV} set — any host that can reach this port can run "
-              "pipeline mutations via POST /api/*.")
+    refusal = _bind_refusal(args)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        raise SystemExit(2)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"jester console: http://{args.host}:{args.port}/  (db={args.db} config={args.config})")
     server.serve_forever()

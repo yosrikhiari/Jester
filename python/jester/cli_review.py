@@ -89,6 +89,29 @@ _EVAL_ROOT = Path(__file__).resolve().parents[2] / "eval"
 DEFAULT_LABELS_PATH = _EVAL_ROOT / "extraction" / "labels.jsonl"
 DEFAULT_AGREEMENT_PATH = _EVAL_ROOT / "scoring" / "agreement.jsonl"
 
+#: A rule wide enough to survive a CI log full of indented step output. The
+#: absence of a measurement used to be two lowercase lines that read like any
+#: other informational step, and a log reader had to know the difference.
+_MEASURED_RULE = "=" * 60
+
+
+def _not_measured(*, subject: str, noun: str, reason: str, path, rows: int,
+                  example: str, empty: bool = False) -> None:
+    """The unmissable form of "there is no measurement".
+
+    Exit 0 here means "not taken", not "passed": the file that would carry the
+    verdict does not exist (or holds no rows), so any number quoted from this
+    run would be invented. The block names the resolved path and the row count
+    so a reader can tell which file was missing and how empty it was.
+    """
+    detail = f" ({rows} rows; the file is empty)" if empty else f" ({rows} rows)"
+    print(_MEASURED_RULE)
+    print(f"NOT MEASURED — {subject}: {reason}")
+    print(f"{noun + ':':<8} {path}{detail}")
+    print(f"To measure: {example}")
+    print('Exit 0 is "not taken", not "passed".')
+    print(_MEASURED_RULE)
+
 
 def cmd_eval_sample(args):
     """NB4: draw the evaluation sample, before any retention sweep.
@@ -149,23 +172,32 @@ def cmd_eval_sample(args):
 def cmd_eval_extract(args):
     """S-06: extraction quality over committed JSONL labels.
 
-    No labels is not a failure — it is the pause before the owner labels. The
-    command says what to write and exits 0. Once labels exist, every aggregate
-    is printed with its denominator and the published floors gate the exit.
+    THE CONTRACT. Exit 0 with `measured: False` means the substrate is absent —
+    the labels file does not exist, or it holds no rows. Nothing was measured,
+    so no number may be quoted from that run: the command prints a NOT MEASURED
+    block naming the resolved path, the row count and what to write, and says
+    outright that exit 0 means "not taken", not "passed". Once labels exist,
+    `measured` is True, every aggregate is printed with its denominator and the
+    published floors gate the exit code.
     """
     from jester.extraction_eval import (evaluate, format_report, gate_failures,
                                         load_labels)
 
     path = Path(getattr(args, "labels", None) or DEFAULT_LABELS_PATH)
+    example = f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}"
     if not path.exists():
-        print(f"no labels yet at {path}")
-        print(f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}")
-        return {"ok": True, "labels": 0}
+        _not_measured(subject="extraction quality",
+                      noun="labels",
+                      reason="no label rows are committed yet",
+                      path=path, rows=0, example=example)
+        return {"ok": True, "labels": 0, "measured": False}
     labels = load_labels(path)
     if not labels:
-        print(f"no labels yet at {path} (the file is empty)")
-        print(f"add JSONL rows, one rater verdict per line: {_LABEL_EXAMPLE}")
-        return {"ok": True, "labels": 0}
+        _not_measured(subject="extraction quality",
+                      noun="labels",
+                      reason="the labels file holds no rows yet",
+                      path=path, rows=0, example=example, empty=True)
+        return {"ok": True, "labels": 0, "measured": False}
 
     report = evaluate(labels)
     print(format_report(report, seed=args.seed, labels_path=path))
@@ -179,17 +211,19 @@ def cmd_eval_extract(args):
         print("extraction eval FAILED")
         sys.exit(1)
     print("extraction eval OK: every published floor holds")
-    return {"ok": True, "report": report}
+    return {"ok": True, "report": report, "measured": True}
 
 
 def cmd_eval_agreement(args):
     """V3-13: the owner's scores against the model's, per axis.
 
-    Only the measurement exists: the human column is the owner's to write.
-    No file (or an empty one) is the pause before that scoring, so the command
-    says what to write and exits 0; fewer compared ideas than `--min` prints
-    the report and says it is not yet measurable rather than gating on a
-    number taken from too few ideas.
+    Only the measurement exists: the human column is the owner's to write. An
+    absent file (or an empty one) is the pause before that scoring, not a
+    pass — the command prints a NOT MEASURED block with the resolved path, the
+    row count and the schema, returns `measured: False` and exits 0, which
+    means "not taken". Fewer compared ideas than `--min` prints the report and
+    says it is not yet measurable rather than gating on a number taken from
+    too few ideas.
     """
     from jester.scoring_eval import (evaluate_agreement, example_row,
                                      format_report as format_agreement,
@@ -199,12 +233,18 @@ def cmd_eval_agreement(args):
     path = Path(getattr(args, "labels", None) or DEFAULT_AGREEMENT_PATH)
     rows = load_rows(path) if path.exists() else []
     if not rows:
+        example = f"add JSONL rows, one idea per line: {example_row()}"
         if path.exists():
-            print(f"no agreement scores yet at {path} (the file is empty)")
+            _not_measured(subject="scorer agreement",
+                          noun="scores",
+                          reason="the scores file holds no rows yet",
+                          path=path, rows=0, example=example, empty=True)
         else:
-            print(f"no agreement scores yet at {path}")
-        print(f"add JSONL rows, one idea per line: {example_row()}")
-        return {"ok": True, "labels": 0}
+            _not_measured(subject="scorer agreement",
+                          noun="scores",
+                          reason="no score rows are committed yet",
+                          path=path, rows=0, example=example)
+        return {"ok": True, "labels": 0, "measured": False}
 
     report = evaluate_agreement(rows, min_rows=minimum)
     print(format_agreement(report, labels_path=path))
@@ -214,7 +254,7 @@ def cmd_eval_agreement(args):
     else:
         print(f"not yet measurable: {report['n_compared']} compared of "
               f"{report['min_rows']} required")
-    return {"ok": True, **report}
+    return {"ok": True, **report, "measured": True}
 
 
 def cmd_mark(args):

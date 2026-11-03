@@ -169,6 +169,7 @@ def test_thirty_identical_rows_are_zero_mae_and_exit_zero(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert res["ok"] is True and res["measurable"] is True
+    assert res["measured"] is True, "scored rows are a measurement"
     assert res["n_compared"] == 30 and res["n_skipped"] == 0
     for axis in AXES:
         assert res["axes"][axis]["mae"] == pytest.approx(0.0)
@@ -195,10 +196,13 @@ def test_an_absent_file_prints_the_example_and_exits_zero(tmp_path, capsys):
     res = cmd_eval_agreement(_ns(missing))
 
     out = capsys.readouterr().out
-    assert res == {"ok": True, "labels": 0}
-    assert f"no agreement scores yet at {missing}" in out
+    assert res["ok"] is True and res["labels"] == 0 and res["measured"] is False
+    assert "NOT MEASURED" in out and "scorer agreement" in out
+    assert str(missing) in out and "(0 rows)" in out
+    assert 'Exit 0 is "not taken", not "passed".' in out
     assert '"idea_id"' in out and '"human"' in out and '"model"' in out
     assert '"overall"' in out and '"competition"' in out
+    assert "::warning::" not in out, "no GitHub annotation syntax from the CLI"
     assert not missing.exists(), "the command writes no file of its own"
 
 
@@ -208,8 +212,8 @@ def test_an_empty_file_is_the_same_pause_as_an_absent_one(tmp_path, capsys):
     res = cmd_eval_agreement(_ns(path))
 
     out = capsys.readouterr().out
-    assert res == {"ok": True, "labels": 0}
-    assert "no agreement scores yet at" in out and "(the file is empty)" in out
+    assert res["ok"] is True and res["labels"] == 0 and res["measured"] is False
+    assert "NOT MEASURED" in out and "the file is empty" in out
     assert '"idea_id"' in out
 
 

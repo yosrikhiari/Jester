@@ -1538,10 +1538,12 @@ def cmd_backup(args):
     manifest) and never overwrites anything.
     """
     from jester.backup import (
+        SECOND_COPY_PREFIX,
         backup_set,
         prune_backup_sets,
         restore_backup,
         restore_drill,
+        second_copy_reason,
         verify_backup,
     )
 
@@ -1585,7 +1587,8 @@ def cmd_backup(args):
 
     res = backup_set(args.db, args.out or "", compress=not args.no_compress,
                      also_to=getattr(args, "also_to", "") or "",
-                     env_root=getattr(args, "env_root", None) or None)
+                     env_root=getattr(args, "env_root", None) or None,
+                     include_secrets=not getattr(args, "exclude_secrets", False))
     if not res["ok"]:
         print(f"backup failed: {res['error']}")
         sys.exit(1)
@@ -1609,12 +1612,31 @@ def cmd_backup(args):
         print(f"  also wrote: {', '.join(companions)}")
     if res["absent"]:
         print(f"  not present: {', '.join(res['absent'])}")
-    if res["failed"]:
+    for name in res.get("excluded") or []:
+        print(f"  not copied: {name} (--exclude-secrets)")
+    # The primary set's failures and the other volume's misses are different
+    # facts, so they get different lines. A second-copy failure never fails the
+    # command: the archive backup succeeded, and it is the one that matters.
+    primary_failed = {k: v for k, v in res["failed"].items()
+                      if not str(v).startswith(SECOND_COPY_PREFIX)}
+    second_failed = {k: v for k, v in res["failed"].items()
+                     if str(v).startswith(SECOND_COPY_PREFIX)}
+    if primary_failed:
         print("  companion FAILED: " + ", ".join(
-            f"{k} ({v})" for k, v in res["failed"].items()))
+            f"{k} ({v})" for k, v in primary_failed.items()))
+    # The count and the FAILED line are different postings of the same fact:
+    # a partial `N file(s)` next to named misses would be read as a pass. When
+    # anything missed the other volume, the misses are the line; what did not
+    # come back is still listed one name at a time and in `copied_to_second`.
     if getattr(args, "also_to", ""):
-        print(f"  second copy: {len(res['copied_to_second'])} file(s) in "
-              f"{res['also_to']}")
+        if second_failed:
+            print("  second copy FAILED: " + ", ".join(
+                f"{k} ({second_copy_reason(v)})"
+                for k, v in second_failed.items()))
+        else:
+            copied = res["copied_to_second"]
+            if copied:
+                print(f"  second copy: {len(copied)} file(s) in {res['also_to']}")
     print(f"  manifest: {res['manifest']}")
     print(f"  note: {res['detail']}")
 
@@ -1742,6 +1764,7 @@ def cmd_schedule(args):
                 getattr(args, "file", None),
                 db=args.db,
                 config=args.config,
+                signals_db=getattr(args, "signals_db", None) or None,
                 dry_run=getattr(args, "dry_run", False),
                 force=getattr(args, "force", False),
             )
@@ -1750,9 +1773,16 @@ def cmd_schedule(args):
             sys.exit(2)
         for r in res["results"]:
             line = f"  {r['task']:<32} {r['action']}"
+            # The archive is half of what a tick does, and Task Scheduler shows
+            # none of it: a task writing the wrong database looks identical to
+            # a working one from there. A dry run has to say so.
+            if r.get("db"):
+                line += f"  [{r['db']}]"
             if r.get("detail"):
                 line += f" — {r['detail']}"
             print(line)
+            if r.get("warning"):
+                print(f"    warning: {r['warning']}")
         if res.get("detail"):
             print(res["detail"])
         if not res["ok"]:
@@ -2460,7 +2490,7 @@ def pipeline_paused_notes() -> list:
     return notes
 
 
-def schedule_drift_notes() -> list:
+def schedule_drift_notes(main_db=None, signals_db=None) -> list:
     """Tasks whose live registration disagrees with config/schedule.yaml (S-20).
 
     A note rather than a finding: Doctor's findings are about the archive, and
@@ -2468,9 +2498,15 @@ def schedule_drift_notes() -> list:
     installed at all is the one case the declaration cannot see -- the disabled
     generative tasks are absent on a box that never installed them, and that is
     still paused, not drifted.
+
+    `main_db` and `signals_db` are the archives the caller is diagnosing with.
+    The launcher records a `--db`, so comparing it against this function's own
+    defaults would report a host that moved its archive with `--db` as drifted
+    on every run. Pass the same paths Doctor was given.
     """
     try:
-        drift = _schedule.desired_drift()
+        drift = _schedule.desired_drift(main_db=main_db or _schedule.DEFAULT_DB,
+                                        signals_db=signals_db or None)
     except _schedule.ScheduleError as exc:
         return [f"config/schedule.yaml: {exc}"]
     return [f"{d['task']}: " + "; ".join(d["problems"]) for d in drift]
@@ -2528,7 +2564,9 @@ def cmd_doctor(args):
                   + ", ".join(unused))
     checks = 5 + (1 if os.environ.get("JESTER_QDRANT_URL") else 0)
     findings = evaluate_doctor(db) + launcher_findings()
-    for note in pipeline_paused_notes() + schedule_drift_notes() + journal_note(db):
+    for note in (pipeline_paused_notes()
+                 + schedule_drift_notes(args.db, getattr(args, "signals_db", None))
+                 + journal_note(db)):
         print(f"doctor note: {note}")
     if findings:
         for f in findings:
@@ -4461,7 +4499,10 @@ def main(argv=None):
         help="is the collector alive? per-source streaks, a verdict and an "
              "exit code (1 when a source is barren, stale or erroring, or "
              "when no run happened in the window)")
-    hl.add_argument("--db", default="data/jester.db")
+    hl.add_argument(
+        "--db", default="data/signals-live.db",
+        help="the collector's archive (default: data/signals-live.db). It is "
+             "NOT the nuggets archive: the two share no streak schema")
     hl.add_argument("--days", type=int, default=7,
                     help="window to judge, in days (default 7)")
     hl.add_argument("--json", action="store_true",
@@ -4488,7 +4529,9 @@ def main(argv=None):
                          "write the handover list | record what came of a lead | "
                          "list or restore a record's corrections | "
                          "score the stored Reddit rooms | write the buyer brief page")
-    sg.add_argument("--db", default="data/jester.db")
+    sg.add_argument(
+        "--db", default="data/signals-live.db",
+        help="the collector's archive (default: data/signals-live.db)")
     sg.add_argument("--out", default=None,
                     help="output directory (default: exports/signals beside the db)")
     sg.add_argument("--rules", default=None,
@@ -4763,6 +4806,14 @@ def main(argv=None):
              "while treatment waits for a quota reset.",
     )
     sc.add_argument("--db", default="data/jester.db")
+    sc.add_argument(
+        "--signals-db",
+        default=None,
+        metavar="PATH",
+        help="with `apply`: the collector's archive for the signals tasks "
+             "(default: signals-live.db beside --db). A task may also name "
+             "its own with a `db:` key in the declaration, which wins",
+    )
     sc.add_argument("--config", default=DEFAULT_CONFIG_DIR)
     sc.add_argument(
         "--replay", type=int, default=0, metavar="TICKS",
@@ -4830,6 +4881,14 @@ def main(argv=None):
 
     dc = sub.add_parser("doctor")
     dc.add_argument("--db", default="data/jester.db")
+    dc.add_argument(
+        "--signals-db",
+        default=None,
+        metavar="PATH",
+        help="the collector's archive, when the scheduled tasks were installed "
+             "with a non-default --signals-db (default: signals-live.db beside "
+             "--db). Used only to compare the launchers against the declaration",
+    )
     dc.add_argument(
         "--no-migrate",
         action="store_true",
@@ -4966,6 +5025,13 @@ def main(argv=None):
     bk.add_argument(
         "--env-root", default="",
         help="where to look for the dotenv (default: this checkout)",
+    )
+    bk.add_argument(
+        "--exclude-secrets", dest="exclude_secrets", action="store_true",
+        help="leave .env out of the set (snapshot only). The default KEEPS it: "
+             "a restore needs the keys. Use this for a copy that leaves the "
+             "owner-only boundary -- restore the dotenv from the password "
+             "manager instead.",
     )
     bk.add_argument(
         "--keep", type=int, default=14,

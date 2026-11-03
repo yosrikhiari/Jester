@@ -1,8 +1,12 @@
 # Config promotion: `config/` and `config-live/`
 
-The repo ships two configuration profiles that differ in **model choice and
-nothing else**. This page says what each one is for, how a change moves from
-one to the other, and how to prove the move did only what you meant.
+The repo ships two configuration profiles. `config/` is the default profile
+and the only place a default lives; `config-live/` is an **overlay** on it
+that switches every model role to the fully local setup. A key the live file
+does not carry resolves to the `config/` value, so the two files are *not*
+identical and are not meant to be. This page says what each one is for, how a
+change moves from one to the other, and how to prove the move did only what
+you meant.
 
 ## The two profiles
 
@@ -11,14 +15,31 @@ one to the other, and how to prove the move did only what you meant.
 | `config/` | the default profile, tuned for hosted + local mix | extractor `ollama:qwen3:8b`; synthesizer, critic and labeller `groq:openai/gpt-oss-120b`; embedding `ollama:nomic-embed-text`; chat and specifier `fake` |
 | `config-live/` | the fully local profile (setup §37.16) | extractor, synthesizer, critic, labeller, chat and specifier `ollama:qwen3:8b`; embedding `ollama:nomic-embed-text` |
 
-Everything else — `sources.yaml`, `signal_rules.yaml`, `scraper.yaml`, and
-every non-model key in `thresholds.yaml` — is meant to be identical in both
-directories. The console enforces that half of the rule directly: saving
-thresholds **without** a profile mirrors the write into both
-`config/thresholds.yaml` and `config-live/thresholds.yaml`, while choosing a
-profile writes only that profile. Model choice is never mirrored. (The mirror
-applies only when the console serves the repo's own `config/`; pointed at any
-other directory, it writes exactly there.)
+### How the overlay is kept honest
+
+`--config config-live` loads that directory on its own. The *intended*
+relationship is still an overlay on `config/`: the live file carries every key
+it means to change, and anything it leaves out is a documented default. Two
+rules follow, and `scripts/check_config_parity.py` enforces both:
+
+- **No live-only key is permitted.** A key in `config-live/thresholds.yaml`
+  that `config/` does not carry has no default behind it; add it to `config/`
+  first. `llm_provider` is declared in `config/` for exactly this reason.
+- **Only declared defaults-only keys may be omitted.** Seventeen keys in
+  `config/thresholds.yaml` are deliberately absent from the live profile
+  (chat, scheduler rotation, per-platform depth, the dev-only provider
+  overrides). That list and a one-line reason per key live in `DEFAULTS_ONLY`
+  in `scripts/check_config_parity.py`. Any other `config/` key must be in
+  `config-live/` too.
+
+`sources.yaml`, `signal_rules.yaml` and `scraper.yaml` are shared verbatim.
+
+The console enforces the write half of the rule directly: saving thresholds
+**without** a profile mirrors the write into both `config/thresholds.yaml` and
+`config-live/thresholds.yaml`, while choosing a profile writes only that
+profile. Model choice is never mirrored. (The mirror applies only when the
+console serves the repo's own `config/`; pointed at any other directory, it
+writes exactly there.)
 
 Two shipped facts that surprise people:
 
@@ -59,24 +80,44 @@ no code reads. The shipped profiles carry none (S-13); a key added by hand is
 reported the moment `jester models` loads the file.
 
 `--diff` compares **role records only**. Thresholds, prefilter rules and
-source lists are outside it; compare those with:
+source lists are outside it; the key sets are checked by the parity gate
+below, and the values by:
 
 ```bash
 git diff --no-index config/thresholds.yaml config-live/thresholds.yaml
 ```
 
+## The parity gate
+
+`scripts/check_config_parity.py` is the machine version of the two overlay
+rules. It fails when `config-live/` has a key `config/` does not, or when a
+`config/` key is missing from `config-live/` without a `DEFAULTS_ONLY` entry,
+naming every offender; on success it prints the counts and exits 0. The
+Python CI job runs it after the lock install, since it needs PyYAML.
+
+```bash
+python scripts/check_config_parity.py
+# config parity: 36 key(s) in config/, 19 in config-live/, 17 allowlisted defaults-only
+```
+
+It compares **which keys exist**, not their values: a deliberate live override
+of a shared key (`competitor_search_provider: duckduckgo`) passes. To make a
+new defaults-only key legal, add it to `DEFAULTS_ONLY` with the reason in the
+same change; to promote one, add it to `config-live/` and remove the entry.
+
 ## Promoting a change
 
 "Promotion" means moving an intended model change from the profile you tuned
-to the other one. There is no script and no state to migrate — the two
-directories are read at startup — so the discipline is in the verification,
-not the copy.
+to the other one. There is no promotion script and no state to migrate — each
+profile is read at startup — so the discipline is in the verification, not the
+copy; the parity gate is what checks the result.
 
 1. **Edit the source profile.** For example, switch the synthesizer in
    `config/thresholds.yaml` from Groq to local Ollama.
-2. **Mirror the model block** into the other profile by hand. Keep the
-   non-model keys untouched; if they differ, you are looking at drift, not a
-   promotion.
+2. **Mirror the model block** into the other profile by hand. Leave the
+   non-model keys alone: if one differs, that is either a deliberate live
+   override or drift, and the parity gate below tells you whether the key set
+   is legal while the `git diff` shows the values.
 3. **Prove the difference is exactly what you meant:**
 
    ```bash
@@ -88,12 +129,12 @@ not the copy.
 4. **Prove the shared half still agrees:**
 
    ```bash
-   git diff --no-index config/thresholds.yaml config-live/thresholds.yaml
+   python scripts/check_config_parity.py
    ```
 
-   Expect only the model keys and the `*_provider` lines, plus keys one file
-   does not carry at all (for example `llm_provider` and
-   `competitor_search_provider` in `config-live/`). Anything else is drift.
+   It must print the counts and exit 0. A key it names is either a missed
+   promotion or a new defaults-only key that needs a reason in
+   `DEFAULTS_ONLY`.
 5. **Exercise the pipeline on the new profile:** `python -m jester.cli smoke`,
    then one small real run, and read `python -m jester.cli runs` for the flags
    and the `models_used` record.

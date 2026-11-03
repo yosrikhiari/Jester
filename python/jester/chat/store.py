@@ -114,13 +114,24 @@ class ChatStore:
         return int(cur.lastrowid or 0)
 
     def messages(self, session_id: str, limit: int = 400) -> List[dict]:
+        """The MOST RECENT `limit` messages, chronological.
+
+        `ORDER BY seq DESC LIMIT ?` keeps the newest and the reverse restores
+        order for reading. Fetching the oldest N instead (the shape until
+        2026-11-03) meant a session longer than the window asked the model to
+        answer the current turn knowing nothing that happened after message
+        #24 — the oldest window became a permanent past that grew with every
+        new turn, and the newest context disappeared exactly when the
+        conversation got long enough for it to matter (R4-11, filed as V3-03).
+        """
         rows = self.db.execute(
             "SELECT seq, role, content, created_utc, models_used "
-            "FROM chat_messages WHERE session_id=? ORDER BY seq LIMIT ?",
+            "FROM chat_messages WHERE session_id=? "
+            "ORDER BY seq DESC LIMIT ?",
             (session_id, limit),
         ).fetchall()
         out: List[dict] = []
-        for row in rows:
+        for row in reversed(rows):
             d = dict(row)
             if isinstance(d.get("models_used"), str):
                 try:

@@ -404,16 +404,42 @@ def test_nugget_cap_invariant():
 
 # ---- the CLI refuses to invent a result when no labels exist -------------------
 
-def test_eval_extract_prints_how_to_label_when_the_file_is_missing(tmp_path, capsys):
+def test_eval_extract_says_not_measured_when_the_file_is_missing(tmp_path, capsys):
+    """Two lowercase lines read like any other informational step in a CI log.
+    The absence of a measurement is a NOT MEASURED block: the resolved path,
+    the row count, how to measure, and the sentence that exit 0 is "not taken"."""
     from argparse import Namespace
     from jester.cli_review import cmd_eval_extract
 
-    cmd_eval_extract(Namespace(labels=str(tmp_path / "missing.jsonl"), seed=7,
-                               floor=0.70, fabrication_ceiling=0.05,
-                               max_nuggets_per_comment=1.2))
+    missing = tmp_path / "missing.jsonl"
+    res = cmd_eval_extract(Namespace(labels=str(missing), seed=7,
+                                     floor=0.70, fabrication_ceiling=0.05,
+                                     max_nuggets_per_comment=1.2))
+
     out = capsys.readouterr().out
-    assert "no labels" in out.lower()
-    assert "jsonl" in out.lower()
+    assert res["ok"] is True and res["measured"] is False and res["labels"] == 0
+    assert "NOT MEASURED" in out
+    assert str(missing) in out and "(0 rows)" in out
+    assert '"unique_key"' in out, "the schema example survives"
+    assert 'Exit 0 is "not taken", not "passed".' in out
+    assert "::warning::" not in out, "no GitHub annotation syntax from the CLI"
+
+
+def test_eval_extract_says_not_measured_when_the_file_is_empty(tmp_path, capsys):
+    from argparse import Namespace
+    from jester.cli_review import cmd_eval_extract
+
+    path = tmp_path / "labels.jsonl"
+    path.write_text("", encoding="utf-8")
+    res = cmd_eval_extract(Namespace(labels=str(path), seed=7, floor=0.70,
+                                     fabrication_ceiling=0.05,
+                                     max_nuggets_per_comment=1.2))
+
+    out = capsys.readouterr().out
+    assert res["ok"] is True and res["measured"] is False
+    assert "NOT MEASURED" in out
+    assert "the file is empty" in out and str(path) in out
+    assert '"unique_key"' in out
 
 
 def test_eval_extract_exits_nonzero_when_the_gate_fails(tmp_path):
@@ -467,4 +493,5 @@ def test_eval_extract_honours_a_lowered_kappa_floor(tmp_path, capsys):
                                      min_kappa=-1.0))
 
     assert res["ok"] is True
+    assert res["measured"] is True, "a labelled file is a measurement"
     assert "GATE" not in capsys.readouterr().out

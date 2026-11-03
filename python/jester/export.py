@@ -106,6 +106,62 @@ LISTING_COLUMNS = [
 
 MANIFEST = "manifest.json"
 
+#: How an export tree is swapped in without ever being half-visible. The tree
+#: is built in a sibling of the target (`<name>.staging`), the manifest is the
+#: last file written into it and lands through temp-file + replace, and only
+#: then does the tree take the target's place. The names matter: they are
+#: jester-owned, so `prune_exports` can remove leftovers without ever
+#: deleting a directory a human created (`<name>` without a manifest stays
+#: exactly as untouchable as before).
+STAGING_SUFFIX = ".staging"
+RETIRED_PREFIX = ".retired-"
+
+
+def _staging_dir(out_dir: Path) -> Path:
+    return out_dir.parent / (out_dir.name + STAGING_SUFFIX)
+
+
+def _clear_swap_leftovers(out_dir: Path) -> int:
+    """Remove jester-named crash leftovers. Returns how many were removed.
+
+    Both names are jester-owned (they spell out the target's name), so this
+    can never touch a directory anybody else created.
+    """
+    removed = 0
+    staging = _staging_dir(out_dir)
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+        removed += 1
+    for retired in out_dir.parent.glob(out_dir.name + RETIRED_PREFIX + "*"):
+        shutil.rmtree(retired, ignore_errors=True)
+        removed += 1
+    return removed
+
+
+def _discard_swap_leftovers(out_dir: Path) -> None:
+    """Remove the staging tree and any retired officer of a previous export.
+
+    Called at the START of every export, so a crash mid-write costs the next
+    run nothing — the leftovers are removed before staging is rebuilt.
+    """
+    _clear_swap_leftovers(out_dir)
+
+
+def _write_manifest_atomic(target: Path, manifest: dict) -> None:
+    """Land the manifest through temp-file + replace.
+
+    A manifest written last can still be TORN by a crash at write time; the
+    replace makes the step all-or-nothing, and a torn file never exists under
+    a name a reader would open — it is at most a `.tmp` cleaning job.
+    """
+    tmp = target.with_name(MANIFEST + ".tmp")
+    tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    try:
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
 
 def _slug(value, fallback="unknown"):
     """A filename-safe origin/category key. Never empty, never a path."""
@@ -481,9 +537,24 @@ def read_listings(db):
 
 
 def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_FILE) -> dict:
-    """Write the whole archive as CSV. Returns a manifest of what was written."""
+    """Write the whole archive as CSV. Returns a manifest of what was written.
+
+    The tree becomes visible ATOMICALLY (R4-09, once N-08): every shard is
+    built in a jester-owned sibling of the target (`<name>.staging`) and the
+    manifest is the tree's last file, landed through temp-file + replace, so
+    there is never a moment where `out_dir` holds a fresh shard next to a
+    stale manifest, or a half-written export at all. Only once staging is
+    complete does it take the target's place: a previous jester export is
+    renamed aside (`<name>.retired-<stamp>`) and removed, an unmanifested
+    tree at the target is removed. A crash costs nothing visible: the target
+    keeps its previous export exactly, the staging tree is removed on the way
+    out, and the next run rebuilds from scratch after clearing the leftovers
+    by name.
+    """
     out_dir = Path(out_dir)
     now = now or datetime.now(timezone.utc)
+    _discard_swap_leftovers(out_dir)
+    stage = _staging_dir(out_dir)
 
     comments = read_comments(db)
     nuggets = read_nuggets(db)
@@ -532,126 +603,162 @@ def export_csv(db, out_dir, *, now=None, rows_per_file: int = DEFAULT_ROWS_PER_F
 
     def record(written):
         for path, n in written:
-            files[str(path.relative_to(out_dir)).replace("\\", "/")] = n
+            files[str(path.relative_to(stage)).replace("\\", "/")] = n
 
-    # ---- by origin: one folder per source, sharded ------------------------
-    for platform, rows in sorted(_group(comments, lambda r: _slug(r["platform"])).items()):
-        record(_write_shards(out_dir / "comments" / platform, platform,
-                             COMMENT_COLUMNS, rows, rows_per_file))
-    for platform, rows in sorted(_group(nuggets, lambda r: _slug(r.get("platform"))).items()):
-        record(_write_shards(out_dir / "nuggets" / platform, platform,
-                             NUGGET_COLUMNS, rows, rows_per_file))
+    try:
 
-    # ONE ROW PER LISTING in the sheets people open, and the full series in
-    # exactly one place.
-    #
-    # The archive appends an observation every time a listing is seen again,
-    # unchanged or not, and it is right to: `RecordObservation` documents that
-    # "we looked on the 3rd and it had not moved" is what makes days-on-market
-    # a fact rather than an inference from gaps. But that is an archival
-    # decision, and re-exporting it row for row made the spreadsheet unusable.
-    # A real archive held 7979 observations of 3828 listings, of which 2876
-    # rows - 36% - carried no change from an earlier one: the same listing at
-    # the same price with a byte-identical content_hash, six times over. Only
-    # 74 listings had ever changed price at all.
-    #
-    # So the split is by question. `current` answers "what is on the market",
-    # which is what `all-001.csv` and the per-portal folders are opened for.
-    # `history` answers "how did it get there" and keeps every observation, so
-    # nothing the archive knows is lost on the way to CSV.
-    current = sorted((r for r in listings if r.get("is_latest") == "true"),
-                     key=lambda r: (r.get("portal", ""), r.get("listing_id", "")))
+        # ---- by origin: one folder per source, sharded --------------------
+        for platform, rows in sorted(_group(comments, lambda r: _slug(r["platform"])).items()):
+            record(_write_shards(stage / "comments" / platform, platform,
+                                 COMMENT_COLUMNS, rows, rows_per_file))
+        for platform, rows in sorted(_group(nuggets, lambda r: _slug(r.get("platform"))).items()):
+            record(_write_shards(stage / "nuggets" / platform, platform,
+                                 NUGGET_COLUMNS, rows, rows_per_file))
 
-    # One folder per portal, which is the split that matters for listings:
-    # nobody asks "show me every property", they ask what Property24 had.
-    for portal, rows in sorted(_group(current, lambda r: _slug(r.get("portal"))).items()):
-        record(_write_shards(out_dir / "listings" / portal, portal,
-                             LISTING_COLUMNS, rows, rows_per_file))
+        # ONE ROW PER LISTING in the sheets people open, and the full series in
+        # exactly one place.
+        #
+        # The archive appends an observation every time a listing is seen again,
+        # unchanged or not, and it is right to: `RecordObservation` documents that
+        # "we looked on the 3rd and it had not moved" is what makes days-on-market
+        # a fact rather than an inference from gaps. But that is an archival
+        # decision, and re-exporting it row for row made the spreadsheet unusable.
+        # A real archive held 7979 observations of 3828 listings, of which 2876
+        # rows - 36% - carried no change from an earlier one: the same listing at
+        # the same price with a byte-identical content_hash, six times over. Only
+        # 74 listings had ever changed price at all.
+        #
+        # So the split is by question. `current` answers "what is on the market",
+        # which is what `all-001.csv` and the per-portal folders are opened for.
+        # `history` answers "how did it get there" and keeps every observation, so
+        # nothing the archive knows is lost on the way to CSV.
+        current = sorted((r for r in listings if r.get("is_latest") == "true"),
+                         key=lambda r: (r.get("portal", ""), r.get("listing_id", "")))
 
-    # ...and one sheet with all of them, sitting beside those folders. The
-    # per-portal split answers "what did this portal have"; it cannot answer
-    # "what is on the market", which needs every source in one place - sorting
-    # by price across portals, or filtering to a market, means one file rather
-    # than ten opened side by side. `portal` and `market` are the first two
-    # columns, so the split is a filter away.
-    record(_write_shards(out_dir / "listings", "all",
-                         LISTING_COLUMNS, current, rows_per_file))
+        # One folder per portal, which is the split that matters for listings:
+        # nobody asks "show me every property", they ask what Property24 had.
+        for portal, rows in sorted(_group(current, lambda r: _slug(r.get("portal"))).items()):
+            record(_write_shards(stage / "listings" / portal, portal,
+                                 LISTING_COLUMNS, rows, rows_per_file))
 
-    # Every observation, including the unchanged ones. Kept separate rather
-    # than dropped: the price cuts are in here, and so is the evidence for how
-    # long something has been on the market.
-    record(_write_shards(out_dir / "listings", "history",
-                         LISTING_COLUMNS,
-                         sorted(listings, key=lambda r: (r.get("portal", ""),
-                                                         r.get("listing_id", ""),
-                                                         r.get("observed_at", ""))),
-                         rows_per_file))
+        # ...and one sheet with all of them, sitting beside those folders. The
+        # per-portal split answers "what did this portal have"; it cannot answer
+        # "what is on the market", which needs every source in one place - sorting
+        # by price across portals, or filtering to a market, means one file rather
+        # than ten opened side by side. `portal` and `market` are the first two
+        # columns, so the split is a filter away.
+        record(_write_shards(stage / "listings", "all",
+                             LISTING_COLUMNS, current, rows_per_file))
 
-    # ---- by content type: "every data-loss complaint, whatever the source"
-    for category, rows in sorted(
-        _group(nuggets, lambda r: _slug(r.get("category"), "uncategorised")).items()
-    ):
-        record(_write_shards(out_dir / "nuggets" / "by-category" / category, category,
-                             NUGGET_COLUMNS, rows, rows_per_file))
+        # Every observation, including the unchanged ones. Kept separate rather
+        # than dropped: the price cuts are in here, and so is the evidence for how
+        # long something has been on the market.
+        record(_write_shards(stage / "listings", "history",
+                             LISTING_COLUMNS,
+                             sorted(listings, key=lambda r: (r.get("portal", ""),
+                                                             r.get("listing_id", ""),
+                                                             r.get("observed_at", ""))),
+                             rows_per_file))
 
-    # ideas span platforms by construction (that is the point of synthesis), so
-    # they are one set plus the citation join that makes the export relational.
-    record(_write_shards(out_dir / "ideas", "ideas", IDEA_COLUMNS, ideas, rows_per_file))
-    record(_write_shards(out_dir / "ideas", "citations", CITATION_COLUMNS,
-                         citations, rows_per_file))
+        # ---- by content type: "every data-loss complaint, whatever the source"
+        for category, rows in sorted(
+            _group(nuggets, lambda r: _slug(r.get("category"), "uncategorised")).items()
+        ):
+            record(_write_shards(stage / "nuggets" / "by-category" / category, category,
+                                 NUGGET_COLUMNS, rows, rows_per_file))
 
-    # The audit trail for every collapsed row: which id was kept, which was
-    # dropped, and a preview of the shared text. Without it the export would
-    # silently hold fewer rows than the archive.
-    if duplicates:
-        _write(out_dir / "duplicates.csv", DUPLICATE_COLUMNS, duplicates)
-        files["duplicates.csv"] = len(duplicates)
+        # ideas span platforms by construction (that is the point of synthesis), so
+        # they are one set plus the citation join that makes the export relational.
+        record(_write_shards(stage / "ideas", "ideas", IDEA_COLUMNS, ideas, rows_per_file))
+        record(_write_shards(stage / "ideas", "citations", CITATION_COLUMNS,
+                             citations, rows_per_file))
 
-    manifest = {
-        "exported_at": now.isoformat(),
-        "rows_per_file": rows_per_file,
-        # Stated because it bites every naive reader exactly once. The BOM is
-        # deliberate — Excel on Windows reads a plain UTF-8 CSV as cp1252 and
-        # mangles every non-ASCII character in scraped text — but it means the
-        # FIRST column header carries an invisible ﻿ prefix. A consumer
-        # opening these with plain "utf-8" silently loses that column, which
-        # is unique_key for nuggets and id for ideas. Read them with
-        # encoding="utf-8-sig" (pandas: encoding="utf-8-sig").
-        "encoding": "utf-8-sig",
-        "reader_note": (
-            "open with encoding='utf-8-sig'; plain utf-8 leaves a BOM on the "
-            "first column name"
-        ),
-        "counts": {
-            "comments": len(comments),
-            "nuggets": len(nuggets),
-            "ideas": len(ideas),
-            "citations": len(citations),
-            # "listings" counts LISTINGS, which is what all-NNN.csv and the
-            # portal folders hold. The observation total is its own number
-            # rather than folded in here, because a log line saying "exported
-            # 7979 listing(s)" over an archive of 3828 properties is a count
-            # nobody can act on.
-            "listings": sum(1 for r in listings if r.get("is_latest") == "true"),
-            "listing_observations": len(listings),
-        },
-        # Reported separately so "we exported fewer rows than the archive holds"
-        # is an explained number rather than a discrepancy someone has to chase.
-        "counts_before_dedup": raw_counts,
-        "duplicates_dropped": len(duplicates),
-        "files": files,
-        # Named so a reader knows the retention clock applies to this directory
-        # too — §14 does not stop at the database boundary.
-        "retention_note": (
-            "Contains raw scraped text. jester retention prunes export "
-            "directories past the same TTL as the archive (§14)."
-        ),
-    }
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / MANIFEST).write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8"
-    )
-    return manifest
+        # The audit trail for every collapsed row: which id was kept, which was
+        # dropped, and a preview of the shared text. Without it the export would
+        # silently hold fewer rows than the archive.
+        if duplicates:
+            _write(stage / "duplicates.csv", DUPLICATE_COLUMNS, duplicates)
+            files["duplicates.csv"] = len(duplicates)
+
+        manifest = {
+            "exported_at": now.isoformat(),
+            "rows_per_file": rows_per_file,
+            # Stated because it bites every naive reader exactly once. The BOM is
+            # deliberate — Excel on Windows reads a plain UTF-8 CSV as cp1252 and
+            # mangles every non-ASCII character in scraped text — but it means the
+            # FIRST column header carries an invisible ﻿ prefix. A consumer
+            # opening these with plain "utf-8" silently loses that column, which
+            # is unique_key for nuggets and id for ideas. Read them with
+            # encoding="utf-8-sig" (pandas: encoding="utf-8-sig").
+            "encoding": "utf-8-sig",
+            "reader_note": (
+                "open with encoding='utf-8-sig'; plain utf-8 leaves a BOM on the "
+                "first column name"
+            ),
+            "counts": {
+                "comments": len(comments),
+                "nuggets": len(nuggets),
+                "ideas": len(ideas),
+                "citations": len(citations),
+                # "listings" counts LISTINGS, which is what all-NNN.csv and the
+                # portal folders hold. The observation total is its own number
+                # rather than folded in here, because a log line saying "exported
+                # 7979 listing(s)" over an archive of 3828 properties is a count
+                # nobody can act on.
+                "listings": sum(1 for r in listings if r.get("is_latest") == "true"),
+                "listing_observations": len(listings),
+            },
+            # Reported separately so "we exported fewer rows than the archive holds"
+            # is an explained number rather than a discrepancy someone has to chase.
+            "counts_before_dedup": raw_counts,
+            "duplicates_dropped": len(duplicates),
+            "files": files,
+            # Named so a reader knows the retention clock applies to this directory
+            # too — §14 does not stop at the database boundary.
+            "retention_note": (
+                "Contains raw scraped text. jester retention prunes export "
+                "directories past the same TTL as the archive (§14)."
+            ),
+        }
+
+        # The manifest lands LAST inside staging, through temp-file + replace:
+        # a torn or half-written manifest can never exist under a name a
+        # reader would open.
+        _write_manifest_atomic(stage / MANIFEST, manifest)
+
+        # ---- swap: staging takes the target's place in one step ------------
+        # A previous jester export is renamed aside and removed; an
+        # unmanifested tree at the target (a historic half-export jester was
+        # asked to own) cannot be merged with a tree of another schema and is
+        # removed. From here the swapped tree is complete; if the replace
+        # itself fails, the old export is put back exactly as it was.
+        retired = None
+        if out_dir.exists():
+            if (out_dir / MANIFEST).exists():
+                retired = out_dir.parent / (
+                    f"{out_dir.name}{RETIRED_PREFIX}"
+                    f"{now.strftime('%Y%m%dT%H%M%SZ')}"
+                )
+                out_dir.rename(retired)
+            else:
+                shutil.rmtree(out_dir)
+        try:
+            os.replace(stage, out_dir)
+        except BaseException:
+            # Nothing was replaced (rename onto an absent target is atomic):
+            # put the previous export back, then let the caller see the reason.
+            if retired is not None and retired.exists() and not out_dir.exists():
+                retired.rename(out_dir)
+            raise
+        if retired is not None:
+            shutil.rmtree(retired, ignore_errors=True)
+        return manifest
+    except BaseException:
+        # A kill anywhere before the swap leaves NO export: the target keeps
+        # its previous export exactly, and staging — the only half state —
+        # is removed on the way out.
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
 
 
 def default_export_dir(db_path: str) -> str:
@@ -662,20 +769,74 @@ def default_export_dir(db_path: str) -> str:
     return os.path.join(os.path.dirname(base), "exports")
 
 
+class ExportPathError(ValueError):
+    """A requested export directory that escapes the exports root.
+
+    ValueError so a caller that only knows "the request was wrong" still
+    catches it; the console maps it to 400 rather than 500.
+    """
+
+
+def exports_root(db_path: str) -> Path:
+    """Where exports may be written: ``JESTER_EXPORTS_DIR``, else beside the db."""
+    configured = os.environ.get("JESTER_EXPORTS_DIR", "").strip()
+    return Path(configured or default_export_dir(db_path)).resolve()
+
+
+def resolve_export_dir(out_dir, db_path) -> Path:
+    """The export target, contained inside the exports root.
+
+    A relative ``out_dir`` is resolved against the exports root, not the
+    process cwd: ``"nightly"`` means ``<root>/nightly`` wherever the console
+    was started. Both sides go through ``Path.resolve()`` before the
+    comparison, so a symlink that points out of the root is caught the same
+    way as ``..`` and an absolute path elsewhere: the resolved target is what
+    the writes would land on, and that is what has to be inside.
+    """
+    root = exports_root(db_path)
+    if out_dir is None:
+        return root
+    if not isinstance(out_dir, (str, os.PathLike)):
+        raise ExportPathError(
+            f"export directory must be a path string, not "
+            f"{type(out_dir).__name__}")
+    target = Path(out_dir).expanduser()
+    if not target.is_absolute():
+        target = root / target
+    target = target.resolve()
+    if not target.is_relative_to(root):
+        raise ExportPathError(
+            f"export directory {str(out_dir)!r} resolves to {target}, which is "
+            f"outside the exports root {root}")
+    return target
+
+
 def prune_exports(out_dir, ttl_days: int = 30, now=None) -> int:
     """§14: drop export directories whose manifest is past the TTL.
 
     Without this, `jester retention` would wipe raw_text from the archive while
     a CSV copy of the same text sat next to it — a retention policy with a hole
     in it is not a retention policy.
+
+    The crash leftovers of this name (`<name>.staging`, `<name>.retired-*`) are
+    removed here too and counted among the removed directories: they are
+    jester-owned names, and apart from the next export of the same target
+    nothing else ever deletes a staging tree.
     """
     out_dir = Path(out_dir)
-    if not out_dir.exists():
-        return 0
     now = now or datetime.now(timezone.utc)
+    # Leftovers come first, whether or not the target itself exists: a hard
+    # kill can leave a staging tree with no target beside it.
+    removed = _clear_swap_leftovers(out_dir)
+    if not out_dir.exists():
+        return removed
     manifest = out_dir / MANIFEST
     if not manifest.exists():
-        return 0
+        # No manifest means jester did not write this directory; never delete
+        # someone else's tree. (The historic unmanifested tree of a target
+        # jester is asked to export to is retired by the export swap, not by
+        # retention.)
+        return removed
     try:
         stamp = json.loads(manifest.read_text(encoding="utf-8")).get("exported_at")
         when = datetime.fromisoformat(str(stamp))
@@ -684,6 +845,6 @@ def prune_exports(out_dir, ttl_days: int = 30, now=None) -> int:
     except Exception:  # noqa: BLE001 - an unreadable stamp is treated as stale
         when = None
     if when is not None and (now - when).days < ttl_days:
-        return 0
+        return removed
     shutil.rmtree(out_dir, ignore_errors=True)
-    return 1
+    return removed + 1

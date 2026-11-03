@@ -163,6 +163,12 @@ competitor_search_provider: none
 # runs a day, so 1 is roughly 150 re-scores a day inside the Groq free tier.
 # 0 turns re-scoring off.
 rescore_per_run: 1
+# The global fallback for jobs that set no provider of their own. Every
+# pipeline role above names its provider explicitly; chat and the specifier
+# inherit this one, and `fake` is the value they already resolved to (it is
+# the dataclass default). Declared here so config-live/ is an overlay rather
+# than the only profile that carries the key.
+llm_provider: fake
 embedding_provider: ollama
 embedding_model: nomic-embed-text
 synthesizer_provider: groq

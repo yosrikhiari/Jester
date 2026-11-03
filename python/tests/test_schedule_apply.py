@@ -174,6 +174,92 @@ def test_the_cli_prints_one_line_per_task_and_a_total(host, capsys):
     assert "14 task(s) would change" in out
 
 
+def test_each_task_is_applied_against_its_own_archive(host):
+    """R4-02: the launcher is what the scheduler runs, so the resolved database
+    has to reach the file. Before this every task -- signals and health
+    included -- was pointed at the nuggets archive."""
+    assert schedule.apply_desired()["ok"] is True
+
+    assert schedule.read_launcher("signals")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("health")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("leads-reddit")["db"] == "data/signals-live.db"
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+    assert schedule.read_launcher("backup")["db"] == "data/jester.db"
+
+
+def test_an_explicit_signals_archive_is_used_and_checked(host):
+    assert schedule.apply_desired(signals_db="data/collector.db")["ok"] is True
+    assert schedule.read_launcher("signals")["db"] == "data/collector.db"
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+
+
+def test_a_launcher_pointed_at_the_wrong_archive_is_reinstalled(host):
+    """The bug this closes: a host that already applied the declaration keeps a
+    launcher naming data/jester.db, and an apply that only compares argv and
+    the format marker reports it "unchanged" forever."""
+    assert schedule.apply_desired()["ok"] is True
+    schedule.write_launcher("data/jester.db", "config", None, command="signals")
+
+    actions = {r["task"]: r["action"] for r in schedule.apply_desired()["results"]}
+
+    assert actions["JesterNightlySignals"] == "installed"
+    assert actions["JesterNightlyBackup"] == "unchanged"
+    assert schedule.read_launcher("signals")["db"] == "data/signals-live.db"
+
+
+def test_a_dry_run_names_the_archive_each_task_would_write(host):
+    res = schedule.apply_desired(dry_run=True)
+    dbs = {r["task"]: r.get("db") for r in res["results"]}
+
+    assert dbs["JesterNightlySignals"] == "data/signals-live.db"
+    assert dbs["JesterNightlyHealth"] == "data/signals-live.db"
+    assert dbs["JesterNightlyLeadsReddit"] == "data/signals-live.db"
+    assert dbs["JesterNightly"] == "data/jester.db"
+    assert dbs["JesterNightlyBackup"] == "data/jester.db"
+
+
+def test_the_cli_passes_the_signals_archive_through(host, capsys):
+    cli.main(["schedule", "apply", "--dry-run", "--signals-db", "data/collector.db"])
+    out = capsys.readouterr().out
+    assert "data/collector.db" in out
+
+
+def test_a_non_default_launcher_archive_is_not_moved_silently(host):
+    """A host installed with its own `schedule install --db` keeps that path in
+    the launcher. Applying the declaration without naming an archive must say
+    it is moving it, not just do it -- the operator's choice is still overridden
+    (apply makes the machine match the file), but it is not silent."""
+    assert schedule.apply_desired(db="data/mine.db")["ok"] is True
+
+    res = schedule.apply_desired()
+    warned = {r["task"]: r.get("warning") for r in res["results"]
+              if r.get("warning")}
+    assert warned, res
+    assert all("data/mine.db" in w for w in warned.values()), warned
+    assert schedule.read_launcher("cycle")["db"] == "data/jester.db"
+
+    # Naming the archive on this run is consent: no warning.
+    res = schedule.apply_desired(db="data/mine.db")
+    assert not any(r.get("warning") for r in res["results"]), res
+
+
+def test_the_cli_prints_the_archive_warning(host, capsys):
+    assert schedule.apply_desired(db="data/mine.db")["ok"] is True
+    cli.main(["schedule", "apply", "--dry-run"])
+    out = capsys.readouterr().out
+    assert "warning:" in out and "data/mine.db" in out, out
+
+
+def test_drift_compares_the_archive_doctor_was_given(host):
+    """Doctor diagnoses one archive; the launcher records the one it was
+    installed with. Comparing against this code's defaults reported every task
+    as drifted on a host that had passed a non-default --db."""
+    assert schedule.apply_desired(db="data/moved.db")["ok"] is True
+
+    assert any("launcher writes" in n for n in cli.schedule_drift_notes())
+    assert cli.schedule_drift_notes("data/moved.db") == []
+
+
 def test_a_declaration_can_say_weekly_and_scope_one_tick(tmp_path, host):
     path = tmp_path / "week.yaml"
     path.write_text(
@@ -525,3 +611,73 @@ def test_a_monthly_cron_line_is_a_valid_five_field_schedule(monkeypatch, tmp_pat
     line = schedule.cron_line(at="03:00", monthly=1, command="backup-drill")
     assert line.split()[:5] == ["0", "3", "1", "*", "*"]
     assert "jester.cli backup drill --db data/jester.db" in line
+
+
+# -- per-task `args:` (R4-07): the second copy is declared, not remembered ----
+#
+# The declaration now carries the extra CLI flags a task runs with. They are
+# the operator's words, passed verbatim: one list item is one argv token, no
+# shell expands a wildcard or splits a path, so anything that is not a plain
+# string is a declaration meaning something its author never wrote.
+
+@pytest.mark.parametrize("body", [
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: --also-to\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, 5]\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, true]\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, '']\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, 'a \"quoted\" token']\n",
+])
+def test_a_bad_args_declaration_is_refused_before_anything_installs(tmp_path, host, body):
+    path = tmp_path / "bad-args.yaml"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(schedule.ScheduleError):
+        schedule.apply_desired(path)
+    assert host.created() == []
+
+
+def test_a_backup_may_declare_the_second_copy_and_apply_writes_it(host, tmp_path):
+    path = tmp_path / "also.yaml"
+    path.write_text(
+        "tasks:\n"
+        "  - task: JesterNightlyBackup\n"
+        "    command: backup\n"
+        "    cadence: {at: '02:30'}\n"
+        "    args: [--also-to, 'D:/second copy/jester']\n", encoding="utf-8")
+
+    specs = schedule.load_desired(path)
+    assert specs[0]["args"] == ["--also-to", "D:/second copy/jester"]
+    assert schedule.apply_desired(path)["ok"] is True
+    # The archive backup succeeds on the primary volume even while this line
+    # is one flag away from a volume the machine has never seen; parsing shows
+    # the tokens verbatim, one list item per argv token.
+    assert schedule.read_launcher("backup")["extra"] == [
+        "--also-to", "D:/second copy/jester"]
+    assert [r["action"] for r in schedule.apply_desired(path)["results"]] == [
+        "unchanged"]
+
+
+def test_an_undeclared_args_list_is_empty(host, tmp_path):
+    path = _one_task(tmp_path / "plain.yaml", "09:00")
+    assert schedule.load_desired(path)[0]["args"] == []
+    assert schedule.apply_desired(path)["ok"] is True
+    assert schedule.read_launcher("signals")["extra"] == []
+
+
+def test_treat_takes_args_even_though_it_takes_no_scope(host, tmp_path):
+    path = tmp_path / "treat.yaml"
+    path.write_text(
+        "tasks:\n"
+        "  - task: JesterNightlyTreat\n"
+        "    command: treat\n"
+        "    cadence: {at: '04:00'}\n"
+        "    options: {max_posts: 5}\n"
+        "    args: [--cap, '10']\n", encoding="utf-8")
+    assert schedule.apply_desired(path)["ok"] is True
+    assert schedule.read_launcher("treat")["extra"] == ["--cap", "10"]
+    again = schedule.apply_desired(path)
+    assert [r["action"] for r in again["results"]] == ["unchanged"]
