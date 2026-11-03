@@ -56,7 +56,7 @@ func FetchListingList(ctx context.Context, src config.Source, delay time.Duratio
 			continue
 		}
 
-		listings, err := profile.Parse(body)
+		listings, _, err := profile.Parse(body)
 		if err != nil {
 			fmt.Printf("[live]   realestate page %d parse failed: %v\n", i+1, err)
 			if firstErr == nil {

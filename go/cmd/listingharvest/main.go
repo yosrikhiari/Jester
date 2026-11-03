@@ -214,7 +214,7 @@ func main() {
 				time.Sleep(realestate.Pace(*delay))
 				continue
 			}
-			listings, err := p.Parse(body)
+			listings, _, err := p.Parse(body)
 			if err != nil {
 				st.Errors++
 				if st.FirstError == "" {

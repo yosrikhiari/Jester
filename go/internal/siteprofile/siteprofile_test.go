@@ -30,7 +30,7 @@ func load(t *testing.T, profile, fixture string) (*Profile, string) {
 
 func TestProperty24RealTiles(t *testing.T) {
 	p, body := load(t, "property24.yaml", "property24_tiles.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestProperty24RealTiles(t *testing.T) {
 
 func TestPrivatePropertyRealListings(t *testing.T) {
 	p, body := load(t, "privateproperty.yaml", "privateproperty_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestBothModesProduceObservableListings(t *testing.T) {
 		{"privateproperty.yaml", "privateproperty_listings.html"},
 	} {
 		p, body := load(t, c.profile, c.fixture)
-		got, err := p.Parse(body)
+		got, _, err := p.Parse(body)
 		if err != nil || len(got) == 0 {
 			t.Fatalf("%s: %d listings, err %v", c.profile, len(got), err)
 		}
@@ -204,7 +204,7 @@ func TestPriceParsingHandlesRealFormatting(t *testing.T) {
 // failed before the fix that follows it.
 func TestRealMarkupRegressions(t *testing.T) {
 	p, body := load(t, "property24.yaml", "property24_tiles.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("parse: %d listings, err %v", len(got), err)
 	}
@@ -258,7 +258,7 @@ func TestRealMarkupRegressions(t *testing.T) {
 // in the JSON, and only the block says which belongs to which.
 func TestPrivatePropertyPairsPriceWithItsOwnListing(t *testing.T) {
 	p, body := load(t, "privateproperty.yaml", "privateproperty_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("parse: %d listings, err %v", len(got), err)
 	}
@@ -289,7 +289,7 @@ func TestPrivatePropertyPairsPriceWithItsOwnListing(t *testing.T) {
 func TestBlockStartBacksUpToTheContainer(t *testing.T) {
 	p, body := load(t, "privateproperty.yaml", "privateproperty_listings.html")
 	p.Extract.BlockStart = "" // simulate the profile before the fix
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestBlockStartBacksUpToTheContainer(t *testing.T) {
 // a Next.js page that embeds schema.org RealEstateListing in __NEXT_DATA__.
 func TestTayaraLDJSONParsing(t *testing.T) {
 	p, body := load(t, "tayara.yaml", "tayara_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestTayaraLDJSONParsing(t *testing.T) {
 // a JSF/PrimeFaces page with data-adid markers on each listing tile.
 func TestMubawabAnchoredParsing(t *testing.T) {
 	p, body := load(t, "mubawab.yaml", "mubawab_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -551,7 +551,7 @@ func TestTunisieAnnonceAnchoredParsing(t *testing.T) {
 	// Nature, Type, and the full untruncated title, because the anchor text
 	// itself is cut off at about thirty characters.
 	p, body := load(t, "tunisieannonce.yaml", "tunisieannonce_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestTunisieAnnonceDealTypeComesFromNature(t *testing.T) {
 }
 func TestHouniLDJSONParsing(t *testing.T) {
 	p, body := load(t, "houni.yaml", "houni_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -816,19 +816,31 @@ extract:
 func TestNextDataSaysWhyItFoundNothing(t *testing.T) {
 	p := &Profile{Portal: "x", Extract: Extract{Mode: "nextdata", DataPath: "a.b"}}
 
-	if _, err := p.Parse("<html><body>consent wall</body></html>"); err == nil ||
+	_, ps0, err := p.Parse("<html><body>consent wall</body></html>")
+	if err == nil ||
 		!strings.Contains(err.Error(), "no __NEXT_DATA__") {
 		t.Errorf("missing script: got %v", err)
 	}
+	if ps0.Blocks != 0 {
+		t.Errorf("missing script: blocks=%d, want 0", ps0.Blocks)
+	}
 
-	if _, err := p.Parse(`<script id="__NEXT_DATA__">{"a":</script>`); err == nil ||
+	_, ps1, err := p.Parse(`<script id="__NEXT_DATA__">{"a":</script>`)
+	if err == nil ||
 		!strings.Contains(err.Error(), "not valid JSON") {
 		t.Errorf("malformed json: got %v", err)
 	}
+	if ps1.Blocks != 1 || ps1.BadJSON != 1 {
+		t.Errorf("malformed json: blocks=%d bad_json=%d, want 1/1", ps1.Blocks, ps1.BadJSON)
+	}
 
-	if _, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"c":1}}</script>`); err == nil ||
+	_, ps2, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"c":1}}</script>`)
+	if err == nil ||
 		!strings.Contains(err.Error(), "matched nothing") {
 		t.Errorf("moved schema: got %v", err)
+	}
+	if ps2.Blocks != 1 || ps2.BadJSON != 0 {
+		t.Errorf("moved schema: blocks=%d bad_json=%d, want 1/0", ps2.Blocks, ps2.BadJSON)
 	}
 }
 
@@ -836,12 +848,17 @@ func TestNextDataSaysWhyItFoundNothing(t *testing.T) {
 // not a failure and must not be reported as one.
 func TestNextDataTreatsAnEmptyResultArrayAsNoError(t *testing.T) {
 	p := &Profile{Portal: "x", Extract: Extract{Mode: "nextdata", DataPath: "a.b"}}
-	got, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"b":[]}}</script>`)
+	got, ps, err := p.Parse(`<script id="__NEXT_DATA__">{"a":{"b":[]}}</script>`)
 	if err != nil {
 		t.Fatalf("empty result page reported as an error: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("got %d listings from an empty array", len(got))
+	}
+	// The empty page is a page that unpacked fine: the counters say the block
+	// was there and genuinely held nothing.
+	if ps.Blocks != 1 || ps.Candidates != 0 || ps.Kept != 0 {
+		t.Errorf("empty result page counters: %+v, want blocks=1 candidates=0 kept=0", ps)
 	}
 }
 
@@ -860,7 +877,7 @@ func TestURLTemplateIsPerProfileNotTayaraForEveryone(t *testing.T) {
 // would strip every Tayara listing of its address.
 func TestTayaraStillBuildsListingURLs(t *testing.T) {
 	p, body := load(t, "tayara.yaml", "tayara_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -895,12 +912,17 @@ func TestAPromotedBannerIsNotAListing(t *testing.T) {
 		`<div class="listingTit"><a>JINENE SOUKRA 1 : Luxe et Confort</a></div>` +
 		`<img data-src="https://www.mubawab-media.com/promotion/4/083F/pictures/h/facade.avif">` +
 		`</div>`
-	got, err := p.Parse(banner)
+	got, ps, err := p.Parse(banner)
 	if err != nil {
 		t.Fatalf("parse banner: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("want the linkless banner dropped, got %d: %+v", len(got), got)
+	}
+	// The counters keep the dropping honest: the banner was really seen as a
+	// candidate and really dropped by the link rule, not lost in the shuffle.
+	if ps.Candidates != 1 || ps.NoURL != 1 || ps.Kept != 0 {
+		t.Errorf("banner counters: %+v, want candidates=1 no_url=1 kept=0", ps)
 	}
 
 	// The same shape WITH a link is a real tile and must still be admitted -
@@ -912,7 +934,7 @@ func TestAPromotedBannerIsNotAListing(t *testing.T) {
 		`<div class="priceTag">550000</div>` +
 		`<img data-src="https://www.mubawab-media.com/ad/8/388/040F/m/x.avif">` +
 		`</div>`
-	got, err = p.Parse(tile)
+	got, ps, err = p.Parse(tile)
 	if err != nil {
 		t.Fatalf("parse tile: %v", err)
 	}
@@ -921,5 +943,90 @@ func TestAPromotedBannerIsNotAListing(t *testing.T) {
 	}
 	if got[0].URL == "" {
 		t.Fatal("kept a listing with no URL, which the guard exists to prevent")
+	}
+	if ps.Candidates != 1 || ps.Kept != 1 || ps.NoURL != 0 {
+		t.Errorf("tile counters: %+v, want candidates=1 kept=1 no_url=0", ps)
+	}
+	// Coverage counts what the kept row carries. The tile published all three
+	// canonical fields (its id, its href, its price) so all three histograms
+	// show one covered row against one kept row.
+	for _, name := range []string{"listing_id", "url", "price"} {
+		if ps.Fields[name] != 1 {
+			t.Errorf("tile coverage %s=%d, want 1 of 1 kept row", name, ps.Fields[name])
+		}
+	}
+}
+
+// TestParseStatsCountThePage pins the counter contract behind the drift
+// ledger. A page whose anchor still matches but whose prices vanished is the
+// failure mode that a plain "no listings" never showed; the counters are the
+// instrument.
+func TestParseStatsCountThePage(t *testing.T) {
+	loadStatsProfile := func(anchor string) *Profile {
+		t.Helper()
+		pb := []byte(`portal: statstest
+extract:
+  mode: anchored
+  anchor: '` + anchor + `'
+  block_len: 200
+  url_template: '/listing/{id}'
+  fields:
+    price:
+      pattern: 'priceTag">(\d+)'
+`)
+		p, err := Load(pb)
+		if err != nil {
+			t.Fatalf("load profile: %v", err)
+		}
+		return p
+	}
+
+	p := loadStatsProfile(`data-id="(?P<id>\d+)"`)
+	body := `<html><body>` +
+		`<div data-id="41"><div class="priceTag">100</div></div>` +
+		`<div data-id="42"><div class="priceTag">200</div></div>` +
+		`<div data-id="43"></div>` +
+		`</body></html>`
+	rows, ps, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
+	}
+	if ps.Anchors != 3 || ps.Tiles != 3 || ps.Candidates != 3 ||
+		ps.Kept != 3 || ps.Filtered != 0 || ps.NoURL != 0 || ps.BadJSON != 0 {
+		t.Errorf("clean page counters: %+v", ps)
+	}
+	// Tile 43 publishes no price: coverage is 2 of 3, and that fraction is the
+	// whole point of the histogram.
+	if ps.Fields["price"] != 2 {
+		t.Errorf("price coverage %d, want 2 of 3 kept rows", ps.Fields["price"])
+	}
+
+	// The fixture-regression story at its smallest: the portal renames its
+	// tile attribute, the anchor stops matching, and the counters say "the
+	// page no longer has the shape we look for" instead of "nothing for sale".
+	drifted := loadStatsProfile(`data-ref="(?P<id>\d+)"`)
+	drRows, drPS, err := drifted.Parse(body)
+	if err != nil {
+		t.Fatalf("parse drifted: %v", err)
+	}
+	if len(drRows) != 0 || drPS.Anchors != 0 || drPS.Tiles != 0 || drPS.Kept != 0 {
+		t.Errorf("drifted page: rows=%d stats=%+v, want zero rows, zero anchors/tiles", len(drRows), drPS)
+	}
+
+	// A de-duplicated page (Property24 repeats its anchor inside the tile)
+	// reports tiles considered, not raw anchor hits.
+	dupped := loadStatsProfile(`data-id="(?P<id>\d+)"`)
+	dupBody := `<html><body>` +
+		`<div data-id="7"><div data-id="7"><div class="priceTag">300</div></div></div>` +
+		`</body></html>`
+	_, dpPS, err := dupped.Parse(dupBody)
+	if err != nil {
+		t.Fatalf("parse dup: %v", err)
+	}
+	if dpPS.Anchors != 2 || dpPS.Tiles != 1 || dpPS.Kept != 1 {
+		t.Errorf("dup page counters: %+v, want anchors=2 tiles=1 kept=1", dpPS)
 	}
 }

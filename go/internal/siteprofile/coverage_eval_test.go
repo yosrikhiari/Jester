@@ -37,7 +37,7 @@ var fixtureFor = map[string]string{
 func coverageOf(t *testing.T, profile, fixture string) (int, map[string]float64) {
 	t.Helper()
 	p, body := load(t, profile, fixture)
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("%s: parse: %v", profile, err)
 	}
@@ -248,7 +248,7 @@ func TestProperty24PriceIgnoresTheSearchFilterWidgets(t *testing.T) {
 // price that had silently fallen to 25 tiles in 877 still scored 100%.
 func TestProperty24DeepPageKeepsPriceAndLocation(t *testing.T) {
 	p, body := load(t, "property24.yaml", "property24_deep_tiles.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestProperty24DeepPageKeepsPriceAndLocation(t *testing.T) {
 // sales and things that are not property at all.
 func TestTayaraPageTwoSeparatesLettingsFromSales(t *testing.T) {
 	p, body := load(t, "tayara.yaml", "tayara_page2_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -357,7 +357,7 @@ extract:
 // with its id and no other field. Measured on Cape Town page 1: 20 of 20.
 func TestPrivatePropertySurvivesCSSModuleClassNames(t *testing.T) {
 	p, body := load(t, "privateproperty.yaml", "privateproperty_cssmodule_tiles.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestAbsoluteHandlesEveryURLShapeAPortalPublishes(t *testing.T) {
 // anything.
 func TestBehyaParsesTheDataAttributeTiles(t *testing.T) {
 	p, body := load(t, "behya.yaml", "behya_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestBehyaAnchorIsNotPinnedToClassOrder(t *testing.T) {
 // standard rather than a class name.
 func TestRedfinParsesProductOffers(t *testing.T) {
 	p, body := load(t, "redfin.yaml", "redfin_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -522,7 +522,7 @@ func TestEveryParseModeStampsTheMarket(t *testing.T) {
 	} {
 		t.Run(c.profile, func(t *testing.T) {
 			p, body := load(t, c.profile, c.fixture)
-			got, err := p.Parse(body)
+			got, _, err := p.Parse(body)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -544,7 +544,7 @@ func TestEveryParseModeStampsTheMarket(t *testing.T) {
 // burying it in prose, which is what makes it cheap to parse.
 func TestHabitacliaParsesTheTileAttributes(t *testing.T) {
 	p, body := load(t, "habitaclia.yaml", "habitaclia_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestHabitacliaBlockIsLongEnoughForTheWholeTile(t *testing.T) {
 // listings, and the fixture is therefore the rendered DOM.
 func TestOnTheMarketParsesRenderedCards(t *testing.T) {
 	p, body := load(t, "onthemarket.yaml", "onthemarket_listings.html")
-	got, err := p.Parse(body)
+	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
