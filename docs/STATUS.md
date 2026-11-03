@@ -23,6 +23,17 @@ dispatched lane `41302659108` passed 11 live tests with none skipped after the
 fix (C.7). Four frontend dependency PRs were merged; three are held with
 reasons (C.8). The live archive was **not** modified by this cycle.
 
+**Extraction quality is NOT MEASURED (stated 2026-11-02).** No
+`eval/extraction/labels.jsonl` is committed, so `jester eval extract` exits 0
+with `measured: false` and a NOT MEASURED block — the CI step called
+"extraction eval gate" is a state report, not a gate, and no extraction number
+(precision, recall, F1, fabrication rate, kappa) may be quoted from it. The
+same holds for `jester eval agreement` and `eval/scoring/agreement.jsonl`.
+The owner action is the drawn 150-row sample
+(`eval/extraction/sample.jsonl`, 50 rows double-labelled): when labels are
+committed, the published floors (F1 0.70, fabrication 0.05, kappa 0.6) become
+a real gate and the first measured number can be printed with its denominator.
+
 Status words:
 
 - **Shipped** — code, tests and docs are on `main` and the named suite passes.
