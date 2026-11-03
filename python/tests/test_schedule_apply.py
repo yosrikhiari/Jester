@@ -611,3 +611,73 @@ def test_a_monthly_cron_line_is_a_valid_five_field_schedule(monkeypatch, tmp_pat
     line = schedule.cron_line(at="03:00", monthly=1, command="backup-drill")
     assert line.split()[:5] == ["0", "3", "1", "*", "*"]
     assert "jester.cli backup drill --db data/jester.db" in line
+
+
+# -- per-task `args:` (R4-07): the second copy is declared, not remembered ----
+#
+# The declaration now carries the extra CLI flags a task runs with. They are
+# the operator's words, passed verbatim: one list item is one argv token, no
+# shell expands a wildcard or splits a path, so anything that is not a plain
+# string is a declaration meaning something its author never wrote.
+
+@pytest.mark.parametrize("body", [
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: --also-to\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, 5]\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, true]\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, '']\n",
+    "tasks:\n  - task: T\n    command: backup\n    cadence: {every: 30}\n"
+    "    args: [--also-to, 'a \"quoted\" token']\n",
+])
+def test_a_bad_args_declaration_is_refused_before_anything_installs(tmp_path, host, body):
+    path = tmp_path / "bad-args.yaml"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(schedule.ScheduleError):
+        schedule.apply_desired(path)
+    assert host.created() == []
+
+
+def test_a_backup_may_declare_the_second_copy_and_apply_writes_it(host, tmp_path):
+    path = tmp_path / "also.yaml"
+    path.write_text(
+        "tasks:\n"
+        "  - task: JesterNightlyBackup\n"
+        "    command: backup\n"
+        "    cadence: {at: '02:30'}\n"
+        "    args: [--also-to, 'D:/second copy/jester']\n", encoding="utf-8")
+
+    specs = schedule.load_desired(path)
+    assert specs[0]["args"] == ["--also-to", "D:/second copy/jester"]
+    assert schedule.apply_desired(path)["ok"] is True
+    # The archive backup succeeds on the primary volume even while this line
+    # is one flag away from a volume the machine has never seen; parsing shows
+    # the tokens verbatim, one list item per argv token.
+    assert schedule.read_launcher("backup")["extra"] == [
+        "--also-to", "D:/second copy/jester"]
+    assert [r["action"] for r in schedule.apply_desired(path)["results"]] == [
+        "unchanged"]
+
+
+def test_an_undeclared_args_list_is_empty(host, tmp_path):
+    path = _one_task(tmp_path / "plain.yaml", "09:00")
+    assert schedule.load_desired(path)[0]["args"] == []
+    assert schedule.apply_desired(path)["ok"] is True
+    assert schedule.read_launcher("signals")["extra"] == []
+
+
+def test_treat_takes_args_even_though_it_takes_no_scope(host, tmp_path):
+    path = tmp_path / "treat.yaml"
+    path.write_text(
+        "tasks:\n"
+        "  - task: JesterNightlyTreat\n"
+        "    command: treat\n"
+        "    cadence: {at: '04:00'}\n"
+        "    options: {max_posts: 5}\n"
+        "    args: [--cap, '10']\n", encoding="utf-8")
+    assert schedule.apply_desired(path)["ok"] is True
+    assert schedule.read_launcher("treat")["extra"] == ["--cap", "10"]
+    again = schedule.apply_desired(path)
+    assert [r["action"] for r in again["results"]] == ["unchanged"]

@@ -215,3 +215,58 @@ def test_the_console_card_shows_it_and_can_fix_it(tmp_path):
     assert res["ok"]
     assert [r["command"] for r in res["refreshed"]] == ["signals-hiring"]
     assert api.jobs_scraper()["launcher"]["stale"] is False
+
+
+# -- declared `args:` are a fact for every command (R4-07) --------------------
+#
+# A second backup copy would otherwise be invisible to drift: `backup` takes no
+# scrape scope, so scope comparison had nothing to say about an extra
+# `--also-to`, and `treat` famously takes no options at all. `args` is compared
+# on its own, after the scope is, token for token.
+
+def _spec(command, args):
+    return {"task": schedule.TASK_FOR_COMMAND.get(command, command),
+            "command": command, "options": {},
+            "enabled": True, "args": list(args)}
+
+
+def test_changing_the_declared_args_is_drift_not_unchanged():
+    schedule.write_launcher("data/jester.db", "config", PY, command="backup",
+                            extra=["--also-to", "D:/backups/jester"])
+    moved = _spec("backup", ["--also-to", "D:/second copy/jester"])
+
+    problems = schedule._launcher_problems(moved)
+
+    assert len(problems) == 1
+    assert "extra arguments are --also-to D:/backups/jester" in problems[0]
+    assert "should be --also-to D:/second copy/jester" in problems[0]
+
+
+def test_matching_args_are_not_drift_and_undecided_args_cannot_veto_a_match():
+    schedule.write_launcher("data/jester.db", "config", PY, command="backup",
+                            extra=["--also-to", "D:/second copy/jester"])
+    assert schedule._launcher_problems(
+        _spec("backup", ["--also-to", "D:/second copy/jester"])) == []
+    # A command declared without `args` defaults to []; a launcher whose extra
+    # is also empty matches that, versus reporting drift against a None.
+    schedule.write_launcher("data/jester.db", "config", PY, command="cycle")
+    assert schedule._launcher_problems({"task": "J", "command": "cycle",
+                                        "options": {}}) == []
+
+
+def test_a_path_with_spaces_survives_as_one_argv_token():
+    path_with_space = "D:/second copy/jester"
+    schedule.write_launcher("data/jester.db", "config", PY, command="backup",
+                            extra=["--also-to", path_with_space])
+    assert schedule.read_launcher("backup")["extra"] == [
+        "--also-to", path_with_space]
+    assert schedule._launcher_problems(_spec("backup", ["--also-to",
+                                                        path_with_space])) == []
+
+
+def test_treat_args_are_compared_although_its_options_are_not():
+    """`treat` takes no scrape scope, and that never made it args-blind."""
+    schedule.write_launcher("data/jester.db", "config", PY, command="treat")
+    problems = schedule._launcher_problems(_spec("treat", ["--cap", "10"]))
+
+    assert problems == ["extra arguments are none; should be --cap 10"]
