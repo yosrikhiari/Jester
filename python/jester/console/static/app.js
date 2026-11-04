@@ -559,6 +559,29 @@ function healthTag(s) {
     title="${esc(s.health_reason || '')}">${esc(label)}</span>`;
 }
 
+/** The drift ledger's compact card for this source: what the latest run kept,
+ *  and — as alarm chips, only when they exist — what the recent trend says.
+ *  A quiet run is weather; the alarms fire on repeated failures, pages that
+ *  parsed clean but kept nothing, or a field's coverage falling off its
+ *  rolling baseline. Anchors going silent alone never fires one, because in
+ *  an anchored profile the anchor is the only way we see tiles at all;
+ *  server-side rules carry the same limit. Never-visited sources show "—". */
+function trendCell(t) {
+  if (!t) return '<span class="xs">—</span>';
+  const parts = [];
+  if (t.first_err) parts.push(`<span class="xs why" title="${esc(t.first_err)}">err</span>`);
+  const kept = t.dup ? `${t.items} (+${t.dup} seen)` : String(t.items);
+  parts.push(`<span class="xs mono" title="latest run · ${esc(t.run_id)} · ${t.runs} run(s) charted">${esc(kept)}</span>`);
+  for (const a of t.drift || []) {
+    // tag()'s tone classes are the styled ones; a bare pill--bad has no CSS.
+    // tag() cannot carry a hover title, so the same tone-failed shape is
+    // inlined with the alarm's note.
+    parts.push(`<span class="pill pill--sm tone-failed" title="${esc(a.note || '')}">` +
+      `<span class="dot"></span>${esc(a.kind)}</span>`);
+  }
+  return parts.join(' ');
+}
+
 const PLATFORM_LABEL = {
   reddit: 'Reddit', hackernews: 'Hacker News', discourse: 'Discourse',
   youtube: 'YouTube', tiktok: 'TikTok', stackexchange: 'Stack Exchange',
@@ -590,6 +613,7 @@ const SRC_STATES = {
   all: () => true,
   producing: s => s.enabled && s.health === 'producing',
   barren: s => s.enabled && s.health === 'barren',
+  drifting: s => s.enabled && Array.isArray(s.trend?.drift) && s.trend.drift.length > 0,
   paused: s => !s.enabled,
 };
 let SRC_QUERY = '', SRC_STATE = 'all';
@@ -721,7 +745,7 @@ function renderSources() {
       barren ? `${barren} barren` : '',
     ].filter(Boolean).join(' · ');
     rendered += groupRow({
-      key, depth: 1, span: 8, count: shown.length, meta: esc(meta),
+      key, depth: 1, span: 9, count: shown.length, meta: esc(meta),
       label: esc(PLATFORM_LABEL[platform] || platform),
       tint: SRC_TINTS[(order[platform] ?? 5) % 5],
     }) + (FOLDED.has(key) ? '' : shown.map(sourceRow).join(''));
@@ -731,7 +755,7 @@ function renderSources() {
     ? `${visibleCount} of ${list.length} shown`
     : `${COUNTS.sources} enabled / ${list.length} total`;
   $('#src-body').innerHTML = rendered
-    || emptyRow(8, filtering ? 'No sources match the search or filter.' : 'No sources yet — add one above.');
+    || emptyRow(9, filtering ? 'No sources match the search or filter.' : 'No sources yet — add one above.');
   /** How the worker reaches this source, and whether it can right now. A
    *  Reddit source read "quiet" for 26 days while cloakserve was down; the
    *  page never said the fetch was impossible. */
@@ -760,6 +784,7 @@ function renderSources() {
           ${s.notes ? `<div class="xs">${esc(s.notes)}</div>` : ''}</td>
       <td>${fetchCell(s)}</td>
       <td>${fetchedCell(s.state)}</td>
+      <td>${trendCell(s.trend)}</td>
       <td>${status}</td>
       <td class="row-actions"><button class="btn btn--sm" data-smenu aria-haspopup="menu" aria-expanded="false" aria-label="Actions for ${esc(s.name)}">⋯</button></td>
     </tr>`;
@@ -786,6 +811,16 @@ function renderSources() {
       ${res.park_after_barren_visits || 3}+ times and never queued a comment. Each one still
       costs a rotation slot every run — the row’s “⋯” menu has “park” to
       pause it without removing it.`);
+  }
+  const drifting = list.filter(s => s.enabled && s.trend?.drift?.length);
+  if (drifting.length) {
+    // The alarms say what changed, not what to do — the fix is a judgment
+    // about that source, and pretending otherwise would be the console
+    // prescribing.
+    notes.push(`<span class="chip chip--bad">drift ledger</span> ${drifting.length} enabled
+      source(s) moved against their own trend
+      (${esc(drifting.map(s => s.name).join(', '))}). Hover a trend cell for which
+      alarm fired; <span class="mono">/api/outcomes</span> holds the rows.`);
   }
   const gaps = res.platform_gaps || {};
   for (const [p, why] of Object.entries(gaps)) {

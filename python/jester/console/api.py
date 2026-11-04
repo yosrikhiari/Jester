@@ -59,6 +59,7 @@ from jester.config import (
 from jester.export import export_csv, resolve_export_dir
 from jester.worker import go_binary, ingest as worker_ingest
 from jester import schedule as _schedule
+from jester import runout as _runout
 from jester.fetchers.cloak import load_scraper_config
 from jester.llm import PROMPT_VERSIONS, RUBRIC_VERSION
 from jester.quota import day_key
@@ -1496,13 +1497,15 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
         an add-form without hard-coding platform knowledge in JavaScript."""
         srcs = load_sources(self._sources_path)
         state = self._source_state()
+        series = self._runout()
         return {
             "ok": True,
             "path": str(self._sources_path),
             # The worker walks least-recently-fetched first, so "when was this
             # last visited" is now the thing that decides run order — it has to
             # be visible, or the rotation looks like randomness.
-            "sources": [self._with_health(s, state.get(s.name)) for s in srcs],
+            "sources": [self._with_trend(self._with_health(s, state.get(s.name)),
+                                         series.get(s.name)) for s in srcs],
             "platform_kinds": {k: list(v) for k, v in PLATFORM_KINDS.items()},
             "supported_kinds": [list(pair) for pair in sorted(SUPPORTED_KINDS)],
             # Why a platform the add-form offers still cannot be fetched. A gap
@@ -1519,12 +1522,46 @@ class ConsoleAPI(ApiSignalsMixin, ChatAPI):
             # judgement about the list, not about the collision.
             "duplicate_names": duplicate_names(srcs),
             "park_after_barren_visits": self.PARK_AFTER_BARREN_VISITS,
+            "drifting_sources": sorted(
+                name for name, rows in series.items()
+                if _runout.drift_alarms(rows) and self._is_listed(srcs, name)),
         }
+
+    @staticmethod
+    def _is_listed(srcs, name):
+        return any(s.name == name for s in srcs)
+
+    #: A drift-alarmed source is flagged on the sources page regardless of its
+    #: health tag — a portal can be "producing" by source_state's cumulative
+    #: sums while today's coverage quietly collapsed.
+    def _with_trend(self, src_dict, rows):
+        card = _runout.trend(src_dict["name"], rows)
+        if card is not None:
+            src_dict["trend"] = card
+        return src_dict
 
     def _with_health(self, src, state):
         status, reason = self._source_health(state)
         return {**src.to_dict(), "state": state,
                 "health": status, "health_reason": reason}
+
+    def _runout(self):
+        """The ledger's recent rows per source, or {} before the worker first
+        opens this archive (the table is Go-owned; see jester.runout)."""
+        return _runout.load_outcomes(self.db)
+
+    def outcomes(self):
+        """The full run-outcome ledger: per source, the recent series and
+        what its trend says. One route for the drill-down the sources page
+        only summarizes."""
+        series = self._runout()
+        return {
+            "ok": True,
+            "runs_per_source": _runout.SERIES_PER_SOURCE,
+            "series": series,
+            "drift": {name: _runout.drift_alarms(rows)
+                      for name, rows in series.items()},
+        }
 
     def _write_sources(self, srcs):
         written = []
