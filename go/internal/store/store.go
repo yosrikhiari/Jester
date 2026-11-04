@@ -184,6 +184,33 @@ CREATE TABLE IF NOT EXISTS realestate_config (
   payload_schema TEXT NOT NULL,
   PRIMARY KEY (portal)
 );
+-- Run-outcome ledger: the per-run facts a source visit produced, kept for
+-- clean and failing visits alike. source_state answers "what has this source
+-- cumulatively yielded and when was it last visited"; this answers "what
+-- exactly did one run see" - rows, anchors, per-field coverage, cost, the
+-- failure class - which is what turns quiet portal drift into a graded
+-- signal. Additive like every table here (no schema_version bump: the meta
+-- guard stays 1 by strict cross-language contract), Go-owned - the console
+-- opens with migrate=False and only reads it.
+CREATE TABLE IF NOT EXISTS run_outcome (
+  run_id      TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  platform    TEXT NOT NULL DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT '',
+  observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  items       INTEGER NOT NULL DEFAULT 0,
+  fresh       INTEGER NOT NULL DEFAULT 0,
+  dup         INTEGER NOT NULL DEFAULT 0,
+  pages_ok    INTEGER NOT NULL DEFAULT 0,
+  pages_err   INTEGER NOT NULL DEFAULT 0,
+  bytes       INTEGER NOT NULL DEFAULT 0,
+  latency_ms  INTEGER NOT NULL DEFAULT 0,
+  fetch_mode  TEXT NOT NULL DEFAULT '',
+  first_err   TEXT NOT NULL DEFAULT '',
+  stats_json  TEXT,
+  PRIMARY KEY (run_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_run_outcome_source ON run_outcome(source, observed_at);
 `
 
 // addColumns are the columns added to Go-owned tables after the first release.
@@ -839,6 +866,106 @@ ON CONFLICT(name) DO UPDATE SET
   measured_visits = source_state.measured_visits + 1,
   visits          = source_state.visits + 1`, name, queued, queued)
 	return err
+}
+
+// RunOutcome is one source's visit row in the run_outcome ledger — the
+// per-run counterpart of source_state's cumulative sums. Community adapters
+// carry items (with the page counters zero, which the console renders as "-");
+// the realestate walk fills pages/bytes/latency and embeds its
+// fetch-and-parse stats as the JSON the console's trend cards read
+// ({"pages":…,"pages_ok":…,…,"parse":{"anchors":…,"fields":{…}}}).
+//
+// Kept for failed visits too: "visited, yielded nothing, here is why" is the
+// row's whole point.
+type RunOutcome struct {
+	RunID      string
+	Source     string
+	Platform   string
+	Kind       string
+	ObservedAt string // RFC3339; Now() supplies it when empty
+	Items      int
+	Fresh      int
+	Dup        int
+	PagesOK    int
+	PagesErr   int
+	Bytes      int
+	LatencyMS  int64
+	FetchMode  string
+	FirstErr   string
+	// StatsJSON carries the realestate walk stats; empty for community
+	// platforms (stored as SQL NULL).
+	StatsJSON string
+}
+
+// RecordRunOutcome appends the source's visit outcome, replacing the row of a
+// source re-walked within the same run so the ledger is one row per source.
+func (s *Store) RecordRunOutcome(o RunOutcome) error {
+	if o.ObservedAt == "" {
+		o.ObservedAt = Now()
+	}
+	// An empty StatsJSON becomes SQL NULL: "absent" and "empty" are different
+	// facts in a TEXT column.
+	var statsJSON any
+	if o.StatsJSON != "" {
+		statsJSON = o.StatsJSON
+	}
+	_, err := s.db.Exec(`INSERT INTO run_outcome
+	  (run_id, source, platform, kind, observed_at, items, fresh, dup,
+	   pages_ok, pages_err, bytes, latency_ms, fetch_mode, first_err, stats_json)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(run_id, source) DO UPDATE SET
+	  platform = excluded.platform,
+	  kind    = excluded.kind,
+	  observed_at = excluded.observed_at,
+	  items   = excluded.items,
+	  fresh   = excluded.fresh,
+	  dup     = excluded.dup,
+	  pages_ok   = excluded.pages_ok,
+	  pages_err  = excluded.pages_err,
+	  bytes      = excluded.bytes,
+	  latency_ms = excluded.latency_ms,
+	  fetch_mode = excluded.fetch_mode,
+	  first_err  = excluded.first_err,
+	  stats_json = excluded.stats_json`,
+		o.RunID, o.Source, o.Platform, o.Kind, o.ObservedAt, o.Items, o.Fresh, o.Dup,
+		o.PagesOK, o.PagesErr, o.Bytes, o.LatencyMS, o.FetchMode, o.FirstErr, statsJSON)
+	if err != nil {
+		return fmt.Errorf("record run outcome: %w", err)
+	}
+	return nil
+}
+
+// RunOutcomes reads one run's ledger rows, ordered by source — the read side
+// the console's Python series mirrors, and what a `worker`-side caller needs
+// to check what runLive actually recorded. A run that visited nothing returns
+// an empty (non-nil) slice: "no rows" is an answer, not an error.
+func (s *Store) RunOutcomes(runID string) ([]RunOutcome, error) {
+	rows, err := s.db.Query(`SELECT source, platform, kind, observed_at,
+	       items, fresh, dup, pages_ok, pages_err, bytes, latency_ms,
+	       fetch_mode, first_err, stats_json
+	 FROM run_outcome WHERE run_id = ? ORDER BY source`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("run outcomes: %w", err)
+	}
+	defer rows.Close()
+	out := []RunOutcome{}
+	for rows.Next() {
+		var o RunOutcome
+		var statsJSON any
+		o.RunID = runID
+		if err := rows.Scan(&o.Source, &o.Platform, &o.Kind, &o.ObservedAt,
+			&o.Items, &o.Fresh, &o.Dup, &o.PagesOK, &o.PagesErr, &o.Bytes,
+			&o.LatencyMS, &o.FetchMode, &o.FirstErr, &statsJSON); err != nil {
+			return nil, fmt.Errorf("run outcome scan: %w", err)
+		}
+		// NULL stats_json means "this platform carries no walk stats", the
+		// same distinction RecordRunOutcome writes.
+		if str, ok := statsJSON.(string); ok {
+			o.StatsJSON = str
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 // SourceOrder returns the configured names sorted least-recently-fetched

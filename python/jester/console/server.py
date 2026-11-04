@@ -558,6 +558,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/jobs": api.jobs,
             "/api/running": api.running,
             "/api/signals/scraper": api.jobs_scraper,
+            # The run-outcome ledger: per-source series + drift alarms. The
+            # sources page carries the compact card; this is the drill-down.
+            "/api/outcomes": api.outcomes,
         }
         if path in routes:
             self._json(routes[path]())

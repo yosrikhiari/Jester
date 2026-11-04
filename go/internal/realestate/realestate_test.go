@@ -1,11 +1,16 @@
 package realestate
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"jester/internal/config"
 	"jester/internal/siteprofile"
 )
 
@@ -260,4 +265,89 @@ func TestTrimURLExtLeavesHostnamesAndExtensionlessURLsAlone(t *testing.T) {
 			t.Errorf("%s -> %s, want %s", c.in, got, c.want)
 		}
 	}
+}
+
+// TestFetchListingListReportsStats pins what the drift ledger gets from one
+// portal walk: page counts, body bytes, fetch mode and the parse counters,
+// on both a clean page and a page the portal answers with a refusal. A fake
+// portal answers instead of a real one, so the test stays offline and fast;
+// the profile it drives is shape-identical to the shipped anchored ones.
+func TestFetchListingListReportsStats(t *testing.T) {
+	const page = `<html><body>` +
+		`<div data-id="31"><div class="priceTag">31</div></div>` +
+		`<div data-id="32"><div class="priceTag">3200</div></div>` +
+		`</body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "soldout") {
+			// A 4xx is an answer, not a flap: the client does not retry it,
+			// which keeps this test as fast as one request.
+			http.Error(w, "gone", http.StatusForbidden)
+			return
+		}
+		w.Write([]byte(page))
+	}))
+	defer srv.Close()
+
+	writeProfile := func(name, listPath string) string {
+		t.Helper()
+		configDir := filepath.Join(t.TempDir(), "profiles")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatalf("mkdir profiles: %v", err)
+		}
+		yaml := `portal: ` + name + `
+market: zz
+base_url: ` + srv.URL + `
+currency: EUR
+fetch: http
+
+list:
+  url: ` + srv.URL + listPath + `
+  max_pages: 1
+
+extract:
+  mode: anchored
+  anchor: 'data-id="(?P<id>\d+)"'
+  block_len: 300
+  url_template: '/listing/{id}'
+  fields:
+    price:
+      pattern: 'priceTag">(\d+)'
+`
+		if err := os.WriteFile(filepath.Join(configDir, name+".yaml"), []byte(yaml), 0o644); err != nil {
+			t.Fatalf("write profile: %v", err)
+		}
+		return filepath.Dir(configDir)
+	}
+
+	t.Run("clean page", func(t *testing.T) {
+		configDir := writeProfile("statstest", "/listings/")
+		listings, st, err := FetchListingList(context.Background(), config.Source{Name: "statstest"}, 0, 0, configDir, 0)
+		if err != nil {
+			t.Fatalf("walk: %v", err)
+		}
+		if len(listings) != 2 {
+			t.Fatalf("want 2 listings, got %d", len(listings))
+		}
+		if st.Pages != 1 || st.PagesOK != 1 || st.PagesErr != 0 ||
+			st.Bytes != len(page) || st.FetchMode != "http" {
+			t.Errorf("walk stats: %+v", st)
+		}
+		if st.Parse.Anchors != 2 || st.Parse.Kept != 2 || st.Parse.Fields["price"] != 2 {
+			t.Errorf("parse stats: %+v", st.Parse)
+		}
+	})
+
+	t.Run("portal answers 403", func(t *testing.T) {
+		configDir := writeProfile("soldouttest", "/soldout")
+		_, st, err := FetchListingList(context.Background(), config.Source{Name: "soldouttest"}, 0, 0, configDir, 0)
+		if err == nil {
+			t.Fatal("want the walk to fail loudly on every page 403")
+		}
+		if st.Pages != 1 || st.PagesErr != 1 || st.PagesOK != 0 || st.Bytes != 0 {
+			t.Errorf("refused-page stats: %+v", st)
+		}
+		if st.FetchMode != "http" {
+			t.Errorf("fetch mode %q, want http", st.FetchMode)
+		}
+	})
 }

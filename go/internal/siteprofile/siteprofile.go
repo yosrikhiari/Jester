@@ -460,16 +460,116 @@ func hasGroup(re *regexp.Regexp, want string) bool {
 }
 
 // Parse turns one fetched page into listings.
-func (p *Profile) Parse(body string) ([]store.Listing, error) {
+// ParseStats is what one Parse pass saw, beyond the rows it returned.
+//
+// It exists so the drift ledger can keep facts apart that all used to
+// collapse into "no listings": the page still carries blocks but the wanted
+// shape is gone (Blocks>0, Candidates=0); the profile still finds tiles but
+// fields stopped arriving (Kept>0, coverage below its usual level); the body
+// changed enough that nothing matches at all (Anchors=0 / Tiles=0 /
+// Blocks=0 with no error). It is a counter plane only - nothing here
+// substitutes, re-saves or relocates anything. One honest limit worth writing
+// down: in an anchored profile the anchor is the only way we see tiles at
+// all, so Anchors=0 alone does not prove drift; the coverage trend and the
+// rows over successive runs do.
+type ParseStats struct {
+	// anchored mode
+	Anchors int `json:"anchors"` // anchor matches in the body
+	Tiles   int `json:"tiles"`   // distinct tiles considered after same-id de-dup
+	// ldjson / nextdata modes
+	Blocks  int `json:"blocks"`   // script blocks found in the body
+	BadJSON int `json:"bad_json"` // of those, not decodable JSON
+	// every mode
+	Candidates int            `json:"candidates"` // rows that reached assembly
+	Kept       int            `json:"kept"`       // rows returned
+	Filtered   int            `json:"filtered"`   // dropped by the profile's filter
+	NoID       int            `json:"no_id"`      // dropped for lacking a listing id
+	NoURL      int            `json:"no_url"`     // dropped by the no-link validity rule
+	Fields     map[string]int `json:"fields"`     // profile field -> kept rows where it was filled
+}
+
+// Add accumulates one page's stats into s, so a portal's run stat is the sum
+// of its pages. Field names agree across pages of one portal; a field that
+// only exists on some pages just accumulates fewer covered rows in its
+// denominator (which is the fact we are trying to see).
+func (s *ParseStats) Add(o ParseStats) {
+	s.Anchors += o.Anchors
+	s.Tiles += o.Tiles
+	s.Blocks += o.Blocks
+	s.BadJSON += o.BadJSON
+	s.Candidates += o.Candidates
+	s.Kept += o.Kept
+	s.Filtered += o.Filtered
+	s.NoID += o.NoID
+	s.NoURL += o.NoURL
+	if len(o.Fields) > 0 {
+		if s.Fields == nil {
+			s.Fields = map[string]int{}
+		}
+		for k, v := range o.Fields {
+			s.Fields[k] += v
+		}
+	}
+}
+
+// recordFields fills the coverage histogram: for every field the profile
+// names, how many of the KEPT rows carry it. Canonical fields read off the
+// struct so their semantics are the archive's - price in particular, where
+// "zero" is a published non-price and must not read as coverage. Every other
+// field reads off the payload, which retains exactly what assign put in.
+func (p *Profile) recordFields(ps *ParseStats, rows []store.Listing) {
+	if ps.Fields == nil {
+		ps.Fields = map[string]int{}
+	}
+	for i := range rows {
+		l := &rows[i]
+		var payload map[string]any
+		if l.Payload != "" {
+			_ = json.Unmarshal([]byte(l.Payload), &payload)
+		}
+		for name := range p.Extract.Fields {
+			var covered bool
+			switch name {
+			case "listing_id":
+				covered = l.ListingID != ""
+			case "url":
+				covered = l.URL != ""
+			case "price":
+				covered = l.Price != nil
+			case "currency":
+				covered = l.Currency != ""
+			case "status":
+				covered = l.Status != ""
+			default:
+				v, ok := payload[name]
+				s, isStr := v.(string)
+				covered = ok && v != nil && (!isStr || s != "")
+			}
+			if covered {
+				ps.Fields[name]++
+			}
+		}
+	}
+}
+
+// Parse extracts listings from one page body, and reports what the page
+// actually held alongside what it returned.
+func (p *Profile) Parse(body string) ([]store.Listing, ParseStats, error) {
+	var rows []store.Listing
+	var stats ParseStats
+	var err error
 	switch p.Extract.Mode {
 	case "ldjson":
-		return p.parseLDJSON(body)
+		rows, stats, err = p.parseLDJSON(body)
 	case "anchored":
-		return p.parseAnchored(body)
+		rows, stats, err = p.parseAnchored(body)
 	case "nextdata":
-		return p.parseNextData(body)
+		rows, stats, err = p.parseNextData(body)
+	default:
+		return nil, ParseStats{Fields: map[string]int{}}, fmt.Errorf("siteprofile %s: unknown mode %q", p.Portal, p.Extract.Mode)
 	}
-	return nil, fmt.Errorf("siteprofile %s: unknown mode %q", p.Portal, p.Extract.Mode)
+	p.recordFields(&stats, rows)
+	return rows, stats, err
 }
 
 var tagRe = regexp.MustCompile(`<[^>]*>`)
@@ -478,7 +578,9 @@ var ldjsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/ld\+jso
 var nextDataRe = regexp.MustCompile(`(?is)<script[^>]+id=["']__(?:NEXT|NUXT)_DATA__["'][^>]*>(.*?)</script>`)
 var nuxtJsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/json["'][^>]*data-nuxt-data[^>]*>(.*?)</script>`)
 
-func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
+func (p *Profile) parseNextData(body string) ([]store.Listing, ParseStats, error) {
+	var ps ParseStats
+	ps.Fields = map[string]int{}
 	m := nextDataRe.FindStringSubmatch(body)
 	if m == nil {
 		m = nuxtJsonRe.FindStringSubmatch(body)
@@ -487,12 +589,14 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 			// redirect to a consent wall and a genuine markup change all came
 			// back as "no listings, no error", which the caller could only
 			// report as a portal with nothing to sell.
-			return nil, fmt.Errorf("siteprofile %s: no __NEXT_DATA__ or __NUXT_DATA__ script in the page", p.Portal)
+			return nil, ps, fmt.Errorf("siteprofile %s: no __NEXT_DATA__ or __NUXT_DATA__ script in the page", p.Portal)
 		}
 	}
+	ps.Blocks++
 	var root any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
-		return nil, fmt.Errorf("siteprofile %s: __NEXT_DATA__ is not valid JSON: %w", p.Portal, err)
+		ps.BadJSON++
+		return nil, ps, fmt.Errorf("siteprofile %s: __NEXT_DATA__ is not valid JSON: %w", p.Portal, err)
 	}
 	// Navigate to the array via data_path (dotted, supports only map traversal).
 	nodes := jsonPathRaw(root, p.Extract.DataPath)
@@ -501,7 +605,7 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 		// A path resolving to an EMPTY ARRAY is a different fact - a result
 		// page with no results - and falls through to return no listings and
 		// no error, which is the honest answer for it.
-		return nil, fmt.Errorf("siteprofile %s: data_path %q matched nothing in __NEXT_DATA__", p.Portal, p.Extract.DataPath)
+		return nil, ps, fmt.Errorf("siteprofile %s: data_path %q matched nothing in __NEXT_DATA__", p.Portal, p.Extract.DataPath)
 	}
 	// The path should resolve to an array; jsonPathRaw collects across arrays,
 	// so we need to flatten one level if the result is a single slice.
@@ -519,6 +623,7 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 		if !ok {
 			continue
 		}
+		ps.Candidates++
 		l := store.Listing{Portal: p.Portal, Currency: p.Currency}
 		payload := p.newPayload()
 		for name, f := range p.Extract.Fields {
@@ -526,6 +631,7 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 			p.assign(&l, payload, name, v)
 		}
 		if !p.Extract.Filter.keep(payload) {
+			ps.Filtered++
 			continue
 		}
 		if v := p.Extract.Classify.classify(payload); v != "" {
@@ -535,6 +641,7 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 			l.Media = append(l.Media, store.Media{Position: i, URL: u})
 		}
 		if l.ListingID == "" {
+			ps.NoID++
 			continue
 		}
 		if l.URL == "" && p.Extract.URLTemplate != "" {
@@ -550,12 +657,14 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, error) {
 		// rows: over a 4141-listing run across ten portals, nine were at 100%
 		// URL coverage and the only ten blanks were these.
 		if l.URL == "" {
+			ps.NoURL++
 			continue
 		}
 		l.Payload = mustJSON(payload)
 		out = append(out, l)
 	}
-	return out, nil
+	ps.Kept = len(out)
+	return out, ps, nil
 }
 
 // ApplyDetail merges a listing's own page into a listing already parsed from
@@ -652,11 +761,15 @@ func jsonPathRaw(node any, path string) []any {
 	return cur
 }
 
-func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
+func (p *Profile) parseLDJSON(body string) ([]store.Listing, ParseStats, error) {
+	var ps ParseStats
+	ps.Fields = map[string]int{}
 	var out []store.Listing
 	for _, m := range ldjsonRe.FindAllStringSubmatch(body, -1) {
 		var any1 any
+		ps.Blocks++
 		if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &any1); err != nil {
+			ps.BadJSON++
 			// A portal that emits one malformed block still publishes the
 			// others; a parse error here is not a failed page.
 			continue
@@ -666,6 +779,7 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 			if !ok || obj["@type"] != p.Extract.Type {
 				continue
 			}
+			ps.Candidates++
 			l := store.Listing{Portal: p.Portal, Currency: p.Currency}
 			payload := p.newPayload()
 			for name, f := range p.Extract.Fields {
@@ -673,6 +787,7 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 				p.assign(&l, payload, name, v)
 			}
 			if !p.Extract.Filter.keep(payload) {
+				ps.Filtered++
 				continue
 			}
 			if v := p.Extract.Classify.classify(payload); v != "" {
@@ -682,6 +797,7 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 				l.Media = append(l.Media, store.Media{Position: i, URL: u})
 			}
 			if l.ListingID == "" {
+				ps.NoID++
 				continue // a listing with no identity cannot be observed twice
 			}
 			if l.URL == "" && p.Extract.URLTemplate != "" {
@@ -697,19 +813,24 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, error) {
 			// rows: over a 4141-listing run across ten portals, nine were at 100%
 			// URL coverage and the only ten blanks were these.
 			if l.URL == "" {
+				ps.NoURL++
 				continue
 			}
 			l.Payload = mustJSON(payload)
 			out = append(out, l)
 		}
 	}
-	return out, nil
+	ps.Kept = len(out)
+	return out, ps, nil
 }
 
-func (p *Profile) parseAnchored(body string) ([]store.Listing, error) {
+func (p *Profile) parseAnchored(body string) ([]store.Listing, ParseStats, error) {
+	var ps ParseStats
+	ps.Fields = map[string]int{}
 	anchor := regexp.MustCompile(p.Extract.Anchor)
 	idx := anchor.SubexpIndex("id")
 	locs := anchor.FindAllStringSubmatchIndex(body, -1)
+	ps.Anchors = len(locs)
 
 	var startRe *regexp.Regexp
 	var startAt []int
@@ -731,6 +852,8 @@ func (p *Profile) parseAnchored(body string) ([]store.Listing, error) {
 			continue
 		}
 		seen[id] = true
+		ps.Tiles++
+		ps.Candidates++
 
 		begin := loc[0]
 		if startRe != nil {
@@ -787,6 +910,7 @@ func (p *Profile) parseAnchored(body string) ([]store.Listing, error) {
 			p.assign(&l, payload, name, p.apply(f, valuesFor(f, block, embedded)))
 		}
 		if !p.Extract.Filter.keep(payload) {
+			ps.Filtered++
 			continue
 		}
 		if v := p.Extract.Classify.classify(payload); v != "" {
@@ -808,12 +932,14 @@ func (p *Profile) parseAnchored(body string) ([]store.Listing, error) {
 		// rows: over a 4141-listing run across ten portals, nine were at 100%
 		// URL coverage and the only ten blanks were these.
 		if l.URL == "" {
+			ps.NoURL++
 			continue
 		}
 		l.Payload = mustJSON(payload)
 		out = append(out, l)
 	}
-	return out, nil
+	ps.Kept = len(out)
+	return out, ps, nil
 }
 
 // valuesFor reads a field from a block: by JSON path when the block carries

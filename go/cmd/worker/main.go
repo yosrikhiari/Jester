@@ -246,6 +246,11 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 			if err != nil {
 				fmt.Printf("[live] %s/%s (%s) skipped: cdp session: %v\n",
 					src.Platform, src.Name, kind, err)
+				// The ledger row makes the failure a trend fact, not just a
+				// line that flashes by: a source whose identity never opens is
+				// a source that yields nothing, whatever its portal is doing.
+				recordRunOutcome(st, store.RunOutcome{RunID: runID, Source: src.Name},
+					src, kind, outcome{}, err)
 				skipped++
 				continue
 			}
@@ -254,7 +259,7 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 		}
 
 		before := bg.usedComments
-		_, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg, configDir)
+		res, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg, configDir)
 		if cancel != nil {
 			cancel()
 		}
@@ -265,6 +270,10 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 		if terr := st.TouchSource(src.Name, bg.usedComments-before); terr != nil {
 			fmt.Printf("[live] could not record visit to %s: %v\n", src.Name, terr)
 		}
+		// The ledger row goes to the store before the failure short-circuit,
+		// so the failed visit is a fact with a trend history, not a line in
+		// the log that flashes by.
+		recordRunOutcome(st, store.RunOutcome{RunID: runID, Source: src.Name}, src, kind, res, err)
 		if err != nil {
 			// One unreachable source must not abort the others: every run
 			// says which source failed and why, and keeps going.
@@ -278,6 +287,27 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 	}
 	fmt.Printf("[live] done: %d comment(s) from %d post(s) queued this run, %d source(s) skipped\n",
 		bg.usedComments, bg.usedPosts, skipped)
+}
+
+// recordRunOutcome writes the run_outcome ledger row for one visited source.
+// One row per source per run, written for clean visits and failures alike;
+// the console's trend cards and drift alarms read the table, so a silent
+// portal (or a dead adapter) must leave a row, not just a log line. An error
+// recording the row is reported and does not disturb the run: the ledger is
+// telemetry, never a job stopper.
+func recordRunOutcome(st *store.Store, o store.RunOutcome, src config.Source, kind string, oc outcome, ferr error) {
+	o.Platform = src.Platform
+	o.Kind = kind
+	o.Items = oc.items
+	o.Fresh = oc.fresh
+	o.Dup = oc.dup
+	o.StatsJSON = oc.extended
+	if ferr != nil {
+		o.FirstErr = ferr.Error()
+	}
+	if err := st.RecordRunOutcome(o); err != nil {
+		fmt.Printf("[live] could not record outcome for %s: %v\n", o.Source, err)
+	}
 }
 
 // budget caps how much one run ingests, backing the console's "stop at N"
@@ -422,10 +452,24 @@ func needsBrowser(platform string) bool {
 	}
 }
 
-// fetchSource routes one source to the right adapter based on its kind.
+// outcome is what one fetchSource visit produced — the unit the run_outcome
+// ledger records. Every adapter carries items (what it kept and enqueued);
+// where the visit naturally splits them, realestate also carries fresh/dup
+// and the walk's fetch-and-parse stats JSON for the console's trend cards.
+// Zero counters never mean "not measured" silently: the ledger row is written
+// by the callers, which know what their platform can and cannot count.
+type outcome struct {
+	items    int
+	fresh    int
+	dup      int
+	extended string // realestate walk stats JSON; empty for the others
+}
+
+// fetchSource routes one source to the right adapter based on its kind, and
+// reports what the visit yielded alongside whether it errored.
 func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID string,
 	pp prefilter.Params, src config.Source, kind string, delay time.Duration, perSource int,
-	bg *budget, configDir string) (int, error) {
+	bg *budget, configDir string) (outcome, error) {
 	maxPerThread := int(cfg.Thresholds.MaxCommentsPerThread)
 	switch {
 	case src.Platform == "reddit" && kind == "thread":
@@ -433,13 +477,13 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		comments, post, err := reddit.FetchThreadURL(ctx, src.URL, delay,
 			cfg.Scraper.BlockedAction, cfg.Scraper.Warmups())
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		threadID := reddit.ThreadIDFromPath(src.URL)
 		n := enqueueComments(st, runID, "reddit", src.URL, threadID, comments, post, pp, maxPerThread)
 		bg.add(n)
 		fmt.Printf("[live] enqueued %d kept comments (thread %s)\n", n, threadID)
-		return n, nil
+		return outcome{items: n}, nil
 
 	case src.Platform == "reddit" && kind == "subreddit":
 		listing := strings.TrimRight(src.URL, "/") + "/new/"
@@ -453,7 +497,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			cfg.Scraper.Warmups(),
 			src.MinCommentsOr(int(cfg.Thresholds.MinCommentsPerThread)))
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		total := 0
 		unchanged := 0
@@ -503,7 +547,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			// "we declined to reopen 7 unchanged threads" are different runs.
 			fmt.Printf("[live]   skipped %d thread(s) unchanged since last visit\n", unchanged)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "youtube" && kind == "video":
 		fmt.Printf("[live] youtube video %s\n", src.URL)
@@ -511,19 +555,19 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			ctx, src.URL, delay, 5, cfg.Scraper.BlockedAction,
 		)
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		videoID := youtube.VideoIDFromURL(src.URL)
 		n := enqueueComments(st, runID, "youtube", src.URL, videoID, comments, post, pp, maxPerThread)
 		bg.add(n)
 		fmt.Printf("[live] enqueued %d kept comments (video %s)\n", n, videoID)
-		return n, nil
+		return outcome{items: n}, nil
 
 	case src.Platform == "youtube" && kind == "channel":
 		fmt.Printf("[live] youtube channel %s (up to %d video(s))\n", src.URL, perSource)
 		videos, err := youtube.ListChannelVideos(ctx, src.URL, delay, perSource)
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		total := 0
 		for _, watchURL := range videos {
@@ -543,7 +587,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live]   enqueued %d kept comments (video %s)\n", n, videoID)
 			total += n
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "hackernews":
 		hn := hackernews.New()
@@ -562,7 +606,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live] hacker news %s (up to %d thread(s))\n", tag, perSource)
 			found, err := hn.ListStories(ctx, tag, perSource)
 			if err != nil {
-				return 0, err
+				return outcome{}, err
 			}
 			stories = found
 		}
@@ -592,7 +636,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			total += n
 			sleep(delay)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "lemmy":
 		lm := lemmy.New()
@@ -603,7 +647,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		fmt.Printf("[live] lemmy %s (up to %d post(s))\n", src.URL, perSource)
 		posts, err := lm.ListPosts(ctx, src.URL, perSource)
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		total := 0
 		for _, lp := range posts {
@@ -623,7 +667,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			total += n
 			sleep(delay)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "podcast":
 		pc := podcast.New()
@@ -631,7 +675,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		pc.MaxEpisodes = perSource
 		show, eps, noTranscript, err := pc.ListEpisodes(ctx, src.URL)
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		fmt.Printf("[live] podcast %s (%d episode(s) with a transcript)\n",
 			show.Title, len(eps))
@@ -662,14 +706,14 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			total += n
 			sleep(delay)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "steam":
 		sm := steam.New()
 		sm.Delay = delay
 		appID := steam.AppIDFromURL(src.URL)
 		if appID == "" {
-			return 0, fmt.Errorf("steam source %q names no app id", src.URL)
+			return outcome{}, fmt.Errorf("steam source %q names no app id", src.URL)
 		}
 		// A Steam source IS one app, so perSource — "threads to walk per
 		// source" — has nothing to walk here. The depth that actually varies
@@ -689,7 +733,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		fmt.Printf("[live] steam app %s (up to %d review(s))\n", appID, want)
 		comments, post, err := sm.FetchReviews(ctx, appID, want)
 		if err != nil {
-			return 0, err
+			return outcome{}, err
 		}
 		// The store's own title, so the archive groups by "Aseprite" rather
 		// than by a number. Failing to get it is not worth losing the reviews
@@ -709,7 +753,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		// has to report the yield.
 		fmt.Printf("[live]   enqueued %d kept review(s) of %d (steam %s)\n",
 			n, len(comments), appID)
-		return n, nil
+		return outcome{items: n}, nil
 
 	case src.Platform == "github":
 		gh := github.New()
@@ -721,14 +765,14 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		if kind == "issue" {
 			n := githubIssueFromURL(src.URL)
 			if n == 0 {
-				return 0, fmt.Errorf("no issue number in %s", src.URL)
+				return outcome{}, fmt.Errorf("no issue number in %s", src.URL)
 			}
 			issues = append(issues, github.Issue{Number: n})
 		} else {
 			fmt.Printf("[live] github %s (up to %d issue(s))\n", repo, perSource)
 			found, err := gh.ListIssues(ctx, repo, perSource)
 			if err != nil {
-				return 0, err
+				return outcome{}, err
 			}
 			issues = found
 		}
@@ -756,7 +800,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		if gh.RateRemaining > 0 {
 			fmt.Printf("[live]   github rate remaining: %d\n", gh.RateRemaining)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "stackexchange":
 		se := stackexchange.New()
@@ -768,14 +812,14 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		if kind == "question" {
 			id := stackexchangeIDFromURL(src.URL)
 			if id == 0 {
-				return 0, fmt.Errorf("no question id in %s", src.URL)
+				return outcome{}, fmt.Errorf("no question id in %s", src.URL)
 			}
 			questions = append(questions, stackexchange.Question{ID: id})
 		} else {
 			fmt.Printf("[live] stackexchange %s (up to %d question(s))\n", site, perSource)
 			found, err := se.ListQuestions(ctx, site, perSource)
 			if err != nil {
-				return 0, err
+				return outcome{}, err
 			}
 			questions = found
 		}
@@ -802,7 +846,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		if se.QuotaRemaining > 0 {
 			fmt.Printf("[live]   stackexchange quota remaining today: %d\n", se.QuotaRemaining)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "discourse":
 		dc := discourse.New()
@@ -819,7 +863,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		if kind == "topic" {
 			id, slug := discourseTopicFromURL(src.URL)
 			if id == 0 {
-				return 0, fmt.Errorf("no topic id in %s", src.URL)
+				return outcome{}, fmt.Errorf("no topic id in %s", src.URL)
 			}
 			base = discourseBaseFromTopicURL(src.URL)
 			topics = append(topics, discourse.Topic{ID: id, Slug: slug})
@@ -827,7 +871,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			fmt.Printf("[live] discourse %s (up to %d topic(s))\n", base, perSource)
 			found, err := dc.ListTopics(ctx, base, perSource)
 			if err != nil {
-				return 0, err
+				return outcome{}, err
 			}
 			topics = found
 		}
@@ -848,15 +892,23 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			total += n
 			sleep(delay)
 		}
-		return total, nil
+		return outcome{items: total}, nil
 
 	case src.Platform == "realestate" && kind == "listing":
 		fmt.Printf("[live] realestate listing %s (portal: %s)\n", src.URL, src.Name)
-		listings, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir, cfg.Thresholds.RealestateDetailPerPage)
+		listings, fst, err := realestate.FetchListingList(ctx, src, delay, perSource, configDir, cfg.Thresholds.RealestateDetailPerPage)
+		// The walk's own stats ride into the ledger even when the walk
+		// failed, so "every page 403'd" and "parsed clean but held nothing"
+		// stay distinguishable in the week's trend. Marshalling a plain
+		// struct cannot fail; the stats are best-effort telemetry.
+		statsJSON, _ := json.Marshal(fst)
+		res := outcome{extended: string(statsJSON)}
 		if err != nil {
-			return 0, err
+			return res, err
 		}
 		total := 0
+		fresh := 0
+		dups := 0
 		for _, l := range listings {
 			if bg.stop("listing") {
 				break
@@ -874,6 +926,7 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 			if dup {
 				fmt.Printf("[live]   listing %s already ingested, skipping enqueue (obs=%d)\n", l.ListingID, obsID)
 				total++
+				dups++
 				bg.add(1)
 				continue
 			}
@@ -892,14 +945,19 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 				continue
 			}
 			total++
+			fresh++
 			bg.add(1)
 			fmt.Printf("[live]   recorded listing %s (obs=%d)\n", l.ListingID, obsID)
 		}
-		return total, nil
+		// A row dropped by a RecordObservation or dedup-check failure counts
+		// in neither split — both splits are best attempts, and the ledger
+		// row's stats_json carries what the walk saw.
+		res.items, res.fresh, res.dup = total, fresh, dups
+		return res, nil
 
 	default:
 		// R29 spirit: say so out loud rather than silently ingesting nothing.
-		return 0, fmt.Errorf("no adapter for platform=%q kind=%q yet", src.Platform, kind)
+		return outcome{}, fmt.Errorf("no adapter for platform=%q kind=%q yet", src.Platform, kind)
 	}
 }
 
