@@ -1184,6 +1184,10 @@ def cmd_ingest(args):
     whole thing arrives at once. A bounded one turns the same condition into
     something the operator can see on the day it starts.
     """
+    # The run ids with a fixed default taught this command the ledger's PK:
+    # cycle's help carries the fuller story.
+    if not getattr(args, "run", None):
+        args.run = _default_ingest_run_id()
     ceiling = getattr(args, "queue_ceiling", None)
     ceiling = QUEUE_CEILING if ceiling is None else int(ceiling)
     pending = _pending_batches(args.db) if ceiling > 0 else None
@@ -1285,6 +1289,19 @@ class _TimestampedOut:
 
 def _default_cycle_run_id() -> str:
     return "cycle-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _default_ingest_run_id() -> str:
+    """One ingest tick, one run id.
+
+    The run_outcome row's primary key is (run_id, source) with ON CONFLICT DO
+    UPDATE, so a fixed id would overwrite that source's ledger row on every
+    scheduled tick - 30-minute cadence would keep exactly one row per source
+    and read as a flat, empty trend. The drift ledger (and now the grade
+    verdicts it carries) needs each tick to be its own row; `cycle` already
+    learned this the same way.
+    """
+    return "ingest-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _ingest_timeout(args):
@@ -4665,7 +4682,7 @@ def main(argv=None):
     ing = sub.add_parser("ingest", help="fetch the curated sources with the Go worker")
     ing.add_argument("--db", default="data/jester.db")
     ing.add_argument("--config", default=DEFAULT_CONFIG_DIR)
-    ing.add_argument("--run", default="cli-ingest")
+    ing.add_argument("--run", default=None, help="run id (default: ingest-<UTC timestamp>)")
     # cmd_ingest has always read args.exports - it is the command that writes
     # listing_observation, so it is the one whose CSVs matter - but only `run`
     # and `cycle` declared the flag. The getattr could therefore never be
