@@ -118,6 +118,11 @@ def drift_alarms(rows):
       half-drift (prices on a third of the tiles) a plain zero never shows.
     - repeat-failure: this visit and the ones before it all errored. Once is
       weather; three in a row is a source that answers but cannot be read.
+    - grade-failed: the gates (internal/grade, carried in the row's stats
+      under "grade") failed the portal's floors, or carried a structural
+      finding. The ledger's NEWEST graded run decides — a later ungraded
+      row (a walk that parsed nothing) does not clear it, and a later
+      passing grade clears it; the alarm says which run it is from.
     """
     if not rows:
         return []
@@ -138,6 +143,9 @@ def drift_alarms(rows):
             drop = _coverage_drop(parse.get("parse") or {}, baseline)
             if drop:
                 out.append(drop)
+    grade = _grade_failed(rows)
+    if grade:
+        out.append(grade)
     if latest["first_err"]:
         # A streak, not a lifetime count: one success between failures means
         # the portal answers sometimes, which reads differently to an operator
@@ -151,6 +159,46 @@ def drift_alarms(rows):
             out.append({"kind": "repeat-failure",
                         "note": f"{streak} consecutive failed visit(s)"})
     return out
+
+
+def _grade_failed(series):
+    """The grade alarm, or None: the ledger's newest graded run must have failed.
+
+    The verdict is carried in the row's stats_json as {grade: {portals: [...],
+    global_failures?: [...]}} — the worker embeds it (see go/cmd/worker), the
+    CLI's bulk grade uses the same shape. A grade that passed calls nothing;
+    thin samples make no verdict and alarm nothing; the chip's label says HOW
+    MANY gates failed so the trend stays one glance readable.
+    """
+    graded = None
+    for row in series:
+        if (row.get("stats") or {}).get("grade"):
+            graded = row
+            break
+    if graded is None:
+        return None
+    g = graded["stats"]["grade"]
+    names = []
+    findings = []
+    for p in g.get("portals") or ():
+        for gate in p.get("gates") or ():
+            if gate.get("verdict") == "fail":
+                names.append(gate.get("name") or "?")
+        findings.extend(p.get("failures") or ())
+    findings.extend(g.get("global_failures") or ())
+    if not names and not findings:
+        # The newest grade passed; an older failing run is honoured history,
+        # not a live alarm.
+        return None
+    if names:
+        note = f"run {graded['run_id']}: {len(names)} gate(s) failed ({', '.join(names)})"
+        label = f"grade: {len(names)} gate(s)"
+        if findings:
+            note += f"; {len(findings)} more finding(s)"
+    else:
+        note = f"run {graded['run_id']}: {len(findings)} finding(s) - {findings[0]}"
+        label = f"grade: {len(findings)} finding(s)"
+    return {"kind": "grade-failed", "label": label, "note": note}
 
 
 def _coverage_drop(parse_now, baseline):

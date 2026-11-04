@@ -227,6 +227,125 @@ def test_three_consecutive_failures_alarm(db):
     assert "repeat-failure" in kinds
 
 
+# ---- the grade verdict (stats_json "grade") ---------------------------------
+
+def seeded_grade(*, failed=(), findings=(), thin=False):
+    """A grade dict exactly as the worker embeds it: one portal, three gates,
+    verdicts from `failed`, structural findings off the portal, and `thin`
+    marking every gate below the run quorum (shares that make no verdict)."""
+
+    def gate(name):
+        if thin:
+            return {"name": name, "verdict": "thin", "got": 0.8, "n": 8, "total": 10}
+        return {"name": name, "verdict": "fail" if name in failed else "ok",
+                "got": 0.67, "n": 8, "total": 12}
+
+    portal = {
+        "portal": "zoopla", "records": 12,
+        "gates": [gate("url present"), gate("price parsed"), gate("media present")],
+    }
+    if findings:
+        portal["failures"] = list(findings)
+    return {"total": 12, "unique": 12, "dupes": 0, "portals": [portal]}
+
+
+def graded_row(run_id, **kw):
+    """A realestate walk row that carries a grade in its stats."""
+    body = walk(12, {"price": 12})
+    body["stats"]["grade"] = seeded_grade(**kw)
+    return body
+
+
+def test_grader_fail_names_the_gates(db):
+    seed(db, "zoopla", "run-bad", observed_at="2026-11-03T00:00:00Z",
+         **graded_row("run-bad", failed=("price parsed", "media present")))
+    db.commit()
+    got = [a for a in runout.drift_alarms(runout.load_outcomes(db)["zoopla"])
+           if a["kind"] == "grade-failed"]
+    assert len(got) == 1
+    assert got[0]["label"] == "grade: 2 gate(s)"
+    assert (got[0]["note"] ==
+            "run run-bad: 2 gate(s) failed (price parsed, media present)")
+
+
+def test_passing_grade_clears_an_old_failure(db):
+    seed(db, "zoopla", "run-bad", observed_at="2026-11-02T00:00:00Z",
+         **graded_row("run-bad", failed=("price parsed",)))
+    seed(db, "zoopla", "run-ok", observed_at="2026-11-03T00:00:00Z",
+         **graded_row("run-ok"))
+    db.commit()
+    got = [a for a in runout.drift_alarms(runout.load_outcomes(db)["zoopla"])
+           if a["kind"] == "grade-failed"]
+    assert got == []  # the ledger's newest verdict is clean
+
+
+def test_ungraded_newest_row_does_not_clear_the_alarm(db):
+    """A walk that parsed nothing carries no grade; it must not make the
+    portal look graded-clean — the alarm stays, and still says which run."""
+    seed(db, "zoopla", "run-bad", observed_at="2026-11-02T00:00:00Z",
+         **graded_row("run-bad", failed=("price parsed",)))
+    seed(db, "zoopla", "run-dark", observed_at="2026-11-03T00:00:00Z",
+         **walk(0, {}, pages_ok=0, pages_err=2, first_err="connection refused"))
+    db.commit()
+    got = [a for a in runout.drift_alarms(runout.load_outcomes(db)["zoopla"])
+           if a["kind"] == "grade-failed"]
+    assert len(got) == 1
+    assert got[0]["note"].startswith("run run-bad: 1 gate(s) failed")
+
+
+def test_findings_only_grade_alarms(db):
+    """A grade whose gates passed but whose records carry a structural
+    finding is still a failing grade — the finding is the alarm."""
+    seed(db, "zoopla", "run-find", observed_at="2026-11-03T00:00:00Z",
+         **graded_row("run-find",
+                      findings=("zoopla: 2 records carry no deal_type",)))
+    db.commit()
+    got = [a for a in runout.drift_alarms(runout.load_outcomes(db)["zoopla"])
+           if a["kind"] == "grade-failed"]
+    assert len(got) == 1
+    assert got[0]["label"] == "grade: 1 finding(s)"
+    assert "no deal_type" in got[0]["note"]
+
+
+def test_thin_grade_makes_no_alarm(db):
+    """Below the run quorum the sample carries shares without verdicts —
+    neither fail nor alarm: a 3-tile walk cannot paint a red trend card."""
+    seed(db, "zoopla", "run-thin", observed_at="2026-11-03T00:00:00Z",
+         **graded_row("run-thin", thin=True))
+    db.commit()
+    got = [a for a in runout.drift_alarms(runout.load_outcomes(db)["zoopla"])
+           if a["kind"] == "grade-failed"]
+    assert got == []
+
+
+def test_grade_failing_source_is_drifting(db, tmp_path):
+    seed(db, "zoopla", "run-bad", observed_at="2026-11-03T00:00:00Z",
+         **graded_row("run-bad", failed=("price parsed",)))
+    db.commit()
+    db.close()
+    cfg = realcfg(tmp_path)
+    api = ConsoleAPI(db_path=str(tmp_path / "j.db"), config_dir=str(cfg))
+    res = api.sources()
+    by_name = {s["name"]: s for s in res["sources"]}
+    kinds = [a["kind"] for a in by_name["zoopla"]["trend"]["drift"]]
+    assert "grade-failed" in kinds
+    assert res["drifting_sources"] == ["zoopla"]  # ghost carries no rows
+
+
+def test_outcomes_drill_down_carries_the_grade_rows(db, tmp_path):
+    seed(db, "zn", "r-1", observed_at="2026-11-01T00:00:00Z",
+         **graded_row("r-1", failed=("price parsed",)))
+    db.commit()
+    db.close()
+    cfg = tmp_path / "config3"
+    cfg.mkdir()
+    api = ConsoleAPI(db_path=str(tmp_path / "j.db"), config_dir=str(cfg))
+    res = api.outcomes()
+    row = res["series"]["zn"][0]
+    assert row["stats"]["grade"]["portals"][0]["gates"][1]["verdict"] == "fail"
+    assert any(a["kind"] == "grade-failed" for a in res["drift"]["zn"])
+
+
 # ---- the console surfaces ---------------------------------------------------
 
 def test_sources_carries_trend_cards(db, tmp_path):
