@@ -126,5 +126,11 @@ no adaptive substitution, ever** (`siteprofile.go:748-754` "wrong data that look
       uncovered-to-cover left (the one-per-adapter return lines only a live
       network can reach), siteprofile/store/realestate new lines 0/0/4
       (browser fork) → estimated gate ≈ 88%.
-- [ ] Merge PR #88 when green — authorized; Dependabot PRs #80/#81 stay
+- [x] Merge PR #88 when green — authorized and done (2026-11-04): the
+      branch's second CI run `41799904853` passed every required context
+      (Python 6m02s, Go 43s, Frontend 12s, Windows 2m15s, Compose 1m14s,
+      Sonar — CI scanner 1m23s, SonarCloud Code Analysis pass — the gate
+      now reads clean after `75687a2`), and the PR landed as merge commit
+      `55222a7ceb7c36ea9e4801c0b6e6d4c13806fcef` at 2026-11-04T08:37:56Z,
+      preserving every wave commit above. Dependabot PRs #80/#81 stay
       held regardless.

@@ -5,15 +5,18 @@ ID to its evidence; this page says which of them is current and where the
 remaining work sits. **If this page and another document disagree about a
 status, this page wins** — fix the other document in the same change.
 
-> **`main` at `1f774a2`.** Everything implementable without the owner's
+> **`main` at `55222a7`.** Everything implementable without the owner's
 > credentials is merged: PR #85 landed the lock-parity fix (`b01349e`, in the
 > merge `baafcb7`), PR #86 merged the 2026-11-02 v4 work — batches B1–B5 of
 > [the report](reports/2026-11-02-next-development-strategy.md) — as a merge
 > commit (`a2c6104`) that preserves every wave commit the register cites,
-> and PR #87 parameterized the signals schema probe's pragma read (fix
+> PR #87 parameterized the signals schema probe's pragma read (fix
 > `324bbb4`, merge `1f774a2`), closing the one finding that SonarCloud's
-> quality-gate check held red. The live archive was **not** modified by any
-> of this work: no command here opened `data/jester.db` for writing.
+> quality-gate check held red, and PR #88 merged the drift-ledger wave
+> (Phase A of the Scrapling-informed roadmap) as merge commit `55222a7`,
+> preserving every wave commit the section below cites. The live archive
+> was **not** modified by any of this work: no command here opened
+> `data/jester.db` for writing.
 > [The R4 register](#r4-register-2026-11-02-report) below maps every item to
 > its wave and its remaining owner half.
 
@@ -29,14 +32,15 @@ A, where the failing condition had been exactly one medium-impact
 lane: the protection decisions, the extraction/agreement labels, the
 Windows task account + `schedule apply`, WAL and the second backup volume.
 
-**As of 2026-11-04.** The drift-ledger wave (Phase A) is code-complete on
-`feat/run-outcome-plane` — all suites green, and SonarCloud's new-code
-coverage gate repaired at `75687a2` (68.2% on the first CI run, raised on
-the same branch; [PR #88](https://github.com/yosrikhiari/Jester/pull/88)'s
-latest checks are the authority) — and is **not merged yet**: the owner
-authorized push + PR + merge when green, and the merge lands only with
-every required context green (the wave section below carries the evidence
-and the honesty notes). The live archive was again not touched: no
+**As of 2026-11-04.** The drift-ledger wave (Phase A) is **merged**:
+[PR #88](https://github.com/yosrikhiari/Jester/pull/88) landed as merge
+commit `55222a7` (2026-11-04T08:37:56Z) under the owner's push + PR +
+merge-when-green authorization, with CI run `41799904853` passing every
+required context — Python (6m02s), Go, Frontend, Windows (2m15s), Compose,
+the Sonar scanner job and the SonarCloud Code Analysis check itself. That
+last check had failed the branch's first run: the quality gate read
+new-code coverage 68.2% against the 80% floor, repaired at `75687a2` (the
+gate-repair commit below). The live archive was again not touched: no
 command here opened `data/jester.db` for writing.
 
 **Extraction quality is NOT MEASURED (stated 2026-11-02).** No
@@ -204,7 +208,7 @@ the tree's commit history; the last column is the owner lane.
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2343` / `go test functions: 306` |
 | focused suites re-run at B5 | chat files (57), export (49), doc contracts + doc links (9) | all green |
 
-## Drift-ledger wave (Phase A of the Scrapling-informed roadmap) — code complete on branch
+## Drift-ledger wave (Phase A of the Scrapling-informed roadmap) — merged as PR #88
 
 Phase A was chosen from [the 2026-11-03 Scrapling research
 report](../.superpowers/sdd/2026-11-03-scrapling-informed-enhancement/report.md)
@@ -212,11 +216,13 @@ by the owner (question tool, 2026-11-03) and executed on
 `feat/run-outcome-plane`, cut off `main` tip `15032e4`. Its design register
 lives at
 [the wave ledger](../.superpowers/sdd/2026-11-03-drift-ledger/progress.md);
-the wave is **NOT merged** — pushing, the PR and the merge (Dependabot PRs
-#80/#81 stay held) require fresh owner authorization, at which time this
-section is updated with the merge evidence.
+the wave was merged under the owner's push + PR + merge-when-green
+authorization: merge commit `55222a7` (2026-11-04T08:37:56Z), CI run
+`41799904853` green on every required context (Python 6m02s, Go 43s,
+Frontend 12s, Windows 2m15s, Compose 1m14s, Sonar — CI scanner 1m23s,
+SonarCloud Code Analysis pass). Dependabot PRs #80/#81 stay held.
 
-What exists on the branch, with its commit:
+What the wave landed, with its commit:
 
 | Commit | Layer | What it does |
 |---|---|---|
@@ -252,7 +258,7 @@ What it does NOT do (the honesty notes):
 - Mock mode writes no rows: the ledger is a live fact.
 - `listingeval` remains manual — wiring it into scheduled runs is Phase B.
 
-Verification run on the branch (each row is the tree at its named commit):
+Verification run inside the wave (each row is the tree at its named commit):
 
 | Command | Where | Result |
 |---|---|---|
