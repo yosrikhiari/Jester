@@ -257,7 +257,7 @@ What it does NOT do (the honesty notes):
   decision, until the trend cards demand them.
 - Mock mode writes no rows: the ledger is a live fact.
 - `listingeval` remained manual through Phase A — the gates are wired into the
-  scheduled run by the Phase B wave below (on its branch, not yet merged).
+  scheduled run by the Phase B wave below, merged the same morning as PR #91.
 
 Verification run inside the wave (each row is the tree at its named commit):
 
@@ -277,13 +277,19 @@ increments. The lines its tests still do not reach are the one-per-adapter
 `return` statements (a live network each — hermetic tests stay out) and the
 four browser-render lines in realestate's HTTP/browser fork.
 
-## Listingeval-gates wave (Phase B of the Scrapling-informed roadmap) — on `feat/listingeval-gates`, not yet pushed
+## Listingeval-gates wave (Phase B of the Scrapling-informed roadmap) — merged as PR #91
 
-Phase B was chosen the same way and carries the owner's go-ahead of
-2026-11-04; push + PR + merge still await fresh authorization when green. The
-phase was executed on `feat/listingeval-gates`, cut off `main` tip `49f080b`,
-with its design register at
+Phase B was chosen from [the 2026-11-03 Scrapling research
+report](../.superpowers/sdd/2026-11-03-scrapling-informed-enhancement/report.md)
+§3.2 + roadmap "Phase B" by the owner (question tool, 2026-11-04) and executed
+on `feat/listingeval-gates`, cut off `main` tip `49f080b`; its design register
+lives at
 [the phase ledger](../.superpowers/sdd/2026-11-04-listingeval-gates/progress.md).
+The wave was merged under the owner's push + PR + merge-when-green
+authorization: merge commit `38511d0` (2026-11-04T12:04:22Z), CI run
+`41825028459` green on every required context (Python 5m59s, Go 42s, Frontend
+8s, Windows 2m17s, Compose 1m24s, Sonar — CI scanner 1m25s, SonarCloud Code
+Analysis pass). Dependabot PRs #80/#81 stay held.
 
 What the phase landed, with its commit:
 
@@ -293,7 +299,7 @@ What the phase landed, with its commit:
 | `16b76ce` | `go/cmd/worker` | After each live realestate walk the worker grades the parse's own RAW output — the listing slice before budget or dedup — with the run-grade posture (`RunOptions()`: the 1000-uniques bar is off, the quorum is 10) and embeds the verdict in the row's `stats_json` under `grade`: no new columns, no schema_version bump, no backup/export contract touch. A failing grade prints `[grade]` lines beside the `[live]` ones (`<portal>: N gate(s) failed`, then the failing gates and as-is findings; a structural-only sample skips the header) and, once, leaves the sample as `data/traces/<run_id>/<portal>.listings.jsonl` beside the archive — best-effort, never a job stopper. A walk that parsed nothing grades nothing (its row already says why in `first_err`); a profile that cannot load stands the grade down loudly |
 | `e84d6a3` | Python CLI | `ingest`'s static `cli-ingest` run id erased each source's ledger row on every tick (the row's key is `(run_id, source)` with ON CONFLICT DO UPDATE): the default is now resolved per invocation as `ingest-<UTC stamp>`, mirroring `cycle`'s own pattern and reasoning; explicit `--run` still wins |
 | `0423dd6` | Python console | `drift_alarms` gains `grade-failed`: the ledger's NEWEST GRADED row decides — a later ungraded row (a walk that went dark) does not clear the alarm, a later passing grade does; thin samples make no verdict and alarm nothing. The chip carries its own label (`grade: 2 gate(s)`) rendered in place of the kind, with the failing gates and the run id under the hover; the drift filter, the notes drawer and `drifting_sources` read the same kinds and pick the new one up unchanged |
-| this docs commit | docs | This section, the phase register, the counts |
+| `2d97680` | docs | This section and the phase register (the close-out evidence above lands with this page's follow-up docs commit) |
 
 The console keeps NO separate grade key on the trend card — the grade surfaces
 only through the `grade-failed` alarm — and the verdict stays deterministically
