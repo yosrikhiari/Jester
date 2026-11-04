@@ -256,7 +256,8 @@ What it does NOT do (the honesty notes):
 - Per-page `fetch_outcome` rows and detail counters are deferred, by scope
   decision, until the trend cards demand them.
 - Mock mode writes no rows: the ledger is a live fact.
-- `listingeval` remains manual — wiring it into scheduled runs is Phase B.
+- `listingeval` remained manual through Phase A — the gates are wired into the
+  scheduled run by the Phase B wave below (on its branch, not yet merged).
 
 Verification run inside the wave (each row is the tree at its named commit):
 
@@ -275,6 +276,64 @@ one fix it produced along the way: ldjson's NoURL drop counter now
 increments. The lines its tests still do not reach are the one-per-adapter
 `return` statements (a live network each — hermetic tests stay out) and the
 four browser-render lines in realestate's HTTP/browser fork.
+
+## Listingeval-gates wave (Phase B of the Scrapling-informed roadmap) — on `feat/listingeval-gates`, not yet pushed
+
+Phase B was chosen the same way and carries the owner's go-ahead of
+2026-11-04; push + PR + merge still await fresh authorization when green. The
+phase was executed on `feat/listingeval-gates`, cut off `main` tip `49f080b`,
+with its design register at
+[the phase ledger](../.superpowers/sdd/2026-11-04-listingeval-gates/progress.md).
+
+What the phase landed, with its commit:
+
+| Commit | Layer | What it does |
+|---|---|---|
+| `b695079` | `go/internal/grade` + `go/cmd/listingeval` | The grading core moves into `jester/internal/grade` — the CLI's record struct, floors, `knownAbsent` and `PortalFloors` registers, and verdict math move verbatim; the CLI becomes flags + JSONL scan + one `Grade` call. Parity is proven, not asserted: old (main `49f080b`) vs new binaries over four fixtures — a mixed portal sample with every structural finding, a 1000-record clean pass, an empty file, a corrupt line — stdout, stderr and exit codes byte-identical on all four. Verdicts gain `thin` (a below-quorum sample carries shares and makes no verdict) and `none` becomes a named verdict for a declared gap; `grade.Records()` flattens the store's listings off the same JSONL shape |
+| `16b76ce` | `go/cmd/worker` | After each live realestate walk the worker grades the parse's own RAW output — the listing slice before budget or dedup — with the run-grade posture (`RunOptions()`: the 1000-uniques bar is off, the quorum is 10) and embeds the verdict in the row's `stats_json` under `grade`: no new columns, no schema_version bump, no backup/export contract touch. A failing grade prints `[grade]` lines beside the `[live]` ones (`<portal>: N gate(s) failed`, then the failing gates and as-is findings; a structural-only sample skips the header) and, once, leaves the sample as `data/traces/<run_id>/<portal>.listings.jsonl` beside the archive — best-effort, never a job stopper. A walk that parsed nothing grades nothing (its row already says why in `first_err`); a profile that cannot load stands the grade down loudly |
+| `e84d6a3` | Python CLI | `ingest`'s static `cli-ingest` run id erased each source's ledger row on every tick (the row's key is `(run_id, source)` with ON CONFLICT DO UPDATE): the default is now resolved per invocation as `ingest-<UTC stamp>`, mirroring `cycle`'s own pattern and reasoning; explicit `--run` still wins |
+| `0423dd6` | Python console | `drift_alarms` gains `grade-failed`: the ledger's NEWEST GRADED row decides — a later ungraded row (a walk that went dark) does not clear the alarm, a later passing grade does; thin samples make no verdict and alarm nothing. The chip carries its own label (`grade: 2 gate(s)`) rendered in place of the kind, with the failing gates and the run id under the hover; the drift filter, the notes drawer and `drifting_sources` read the same kinds and pick the new one up unchanged |
+| this docs commit | docs | This section, the phase register, the counts |
+
+The console keeps NO separate grade key on the trend card — the grade surfaces
+only through the `grade-failed` alarm — and the verdict stays deterministically
+checkable in CI: the grade package's 12 test functions cover every verdict path,
+the registers, both postures' global policies, zero-record safety and the JSON
+wire shape, and the worker path is pinned offline over the Phase-A httptest
+portal (a failing walk's row + log + artifact, a thin walk's silence, a
+walk whose profile will not build).
+
+What it does NOT do (the honesty notes):
+
+- **No parse-behavior change** — the grade observes the parser's own output;
+  gates never relocate, re-save or "fix" a selector, same rule as Phase A.
+- The signals/health digest is untouched: `health.py` reads only its own
+  signals-live.db archive and never the run_outcome ledger, so wiring grade
+  verdicts there would be a fresh integration — deferred by scope decision and
+  recorded in the register. The operator surface today is the console alarm and
+  the worker's `[grade]` log lines.
+- The grade measures the run's sample only, never the archive's cumulative
+  rows; and artifacts land ONLY on a failing grade — a thin or clean walk
+  writes nothing.
+- Structural findings stay loud at any sample size (only gate verdicts respect
+  the quorum): every shipped profile classifies `deal_type` from the URL, so a
+  tiny walk still cannot fail on a missing field that the parser cannot miss.
+- A console that predates this wave ignores the `grade` key inside `stats_json`
+  harmlessly (unknown JSON keys), which is the same additive rule `stats_json`
+  itself rode in Phase A.
+
+Verification run inside the phase (each row is the tree at its named commit):
+
+| Command | Where | Result |
+|---|---|---|
+| `go test ./internal/grade/...` | `go/`, after B1 | `ok` — 12 test functions over ok/fail/none/thin, the registers and their boundaries (mubawab 7/10 at floor 0.70), structural findings, both postures' global policies, zero-record (no NaN) and the JSON wire shape |
+| `go test ./...` | `go/`, tree at `16b76ce` | every package `ok` |
+| `go vet ./...` | `go/`, tree at this docs commit | no output (clean) |
+| `go test ./internal/grade ./cmd/worker -cover` | same tree | `100.0%` / `32.2%` of statements — the new package is fully covered; the worker's own lines the tests still do not reach are the pre-existing live-network `return`s, unchanged from the Phase A note above and off this phase's delta |
+| parity harness (binaries from main `49f080b` vs this branch) | four fixtures, built in a session temp dir — not carried in the tree | stdout + stderr byte-identical and matching exit codes on all four cases |
+| `python -m pytest python/tests -q` (env above) | tree at `0423dd6` | `2336 passed, 28 skipped, 13 deselected, 41 warnings in 594.87s (0:09:54)` — includes seven new grade-alarm tests in `test_console_runout.py` (21 total there) |
+| `python -m pytest python/tests/test_doc_links.py python/tests/test_doc_contracts.py -q` | tree at this docs commit | `9 passed` |
+| `python scripts/counts.py --no-archive` | this commit | `python tests: 2364` / `go test functions: 338` |
 
 ## The products
 
