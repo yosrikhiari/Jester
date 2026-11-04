@@ -29,6 +29,13 @@ A, where the failing condition had been exactly one medium-impact
 lane: the protection decisions, the extraction/agreement labels, the
 Windows task account + `schedule apply`, WAL and the second backup volume.
 
+**As of 2026-11-04.** The drift-ledger wave (Phase A) is code-complete on
+`feat/run-outcome-plane` (five commits, tip `178162e`) — all suites green —
+and is **not merged**: push + PR + merge await fresh owner authorization
+(the wave section below carries the evidence and the honesty notes). The
+live archive was again not touched: no command here opened
+`data/jester.db` for writing.
+
 **Extraction quality is NOT MEASURED (stated 2026-11-02).** No
 `eval/extraction/labels.jsonl` is committed, so `jester eval extract` exits 0
 with `measured: false` and a NOT MEASURED block — the CI step called
@@ -193,6 +200,63 @@ the tree's commit history; the last column is the owner lane.
 | the same command | B5 complete, tree at `5236fab` | `2315 passed, 28 skipped, 13 deselected, 41 warnings in 535.22s (0:08:55)` |
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2343` / `go test functions: 306` |
 | focused suites re-run at B5 | chat files (57), export (49), doc contracts + doc links (9) | all green |
+
+## Drift-ledger wave (Phase A of the Scrapling-informed roadmap) — code complete on branch
+
+Phase A was chosen from [the 2026-11-03 Scrapling research
+report](../.superpowers/sdd/2026-11-03-scrapling-informed-enhancement/report.md)
+by the owner (question tool, 2026-11-03) and executed on
+`feat/run-outcome-plane`, cut off `main` tip `15032e4`. Its design register
+lives at
+[the wave ledger](../.superpowers/sdd/2026-11-03-drift-ledger/progress.md);
+the wave is **NOT merged** — pushing, the PR and the merge (Dependabot PRs
+#80/#81 stay held) require fresh owner authorization, at which time this
+section is updated with the merge evidence.
+
+What exists on the branch, with its commit:
+
+| Commit | Layer | What it does |
+|---|---|---|
+| `683eb70` | `go/internal/siteprofile` | `Parse(body) ([]Listing, ParseStats, error)` — anchors, tiles, blocks, bad_json, candidates, kept, filtered, no_id, no_url, and a per-field coverage histogram counted over the KEPT rows (canonical fields read off the struct, so `price=0` stays a non-price) |
+| `c1ce3ac` | `go/internal/realestate` | `Stats` (pages ok/err, bytes, fetch-clock latency, fetch mode) threaded out of `FetchListingList`; offline httptest test drives clean-page and 403-portal walks |
+| `d2813a1` | `go/internal/store` | `run_outcome` table + source index via `CREATE TABLE IF NOT EXISTS` — **no schema_version bump** (the guard stays 1, a strict cross-language contract); one row per (run_id, source), `INSERT OR REPLACE`, kept for failing visits |
+| `d3d53d7` | `go/cmd/worker` | `runLive` writes one row per visited source BEFORE the failure short-circuit; a CDP-session failure writes its row; realestate rows carry fresh/dup splits and the walk stats JSON; disabled sources write none |
+| `178162e` | Python console | `jester/runout.py` (series + drift rules), `/api/outcomes`, Sources-page trend column with alarm chips and a `drifting` filter |
+
+The console's drift rules carry their limits where they live, and the tests
+pin them: `shape-gone` needs clean pages AND a prior yield (anchor silence
+ALONE never judges an anchored profile — the anchor is the only way that mode
+sees tiles at all); `coverage-drop` compares against a pooled rolling baseline
+with a floor (a field born thin stays quiet); `repeat-failure` is a streak of
+three broken by any success, not a lifetime count; a never-yielded source is
+unmeasured, not drifted.
+
+What it does NOT do (the honesty notes):
+
+- **No parse-behavior change and no adaptive substitution** — ever. The
+  counters observe; they never relocate, re-save or "fix" a selector. The
+  Scrapling relocate() idea is adopted strictly as its scoring axis.
+- Coverage is counted over **returned rows only**; detail-page fills are not
+  in the histogram (Parse returns before detail fetches).
+- Community adapters carry `items` (and their failure class); page counters
+  for them are zero and the console renders the parse story only where a
+  realestate walk produced it.
+- Latency wraps the fetch call (a bounded retry's backoff lands inside its
+  own clock); pacing sleeps are excluded.
+- Per-page `fetch_outcome` rows and detail counters are deferred, by scope
+  decision, until the trend cards demand them.
+- Mock mode writes no rows: the ledger is a live fact.
+- `listingeval` remains manual — wiring it into scheduled runs is Phase B.
+
+Verification run on the branch (each row is the tree at its named commit):
+
+| Command | Where | Result |
+|---|---|---|
+| `go test ./... -count=1` | `go/`, after each B1 commit (`683eb70`, `c1ce3ac`, `d2813a1`, `d3d53d7`) | every package `ok` |
+| `go vet ./...` | `go/`, tree at `178162e` | no output (clean) |
+| `python -m pytest python/tests -q` (env above) | tree at `178162e` | `2325 passed, 28 skipped, 13 deselected, 41 warnings in 560.13s (0:09:20)` |
+| `python -m pytest test_doc_links.py test_doc_contracts.py -q` | tree at `178162e` | `9 passed` |
+| `python scripts/counts.py --no-archive` | this commit | `python tests: 2357` / `go test functions: 310` |
 
 ## The products
 

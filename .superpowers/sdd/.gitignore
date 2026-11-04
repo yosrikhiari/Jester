@@ -1,0 +1,8 @@
+*
+# Wave artifacts referenced by docs/STATUS.md are shipped explicitly; every
+# other working brief under sdd/ stays out of the tree.
+!/.gitignore
+!/2026-11-03-drift-ledger/
+!/2026-11-03-drift-ledger/progress.md
+!/2026-11-03-scrapling-informed-enhancement/
+!/2026-11-03-scrapling-informed-enhancement/report.md
