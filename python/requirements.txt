@@ -8,7 +8,7 @@ PyYAML>=6.0.3
 # The floor is the version pylock.toml proves: Docker and CI install the lock,
 # so a newer floor here means Windows resolves a client the tested stack never
 # ran. Raise it only together with a regenerated lock.
-qdrant-client>=1.19.1
+qdrant-client>=1.20.0
 # --- DEV ONLY below (test suite + coverage gate). Documented dev install is
 # `pip install -e .[dev]` (see pyproject.toml); these rows stay until
 # pylock.toml is regenerated on Linux, because Docker and CI install from
