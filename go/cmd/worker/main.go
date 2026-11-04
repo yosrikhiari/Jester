@@ -20,12 +20,14 @@ import (
 	"jester/internal/config"
 	"jester/internal/discourse"
 	"jester/internal/github"
+	"jester/internal/grade"
 	"jester/internal/hackernews"
 	"jester/internal/lemmy"
 	"jester/internal/podcast"
 	"jester/internal/prefilter"
 	"jester/internal/realestate"
 	"jester/internal/reddit"
+	"jester/internal/siteprofile"
 	"jester/internal/stackexchange"
 	"jester/internal/steam"
 	"jester/internal/store"
@@ -114,7 +116,7 @@ func main() {
 	}
 
 	if *live {
-		runLive(cfg, st, *runID, pp, selected, *maxComments, *maxPosts, *configDir)
+		runLive(cfg, st, *runID, pp, selected, *maxComments, *maxPosts, *configDir, filepath.Dir(*dbPath))
 		return
 	}
 
@@ -184,8 +186,12 @@ func parseUntil(raw string) (int64, error) {
 	return t.UTC().Unix(), nil
 }
 
+// runLive visits the enabled sources under the ingest budget. dbDir is the
+// database's own directory: the trace artifacts a failed grade leaves beside
+// the archive live under it, so the operator finds evidence where the data
+// they explain already sits.
 func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Params,
-	sources []config.Source, maxComments, maxPosts int, configDir string) {
+	sources []config.Source, maxComments, maxPosts int, configDir, dbDir string) {
 	delay := time.Duration(cfg.Thresholds.RequestDelayMs) * time.Millisecond
 	// Depth is resolved PER SOURCE now, inside the loop, because it depends on
 	// the platform. See Thresholds.DepthFor.
@@ -259,7 +265,7 @@ func runLive(cfg *config.Config, st *store.Store, runID string, pp prefilter.Par
 		}
 
 		before := bg.usedComments
-		res, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg, configDir)
+		res, err := fetchSource(ctx, cfg, st, runID, pp, src, kind, delay, perSource, bg, configDir, dbDir)
 		if cancel != nil {
 			cancel()
 		}
@@ -466,10 +472,11 @@ type outcome struct {
 }
 
 // fetchSource routes one source to the right adapter based on its kind, and
-// reports what the visit yielded alongside whether it errored.
+// reports what the visit yielded alongside whether it errored. dbDir carries
+// the trace root for the platform that grades itself.
 func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID string,
 	pp prefilter.Params, src config.Source, kind string, delay time.Duration, perSource int,
-	bg *budget, configDir string) (outcome, error) {
+	bg *budget, configDir, dbDir string) (outcome, error) {
 	maxPerThread := int(cfg.Thresholds.MaxCommentsPerThread)
 	switch {
 	case src.Platform == "reddit" && kind == "thread":
@@ -901,7 +908,31 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		// failed, so "every page 403'd" and "parsed clean but held nothing"
 		// stay distinguishable in the week's trend. Marshalling a plain
 		// struct cannot fail; the stats are best-effort telemetry.
-		statsJSON, _ := json.Marshal(fst)
+		//
+		// The same is now true of the walk's grade. The gates measure the
+		// parse's own output (the raw listing slice, not the post-budget
+		// counts), a walk that parsed nothing grades nothing — its ledger
+		// row already says so in firstErr — and a walk below the run
+		// quorum carries shares without verdicts. A failing grade prints
+		// its findings here and, once, leaves the sample as a JSONL
+		// artifact beside the archive. None of it stops the run.
+		stats := walkStats{Stats: fst}
+		if err == nil && len(listings) > 0 {
+			if rep, gerr := gradeWalk(configDir, src.Name, listings); gerr != nil {
+				fmt.Printf("[grade] %s: not graded, profile unreadable: %v\n", src.Name, gerr)
+			} else {
+				stats.Grade = rep
+				if rep.HasFailures() {
+					for _, line := range gradeFindingLines(*rep) {
+						fmt.Printf("[grade] %s\n", line)
+					}
+					if werr := writeGradeArtifact(dbDir, runID, listings); werr != nil {
+						fmt.Printf("[grade] %s: sample not archived: %v\n", src.Name, werr)
+					}
+				}
+			}
+		}
+		statsJSON, _ := json.Marshal(stats)
 		res := outcome{extended: string(statsJSON)}
 		if err != nil {
 			return res, err
@@ -959,6 +990,106 @@ func fetchSource(ctx context.Context, cfg *config.Config, st *store.Store, runID
 		// R29 spirit: say so out loud rather than silently ingesting nothing.
 		return outcome{}, fmt.Errorf("no adapter for platform=%q kind=%q yet", src.Platform, kind)
 	}
+}
+
+// walkStats is what a realestate walk's ledger row carries in stats_json: the
+// walk's own cost facts first, then the grade of what the parse produced —
+// embedded, because the grade IS part of what the walk saw, and the console
+// already reads this JSON. The grade key is omitted entirely when nothing was
+// graded (a walk with no output, or one the runner never gave a sample).
+type walkStats struct {
+	realestate.Stats
+	Grade *grade.Report `json:"grade,omitempty"`
+}
+
+// gradeWalk grades one walk's parsed output against the profile's floors. The
+// profile is re-read here — it is the same file the walk loaded seconds ago —
+// so the grading package stays pure: it never touches the filesystem, and the
+// register/floor math is the CLI's, not this function's.
+//
+// A profile that cannot load stands the grade down loudly rather than
+// silently: an ungraded run is a fact worth knowing, since the walk just
+// proved the profile existed.
+func gradeWalk(configDir, srcName string, listings []store.Listing) (*grade.Report, error) {
+	b, err := os.ReadFile(filepath.Join(configDir, "profiles", srcName+".yaml"))
+	if err != nil {
+		return nil, err
+	}
+	prof, err := siteprofile.Load(b)
+	if err != nil {
+		return nil, err
+	}
+	rep := grade.Grade(grade.Records(listings), grade.RunOptions(),
+		map[string]*siteprofile.Profile{prof.Portal: prof})
+	return &rep, nil
+}
+
+// gradeFindingLines writes the failing report the way the worker's log says
+// everything else: a count named by portal first, then each finding on its
+// own line, the way the CLI prints them — the operator reading [live] lines
+// in order gets the same story the ledger's grade JSON tells the console.
+// A sample whose only findings are structural (no failing gate) skips the
+// count header: the findings, which carry their portal name, speak alone.
+func gradeFindingLines(rep grade.Report) []string {
+	portal, gates := "", 0
+	for _, p := range rep.Portals {
+		if portal == "" {
+			portal = p.Portal
+		}
+		for _, g := range p.Gates {
+			if g.Verdict == grade.Fail {
+				gates++
+			}
+		}
+	}
+	var out []string
+	if gates > 0 {
+		out = append(out, fmt.Sprintf("%s: %d gate(s) failed", portal, gates))
+	}
+	for _, p := range rep.Portals {
+		for _, g := range p.Gates {
+			if g.Verdict != grade.Fail {
+				continue
+			}
+			out = append(out, fmt.Sprintf("%s: FAIL %s: %d/%d at floor %.0f%%",
+				p.Portal, g.Name, g.N, g.Total, g.Floor*100))
+		}
+		// The structural findings carry their own portal prefix, exactly
+		// as the CLI prints them.
+		out = append(out, p.Failings...)
+	}
+	return out
+}
+
+// writeGradeArtifact leaves the failing sample beside the archive so the
+// alarm in the console has its auditable backing: the exact records, in the
+// exact shape the listingharvest command would have graded, named by run and
+// portal. Best effort — an archive that cannot be written must never stop
+// the ingest it explains.
+func writeGradeArtifact(dbDir, runID string, listings []store.Listing) error {
+	var sb strings.Builder
+	for _, r := range grade.Records(listings) {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	dir := filepath.Join(dbDir, "traces", runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, gradeArtifactName(listings)), []byte(sb.String()), 0o644)
+}
+
+// gradeArtifactName names the sample file by the portal whose records it
+// holds — a walk visits one portal, and the name is the run's judgment of it.
+func gradeArtifactName(listings []store.Listing) string {
+	for _, l := range listings {
+		return l.Portal + ".listings.jsonl"
+	}
+	return "listings.jsonl"
 }
 
 // enqueueComments pre-filters, dedups and queues one thread's comments.

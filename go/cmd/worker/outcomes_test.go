@@ -11,6 +11,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,7 +130,7 @@ func TestRunLiveWritesARowForEachVisitedSourceEvenWhenItFails(t *testing.T) {
 		{Name: "guarded", Platform: "reddit", URL: "https://www.reddit.com/r/devforhire/new/"},
 		{Name: "forme", Platform: "tumblr", URL: "https://tumblr.example/ask"},
 	}
-	runLive(cfg, st, "r-live", prefilter.Params{}, sources, 0, 0, t.TempDir())
+	runLive(cfg, st, "r-live", prefilter.Params{}, sources, 0, 0, t.TempDir(), t.TempDir())
 
 	rows, err := st.RunOutcomes("r-live")
 	if err != nil {
@@ -159,7 +161,7 @@ func TestRunLiveWritesARowForEachVisitedSourceEvenWhenItFails(t *testing.T) {
 func TestFetchSourceRefusesAnUnknownAdapter(t *testing.T) {
 	src := config.Source{Name: "forme", Platform: "tumblr", URL: "https://tumblr.example/ask"}
 	_, err := fetchSource(context.Background(), &config.Config{}, workerStore(t),
-		"r-1", prefilter.Params{}, src, "", 0, 0, &budget{}, t.TempDir())
+		"r-1", prefilter.Params{}, src, "", 0, 0, &budget{}, t.TempDir(), t.TempDir())
 	if err == nil {
 		t.Fatal("a platform with no adapter must fail loudly")
 	}
@@ -176,7 +178,7 @@ func TestFetchSourceRealestateCarriesStatsOnAFailedWalk(t *testing.T) {
 	src := config.Source{Name: "missingprofile", Platform: "realestate",
 		URL: "https://portal.example/s"}
 	oc, err := fetchSource(context.Background(), &config.Config{}, workerStore(t),
-		"r-1", prefilter.Params{}, src, "listing", 0, 0, &budget{}, t.TempDir())
+		"r-1", prefilter.Params{}, src, "listing", 0, 0, &budget{}, t.TempDir(), t.TempDir())
 	if err == nil {
 		t.Fatal("a source without its profile must fail loudly")
 	}
@@ -192,6 +194,9 @@ func TestFetchSourceRealestateCarriesStatsOnAFailedWalk(t *testing.T) {
 	var stats map[string]any
 	if err := json.Unmarshal([]byte(oc.extended), &stats); err != nil {
 		t.Fatalf("stats_json is not JSON: %v", err)
+	}
+	if g, ok := stats["grade"]; ok {
+		t.Errorf("a walk with no output is not graded, got %v", g)
 	}
 }
 
@@ -231,6 +236,8 @@ extract:
   fields:
     price:
       pattern: 'priceTag">(\d+)'
+    deal_type:
+      const: sale
 `
 	if err := os.WriteFile(filepath.Join(profiles, "fakezoo.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatalf("write profile: %v", err)
@@ -240,9 +247,12 @@ extract:
 	cfg := &config.Config{}
 	sources := []config.Source{{Name: "fakezoo", Platform: "realestate",
 		Kind: "listing", URL: srv.URL + "/l/"}}
+	// The db dir the artifacts (none in this test — a one-tile walk is thin,
+	// not failing) would land under can be a plain temp dir.
+	dbDir := t.TempDir()
 
-	runLive(cfg, st, "r-fresh", prefilter.Params{}, sources, 0, 0, configDir)
-	runLive(cfg, st, "r-dup", prefilter.Params{}, sources, 0, 0, configDir)
+	runLive(cfg, st, "r-fresh", prefilter.Params{}, sources, 0, 0, configDir, dbDir)
+	runLive(cfg, st, "r-dup", prefilter.Params{}, sources, 0, 0, configDir, dbDir)
 
 	fresh, err := st.RunOutcomes("r-fresh")
 	if err != nil || len(fresh) != 1 {
@@ -267,5 +277,204 @@ extract:
 			!strings.Contains(row.StatsJSON, `"kept":1`) {
 			t.Errorf("stats_json: %s", row.StatsJSON)
 		}
+	}
+	// One tile is below the run quorum: the grade rides the row as thin —
+	// shares, no verdict — which is precisely NOT an alarm.
+	if !strings.Contains(f.StatsJSON, `"verdict":"thin"`) {
+		t.Errorf("a one-tile walk must grade thin, got %s", f.StatsJSON)
+	}
+	if entries, err := os.ReadDir(dbDir); err != nil || len(entries) > 0 {
+		t.Errorf("thin is not fail: %d artifact dir entries (err %v)", len(entries), err)
+	}
+}
+
+// captureStdout holds the worker's [live]/[grade] lines while fn runs — the
+// pay operator reads the same log, so the tests get to read it too.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	os.Stdout = old
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	return string(out)
+}
+
+// gradeProfileYaml is a complete anchored profile for the httptest portal,
+// deal_type const because the real profiles classify it for every record —
+// without it the missing-deal_type finding, not the price floor, is what a
+// price-gap walk fails on.
+const gradeProfileYaml = `portal: fakezoo
+market: zz
+base_url: %s
+currency: EUR
+fetch: http
+
+list:
+  url: %s/l/
+  max_pages: 1
+
+extract:
+  mode: anchored
+  anchor: 'data-id="(?P<id>\d+)"'
+  block_len: 300
+  url_template: '/listing/{id}'
+  fields:
+    price:
+      pattern: 'priceTag">(\d+)'
+    deal_type:
+      const: sale
+`
+
+// failingPage is twelve tiles, four without a price: 8/12 = 67% prices is
+// under the 0.80 floor, and the absent gallery drops media to 0% - a real
+// aliasing portal broken in the two ways most likely to cause a crisis.
+func failingPage() string {
+	var b strings.Builder
+	b.WriteString("<html><body>")
+	for i := 1; i <= 12; i++ {
+		if i%3 == 0 {
+			fmt.Fprintf(&b, `<div data-id="%d"></div>`, i)
+			continue
+		}
+		fmt.Fprintf(&b, `<div data-id="%d"><div class="priceTag">%d</div></div>`, i, 200000+i)
+	}
+	b.WriteString("</body></html>")
+	return b.String()
+}
+
+// The failing walk: the grade rides the row's stats_json naming the gates
+// that failed, the log says so in the same words the console note will, and
+// the sample is archived beside the store as the alarm's backing. Offline —
+// the portal is an httptest server.
+func TestRunLiveRealestateGradesAFailingWalkIntoItsRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(failingPage()))
+	}))
+	defer srv.Close()
+
+	configDir := t.TempDir()
+	profiles := filepath.Join(configDir, "profiles")
+	if err := os.MkdirAll(profiles, 0o755); err != nil {
+		t.Fatalf("mkdir profiles: %v", err)
+	}
+	yaml := fmt.Sprintf(gradeProfileYaml, srv.URL, srv.URL)
+	if err := os.WriteFile(filepath.Join(profiles, "fakezoo.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatalf("write profile: %v", err)
+	}
+
+	st := workerStore(t)
+	cfg := &config.Config{}
+	dbDir := t.TempDir()
+	sources := []config.Source{{Name: "fakezoo", Platform: "realestate",
+		Kind: "listing", URL: srv.URL + "/l/"}}
+
+	log := captureStdout(t, func() {
+		runLive(cfg, st, "r-fail", prefilter.Params{}, sources, 0, 0, configDir, dbDir)
+	})
+
+	rows, err := st.RunOutcomes("r-fail")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("run rows: %d rows, err %v", len(rows), err)
+	}
+	row := rows[0]
+
+	var stats struct {
+		Grade *struct {
+			Total  int `json:"total"`
+			Unique int `json:"unique"`
+			Portals []struct {
+				Portal  string `json:"portal"`
+				Records int    `json:"records"`
+				Gates   []struct {
+					Name    string `json:"name"`
+					Verdict string `json:"verdict"`
+					N       int    `json:"n"`
+					Total   int    `json:"total"`
+				} `json:"gates"`
+			} `json:"portals"`
+		} `json:"grade"`
+	}
+	if err := json.Unmarshal([]byte(row.StatsJSON), &stats); err != nil {
+		t.Fatalf("stats_json: %v", err)
+	}
+	if stats.Grade == nil {
+		t.Fatalf("a failing walk of 12 tiles must carry a grade, got %s", row.StatsJSON)
+	}
+	if stats.Grade.Total != 12 || stats.Grade.Unique != 12 {
+		t.Errorf("grade counts: got %d/%d, want 12/12", stats.Grade.Total, stats.Grade.Unique)
+	}
+	if len(stats.Grade.Portals) != 1 || stats.Grade.Portals[0].Portal != "fakezoo" {
+		t.Fatalf("graded portals: %+v", stats.Grade.Portals)
+	}
+	var price, media *string
+	for i := range stats.Grade.Portals[0].Gates {
+		g := stats.Grade.Portals[0].Gates[i]
+		switch g.Name {
+		case "price parsed":
+			price = &g.Verdict
+			if g.N != 8 || g.Total != 12 {
+				t.Errorf("price gate counts: %d/%d, want 8/12", g.N, g.Total)
+			}
+		case "media present":
+			media = &g.Verdict
+		case "url present":
+			if g.Verdict != "ok" {
+				t.Errorf("url gate: got %s, want ok (12/12 priced or not)", g.Verdict)
+			}
+		}
+	}
+	if price == nil || *price != "fail" {
+		t.Fatalf("price gate: got %v, want fail", price)
+	}
+	if media == nil || *media != "fail" {
+		t.Errorf("media gate: got %v, want fail", media)
+	}
+
+	// The log said it in the same words.
+	for _, want := range []string{
+		"[grade] fakezoo: 2 gate(s) failed",
+		"[grade] fakezoo: FAIL price parsed: 8/12 at floor 80%",
+		"[grade] fakezoo: FAIL media present: 0/12 at floor 90%",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log line missing: %q\nlog:\n%s", want, log)
+		}
+	}
+
+	// And the sample is archived beside the store: the alarm's backing,
+	// keyed by run and portal, regradeable by the CLI.
+	path := filepath.Join(dbDir, "traces", "r-fail", "fakezoo.listings.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 12 {
+		t.Errorf("artifact lines: got %d, want 12", len(lines))
+	}
+	var first struct {
+		Portal  string         `json:"portal"`
+		Payload map[string]any `json:"payload"`
+		Price   *int64         `json:"price"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("artifact line is not a harvest record: %v", err)
+	}
+	if first.Portal != "fakezoo" || first.Price == nil {
+		t.Errorf("artifact first line: %+v", first)
+	}
+	if first.Payload["deal_type"] != "sale" {
+		t.Errorf("artifact payload: %v, want the classified deal_type", first.Payload)
 	}
 }
