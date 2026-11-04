@@ -575,9 +575,11 @@ function trendCell(t) {
   for (const a of t.drift || []) {
     // tag()'s tone classes are the styled ones; a bare pill--bad has no CSS.
     // tag() cannot carry a hover title, so the same tone-failed shape is
-    // inlined with the alarm's note.
+    // inlined with the alarm's note. Kind is the one-word class the filters
+    // key on; a grade-failed alarm carries its own label ("grade: 2 gate(s)")
+    // because "grade-failed" alone does not say how bad it was.
     parts.push(`<span class="pill pill--sm tone-failed" title="${esc(a.note || '')}">` +
-      `<span class="dot"></span>${esc(a.kind)}</span>`);
+      `<span class="dot"></span>${esc(a.label || a.kind)}</span>`);
   }
   return parts.join(' ');
 }
