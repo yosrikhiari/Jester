@@ -935,6 +935,39 @@ func (s *Store) RecordRunOutcome(o RunOutcome) error {
 	return nil
 }
 
+// RunOutcomes reads one run's ledger rows, ordered by source — the read side
+// the console's Python series mirrors, and what a `worker`-side caller needs
+// to check what runLive actually recorded. A run that visited nothing returns
+// an empty (non-nil) slice: "no rows" is an answer, not an error.
+func (s *Store) RunOutcomes(runID string) ([]RunOutcome, error) {
+	rows, err := s.db.Query(`SELECT source, platform, kind, observed_at,
+	       items, fresh, dup, pages_ok, pages_err, bytes, latency_ms,
+	       fetch_mode, first_err, stats_json
+	 FROM run_outcome WHERE run_id = ? ORDER BY source`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("run outcomes: %w", err)
+	}
+	defer rows.Close()
+	out := []RunOutcome{}
+	for rows.Next() {
+		var o RunOutcome
+		var statsJSON any
+		o.RunID = runID
+		if err := rows.Scan(&o.Source, &o.Platform, &o.Kind, &o.ObservedAt,
+			&o.Items, &o.Fresh, &o.Dup, &o.PagesOK, &o.PagesErr, &o.Bytes,
+			&o.LatencyMS, &o.FetchMode, &o.FirstErr, &statsJSON); err != nil {
+			return nil, fmt.Errorf("run outcome scan: %w", err)
+		}
+		// NULL stats_json means "this platform carries no walk stats", the
+		// same distinction RecordRunOutcome writes.
+		if str, ok := statsJSON.(string); ok {
+			o.StatsJSON = str
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // SourceOrder returns the configured names sorted least-recently-fetched
 // first, so a capped run spreads across ticks instead of re-walking the head
 // of sources.yaml. Names never fetched sort first — a newly added source

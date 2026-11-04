@@ -813,6 +813,7 @@ func (p *Profile) parseLDJSON(body string) ([]store.Listing, ParseStats, error) 
 			// rows: over a 4141-listing run across ten portals, nine were at 100%
 			// URL coverage and the only ten blanks were these.
 			if l.URL == "" {
+				ps.NoURL++
 				continue
 			}
 			l.Payload = mustJSON(payload)

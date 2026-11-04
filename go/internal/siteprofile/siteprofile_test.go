@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"jester/internal/store"
 )
 
 // The fixtures are excerpts of real result pages fetched on 2026-08-30, not
@@ -1028,5 +1030,176 @@ extract:
 	}
 	if dpPS.Anchors != 2 || dpPS.Tiles != 1 || dpPS.Kept != 1 {
 		t.Errorf("dup page counters: %+v, want anchors=2 tiles=1 kept=1", dpPS)
+	}
+}
+
+// The drop counters are the per-parse facts the drift ledger carries: when a
+// candidate is thrown away, the WHY matters to whoever reads the trend. A
+// "kept 1" with no reason beside it cannot be told apart from "kept 1 of 5
+// because four tiles were junk". These fixtures drive one candidate through
+// each exit — filtered by the profile's rule, missing its identity, missing
+// its link, unreadable JSON — in every mode that has them.
+
+func TestNextDataDropsAreCountedNotSilent(t *testing.T) {
+	p := &Profile{Portal: "nd", Extract: Extract{
+		Mode:     "nextdata",
+		DataPath: "d.h",
+		Fields: map[string]Field{
+			"listing_id": {Path: "id"},
+			"url":        {Path: "href"},
+			"title":      {Path: "name"},
+		},
+		Filter: Filter{Field: "title", Exclude: []string{"promoted"}},
+	}}
+	body := `<script id="__NEXT_DATA__">{"d":{"h":[` +
+		`{"id":1,"href":"u1","name":"plain villa"},` +
+		`{"id":2,"href":"u2","name":"promoted banner"},` +
+		`{"href":"u3","name":"no identity"},` +
+		`{"id":4,"name":"no link"}` +
+		`]}}</script>`
+	rows, ps, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ps.Candidates != 4 || ps.Filtered != 1 || ps.NoID != 1 || ps.NoURL != 1 || ps.Kept != 1 {
+		t.Fatalf("drop counters: %+v", ps)
+	}
+	if len(rows) != 1 || rows[0].ListingID != "1" || rows[0].URL != "u1" {
+		t.Errorf("the kept row is the clean candidate: %+v", rows)
+	}
+}
+
+func TestLDJSONDropsAreCountedNotSilent(t *testing.T) {
+	p := &Profile{Portal: "ld", Extract: Extract{
+		Mode: "ldjson",
+		Type: "Residence",
+		Fields: map[string]Field{
+			"listing_id": {Path: "id"},
+			"url":        {Path: "url"},
+			"title":      {Path: "name"},
+		},
+		Filter: Filter{Field: "title", Exclude: []string{"promoted"}},
+	}}
+	body := `<html><body>` +
+		`<script type="application/ld+json">{"@type":"Residence","id":9,"url":"https://x/9","name":"clean"}</script>` +
+		`<script type="application/ld+json">{"@type":"Residence", oops</script>` +
+		`<script type="application/ld+json">{"@type":"Residence","id":2,"url":"https://x/2","name":"promoted banner"}</script>` +
+		`<script type="application/ld+json">{"@type":"Residence","url":"https://x/3","name":"no identity"}</script>` +
+		`<script type="application/ld+json">{"@type":"Residence","id":4,"name":"no link"}</script>` +
+		`</body></html>`
+	rows, ps, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ps.Blocks != 5 || ps.BadJSON != 1 {
+		t.Errorf("block counters: %+v", ps)
+	}
+	if ps.Candidates != 4 || ps.Filtered != 1 || ps.NoID != 1 || ps.NoURL != 1 || ps.Kept != 1 {
+		t.Errorf("drop counters: %+v", ps)
+	}
+	if len(rows) != 1 || rows[0].ListingID != "9" || rows[0].URL != "https://x/9" {
+		t.Errorf("the kept row is the clean candidate: %+v", rows)
+	}
+}
+
+func TestAnchoredFilteredDropIsCounted(t *testing.T) {
+	p := &Profile{Portal: "anch", Extract: Extract{
+		Mode:        "anchored",
+		Anchor:      `data-id="(?P<id>\d+)"`,
+		BlockLen:    200,
+		URLTemplate: "/l/{id}",
+		Fields: map[string]Field{
+			"price": {Pattern: `priceTag">(\d+)`},
+			"title": {Pattern: `ttl">([^<]+)`},
+		},
+		Filter: Filter{Field: "title", Exclude: []string{"sold"}},
+	}}
+	body := `<html><body>` +
+		`<div data-id="3"><div class="ttl">sunny attic</div><div class="priceTag">100</div></div>` +
+		`<div data-id="4"><div class="ttl">sold house</div><div class="priceTag">77</div></div>` +
+		`</body></html>`
+	rows, ps, err := p.Parse(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if ps.Filtered != 1 || ps.Kept != 1 {
+		t.Errorf("drop counters: %+v", ps)
+	}
+	if len(rows) != 1 || rows[0].ListingID != "3" {
+		t.Errorf("the kept row is the non-excluded tile: %+v", rows)
+	}
+}
+
+// An unknown mode is a broken profile, not a quiet empty page: refuse it with
+// the mode's name in the error, and hand back a histogram the caller can add
+// into (ParseStats.Add must not be handed a nil map to merge into).
+func TestParseRefusesAnUnknownModeWithoutABlankHistogram(t *testing.T) {
+	p := &Profile{Portal: "x", Extract: Extract{Mode: "carrier pigeon"}}
+	rows, ps, err := p.Parse("<html></html>")
+	if err == nil {
+		t.Fatal("an unknown mode must fail loudly")
+	}
+	if !strings.Contains(err.Error(), `unknown mode "carrier pigeon"`) {
+		t.Errorf("error should name the mode, got %v", err)
+	}
+	if rows != nil {
+		t.Errorf("an unknown mode yields nothing: %+v", rows)
+	}
+	if ps.Fields == nil {
+		t.Error("the returned stats must carry an initialized histogram")
+	}
+}
+
+// recordFields fills the histogram for whatever fields the profile extracts;
+// the nil-map guard exists because a caller may hand it a zero ParseStats —
+// e.g. merging stats of two sources under one. Pin the guard's behaviour.
+func TestRecordFieldsStartsTheHistogramWhenTheCallerPassesOne(t *testing.T) {
+	p := &Profile{Portal: "x", Extract: Extract{
+		Fields: map[string]Field{"listing_id": {}, "url": {}, "price": {}, "rooms": {}, "status": {}, "currency": {}},
+	}}
+	five := int64(5)
+	ps := ParseStats{}
+	p.recordFields(&ps, []store.Listing{{
+		ListingID: "i1", URL: "https://x/i1", Price: &five, Status: "for-sale",
+		Currency:  "EUR",
+		Payload:   `{"rooms":3}`,
+	}})
+	if ps.Fields == nil {
+		t.Fatal("recordFields must initialize a nil histogram")
+	}
+	if ps.Fields["listing_id"] != 1 || ps.Fields["url"] != 1 || ps.Fields["price"] != 1 {
+		t.Errorf("canonical fields counted off the struct: %+v", ps.Fields)
+	}
+	if ps.Fields["currency"] != 1 || ps.Fields["status"] != 1 {
+		t.Errorf("currency/status counted off the struct: %+v", ps.Fields)
+	}
+	if ps.Fields["rooms"] != 1 {
+		t.Errorf("payload fields counted off the payload: %+v", ps.Fields)
+	}
+}
+
+// ParseStats.Add is how a multi-page walk or a multi-seed run folds the page
+// counters into one series: the console's coverage fraction reads the SUM.
+// The receiver may start with a nil map (a zero value); the merge must not
+// panic on it, and the sum must be the plain arithmetic on both sides.
+func TestParseStatsAddMergesTheHistogram(t *testing.T) {
+	var s ParseStats
+	s.Add(ParseStats{Anchors: 3, Tiles: 4, Blocks: 5, BadJSON: 1,
+		Candidates: 6, Kept: 2, Filtered: 1, NoID: 2, NoURL: 3,
+		Fields: map[string]int{"price": 2, "url": 2}})
+	if s.Anchors != 3 || s.Tiles != 4 || s.Blocks != 5 || s.BadJSON != 1 ||
+		s.Candidates != 6 || s.Kept != 2 || s.Filtered != 1 || s.NoID != 2 || s.NoURL != 3 {
+		t.Errorf("scalar merge onto a zero value: %+v", s)
+	}
+	if s.Fields["price"] != 2 || s.Fields["url"] != 2 {
+		t.Errorf("histogram merge onto a zero value: %+v", s.Fields)
+	}
+
+	s.Add(ParseStats{Anchors: 1, Kept: 1, Fields: map[string]int{"price": 1, "rooms": 1}})
+	if s.Anchors != 4 || s.Kept != 3 {
+		t.Errorf("scalar merge onto a populated value: %+v", s)
+	}
+	if s.Fields["price"] != 3 || s.Fields["rooms"] != 1 || s.Fields["url"] != 2 {
+		t.Errorf("histogram merge onto a populated value: %+v", s.Fields)
 	}
 }

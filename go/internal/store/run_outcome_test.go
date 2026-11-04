@@ -113,6 +113,62 @@ func TestRunOutcomeLedger(t *testing.T) {
 	if v, err := st.Version(); err != nil || v != 1 {
 		t.Errorf("schema_version=%d err=%v, want 1/nil", v, err)
 	}
+
+	// The reader presents the ledger the same record wrote: NULL stats read
+	// back as "", rows collide only within their own run, and sources come
+	// back ordered so callers can compare without sorting.
+	got, err := st.RunOutcomes("r-1")
+	if err != nil {
+		t.Fatalf("RunOutcomes: %v", err)
+	}
+	if len(got) != 2 || got[0].Source != "hn-ask" || got[1].Source != "zoopla" {
+		t.Fatalf("want hn-ask then zoopla, got %v", got)
+	}
+	hn, z := got[0], got[1]
+	if hn.RunID != "r-1" || hn.FirstErr == "" || hn.Items != 0 || hn.StatsJSON != "" {
+		t.Errorf("community row via reader: %+v", hn)
+	}
+	if z.Items != 31 || z.Dup != 1 || z.PagesOK != 2 || z.StatsJSON == "" {
+		t.Errorf("realestate row via reader: %+v", z)
+	}
+
+	// A run that visited nothing reads as empty, not as an error.
+	none, err := st.RunOutcomes("r-nothing")
+	if err != nil {
+		t.Fatalf("RunOutcomes(r-nothing): %v", err)
+	}
+	if none == nil || len(none) != 0 {
+		t.Errorf("unvisited run must be an empty slice, got %v", none)
+	}
+}
+
+func TestRunOutcomeErrorPathsFailLoudly(t *testing.T) {
+	st := testStore(t)
+	st.Close()
+
+	if _, err := st.RunOutcomes("r-1"); err == nil {
+		t.Fatal("RunOutcomes on a closed store must error")
+	}
+	o := RunOutcome{RunID: "r-1", Source: "s"}
+	if err := st.RecordRunOutcome(o); err == nil {
+		t.Fatal("RecordRunOutcome on a closed store must error")
+	}
+}
+
+// A row whose typed column does not hold a number (loosely-typed SQLite) must
+// surface as a scan error, not as a silently emptied ledger: the reader's
+// whole value is per-run truth.
+func TestRunOutcomesRefusesACorruptRow(t *testing.T) {
+	st := testStore(t)
+	if _, err := st.db.Exec(
+		`INSERT INTO run_outcome (run_id, source, observed_at, latency_ms)
+		 VALUES ('r-corrupt', 's', '2026-11-01T00:00:00Z', 'half-a-second')`); err != nil {
+		t.Fatalf("seed corrupt row: %v", err)
+	}
+	_, err := st.RunOutcomes("r-corrupt")
+	if err == nil {
+		t.Fatal("a non-numeric latency_ms must be reported, not swallowed")
+	}
 }
 
 // A database written before the ledger existed gains the table silently on
