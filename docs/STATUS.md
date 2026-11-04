@@ -30,11 +30,14 @@ lane: the protection decisions, the extraction/agreement labels, the
 Windows task account + `schedule apply`, WAL and the second backup volume.
 
 **As of 2026-11-04.** The drift-ledger wave (Phase A) is code-complete on
-`feat/run-outcome-plane` (five commits, tip `178162e`) — all suites green —
-and is **not merged**: push + PR + merge await fresh owner authorization
-(the wave section below carries the evidence and the honesty notes). The
-live archive was again not touched: no command here opened
-`data/jester.db` for writing.
+`feat/run-outcome-plane` — all suites green, and SonarCloud's new-code
+coverage gate repaired at `75687a2` (68.2% on the first CI run, raised on
+the same branch; [PR #88](https://github.com/yosrikhiari/Jester/pull/88)'s
+latest checks are the authority) — and is **not merged yet**: the owner
+authorized push + PR + merge when green, and the merge lands only with
+every required context green (the wave section below carries the evidence
+and the honesty notes). The live archive was again not touched: no
+command here opened `data/jester.db` for writing.
 
 **Extraction quality is NOT MEASURED (stated 2026-11-02).** No
 `eval/extraction/labels.jsonl` is committed, so `jester eval extract` exits 0
@@ -222,6 +225,7 @@ What exists on the branch, with its commit:
 | `d2813a1` | `go/internal/store` | `run_outcome` table + source index via `CREATE TABLE IF NOT EXISTS` — **no schema_version bump** (the guard stays 1, a strict cross-language contract); one row per (run_id, source), `INSERT OR REPLACE`, kept for failing visits |
 | `d3d53d7` | `go/cmd/worker` | `runLive` writes one row per visited source BEFORE the failure short-circuit; a CDP-session failure writes its row; realestate rows carry fresh/dup splits and the walk stats JSON; disabled sources write none |
 | `178162e` | Python console | `jester/runout.py` (series + drift rules), `/api/outcomes`, Sources-page trend column with alarm chips and a `drifting` filter |
+| `75687a2` | Go, gate repair | SonarCloud's new-code coverage gate read 68.2% (floor 80): the worker's failure-mode wiring had no tests. `store.RunOutcomes(runID)` reader; runLive failure-mode rows pinned offline (CDP refused on loopback, unknown adapter); an httptest realestate walk drives the fresh/dup split across two runs; siteprofile's per-mode drop counters got one fixture per exit — which found and fixed a real bug (ldjson mode skipped its NoURL increment); `ParseStats.Add` merge invariants and the `recordFields` nil-start pinned |
 
 The console's drift rules carry their limits where they live, and the tests
 pin them: `shape-gone` needs clean pages AND a prior yield (anchor silence
@@ -253,10 +257,18 @@ Verification run on the branch (each row is the tree at its named commit):
 | Command | Where | Result |
 |---|---|---|
 | `go test ./... -count=1` | `go/`, after each B1 commit (`683eb70`, `c1ce3ac`, `d2813a1`, `d3d53d7`) | every package `ok` |
-| `go vet ./...` | `go/`, tree at `178162e` | no output (clean) |
+| `go vet ./...` | `go/`, tree at `75687a2` | no output (clean) |
+| `go test ./... -count=1 -coverprofile` | `go/`, tree at `75687a2` | every package `ok` |
+| `go test ./cmd/worker ./internal/siteprofile ./internal/store ./internal/realestate -cover` | `go/`, tree at `75687a2` | `28.2%` / `86.7%` / `78.0%` / `71.7%` of statements |
 | `python -m pytest python/tests -q` (env above) | tree at `178162e` | `2325 passed, 28 skipped, 13 deselected, 41 warnings in 560.13s (0:09:20)` |
-| `python -m pytest test_doc_links.py test_doc_contracts.py -q` | tree at `178162e` | `9 passed` |
+| `python -m pytest test_doc_links.py test_doc_contracts.py -q` | tree at this docs commit | `9 passed` |
 | `python scripts/counts.py --no-archive` | this commit | `python tests: 2357` / `go test functions: 310` |
+
+The coverage-gate repair (`75687a2`) changed no measured behavior except
+one fix it produced along the way: ldjson's NoURL drop counter now
+increments. The lines its tests still do not reach are the one-per-adapter
+`return` statements (a live network each — hermetic tests stay out) and the
+four browser-render lines in realestate's HTTP/browser fork.
 
 ## The products
 

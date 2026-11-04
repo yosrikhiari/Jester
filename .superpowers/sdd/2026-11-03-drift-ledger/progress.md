@@ -113,5 +113,18 @@ no adaptive substitution, ever** (`siteprofile.go:748-754` "wrong data that look
       merged, archive untouched) + the wave section with the five-commit
       table, drift-rule limits, honesty notes and verification evidence;
       ledger + research report become committed artifacts in this commit.
-- [ ] Push + PR + merge — **awaiting fresh owner authorization**; Dependabot
-      PRs #80/#81 stay held regardless.
+- [x] Coverage-gate repair (`75687a2`, pushed cycle 2026-11-04): PR #88's
+      first CI run passed every required context but SonarCloud's quality
+      gate — new_code coverage 68.2% < 80. Diagnosis from SonarCloud's own
+      API (per-file new_lines/new_uncovered_lines/toCover): worker/main.go
+      58 to-cover / 58 uncovered dominated the loss math
+      (1 - 89/280 = 68.2% exactly). Repair: RunOutcomes reader + worker
+      failure-mode rows (CDP-refused, no-adapter), httptest realestate walk
+      (fresh then dup), siteprofile drop-counter fixtures — which exposed a
+      real bug: ldjson's NoURL counter skipped its increment; fixed and
+      pinned. Local proxy for the gate at the repair commit: worker 26
+      uncovered-to-cover left (the one-per-adapter return lines only a live
+      network can reach), siteprofile/store/realestate new lines 0/0/4
+      (browser fork) → estimated gate ≈ 88%.
+- [ ] Merge PR #88 when green — authorized; Dependabot PRs #80/#81 stay
+      held regardless.
