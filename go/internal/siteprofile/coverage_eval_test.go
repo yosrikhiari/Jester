@@ -24,7 +24,7 @@ var fixtureFor = map[string]string{
 	"houni.yaml":           "houni_listings.html",
 	"behya.yaml":          "behya_listings.html",
 	"redfin.yaml":         "redfin_listings.html",
-	"habitaclia.yaml":     "habitaclia_listings.html",
+	"habitaclia.yaml":     "habitaclia_appstate.html",
 	"onthemarket.yaml":    "onthemarket_listings.html",
 	"immowelt.yaml":       "immowelt_listings.html",
 	"zoopla.yaml":         "zoopla_listings.html",
@@ -542,8 +542,16 @@ func TestEveryParseModeStampsTheMarket(t *testing.T) {
 // Spain, reached through the plan's priority 2 because Idealista (priority 1)
 // answers 403. Habitaclia states the record outright on the tile rather than
 // burying it in prose, which is what makes it cheap to parse.
+// 2026-11-05: the portal migrated to a Schibsted app shell. No tiles exist in
+// the shipped HTML any more - the whole result set (29 items on the real
+// Madrid page) arrives inside window.__INITIAL_PROPS__ = JSON.parse("..."),
+// so the profile reads it through nextdata mode and the fixture is real
+// captured state from the live page (habitaclia_appstate.html). The 2026-09
+// theme's own fixture (habitaclia_listings.html, microdata on data-* tiles)
+// is retained on disk to document what the markup used to look like, but it
+// is no longer loadable by this profile on purpose.
 func TestHabitacliaParsesTheTileAttributes(t *testing.T) {
-	p, body := load(t, "habitaclia.yaml", "habitaclia_listings.html")
+	p, body := load(t, "habitaclia.yaml", "habitaclia_appstate.html")
 	got, _, err := p.Parse(body)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -555,8 +563,7 @@ func TestHabitacliaParsesTheTileAttributes(t *testing.T) {
 		if l.Currency != "EUR" {
 			t.Errorf("%s: currency %q", l.ListingID, l.Currency)
 		}
-		// "1.295.000 &#x20AC;" - dots as thousands separators and an entity
-		// for the euro. A price that survives both is a price.
+		// transaction.price.amount arrives as {"amount":1650000,...}
 		if l.Price == nil || *l.Price < 10000 {
 			t.Errorf("%s: price %v", l.ListingID, l.Price)
 		}
@@ -572,13 +579,21 @@ func TestHabitacliaParsesTheTileAttributes(t *testing.T) {
 	}
 }
 
-// A tile runs about 6.1 KB to the next anchor. At block_len 4000 the price,
-// bedroom and surface attributes fell outside the block and came back empty
-// on every row while title and property type parsed fine - a partial parse
-// that looks like a working one.
-func TestHabitacliaBlockIsLongEnoughForTheWholeTile(t *testing.T) {
-	if got := shipped(t, "habitaclia.yaml").Extract.BlockLen; got < 6200 {
-		t.Errorf("block_len %d is shorter than a tile (~6.1 KB)", got)
+// The item identity moved off the 2026-09 theme's data-id attribute onto the
+// app-state object's legacyNumericId - the stable numeric key the archive
+// already holds, so listings re-key instead of re-archiving. Guard the whole
+// migration contract: nextdata mode, the results.items branch of the
+// app-state JSON, and that numeric id.
+func TestHabitacliaAppStateProfileShape(t *testing.T) {
+	p := shipped(t, "habitaclia.yaml")
+	if p.Extract.Mode != "nextdata" {
+		t.Errorf("mode %q, want nextdata (the app shell ships no tiles to anchor)", p.Extract.Mode)
+	}
+	if want := "initialSearchResultsPage.initialSearchContext.results.items"; p.Extract.DataPath != want {
+		t.Errorf("data_path %q, want %q", p.Extract.DataPath, want)
+	}
+	if p.Extract.Fields["listing_id"].Path != "legacyNumericId" {
+		t.Errorf("listing_id path %q, want legacyNumericId", p.Extract.Fields["listing_id"].Path)
 	}
 }
 
