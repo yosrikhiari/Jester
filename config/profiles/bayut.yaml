@@ -6,12 +6,24 @@
 # bedrooms, bathrooms, price, floorSize, address and images.
 # robots.txt allows /for-sale/ and /to-rent/; disallows /search/, /api/ (except
 # /api/transactions and /api/propertyPrices/), /account, and city landing pages.
+#
+# 2026-11-05 VERDICT: BLOCKED, disabled in sources.yaml.
+# The challenge interstitial is a ".humbucker" bundle (browser.js + an iframe
+# challenge served from hb.bayut.com). Rendered in the cloakserve Chrome/146
+# for 55+ seconds it flips to a hard "Verification failed" page (~3.7 KB,
+# no hrefs) - reproducibly, both on the shared anonymous browser AND through
+# the production fingerprint seed (jester-realestate-bayut), and the
+# production walks agree: realestate-revive-2 walked 15 rendered pages and
+# every one parsed clean and held nothing. This started before 2026-10-02
+# (zero-yield already in the Oct 2 archive). Nothing in the profile's LD-JSON
+# parsing is wrong - the DOM the challenge sends is simply never the
+# listing page. Re-enable in sources.yaml once the challenge class changes.
 portal: bayut
 market: ae
 base_url: https://www.bayut.com
 currency: AED
 # A plain GET returns the JS challenge page, not listings. The rendered page
-# carries RealEstateListing LD+JSON — ldjson mode extracts from that rather
+# carries RealEstateListing LD-JSON — ldjson mode extracts from that rather
 # than scraping HTML tiles.
 fetch: browser
 
