@@ -133,12 +133,24 @@ def test_the_shipped_declaration_names_every_task():
         "JesterNightlyRetention", "JesterSignalsRetention",
         "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
-    assert cadence["JesterNightly"] == "every 30 minutes"
+    # 2026-11-05 split: the cycle walks only the realestate portals on a slow
+    # clock - one bounded tick safely inside the 7200s kill cap, instead of
+    # the combined walk that crossed it twice on 2026-10-02.
+    assert cadence["JesterNightly"] == "every 4 hours"
     assert cadence["JesterNightlyScrape"] == "every 1 hour"
     assert cadence["JesterNightlySignalsSweep"] == "weekly on SUN at 08:00"
     assert cadence["JesterNightlySignalsHiring"] == "daily at 09:30"
     assert cadence["JesterNightlyBackupDrill"] == "monthly on day 1 at 03:00"
     assert cadence["JesterClickHouseLoad"] == "daily at 10:30"
+    # The cycle's scope names no portal that is disabled or parked: bayut
+    # since 2026-11-05 (challenge hard-fails), redfin (202 at page 1),
+    # zoopla (parked), seloger (draft). They rejoin the csv the day they walk
+    # clean again.
+    nightly = [s for s in specs if s["task"] == "JesterNightly"][0]
+    scope = nightly["options"]["only"]
+    assert "bayut" not in scope and "redfin" not in scope
+    assert "zoopla" not in scope and "seloger" not in scope
+    assert "habitaclia" in scope  # remapped live, graded in production
 
 
 def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(host):
