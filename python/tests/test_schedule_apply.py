@@ -128,10 +128,16 @@ def host(tmp_path, monkeypatch):
 def test_the_shipped_declaration_names_every_task():
     specs = schedule.load_desired()
     assert [s["task"] for s in specs] == DECLARED
+    # 2026-11-05 activation: the two fetch clocks (cycle, community scrape)
+    # are enabled live - they spend no LLM quota - while treat keeps the
+    # Oct 2 quota pause; the retention/drill/load infra stays off until the
+    # owner opts in.
     assert {s["task"] for s in specs if not s["enabled"]} == {
-        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
+        "JesterNightlyTreat",
         "JesterNightlyRetention", "JesterSignalsRetention",
         "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
+    assert next(s["enabled"] for s in specs if s["task"] == "JesterNightly")
+    assert next(s["enabled"] for s in specs if s["task"] == "JesterNightlyScrape")
     cadence = {s["task"]: schedule.describe_cadence(s) for s in specs}
     # 2026-11-05 split: the cycle walks only the realestate portals on a slow
     # clock - one bounded tick safely inside the 7200s kill cap, instead of
@@ -160,7 +166,7 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert installed == set(DECLARED)
     assert len(host.created()) == 14
     assert {t for t, v in host.tasks.items() if not v["enabled"]} == {
-        "JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat",
+        "JesterNightlyTreat",
         "JesterNightlyRetention", "JesterSignalsRetention",
         "JesterNightlyBackupDrill", "JesterClickHouseLoad"}
 
@@ -168,7 +174,7 @@ def test_apply_installs_every_declared_task_and_a_second_apply_changes_nothing(h
     assert second["ok"] is True
     assert [r["action"] for r in second["results"]] == ["unchanged"] * 14
     assert len(host.created()) == 14, "a second apply must not re-register anything"
-    assert len(host.changes()) == 7, "nor flip the seven paused tasks again"
+    assert len(host.changes()) == 5, "nor flip the five paused tasks again"
 
 
 def test_a_dry_run_changes_nothing_and_says_what_would(host):
@@ -428,10 +434,20 @@ def test_a_paused_task_absent_from_the_machine_is_still_paused(host):
     """A box that never installed the paused tasks agrees with the declaration:
     off is off whether the task is disabled or does not exist."""
     assert schedule.apply_desired()["ok"] is True
-    for task in ("JesterNightly", "JesterNightlyScrape", "JesterNightlyTreat"):
-        host.tasks.pop(task)
+    host.tasks.pop("JesterNightlyTreat")
     assert schedule.desired_drift() == []
     assert cli.schedule_drift_notes() == []
+
+
+def test_a_live_task_absent_from_the_machine_is_drift(host):
+    """2026-11-05 activation: cycle and scrape are declared enabled, so a
+    scheduler that lost them is no longer "paused by agreement" - doctor has
+    to say what the machine is missing."""
+    assert schedule.apply_desired()["ok"] is True
+    host.tasks.pop("JesterNightly")
+    notes = cli.schedule_drift_notes()
+    assert any(n.startswith("JesterNightly: not installed")
+               and "every 4 hours" in n for n in notes), notes
 
 
 # ---- status must not call a paused task INSTALLED (ND-02) -------------------
