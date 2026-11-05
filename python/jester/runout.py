@@ -109,8 +109,14 @@ def drift_alarms(rows):
     - all-pages-failed: the walk planned pages and every one of them failed.
       A fetch-level condemnation — the portal refused, timed out or was
       unreachable — and the loudest thing the ledger can say.
-    - shape-gone: pages parsed clean but kept nothing, while the same source
-      still kept rows on its prior visits. NOT anchor silence alone: in an
+    - shape-gone: pages parsed but kept nothing, while the same source
+      still kept rows on its prior visits. "Pages parsed" is read off the
+      page counters, not first_err's absence: a walk that renders but holds
+      nothing is recorded as an error NOTE ("N page(s) parsed clean and held
+      nothing"), so a rule that required an empty first_err would silence
+      exactly the case it exists to catch - bayut, 2026-10-02 through
+      2026-11-05, rendered 15 clean pages and kept zero, raising nothing.
+      NOT anchor silence alone: in an
       anchored profile the anchor is the only way we see tiles at all, so
       "the page no longer has the wanted shape" needs the clean-pages
       corroboration, exactly the limit siteprofile's counters document.
@@ -132,7 +138,7 @@ def drift_alarms(rows):
     if latest["pages_err"] > 0 and latest["pages_ok"] == 0:
         out.append({"kind": "all-pages-failed",
                     "note": f"{latest['pages_err']} page(s) failed, none parsed"})
-    if (not latest["first_err"] and _yield(latest) == 0 and history
+    if (_yield(latest) == 0 and latest["pages_ok"] > 0 and history
             and any(_yield(h) > 0 for h in history)):
         out.append({"kind": "shape-gone",
                     "note": "visited, nothing kept — but not long ago it kept rows"})

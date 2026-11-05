@@ -155,6 +155,26 @@ def test_shape_gone_needs_clean_pages_and_a_prior_yield(db):
     assert "shape-gone" in kinds
 
 
+def test_zero_yield_that_rides_in_as_an_error_note_alarms(db):
+    """The bayut hole, pinned shut: the worker records a walk that renders but
+    keeps nothing as first_err ("no listings found for <portal>: N page(s)
+    parsed clean and held nothing"). The old shape-gone rule required an EMPTY
+    first_err, so exactly that class of break stayed silent forever - fifteen
+    clean rendered pages, zero kept, no alarm, 2026-10-02 to 2026-11-05.
+    The page counters are the honest signal: pages_ok>0, nothing kept,
+    history kept rows."""
+    for i, kept in enumerate([40, 35]):
+        seed(db, "bayut", f"r-{i}", observed_at=f"2026-11-0{i + 1}T00:00:00Z",
+             **walk(kept, {"price": kept}))
+    seed(db, "bayut", "r-2", observed_at="2026-11-03T00:00:00Z",
+         **walk(0, {}, pages_ok=15, pages_err=0,
+                first_err="no listings found for bayut: 15 page(s) parsed clean and held nothing"))
+    db.commit()
+    kinds = [a["kind"] for a in
+             runout.drift_alarms(runout.load_outcomes(db)["bayut"])]
+    assert "shape-gone" in kinds
+
+
 def test_anchor_silence_alone_is_not_shape_gone(db):
     """The honest limit, pinned: a failing walk (every fetch errored) with no
     prior parse signal does NOT claim the shape vanished — the ledger cannot

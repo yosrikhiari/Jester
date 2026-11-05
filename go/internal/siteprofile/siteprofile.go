@@ -578,25 +578,62 @@ var ldjsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/ld\+jso
 var nextDataRe = regexp.MustCompile(`(?is)<script[^>]+id=["']__(?:NEXT|NUXT)_DATA__["'][^>]*>(.*?)</script>`)
 var nuxtJsonRe = regexp.MustCompile(`(?is)<script[^>]+type=["']application/json["'][^>]*data-nuxt-data[^>]*>(.*?)</script>`)
 
+// appStateRe matches the Schibsted search apps' app-state wrapper (habitaclia,
+// fotocasa): their migrated list pages render an empty <div id="app"> shell and
+// ship the entire search-result structure inside a stringified JSON literal,
+//
+//	window.__INITIAL_PROPS__ = JSON.parse("{\"initialSearchResultsPage\":…}");
+//
+// The literal escapes its own quotes with backslashes, so the quoted JS string
+// is decoded to a string first and only then parsed as JSON. Unlike the script
+// tags above there can be several such wrappers on one page
+// (__APP_CONFIG__, __INITIAL_CONTEXT_VALUE__, …), so the profile's data_path
+// decides which one carries the results: the first wrapper whose decoded JSON
+// answers it wins.
+var appStateRe = regexp.MustCompile(`(?is)window\.([A-Za-z_$][\w$]{0,40})\s*=\s*JSON\.parse\(\s*("(?:[^"\\]|\\.)+")\s*\)\s*;`)
+
 func (p *Profile) parseNextData(body string) ([]store.Listing, ParseStats, error) {
 	var ps ParseStats
 	ps.Fields = map[string]int{}
-	m := nextDataRe.FindStringSubmatch(body)
-	if m == nil {
-		m = nuxtJsonRe.FindStringSubmatch(body)
-		if m == nil {
-			// Returning nothing quietly was the problem: a bot-check page, a
-			// redirect to a consent wall and a genuine markup change all came
-			// back as "no listings, no error", which the caller could only
-			// report as a portal with nothing to sell.
-			return nil, ps, fmt.Errorf("siteprofile %s: no __NEXT_DATA__ or __NUXT_DATA__ script in the page", p.Portal)
+	var root any
+	have := false
+	if m := nextDataRe.FindStringSubmatch(body); m != nil {
+		ps.Blocks++
+		if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
+			ps.BadJSON++
+			return nil, ps, fmt.Errorf("siteprofile %s: __NEXT_DATA__ is not valid JSON: %w", p.Portal, err)
+		}
+		have = true
+	} else if m := nuxtJsonRe.FindStringSubmatch(body); m != nil {
+		ps.Blocks++
+		if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
+			ps.BadJSON++
+			return nil, ps, fmt.Errorf("siteprofile %s: __NUXT_DATA__ is not valid JSON: %w", p.Portal, err)
+		}
+		have = true
+	} else {
+		for _, m := range appStateRe.FindAllStringSubmatch(body, -1) {
+			var literal string
+			if err := json.Unmarshal([]byte(m[2]), &literal); err != nil {
+				continue
+			}
+			var cand any
+			if err := json.Unmarshal([]byte(literal), &cand); err != nil {
+				continue
+			}
+			if len(jsonPathRaw(cand, p.Extract.DataPath)) > 0 {
+				ps.Blocks++
+				root, have = cand, true
+				break
+			}
 		}
 	}
-	ps.Blocks++
-	var root any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(m[1])), &root); err != nil {
-		ps.BadJSON++
-		return nil, ps, fmt.Errorf("siteprofile %s: __NEXT_DATA__ is not valid JSON: %w", p.Portal, err)
+	if !have {
+		// Returning nothing quietly was the problem: a bot-check page, a
+		// redirect to a consent wall and a genuine markup change all came
+		// back as "no listings, no error", which the caller could only
+		// report as a portal with nothing to sell.
+		return nil, ps, fmt.Errorf("siteprofile %s: no __NEXT_DATA__ or __NUXT_DATA__ script and no JSON.parse app-state wrapper in the page", p.Portal)
 	}
 	// Navigate to the array via data_path (dotted, supports only map traversal).
 	nodes := jsonPathRaw(root, p.Extract.DataPath)
@@ -605,7 +642,7 @@ func (p *Profile) parseNextData(body string) ([]store.Listing, ParseStats, error
 		// A path resolving to an EMPTY ARRAY is a different fact - a result
 		// page with no results - and falls through to return no listings and
 		// no error, which is the honest answer for it.
-		return nil, ps, fmt.Errorf("siteprofile %s: data_path %q matched nothing in __NEXT_DATA__", p.Portal, p.Extract.DataPath)
+		return nil, ps, fmt.Errorf("siteprofile %s: data_path %q matched nothing in the page's app-state JSON", p.Portal, p.Extract.DataPath)
 	}
 	// The path should resolve to an array; jsonPathRaw collects across arrays,
 	// so we need to flatten one level if the result is a single slice.

@@ -2,89 +2,97 @@
 #
 # WHY NOT IDEALISTA. Idealista is the plan's priority 1 for Spain and answers
 # 403 to an ordinary GET; its sitemap 404s. Habitaclia answers 200, and no rule
-# in its robots.txt touches /viviendas-*.htm - checked 2026-09-04.
+# in its robots.txt touches the listing paths - checked 2026-09-04.
 #
-# The theme puts the whole record on the tile as data- attributes and wraps it
-# in schema.org Product/Offer microdata, so almost nothing here depends on
-# presentational markup.
+# 2026-11-05: the portal migrated to a Schibsted app shell. The *.htm list
+# pages redirect to canonical /comprar/…/s or /alquiler/…/s searches whose
+# shipped HTML contains NO tiles at all - the whole result set (29 items per
+# page on the Madrid seeds) arrives inside
+#
+#   window.__INITIAL_PROPS__ = JSON.parse("{…}")
+#
+# so the profile switched to nextdata mode; siteprofile.go was taught that
+# wrapper the same day. Only one <script type="application/ld+json"> remains
+# on the page and it is a BreadcrumbList (not listings).
 portal: habitaclia
 market: es
 base_url: https://www.habitaclia.com
 currency: EUR
-# Verified 2026-09-04: served in full to a plain GET, 15 tiles per page.
+# Verified 2026-11-05: canonical seed URLs below answer 200 to a plain GET
+# with the app-state JSON aboard; ?page=N is honoured (?pagina=, -2 and
+# /p/2 all re-serve page one or 404). Rental transcripts carry
+# transaction.type "rent", sales "buy".
 fetch: http
 
 list:
-  url: https://www.habitaclia.com/viviendas-madrid.htm
+  url: https://www.habitaclia.com/comprar/viviendas/madrid-provincia/madrid-capital/s
+  # One region + five big-city purchases plus the Madrid lettings seed, the
+  # same coverage the 2026-09 *.htm seeds reached through redirects.
   urls:
-    - https://www.habitaclia.com/viviendas-madrid.htm
-    - https://www.habitaclia.com/viviendas-barcelona.htm
-    - https://www.habitaclia.com/viviendas-valencia.htm
-    - https://www.habitaclia.com/viviendas-sevilla.htm
-    - https://www.habitaclia.com/viviendas-malaga.htm
-    - https://www.habitaclia.com/alquiler-madrid.htm
-  # Habitaclia pages by rewriting the FILENAME - viviendas-madrid.htm becomes
-  # viviendas-madrid-2.htm - and ?pagina=2 silently re-serves page one.
-  # {url_base} is the seed without its extension, which is the only way a
-  # template can express that.
-  page_template: "{url_base}-{page}.htm"
+    - https://www.habitaclia.com/comprar/viviendas/barcelona-provincia/barcelona-capital/s
+    - https://www.habitaclia.com/comprar/viviendas/valencia-provincia/valencia-capital/s
+    - https://www.habitaclia.com/comprar/viviendas/sevilla-provincia/sevilla-capital/s
+    - https://www.habitaclia.com/comprar/viviendas/malaga-provincia/malaga-capital/s
+    - https://www.habitaclia.com/alquiler/viviendas/madrid-provincia/madrid-capital/s
+  page_param: page
   max_pages: 5
 
 extract:
-  mode: anchored
-  # [^"]* either side of the class name, for the reason Property24 taught: the
-  # tile carries a long ordered class list and pinning to its start breaks the
-  # day the theme reorders it.
-  anchor: 'class="[^"]*js-list-item[^"]*"[^>]*data-id="(?P<id>\d+)"'
-  # 7000, not 4000. Measured: a Habitaclia tile runs about 6.1 KB to the next
-  # anchor, and a 4000-character block cut off before the price, bedroom and
-  # surface attributes - every one of them came back empty while title and
-  # property type parsed fine.
-  block_len: 7000
+  mode: nextdata
+  data_path: initialSearchResultsPage.initialSearchContext.results.items
 
   fields:
+    # legacyNumericId is the stable numeric id the .*htm theme published as
+    # data-id; the item's own "id" is a mutable uuid.
+    listing_id:
+      path: legacyNumericId
+      transform: [trim]
     url:
-      pattern: 'data-href="([^"]{20,300})"'
-      transform: [unescape, trim]
+      # relative path shape /comprar/…/<uuid>/d - absolute builds
+      # https://www.habitaclia.com/comprar/…
+      path: urls.canonical
+      transform: [absolute]
     title:
-      pattern: 'itemprop="name"[^>]*>([^<]{5,140})'
-      transform: [unescape, trim]
-    # "1.295.000 &#x20AC;" - dots as thousands separators and an entity for the
-    # euro sign, so unescape then keep the digits.
+      path: summary.title
+      transform: [trim, striptags]
     price:
-      pattern: 'itemprop="price"[^>]*>([^<]{3,30})'
-      transform: [unescape, digits]
-    # The tile states these outright rather than burying them in prose.
-    property_type:
-      pattern: 'data-propertysubtype="([A-Z_]{2,30})"'
-    seller_type:
-      pattern: 'data-esparticular="([A-Z_]{2,30})"'
-    bedrooms:
-      pattern: 'data-hab="(\d{1,2})"'
+      # {"amount": 1650000, "currency": null, "hidden": false, ...}
+      path: transaction.price.amount
+      transform: [digits]
     surface:
-      pattern: 'data-sup="(\d{1,6})"'
-    transaction:
-      pattern: 'data-transaction="([A-Z_]{2,20})"'
-    # The detail slug ends "<area>-<city>-i<id>.htm"; the greedy prefix takes
-    # the last such pair, which is the city.
+      path: property.builtSurface
+      transform: [digits]
+    rooms:
+      path: property.rooms
+      transform: [digits]
+    bedrooms:
+      path: property.rooms
+      transform: [digits]
+    property_type:
+      path: property.propertySubtype
+      transform: [trim]
+    location:
+      path: summary.location.municipality
+      transform: [trim]
     city:
-      pattern: 'data-href="[^"]*-([a-z]{3,30})-i\d+\.htm'
+      path: summary.location.municipality
+      transform: [trim]
+    transaction:
+      path: transaction.type
       transform: [trim]
 
-  # Habitaclia says which outright, and the seed list carries both: the
-  # viviendas-* URLs are sales and alquiler-madrid is lettings.
+  # The transaction type is stated outright: "buy" on the comprar seeds,
+  # "rent" on the alquiler seed, and the seed list carries both - so deal
+  # types keep discriminating per record.
   classify:
     field: deal_type
     from: transaction
     default: sale
     rules:
       - value: rental
-        match: ["RENT", "ALQUILER"]
+        match: ["rent"]
 
+  # summary.multimedia.images is a list of {type, url, position}; .url is the
+  # photographic host (static.fotocasa.es). 29/29 sampled items carry images.
   gallery:
-    pattern: 'data-image="(//images\.habimg\.com/[^"]+)"'
-    all: true
-    transform: [absolute]
-    # One photograph is published at several sizes; the id before the size
-    # suffix is what two of them share.
-    dedup_by: 'imgh/([0-9-]+/[^_]+)'
+    path: summary.multimedia.images.url

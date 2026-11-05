@@ -43,10 +43,34 @@ tasks:
   # ── the generative pipeline: paused on 2026-10-02 for quota ────────────
   # Re-enable with `enabled: true` and `jester schedule apply` when the quota
   # decision is reversed. Nothing else needs to change.
+  #
+  # 2026-11-05 SPLIT PROPOSAL (declared paused; flipping to true is the
+  # owner's call). What killed the Oct 2 night was arithmetic: the combined
+  # "every enabled source" ingest crossed the worker's kill cap twice
+  # (schedule-cycle.log: "ingest failed: worker exceeded 7200s"). The fix now
+  # shipped in the profiles is a SPLIT instead of a merger:
+  #
+  #   - JesterNightlyCycle walks ONLY the realestate portals on a slow clock.
+  #     Each tick is one bounded unit (~1-1.5 h worst case, well inside the
+  #     7200s cap), the cycle's own stand-down guard keeps ticks from
+  #     overlapping, and every walk now lands graded (mubawab, mubawab-ma and
+  #     habitaclia were re-mapped against live markup today).
+  #   - JesterNightlyScrape keeps the community/job list on its fast clock.
+  #   - JesterNightlyTreat resumes on its own 30-minute cadence.
+  #
+  # Excluded from the realestate csv ON PURPOSE: bayut (disabled 2026-11-05,
+  # challenge hard-fails), redfin (202 rate-limit at page 1, needs its own
+  # strategy before it earns a nightly slot), zoopla (parked), seloger
+  # (draft). Redfin joins the csv the day it scrapes again.
   - task: JesterNightly
     command: cycle
-    cadence: {every: 30}
+    cadence: {every: 240}
+    options:
+      only: [tayara, mubawab, mubawab-ma, habitaclia, tunisieannonce, behya,
+             property24, privateproperty, immowelt, houni, paruvendu, onthemarket]
     enabled: false
+  # Community ingest, unchanged from the 2026-09 launcher it had; the task
+  # simply returns to enabled when the owner lifts the pause.
   - task: JesterNightlyScrape
     command: ingest
     cadence: {every: 60}

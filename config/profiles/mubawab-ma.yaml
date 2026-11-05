@@ -8,6 +8,8 @@ base_url: https://www.mubawab.ma
 currency: MAD
 # Verified 2026-09-05: result page and data-adid tiles served to plain GET.
 # robots.txt explicitly allows ClaudeBot.
+# Re-probed 2026-11-05 (after realestate-revive-1 graded price 0/250): same
+# markup drift as mubawab.tn - price figures now inside <bdi dir="ltr">.
 fetch: http
 
 list:
@@ -44,7 +46,9 @@ extract:
       pattern: 'class="[^"]*listingTit[^"]*"[^>]*>\s*(?:<a[^>]*>)?\s*([^<]{5,300})'
       transform: [unescape, trim, striptags]
     price:
-      pattern: 'class="[^"]*priceTag[^"]*"[^>]*>\s*([^<]{3,40})'
+      # 2026-11-05: figure moved into <bdi dir="ltr"> inside the priceTag
+      # span, same as mubawab.tn (see that profile for the structures).
+      pattern: 'priceTag[^>]*>\s*(?:<bdi[^>]*>\s*)?([^<]{4,40})'
       transform: [unescape, digits, trim]
     location:
       pattern: 'class="[^"]*(?:listingLoc|listingH3)[^"]*"[^>]*>(?:\s*<i[^>]*>.*?</i>)?\s*([^<]{2,100})\s*<'
@@ -76,6 +80,9 @@ extract:
         match: ["louer", "location"]
 
   gallery:
+    # 2026-11-05: dedup key is the filename part - the ad id arrives in path
+    # chunks now (…/ad/8/185/299F/…) and the same photo is published at two
+    # sizes under /h/ and /m/ with one shared filename.
     pattern: '(?:data-src|data-lazy|data-url)="(https://www\.mubawab-media\.com/[^"]+)"'
     all: true
-    dedup_by: 'mubawab-media\.com/ad/(\d+)/'
+    dedup_by: '([a-zA-Z0-9._%~-]{10,})\.[a-z]{3,5}$'

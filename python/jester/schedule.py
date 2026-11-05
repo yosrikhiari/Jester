@@ -887,6 +887,10 @@ SCRAPE_OPTION_FLAGS = (
     ("max_ideas", "--max-ideas"),  # new ideas synthesised per tick
 )
 
+#: The flags themselves, for the observers that need to look for one by name
+#: rather than map a scope dict through.
+SCRAPE_FLAG_NAMES = tuple(flag for _, flag in SCRAPE_OPTION_FLAGS)
+
 
 def scrape_flags(options) -> list:
     """Turn a scope dict into `jester cycle` flags.
@@ -1645,6 +1649,24 @@ def _launcher_problems(spec: dict, *, main_db: str = DEFAULT_DB,
     # either field alone compared nothing for one of the two shapes.
     tokens = (shlex.split(launcher.get("argv") or "", posix=False)
               + list(launcher.get("extra") or []))
+    # A launcher whose file a hand reached into may name the same scope flag
+    # twice: once ahead of the tail apply wrote, once in the tail. Both
+    # parse_scrape_flags and argparse are last-wins, so the tail keeps the run
+    # on the declared scope and a plain parse would call the file clean -
+    # which is how doctor stayed silent on a hand-edited launcher as soon as
+    # the split started DECLARING an --only for the cycle
+    # (test_doctor_names_a_launcher_whose_scope_was_edited_by_hand caught it
+    # at CI). The file stops being what apply writes the moment a scope flag
+    # appears twice, so name it: that is drift, whatever value the tail lets
+    # win.
+    repeated = [f for f in SCRAPE_FLAG_NAMES if tokens.count(f) > 1]
+    if repeated:
+        parts = []
+        for f in repeated:
+            i = tokens.index(f)
+            parts.append(f"{f} {tokens[i + 1] if i + 1 < len(tokens) else '?'}")
+        return [f"scrape options are hand-edited ({'; '.join(parts)} appears "
+                f"again later and the later one wins); apply would rewrite {name}"]
     have = parse_scrape_flags(tokens)
     want_scope = {} if spec["command"] == "treat" else spec["options"]
     if scrape_flags(have) != scrape_flags(want_scope):

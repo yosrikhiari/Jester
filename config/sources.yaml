@@ -1075,7 +1075,7 @@ sources:
   kind: listing
   url: https://www.habitaclia.com/viviendas-madrid.htm
   enabled: true
-  notes: Habitaclia Spain - schema.org Product/Offer microdata on data- attribute tiles, 6 city seeds, filename pagination (viviendas-madrid-2.htm). Region Phase 3 priority 2, because Idealista (priority 1) answers 403.
+  notes: Habitaclia Spain - REMAPPED 2026-11-05 - the migrated Schibsted app shell ships the whole result set inside window.__INITIAL_PROPS__ JSON.parse wrapper (29 items/page; no tiles in the HTML), parsed by nextdata mode on the canonical /comprar/|/alquiler/.../s URLs with ?page=N. Region Phase 3 priority 2, because Idealista (priority 1) answers 403.
 - platform: realestate
   name: redfin
   kind: listing
@@ -1138,5 +1138,5 @@ sources:
   name: bayut
   kind: listing
   url: https://www.bayut.com/for-sale/property/dubai/
-  enabled: true
-  notes: Bayut UAE/Gulf - browser fetch (JS challenge on plain GET), ldjson RealEstateListing mode (rich schema.org with bedrooms, bathrooms, price, floorSize, address), ?page=N pagination. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). robots.txt allows /for-sale/ and /to-rent/. AED currency.
+  enabled: false
+  notes: Bayut UAE/Gulf - browser fetch (JS challenge on plain GET), ldjson RealEstateListing mode (rich schema.org with bedrooms, bathrooms, price, floorSize, address), ?page=N pagination. 5 emirate seeds (Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah). robots.txt allows /for-sale/ and /to-rent/. AED currency. DISABLED 2026-11-05 - the .humbucker challenge interstitial hard-fails to "Verification failed" in cloakserve Chrome/146 (55s+ rendered, production seed and shared browser alike); every page parses clean and holds nothing. Zero-yield already on the Oct 2 archive, so it has been dead ~5 weeks while burning 15 page-loads per walk. Profile itself is correct (ldjson); flip enabled back once the challenge class changes.
