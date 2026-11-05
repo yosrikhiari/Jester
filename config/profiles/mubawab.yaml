@@ -7,6 +7,10 @@ base_url: https://www.mubawab.tn
 currency: TND
 # Verified 2026-09-04: the result page and its data-adid tiles are served in
 # full to an ordinary GET.
+# Re-probed 2026-11-05 (after realestate-revive-1 graded price 0/1130): the
+# page is still served whole (65 adid leaves), but the PRICE markup moved from
+# plain tile text into a <bdi dir="ltr"> wrapper inside the priceTag span, and
+# the photo carousel moved to data-lazy="…" (.avif). Both encoded below.
 fetch: http
 
 list:
@@ -48,7 +52,13 @@ extract:
       pattern: 'class="[^"]*listingTit[^"]*"[^>]*>\s*(?:<a[^>]*>)?\s*([^<]{5,300})'
       transform: [unescape, trim, striptags]
     price:
-      pattern: 'class="[^"]*priceTag[^"]*"[^>]*>\s*([^<]{3,40})'
+      # 2026-11-05: the figure sits in a <bdi dir="ltr"> inside the priceTag
+      # span ("…priceTag…><bdi dir="ltr">430 000</bdi> <span
+      # class="priceCurrency">TND…"); the old bare-text pattern returned
+      # nothing at all. The optional <bdi> keeps "Prix à consulter" tiles
+      # readable (digits transform empty and the share notices them like
+      # before), and tiles still emitting plain text keep parsing.
+      pattern: 'priceTag[^>]*>\s*(?:<bdi[^>]*>\s*)?([^<]{4,40})'
       transform: [unescape, digits, trim]
     location:
       pattern: 'class="[^"]*(?:listingLoc|listingH3)[^"]*"[^>]*>(?:\s*<i[^>]*>.*?</i>)?\s*([^<]{2,100})\s*<'
@@ -80,6 +90,12 @@ extract:
         match: ["louer", "location"]
 
   gallery:
-    pattern: '(?:data-src|data-url)="(https://www\.mubawab-media\.com/[^"]+)"'
+    # 2026-11-05: the carousel now lazy-loads to data-lazy (data-src is gone);
+    # the vertical slider keeps data-url. dedup key is the filename part - the
+    # horizontal and vertical sliders publish the SAME photo at two sizes
+    # under /h/ and /m/, and the same photo shares one filename, while the
+    # ad id arrives in path chunks (…/ad/8/185/299F/…) that changed meaning
+    # in the markup since the "ad/(\d+)/" key was written.
+    pattern: '(?:data-src|data-lazy|data-url)="(https://www\.mubawab-media\.com/[^"]+)"'
     all: true
-    dedup_by: 'mubawab-media\.com/ad/(\d+)/'
+    dedup_by: '([a-zA-Z0-9._%~-]{10,})\.[a-z]{3,5}$'
