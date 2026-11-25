@@ -4,7 +4,7 @@
 # byte from a Windows-1252 editor makes the whole install fail with a decode
 # error that says nothing about which line is at fault. A requirements file
 # has no need for a character outside ASCII, so it does not get one.
-PyYAML>=6.0.3
+PyYAML>=6.0.4
 # The floor is the version pylock.toml proves: Docker and CI install the lock,
 # so a newer floor here means Windows resolves a client the tested stack never
 # ran. Raise it only together with a regenerated lock.
